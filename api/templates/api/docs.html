@@ -1,0 +1,679 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Oneo CRM API Documentation</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.24.1/themes/prism.min.css" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background: #f8fafc;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 20px;
+        }
+        
+        header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 2rem 0;
+            text-align: center;
+        }
+        
+        header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 0.5rem;
+        }
+        
+        header p {
+            font-size: 1.2rem;
+            opacity: 0.9;
+        }
+        
+        .nav-tabs {
+            background: white;
+            padding: 0;
+            margin: 0;
+            border-bottom: 1px solid #e2e8f0;
+            overflow-x: auto;
+        }
+        
+        .nav-tabs ul {
+            display: flex;
+            list-style: none;
+            margin: 0;
+            padding: 0;
+        }
+        
+        .nav-tabs li {
+            white-space: nowrap;
+        }
+        
+        .nav-tabs button {
+            background: none;
+            border: none;
+            padding: 1rem 2rem;
+            cursor: pointer;
+            font-size: 1rem;
+            color: #64748b;
+            border-bottom: 3px solid transparent;
+            transition: all 0.2s;
+        }
+        
+        .nav-tabs button:hover {
+            color: #3b82f6;
+            background: #f1f5f9;
+        }
+        
+        .nav-tabs button.active {
+            color: #3b82f6;
+            border-bottom-color: #3b82f6;
+        }
+        
+        .content {
+            background: white;
+            margin: 2rem 0;
+            border-radius: 8px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        
+        .tab-content {
+            display: none;
+            padding: 2rem;
+        }
+        
+        .tab-content.active {
+            display: block;
+        }
+        
+        .endpoint {
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 6px;
+            margin: 1rem 0;
+            overflow: hidden;
+        }
+        
+        .endpoint-header {
+            background: #3b82f6;
+            color: white;
+            padding: 1rem;
+            font-weight: bold;
+        }
+        
+        .endpoint-body {
+            padding: 1rem;
+        }
+        
+        .method {
+            display: inline-block;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: bold;
+            margin-right: 0.5rem;
+        }
+        
+        .method.get { background: #10b981; color: white; }
+        .method.post { background: #3b82f6; color: white; }
+        .method.put { background: #f59e0b; color: white; }
+        .method.delete { background: #ef4444; color: white; }
+        
+        .code-block {
+            background: #1e293b;
+            color: #e2e8f0;
+            padding: 1rem;
+            border-radius: 6px;
+            overflow-x: auto;
+            margin: 1rem 0;
+        }
+        
+        .code-block pre {
+            margin: 0;
+            font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+        }
+        
+        .section {
+            margin: 2rem 0;
+        }
+        
+        .section h2 {
+            color: #1e293b;
+            border-bottom: 2px solid #e2e8f0;
+            padding-bottom: 0.5rem;
+            margin-bottom: 1rem;
+        }
+        
+        .section h3 {
+            color: #475569;
+            margin: 1.5rem 0 1rem 0;
+        }
+        
+        .param-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 1rem 0;
+        }
+        
+        .param-table th,
+        .param-table td {
+            border: 1px solid #e2e8f0;
+            padding: 0.75rem;
+            text-align: left;
+        }
+        
+        .param-table th {
+            background: #f8fafc;
+            font-weight: 600;
+        }
+        
+        .alert {
+            padding: 1rem;
+            border-radius: 6px;
+            margin: 1rem 0;
+        }
+        
+        .alert.info {
+            background: #dbeafe;
+            border: 1px solid #93c5fd;
+            color: #1e40af;
+        }
+        
+        .alert.warning {
+            background: #fef3c7;
+            border: 1px solid #fcd34d;
+            color: #92400e;
+        }
+        
+        .ws-demo {
+            background: #f0f9ff;
+            border: 1px solid #0ea5e9;
+            border-radius: 6px;
+            padding: 1rem;
+            margin: 1rem 0;
+        }
+        
+        .ws-demo h4 {
+            color: #0369a1;
+            margin-bottom: 0.5rem;
+        }
+        
+        .status-indicator {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: 0.5rem;
+        }
+        
+        .status-indicator.online { background: #10b981; }
+        .status-indicator.offline { background: #ef4444; }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="container">
+            <h1>Oneo CRM API Documentation</h1>
+            <p>Comprehensive API reference for the Oneo CRM platform</p>
+        </div>
+    </header>
+
+    <nav class="nav-tabs">
+        <div class="container">
+            <ul>
+                <li><button class="tab-btn active" data-tab="overview">Overview</button></li>
+                <li><button class="tab-btn" data-tab="rest">REST API</button></li>
+                <li><button class="tab-btn" data-tab="graphql">GraphQL</button></li>
+                <li><button class="tab-btn" data-tab="websocket">WebSockets</button></li>
+                <li><button class="tab-btn" data-tab="auth">Authentication</button></li>
+                <li><button class="tab-btn" data-tab="examples">Examples</button></li>
+            </ul>
+        </div>
+    </nav>
+
+    <div class="container">
+        <div class="content">
+            <!-- Overview Tab -->
+            <div id="overview" class="tab-content active">
+                <div class="section">
+                    <h2>API Overview</h2>
+                    <p>The Oneo CRM API provides comprehensive access to your CRM data through multiple interfaces:</p>
+                    
+                    <div class="endpoint">
+                        <div class="endpoint-header">
+                            <span class="status-indicator online"></span>
+                            REST API - {{ rest_api.base_url }}
+                        </div>
+                        <div class="endpoint-body">
+                            Full CRUD operations with pagination, filtering, and search capabilities.
+                        </div>
+                    </div>
+                    
+                    <div class="endpoint">
+                        <div class="endpoint-header">
+                            <span class="status-indicator online"></span>
+                            GraphQL API - {{ graphql_api.endpoint }}
+                        </div>
+                        <div class="endpoint-body">
+                            Flexible queries with real-time subscriptions and relationship traversal.
+                        </div>
+                    </div>
+                    
+                    <div class="endpoint">
+                        <div class="endpoint-header">
+                            <span class="status-indicator online"></span>
+                            WebSocket API - {{ websocket_api.endpoints.sse }}
+                        </div>
+                        <div class="endpoint-body">
+                            Real-time updates and collaborative features.
+                        </div>
+                    </div>
+                </div>
+
+                <div class="section">
+                    <h2>Rate Limits</h2>
+                    <table class="param-table">
+                        <thead>
+                            <tr>
+                                <th>User Type</th>
+                                <th>Rate Limit</th>
+                                <th>Burst Limit</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td>Authenticated Users</td>
+                                <td>{{ rest_api.rate_limits.authenticated }}</td>
+                                <td>{{ rest_api.rate_limits.burst }}</td>
+                            </tr>
+                            <tr>
+                                <td>API Key Users</td>
+                                <td>{{ rest_api.rate_limits.api_key }}</td>
+                                <td>Higher burst allowance</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- REST API Tab -->
+            <div id="rest" class="tab-content">
+                <div class="section">
+                    <h2>REST API Endpoints</h2>
+                    
+                    <div class="endpoint">
+                        <div class="endpoint-header">
+                            <span class="method get">GET</span>
+                            /api/v1/pipelines/
+                        </div>
+                        <div class="endpoint-body">
+                            <p>List all accessible pipelines with pagination and filtering.</p>
+                            <h4>Query Parameters:</h4>
+                            <table class="param-table">
+                                <thead>
+                                    <tr><th>Parameter</th><th>Type</th><th>Description</th></tr>
+                                </thead>
+                                <tbody>
+                                    <tr><td>page</td><td>integer</td><td>Page number</td></tr>
+                                    <tr><td>page_size</td><td>integer</td><td>Items per page (max 1000)</td></tr>
+                                    <tr><td>search</td><td>string</td><td>Search term</td></tr>
+                                    <tr><td>pipeline_type</td><td>string</td><td>Filter by type</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div class="endpoint">
+                        <div class="endpoint-header">
+                            <span class="method post">POST</span>
+                            /api/v1/pipelines/
+                        </div>
+                        <div class="endpoint-body">
+                            <p>Create a new pipeline.</p>
+                            <div class="code-block">
+                                <pre><code class="language-json">{
+  "name": "Sales Pipeline",
+  "description": "Track sales opportunities",
+  "pipeline_type": "crm",
+  "icon": "dollar-sign",
+  "color": "#10B981"
+}</code></pre>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="endpoint">
+                        <div class="endpoint-header">
+                            <span class="method get">GET</span>
+                            /api/v1/pipelines/{id}/records/
+                        </div>
+                        <div class="endpoint-body">
+                            <p>List records in a specific pipeline.</p>
+                        </div>
+                    </div>
+
+                    <div class="endpoint">
+                        <div class="endpoint-header">
+                            <span class="method post">POST</span>
+                            /api/v1/pipelines/{id}/records/
+                        </div>
+                        <div class="endpoint-body">
+                            <p>Create a new record in the pipeline.</p>
+                            <div class="code-block">
+                                <pre><code class="language-json">{
+  "data": {
+    "company_name": "Acme Corp",
+    "contact_email": "john@acme.com",
+    "deal_value": 50000,
+    "status": "qualified"
+  }
+}</code></pre>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- GraphQL Tab -->
+            <div id="graphql" class="tab-content">
+                <div class="section">
+                    <h2>GraphQL API</h2>
+                    <p>The GraphQL endpoint provides flexible data fetching with real-time subscriptions.</p>
+                    
+                    <div class="alert info">
+                        <strong>Endpoint:</strong> {{ graphql_api.endpoint }}<br>
+                        <strong>Subscriptions:</strong> {{ graphql_api.subscriptions_endpoint }}
+                    </div>
+
+                    <h3>Available Queries</h3>
+                    <div class="code-block">
+                        <pre><code class="language-graphql">query GetPipelinesWithRecords {
+  pipelines {
+    id
+    name
+    recordCount
+    records(limit: 10) {
+      id
+      title
+      data
+      createdAt
+    }
+  }
+}</code></pre>
+                    </div>
+
+                    <h3>Available Mutations</h3>
+                    <div class="code-block">
+                        <pre><code class="language-graphql">mutation CreateRecord($pipelineId: ID!, $input: CreateRecordInput!) {
+  createRecord(pipelineId: $pipelineId, input: $input) {
+    success
+    record {
+      id
+      title
+      data
+    }
+    errors
+  }
+}</code></pre>
+                    </div>
+
+                    <h3>Real-time Subscriptions</h3>
+                    <div class="code-block">
+                        <pre><code class="language-graphql">subscription RecordUpdates($pipelineId: String) {
+  recordUpdates(pipelineId: $pipelineId) {
+    id
+    title
+    data
+    updatedAt
+  }
+}</code></pre>
+                    </div>
+                </div>
+            </div>
+
+            <!-- WebSocket Tab -->
+            <div id="websocket" class="tab-content">
+                <div class="section">
+                    <h2>WebSocket API</h2>
+                    <p>Real-time communication through WebSocket connections with SSE-style messaging.</p>
+
+                    <h3>Connection</h3>
+                    <div class="code-block">
+                        <pre><code class="language-javascript">const ws = new WebSocket('{{ websocket_api.endpoints.sse }}?token=YOUR_JWT_TOKEN');
+
+ws.onopen = function() {
+    console.log('Connected to WebSocket');
+};
+
+ws.onmessage = function(event) {
+    const data = JSON.parse(event.data);
+    console.log('Received:', data);
+};</code></pre>
+                    </div>
+
+                    <h3>Subscribing to Updates</h3>
+                    <div class="code-block">
+                        <pre><code class="language-javascript">// Subscribe to record updates
+ws.send(JSON.stringify({
+    type: 'subscribe',
+    subscription: 'record_updates',
+    id: 'my_subscription',
+    filters: {
+        pipeline_id: 'your-pipeline-id'
+    }
+}));</code></pre>
+                    </div>
+
+                    <div class="ws-demo">
+                        <h4>Live Demo</h4>
+                        <p>Connect to see real-time updates:</p>
+                        <button onclick="connectWebSocket()" id="ws-connect-btn">Connect</button>
+                        <div id="ws-status">Disconnected</div>
+                        <div id="ws-messages"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Authentication Tab -->
+            <div id="auth" class="tab-content">
+                <div class="section">
+                    <h2>Authentication</h2>
+                    
+                    <h3>JWT Token Authentication</h3>
+                    <div class="code-block">
+                        <pre><code class="language-bash">curl -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+     {{ rest_api.base_url }}pipelines/</code></pre>
+                    </div>
+
+                    <h3>API Key Authentication</h3>
+                    <div class="code-block">
+                        <pre><code class="language-bash">curl -H "X-API-Key: YOUR_API_KEY" \
+     {{ rest_api.base_url }}pipelines/</code></pre>
+                    </div>
+
+                    <h3>WebSocket Authentication</h3>
+                    <p>Include JWT token in query parameter or Authorization header:</p>
+                    <div class="code-block">
+                        <pre><code class="language-javascript">// Query parameter
+const ws = new WebSocket('wss://api.example.com/ws/sse/?token=YOUR_JWT_TOKEN');
+
+// Authorization header (if supported by client)
+const ws = new WebSocket('wss://api.example.com/ws/sse/', [], {
+    headers: {
+        'Authorization': 'Bearer YOUR_JWT_TOKEN'
+    }
+});</code></pre>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Examples Tab -->
+            <div id="examples" class="tab-content">
+                <div class="section">
+                    <h2>Code Examples</h2>
+                    
+                    <h3>Python Example</h3>
+                    <div class="code-block">
+                        <pre><code class="language-python">import requests
+
+# Set up authentication
+headers = {'Authorization': 'Bearer YOUR_JWT_TOKEN'}
+base_url = '{{ rest_api.base_url }}'
+
+# Create a pipeline
+pipeline_data = {
+    'name': 'Sales Pipeline',
+    'description': 'Track sales opportunities',
+    'pipeline_type': 'crm'
+}
+response = requests.post(f'{base_url}pipelines/', 
+                        json=pipeline_data, headers=headers)
+pipeline = response.json()
+
+# Create a record
+record_data = {
+    'data': {
+        'company_name': 'Acme Corp',
+        'contact_email': 'john@acme.com',
+        'deal_value': 50000
+    }
+}
+response = requests.post(f'{base_url}pipelines/{pipeline["id"]}/records/',
+                        json=record_data, headers=headers)
+record = response.json()</code></pre>
+                    </div>
+
+                    <h3>JavaScript Example</h3>
+                    <div class="code-block">
+                        <pre><code class="language-javascript">// Using fetch API
+const apiCall = async (endpoint, options = {}) => {
+    const response = await fetch(`{{ rest_api.base_url }}${endpoint}`, {
+        headers: {
+            'Authorization': 'Bearer YOUR_JWT_TOKEN',
+            'Content-Type': 'application/json',
+            ...options.headers
+        },
+        ...options
+    });
+    return response.json();
+};
+
+// Create pipeline and record
+const pipeline = await apiCall('pipelines/', {
+    method: 'POST',
+    body: JSON.stringify({
+        name: 'Sales Pipeline',
+        pipeline_type: 'crm'
+    })
+});
+
+const record = await apiCall(`pipelines/${pipeline.id}/records/`, {
+    method: 'POST',
+    body: JSON.stringify({
+        data: {
+            company_name: 'Acme Corp',
+            deal_value: 50000
+        }
+    })
+});</code></pre>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.24.1/components/prism-core.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.24.1/plugins/autoloader/prism-autoloader.min.js"></script>
+    <script>
+        // Tab switching
+        document.querySelectorAll('.tab-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const tabId = btn.dataset.tab;
+                
+                // Update button states
+                document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                
+                // Update content visibility
+                document.querySelectorAll('.tab-content').forEach(content => {
+                    content.classList.remove('active');
+                });
+                document.getElementById(tabId).classList.add('active');
+            });
+        });
+
+        // WebSocket demo
+        let demoWs = null;
+        
+        function connectWebSocket() {
+            const btn = document.getElementById('ws-connect-btn');
+            const status = document.getElementById('ws-status');
+            const messages = document.getElementById('ws-messages');
+            
+            if (demoWs && demoWs.readyState === WebSocket.OPEN) {
+                demoWs.close();
+                return;
+            }
+            
+            btn.textContent = 'Connecting...';
+            btn.disabled = true;
+            
+            // Note: This is a demo - you'd need to provide a valid token
+            const wsUrl = '{{ websocket_api.endpoints.sse }}'.replace('http', 'ws') + '?token=demo';
+            demoWs = new WebSocket(wsUrl);
+            
+            demoWs.onopen = function() {
+                status.textContent = 'Connected';
+                status.style.color = '#10b981';
+                btn.textContent = 'Disconnect';
+                btn.disabled = false;
+                
+                // Subscribe to demo updates
+                demoWs.send(JSON.stringify({
+                    type: 'subscribe',
+                    subscription: 'record_updates',
+                    id: 'demo_sub'
+                }));
+            };
+            
+            demoWs.onmessage = function(event) {
+                const data = JSON.parse(event.data);
+                const msgDiv = document.createElement('div');
+                msgDiv.textContent = `${new Date().toLocaleTimeString()}: ${JSON.stringify(data)}`;
+                msgDiv.style.padding = '0.5rem';
+                msgDiv.style.background = '#f0f9ff';
+                msgDiv.style.border = '1px solid #0ea5e9';
+                msgDiv.style.borderRadius = '4px';
+                msgDiv.style.marginTop = '0.5rem';
+                messages.appendChild(msgDiv);
+            };
+            
+            demoWs.onclose = function() {
+                status.textContent = 'Disconnected';
+                status.style.color = '#ef4444';
+                btn.textContent = 'Connect';
+                btn.disabled = false;
+            };
+            
+            demoWs.onerror = function(error) {
+                status.textContent = 'Connection Error';
+                status.style.color = '#ef4444';
+                btn.textContent = 'Connect';
+                btn.disabled = false;
+            };
+        }
+    </script>
+</body>
+</html>

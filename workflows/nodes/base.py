@@ -1,0 +1,274 @@
+"""
+Base node processor for workflow execution with support for reusable workflows
+"""
+import time
+import logging
+from abc import ABC, abstractmethod
+from typing import Dict, Any, Optional
+from django.utils import timezone
+from asgiref.sync import sync_to_async
+
+logger = logging.getLogger(__name__)
+
+
+class BaseNodeProcessor(ABC):
+    """Base class for all node processors"""
+    
+    def __init__(self):
+        self.node_type = None
+        self.supports_replay = True
+        self.supports_checkpoints = True
+    
+    @abstractmethod
+    async def process(self, node_config: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Process a node with given configuration and context
+        
+        Args:
+            node_config: Node configuration from workflow definition
+            context: Current execution context
+            
+        Returns:
+            Dict containing node output data
+        """
+        pass
+    
+    async def validate_inputs(self, node_config: Dict[str, Any], context: Dict[str, Any]) -> bool:
+        """
+        Validate node inputs before processing
+        
+        Args:
+            node_config: Node configuration
+            context: Execution context
+            
+        Returns:
+            True if inputs are valid, False otherwise
+        """
+        return True
+    
+    async def prepare_inputs(self, node_config: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Prepare and transform inputs for node processing
+        
+        Args:
+            node_config: Node configuration
+            context: Execution context
+            
+        Returns:
+            Prepared input data
+        """
+        input_mapping = node_config.get('data', {}).get('input_mapping', {})
+        prepared_inputs = {}
+        
+        for input_key, context_path in input_mapping.items():
+            value = self._get_nested_value(context, context_path)
+            if value is not None:
+                prepared_inputs[input_key] = value
+        
+        return prepared_inputs
+    
+    async def create_checkpoint(self, node_config: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Create checkpoint data for replay functionality
+        
+        Args:
+            node_config: Node configuration
+            context: Current execution context
+            
+        Returns:
+            Checkpoint data
+        """
+        if not self.supports_checkpoints:
+            return {}
+        
+        return {
+            'node_id': node_config.get('id'),
+            'node_type': self.node_type,
+            'context_snapshot': context.copy(),
+            'timestamp': timezone.now().isoformat()
+        }
+    
+    async def restore_from_checkpoint(self, checkpoint_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Restore execution state from checkpoint data
+        
+        Args:
+            checkpoint_data: Previously saved checkpoint data
+            
+        Returns:
+            Restored context
+        """
+        if not self.supports_replay:
+            raise ValueError(f"Node type {self.node_type} does not support replay")
+        
+        return checkpoint_data.get('context_snapshot', {})
+    
+    def _get_nested_value(self, data: Dict[str, Any], path: str) -> Any:
+        """
+        Get nested value from dictionary using dot notation
+        
+        Args:
+            data: Dictionary to search
+            path: Dot-notation path (e.g., 'user.profile.name')
+            
+        Returns:
+            Found value or None
+        """
+        if not path:
+            return None
+            
+        # Handle template variables like {trigger_data.contact_email}
+        if path.startswith('{') and path.endswith('}'):
+            path = path[1:-1]
+        
+        keys = path.split('.')
+        current = data
+        
+        for key in keys:
+            if isinstance(current, dict) and key in current:
+                current = current[key]
+            else:
+                return None
+        
+        return current
+    
+    def _set_nested_value(self, data: Dict[str, Any], path: str, value: Any) -> None:
+        """
+        Set nested value in dictionary using dot notation
+        
+        Args:
+            data: Dictionary to modify
+            path: Dot-notation path
+            value: Value to set
+        """
+        keys = path.split('.')
+        current = data
+        
+        for key in keys[:-1]:
+            if key not in current:
+                current[key] = {}
+            current = current[key]
+        
+        current[keys[-1]] = value
+    
+    async def log_execution(self, node_config: Dict[str, Any], result: Dict[str, Any], 
+                          execution_time_ms: int, success: bool, error: Optional[str] = None):
+        """
+        Log node execution for monitoring and debugging
+        
+        Args:
+            node_config: Node configuration
+            result: Execution result
+            execution_time_ms: Execution time in milliseconds
+            success: Whether execution was successful
+            error: Error message if execution failed
+        """
+        log_data = {
+            'node_id': node_config.get('id'),
+            'node_type': self.node_type,
+            'execution_time_ms': execution_time_ms,
+            'success': success,
+            'timestamp': timezone.now().isoformat()
+        }
+        
+        if error:
+            log_data['error'] = error
+        
+        if success:
+            logger.info(f"Node {node_config.get('id')} executed successfully in {execution_time_ms}ms")
+        else:
+            logger.error(f"Node {node_config.get('id')} failed: {error}")
+    
+    async def handle_error(self, node_config: Dict[str, Any], context: Dict[str, Any], 
+                          error: Exception) -> Dict[str, Any]:
+        """
+        Handle node execution errors
+        
+        Args:
+            node_config: Node configuration
+            context: Execution context
+            error: The exception that occurred
+            
+        Returns:
+            Error result data
+        """
+        error_result = {
+            'success': False,
+            'error': str(error),
+            'error_type': type(error).__name__,
+            'node_id': node_config.get('id'),
+            'node_type': self.node_type
+        }
+        
+        # Check if node has error handling configuration
+        error_handling = node_config.get('data', {}).get('error_handling', {})
+        
+        if error_handling.get('continue_on_error', False):
+            error_result['continue_execution'] = True
+        
+        if error_handling.get('retry_count', 0) > 0:
+            error_result['retry_config'] = {
+                'max_retries': error_handling['retry_count'],
+                'retry_delay_ms': error_handling.get('retry_delay_ms', 1000)
+            }
+        
+        return error_result
+
+
+class AsyncNodeProcessor(BaseNodeProcessor):
+    """Base class for async node processors with built-in timing and error handling"""
+    
+    async def execute(self, node_config: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Execute node with timing, validation, and error handling
+        
+        Args:
+            node_config: Node configuration
+            context: Execution context
+            
+        Returns:
+            Node execution result
+        """
+        start_time = time.time()
+        
+        try:
+            # Validate inputs
+            if not await self.validate_inputs(node_config, context):
+                raise ValueError("Node input validation failed")
+            
+            # Create checkpoint if supported
+            checkpoint = None
+            if self.supports_checkpoints:
+                checkpoint = await self.create_checkpoint(node_config, context)
+            
+            # Process the node
+            result = await self.process(node_config, context)
+            
+            # Calculate execution time
+            execution_time_ms = int((time.time() - start_time) * 1000)
+            
+            # Log successful execution
+            await self.log_execution(node_config, result, execution_time_ms, True)
+            
+            # Add metadata to result
+            result.update({
+                'execution_time_ms': execution_time_ms,
+                'success': True,
+                'node_id': node_config.get('id'),
+                'checkpoint': checkpoint
+            })
+            
+            return result
+            
+        except Exception as error:
+            # Calculate execution time
+            execution_time_ms = int((time.time() - start_time) * 1000)
+            
+            # Log failed execution
+            await self.log_execution(node_config, {}, execution_time_ms, False, str(error))
+            
+            # Handle error
+            error_result = await self.handle_error(node_config, context, error)
+            error_result['execution_time_ms'] = execution_time_ms
+            
+            return error_result

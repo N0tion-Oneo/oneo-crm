@@ -1,0 +1,391 @@
+"""
+Serializers for pipeline system API
+"""
+from rest_framework import serializers
+from django.contrib.auth import get_user_model
+from .models import Pipeline, Field, Record, PipelineTemplate
+from .field_types import FieldType, validate_field_config
+from .validators import validate_record_data
+
+User = get_user_model()
+
+
+class FieldSerializer(serializers.ModelSerializer):
+    """Serializer for pipeline fields"""
+    
+    class Meta:
+        model = Field
+        fields = [
+            'id', 'name', 'slug', 'description', 'field_type', 'field_config',
+            'validation_rules', 'display_name', 'help_text', 'placeholder',
+            'is_required', 'is_unique', 'is_indexed', 'is_searchable', 'is_ai_field',
+            'display_order', 'width', 'is_visible_in_list', 'is_visible_in_detail',
+            'ai_config', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at']
+    
+    def validate_field_type(self, value):
+        """Validate field type"""
+        try:
+            FieldType(value)
+        except ValueError:
+            raise serializers.ValidationError(f"Invalid field type: {value}")
+        return value
+    
+    def validate_field_config(self, value):
+        """Validate field configuration"""
+        field_type = self.initial_data.get('field_type')
+        if field_type:
+            try:
+                validate_field_config(FieldType(field_type), value)
+            except ValueError as e:
+                raise serializers.ValidationError(str(e))
+        return value
+    
+    def validate(self, attrs):
+        """Cross-field validation"""
+        # Validate AI field configuration
+        if attrs.get('is_ai_field') and attrs.get('field_type') == FieldType.AI_FIELD:
+            ai_config = attrs.get('ai_config', {})
+            if not ai_config.get('ai_prompt'):
+                raise serializers.ValidationError({
+                    'ai_config': 'AI fields must have an ai_prompt in ai_config'
+                })
+        
+        return attrs
+
+
+class PipelineSerializer(serializers.ModelSerializer):
+    """Serializer for pipelines"""
+    fields = FieldSerializer(many=True, read_only=True)
+    created_by = serializers.StringRelatedField(read_only=True)
+    
+    class Meta:
+        model = Pipeline
+        fields = [
+            'id', 'name', 'slug', 'description', 'icon', 'color',
+            'field_schema', 'view_config', 'settings', 'pipeline_type',
+            'template', 'access_level', 'permission_config', 'is_active',
+            'is_system', 'record_count', 'last_record_created',
+            'created_by', 'created_at', 'updated_at', 'fields'
+        ]
+        read_only_fields = [
+            'id', 'slug', 'field_schema', 'record_count', 'last_record_created',
+            'created_at', 'updated_at'
+        ]
+    
+    def validate_color(self, value):
+        """Validate hex color format"""
+        import re
+        if not re.match(r'^#[0-9A-Fa-f]{6}$', value):
+            raise serializers.ValidationError("Color must be in hex format (#RRGGBB)")
+        return value
+
+
+class PipelineCreateSerializer(serializers.ModelSerializer):
+    """Serializer for creating pipelines with fields"""
+    fields = FieldSerializer(many=True, write_only=True, required=False)
+    
+    class Meta:
+        model = Pipeline
+        fields = [
+            'name', 'description', 'icon', 'color', 'view_config',
+            'settings', 'pipeline_type', 'template', 'access_level',
+            'permission_config', 'fields'
+        ]
+    
+    def create(self, validated_data):
+        """Create pipeline with fields"""
+        fields_data = validated_data.pop('fields', [])
+        
+        # Set created_by from request
+        request = self.context.get('request')
+        if request and request.user:
+            validated_data['created_by'] = request.user
+        
+        pipeline = Pipeline.objects.create(**validated_data)
+        
+        # Create fields
+        for field_data in fields_data:
+            field_data['created_by'] = request.user if request and request.user else None
+            Field.objects.create(pipeline=pipeline, **field_data)
+        
+        return pipeline
+
+
+class RecordSerializer(serializers.ModelSerializer):
+    """Serializer for pipeline records"""
+    created_by = serializers.StringRelatedField(read_only=True)
+    updated_by = serializers.StringRelatedField(read_only=True)
+    pipeline_name = serializers.CharField(source='pipeline.name', read_only=True)
+    
+    class Meta:
+        model = Record
+        fields = [
+            'id', 'data', 'title', 'status', 'tags', 'ai_summary', 'ai_score',
+            'created_by', 'updated_by', 'created_at', 'updated_at',
+            'version', 'pipeline_name', 'is_deleted'
+        ]
+        read_only_fields = [
+            'id', 'title', 'ai_summary', 'ai_score', 'created_at', 'updated_at',
+            'version', 'pipeline_name', 'is_deleted'
+        ]
+    
+    def validate_data(self, value):
+        """Validate record data against pipeline schema"""
+        if not self.instance and not hasattr(self, '_pipeline'):
+            # For creation, pipeline should be set in context
+            pipeline = self.context.get('pipeline')
+            if not pipeline:
+                raise serializers.ValidationError("Pipeline context is required")
+            self._pipeline = pipeline
+        else:
+            self._pipeline = self.instance.pipeline if self.instance else self.context.get('pipeline')
+        
+        # Validate against pipeline schema
+        validation_result = self._pipeline.validate_record_data(value)
+        if not validation_result['is_valid']:
+            raise serializers.ValidationError(validation_result['errors'])
+        
+        return validation_result['cleaned_data']
+    
+    def create(self, validated_data):
+        """Create record with proper user assignment"""
+        request = self.context.get('request')
+        pipeline = self.context.get('pipeline')
+        
+        if not pipeline:
+            raise serializers.ValidationError("Pipeline is required")
+        
+        validated_data['pipeline'] = pipeline
+        
+        if request and request.user:
+            validated_data['created_by'] = request.user
+            validated_data['updated_by'] = request.user
+        
+        return Record.objects.create(**validated_data)
+    
+    def update(self, instance, validated_data):
+        """Update record with proper user assignment"""
+        request = self.context.get('request')
+        
+        if request and request.user:
+            validated_data['updated_by'] = request.user
+        
+        return super().update(instance, validated_data)
+
+
+class RecordCreateSerializer(serializers.Serializer):
+    """Serializer for creating records with field-by-field data"""
+    data = serializers.JSONField()
+    status = serializers.CharField(max_length=100, default='active')
+    tags = serializers.ListField(
+        child=serializers.CharField(max_length=50),
+        required=False,
+        default=list
+    )
+    
+    def validate_data(self, value):
+        """Validate record data against pipeline schema"""
+        pipeline = self.context.get('pipeline')
+        if not pipeline:
+            raise serializers.ValidationError("Pipeline context is required")
+        
+        validation_result = pipeline.validate_record_data(value)
+        if not validation_result['is_valid']:
+            raise serializers.ValidationError(validation_result['errors'])
+        
+        return validation_result['cleaned_data']
+    
+    def create(self, validated_data):
+        """Create record"""
+        request = self.context.get('request')
+        pipeline = self.context.get('pipeline')
+        
+        record = Record(
+            pipeline=pipeline,
+            data=validated_data['data'],
+            status=validated_data.get('status', 'active'),
+            tags=validated_data.get('tags', [])
+        )
+        
+        if request and request.user:
+            record.created_by = request.user
+            record.updated_by = request.user
+        
+        record.save()
+        return record
+
+
+class PipelineTemplateSerializer(serializers.ModelSerializer):
+    """Serializer for pipeline templates"""
+    created_by = serializers.StringRelatedField(read_only=True)
+    
+    class Meta:
+        model = PipelineTemplate
+        fields = [
+            'id', 'name', 'slug', 'description', 'category', 'template_data',
+            'is_system', 'is_public', 'usage_count', 'preview_config',
+            'sample_data', 'created_by', 'created_at', 'updated_at'
+        ]
+        read_only_fields = [
+            'id', 'slug', 'usage_count', 'created_at', 'updated_at'
+        ]
+    
+    def validate_template_data(self, value):
+        """Validate template data structure"""
+        if not isinstance(value, dict):
+            raise serializers.ValidationError("Template data must be a dictionary")
+        
+        # Check required keys
+        required_keys = ['pipeline', 'fields']
+        for key in required_keys:
+            if key not in value:
+                raise serializers.ValidationError(f"Template data must contain '{key}'")
+        
+        # Validate pipeline data
+        pipeline_data = value.get('pipeline', {})
+        if not isinstance(pipeline_data, dict):
+            raise serializers.ValidationError("Pipeline data must be a dictionary")
+        
+        # Validate fields data
+        fields_data = value.get('fields', [])
+        if not isinstance(fields_data, list):
+            raise serializers.ValidationError("Fields data must be a list")
+        
+        for field_data in fields_data:
+            if not isinstance(field_data, dict):
+                raise serializers.ValidationError("Each field must be a dictionary")
+            
+            required_field_keys = ['name', 'slug', 'field_type']
+            for key in required_field_keys:
+                if key not in field_data:
+                    raise serializers.ValidationError(f"Field must contain '{key}'")
+            
+            # Validate field type
+            try:
+                FieldType(field_data['field_type'])
+            except ValueError:
+                raise serializers.ValidationError(f"Invalid field type: {field_data['field_type']}")
+        
+        return value
+
+
+class PipelineTemplateCreatePipelineSerializer(serializers.Serializer):
+    """Serializer for creating pipeline from template"""
+    name = serializers.CharField(max_length=255)
+    description = serializers.CharField(required=False, allow_blank=True)
+    
+    def create(self, validated_data):
+        """Create pipeline from template"""
+        template = self.context['template']
+        request = self.context.get('request')
+        
+        user = request.user if request and request.user else None
+        
+        return template.create_pipeline_from_template(
+            name=validated_data['name'],
+            created_by=user
+        )
+
+
+class FieldValidationSerializer(serializers.Serializer):
+    """Serializer for validating individual field values"""
+    value = serializers.JSONField()
+    is_required = serializers.BooleanField(default=False)
+    
+    def validate(self, attrs):
+        """Validate field value"""
+        field = self.context.get('field')
+        if not field:
+            raise serializers.ValidationError("Field context is required")
+        
+        result = field.validate_value(
+            attrs['value'],
+            attrs.get('is_required', field.is_required)
+        )
+        
+        if not result.is_valid:
+            raise serializers.ValidationError({'value': result.errors})
+        
+        attrs['cleaned_value'] = result.cleaned_value
+        return attrs
+
+
+class RecordSearchSerializer(serializers.Serializer):
+    """Serializer for record search parameters"""
+    q = serializers.CharField(required=False, help_text="Search query")
+    status = serializers.CharField(required=False, help_text="Filter by status")
+    tags = serializers.ListField(
+        child=serializers.CharField(),
+        required=False,
+        help_text="Filter by tags"
+    )
+    created_after = serializers.DateTimeField(required=False)
+    created_before = serializers.DateTimeField(required=False)
+    updated_after = serializers.DateTimeField(required=False)
+    updated_before = serializers.DateTimeField(required=False)
+    
+    # Dynamic field filters (will be added based on pipeline fields)
+    def __init__(self, *args, **kwargs):
+        pipeline = kwargs.pop('pipeline', None)
+        super().__init__(*args, **kwargs)
+        
+        if pipeline:
+            # Add dynamic field filters
+            for field in pipeline.fields.filter(is_searchable=True):
+                field_name = f"field_{field.slug}"
+                
+                if field.field_type in ['text', 'textarea', 'email', 'url']:
+                    self.fields[field_name] = serializers.CharField(required=False)
+                elif field.field_type in ['number', 'decimal']:
+                    self.fields[field_name] = serializers.FloatField(required=False)
+                    self.fields[f"{field_name}_min"] = serializers.FloatField(required=False)
+                    self.fields[f"{field_name}_max"] = serializers.FloatField(required=False)
+                elif field.field_type == 'boolean':
+                    self.fields[field_name] = serializers.BooleanField(required=False)
+                elif field.field_type in ['date', 'datetime']:
+                    self.fields[f"{field_name}_after"] = serializers.DateTimeField(required=False)
+                    self.fields[f"{field_name}_before"] = serializers.DateTimeField(required=False)
+                elif field.field_type in ['select', 'multiselect']:
+                    self.fields[field_name] = serializers.CharField(required=False)
+
+
+class BulkRecordActionSerializer(serializers.Serializer):
+    """Serializer for bulk record actions"""
+    ACTION_CHOICES = [
+        ('delete', 'Delete'),
+        ('update_status', 'Update Status'),
+        ('add_tags', 'Add Tags'),
+        ('remove_tags', 'Remove Tags'),
+        ('export', 'Export'),
+    ]
+    
+    action = serializers.ChoiceField(choices=ACTION_CHOICES)
+    record_ids = serializers.ListField(child=serializers.IntegerField())
+    
+    # Action-specific parameters
+    status = serializers.CharField(required=False, help_text="For update_status action")
+    tags = serializers.ListField(
+        child=serializers.CharField(),
+        required=False,
+        help_text="For add_tags/remove_tags actions"
+    )
+    export_format = serializers.ChoiceField(
+        choices=[('csv', 'CSV'), ('json', 'JSON'), ('xlsx', 'Excel')],
+        required=False,
+        default='csv',
+        help_text="For export action"
+    )
+    
+    def validate(self, attrs):
+        """Validate action-specific parameters"""
+        action = attrs.get('action')
+        
+        if action == 'update_status' and not attrs.get('status'):
+            raise serializers.ValidationError({'status': 'Status is required for update_status action'})
+        
+        if action in ['add_tags', 'remove_tags'] and not attrs.get('tags'):
+            raise serializers.ValidationError({'tags': 'Tags are required for tag actions'})
+        
+        return attrs

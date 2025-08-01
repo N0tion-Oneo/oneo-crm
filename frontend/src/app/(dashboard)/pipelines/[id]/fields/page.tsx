@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { useAuth } from '@/features/auth/context'
-import { ArrowLeft, Save, AlertCircle } from 'lucide-react'
+import { ArrowLeft, Save, AlertCircle, ChevronRight, Settings, Database, Sparkles } from 'lucide-react'
 import { PipelineFieldBuilder } from '@/components/pipelines/pipeline-field-builder'
 import { pipelinesApi } from '@/lib/api'
 
@@ -270,53 +270,111 @@ export default function PipelineFieldsPage() {
   }
 
   return (
-    <div className="h-screen flex flex-col">
-      {/* Header */}
-      <div className="bg-white border-b border-gray-200 px-6 py-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center space-x-4">
+    <div className="h-screen flex flex-col bg-gray-50 dark:bg-gray-900">
+      {/* Enhanced Header */}
+      <div className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 shadow-sm">
+        <div className="px-6 py-4">
+          {/* Breadcrumbs */}
+          <div className="flex items-center space-x-2 text-sm text-gray-500 dark:text-gray-400 mb-3">
+            <button
+              onClick={() => router.push('/pipelines')}
+              className="hover:text-gray-700 dark:hover:text-gray-300 transition-colors"
+            >
+              Pipelines
+            </button>
+            <ChevronRight className="w-4 h-4" />
             <button
               onClick={() => router.push(`/pipelines/${pipelineId}`)}
-              className="text-gray-400 hover:text-gray-600"
+              className="hover:text-gray-700 dark:hover:text-gray-300 transition-colors"
             >
-              <ArrowLeft className="w-5 h-5" />
+              {pipeline.name}
             </button>
-            <div>
-              <h1 className="text-xl font-semibold text-gray-900">
-                {pipeline.name} - Fields
-              </h1>
-              <p className="text-sm text-gray-500">
-                Configure the fields for this pipeline
-              </p>
-            </div>
+            <ChevronRight className="w-4 h-4" />
+            <span className="text-gray-900 dark:text-white font-medium">Field Configuration</span>
           </div>
-          
-          <div className="flex items-center space-x-3">
-            {hasChanges && (
-              <span className="text-sm text-orange-600">
-                You have unsaved changes
-              </span>
-            )}
-            <button
-              onClick={saveFields}
-              disabled={saving || !hasChanges}
-              className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-primary hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <Save className="w-4 h-4 mr-2" />
-              {saving ? 'Saving...' : 'Save Fields'}
-            </button>
+
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-4">
+              <button
+                onClick={() => router.push(`/pipelines/${pipelineId}`)}
+                className="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-all"
+              >
+                <ArrowLeft className="w-5 h-5" />
+              </button>
+              
+              {/* Pipeline Info Card */}
+              <div className="bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-900/20 dark:to-indigo-900/20 rounded-lg p-4 border border-blue-100 dark:border-blue-800">
+                <div className="flex items-center space-x-3">
+                  <div className="p-2 bg-blue-500 rounded-lg">
+                    <Database className="w-5 h-5 text-white" />
+                  </div>
+                  <div>
+                    <h1 className="text-xl font-bold text-gray-900 dark:text-white flex items-center">
+                      {pipeline.name}
+                      <Settings className="w-5 h-5 ml-2 text-gray-500" />
+                    </h1>
+                    <p className="text-sm text-gray-600 dark:text-gray-300">
+                      {fields.length} fields • Configure data structure and validation
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+            
+            {/* Save Actions */}
+            <div className="flex items-center space-x-4">
+              {/* Save Status Indicator */}
+              <div className="flex items-center space-x-2">
+                {hasChanges ? (
+                  <div className="flex items-center space-x-2 px-3 py-1.5 bg-orange-50 dark:bg-orange-900/20 text-orange-700 dark:text-orange-300 rounded-full text-sm font-medium border border-orange-200 dark:border-orange-800">
+                    <div className="w-2 h-2 bg-orange-500 rounded-full animate-pulse"></div>
+                    <span>Unsaved changes</span>
+                  </div>
+                ) : (
+                  <div className="flex items-center space-x-2 px-3 py-1.5 bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300 rounded-full text-sm font-medium border border-green-200 dark:border-green-800">
+                    <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                    <span>All changes saved</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Save Button */}
+              <button
+                onClick={saveFields}
+                disabled={saving || !hasChanges}
+                className={`inline-flex items-center px-6 py-2.5 border border-transparent text-sm font-medium rounded-lg shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary ${
+                  hasChanges 
+                    ? 'text-white bg-primary hover:bg-primary/90 hover:shadow-lg transform hover:-translate-y-0.5' 
+                    : 'text-gray-500 bg-gray-100 dark:bg-gray-700 dark:text-gray-400 cursor-not-allowed'
+                }`}
+              >
+                {saving ? (
+                  <>
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                    Saving...
+                  </>
+                ) : (
+                  <>
+                    <Save className="w-4 h-4 mr-2" />
+                    {hasChanges ? 'Save Fields' : 'Saved'}
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         </div>
       </div>
 
       {/* Field Builder */}
-      <div className="flex-1 overflow-hidden">
-        <PipelineFieldBuilder
-          pipelineId={pipelineId}
-          fields={fields}
-          onFieldsChange={handleFieldsChange}
-          onSave={saveFields}
-        />
+      <div className="flex-1 overflow-hidden p-6">
+        <div className="h-full bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700">
+          <PipelineFieldBuilder
+            pipelineId={pipelineId}
+            fields={fields}
+            onFieldsChange={handleFieldsChange}
+            onSave={saveFields}
+          />
+        </div>
       </div>
     </div>
   )

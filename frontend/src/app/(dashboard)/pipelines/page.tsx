@@ -1,0 +1,494 @@
+'use client'
+
+import { useState, useEffect, useCallback } from 'react'
+import { useRouter } from 'next/navigation'
+import Link from 'next/link'
+import { Search, Plus, MoreHorizontal, Database, Users, Calendar, Edit, Eye, Activity } from 'lucide-react'
+import { useAuth } from '@/features/auth/context'
+import { api, pipelinesApi } from '@/lib/api'
+import { PipelineTemplateLoader, type PipelineTemplate } from '@/components/pipelines/pipeline-template-loader'
+import { useRealtime, type RealtimeMessage, type UserPresence } from '@/hooks/use-realtime'
+
+interface Pipeline {
+  id: number
+  name: string
+  description: string
+  visibility?: string
+  record_count: number
+  created_at: string
+  updated_at: string
+  created_by: {
+    first_name: string
+    last_name: string
+  }
+}
+
+export default function PipelinesPage() {
+  const { user, isLoading: authLoading } = useAuth()
+  const router = useRouter()
+  const [pipelines, setPipelines] = useState<Pipeline[]>([])
+  const [pipelinePermissions, setPipelinePermissions] = useState<any[]>([])
+  const [loading, setLoading] = useState(true)
+  const [permissionsLoaded, setPermissionsLoaded] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [showAllPipelines, setShowAllPipelines] = useState(false) // Debug flag
+  
+  // New pipeline creation states
+  const [showTemplateLoader, setShowTemplateLoader] = useState(false)
+
+  // Handle real-time record updates
+  const handleRealtimeMessage = useCallback((message: RealtimeMessage) => {
+    console.log('📡 Real-time record update:', message)
+    
+    // Only handle record-related updates
+    if (message.type === 'record_create' || message.type === 'record_update' || message.type === 'record_delete') {
+      if (message.payload.pipeline_id) {
+        // Update record count for the affected pipeline
+        setPipelines(prev => prev.map(pipeline => 
+          pipeline.id === message.payload.pipeline_id 
+            ? { ...pipeline, record_count: message.payload.new_count || pipeline.record_count }
+            : pipeline
+        ))
+      }
+    }
+  }, [])
+
+  // Real-time WebSocket connection for record updates (disabled temporarily)
+  const { isConnected } = useRealtime({
+    room: 'pipelines_overview',
+    onMessage: handleRealtimeMessage,
+    autoConnect: false // Disabled to prevent WebSocket errors
+  })
+
+  // Check if user has access to a pipeline
+  const hasPipelineAccess = (pipelineId: number): boolean => {
+    // If no user, deny access
+    if (!user) return false
+    
+    // If permissions haven't loaded yet, don't show any pipelines (prevents race condition)
+    if (!permissionsLoaded) {
+      return false
+    }
+    
+    // If no pipeline permissions exist after loading, allow access (fallback for development)
+    if (pipelinePermissions.length === 0) {
+      return true
+    }
+    
+    // Get user type ID - handle different possible structures
+    const userTypeId = user.userType?.id || (user as any).user_type?.toString() || (user as any).user_type_id?.toString()
+    
+    if (!userTypeId) {
+      console.warn('No user type ID found for user:', user)
+      return false
+    }
+    
+    // Check if user has explicit permission for this pipeline
+    // If a permission record exists, the user has some level of access
+    // Use == for type coercion (backend sends numbers, frontend has strings)
+    const hasExplicitAccess = pipelinePermissions.some(
+      perm => perm.user_type == userTypeId && perm.pipeline_id == pipelineId
+    )
+    
+    return hasExplicitAccess
+  }
+
+
+  // Load pipelines and permissions
+  useEffect(() => {
+    const loadData = async () => {
+      try {
+        setLoading(true)
+        
+        // Load pipelines and pipeline permissions in parallel
+        const [pipelinesResponse, permissionsResponse] = await Promise.all([
+          pipelinesApi.list(),
+          api.get('/auth/user-type-pipeline-permissions/').catch(() => ({ data: { results: [] } }))
+        ])
+        
+        const pipelinesData = pipelinesResponse.data.results || pipelinesResponse.data || []
+        const permissionsData = permissionsResponse.data.results || permissionsResponse.data || []
+        
+        setPipelines(pipelinesData)
+        setPipelinePermissions(permissionsData)
+        setPermissionsLoaded(true)
+        
+      } catch (error: any) {
+        console.error('Failed to load pipelines data:', error)
+        console.error('Error details:', {
+          message: error?.message,
+          response: error?.response?.data,
+          status: error?.response?.status,
+          config: {
+            url: error?.config?.url,
+            baseURL: error?.config?.baseURL,
+            headers: error?.config?.headers
+          }
+        })
+        
+        // Show error notification
+        const notification = document.createElement('div')
+        notification.className = 'fixed top-4 right-4 bg-red-500 text-white px-4 py-2 rounded-md shadow-lg z-50 max-w-md'
+        notification.innerHTML = `
+          <div class="font-semibold">Failed to load pipelines</div>
+          <div class="text-sm mt-1">${error?.response?.data?.error || error?.message || 'Network error'}</div>
+          <div class="text-xs mt-1">Status: ${error?.response?.status || 'Unknown'}</div>
+        `
+        document.body.appendChild(notification)
+        
+        setTimeout(() => {
+          if (document.body.contains(notification)) {
+            document.body.removeChild(notification)
+          }
+        }, 5000)
+      } finally {
+        setLoading(false)
+        setPermissionsLoaded(true) // Always set to true to prevent UI being stuck
+      }
+    }
+
+    // Only load data when auth is ready
+    if (!authLoading) {
+      if (user) {
+        loadData()
+      } else {
+        // Auth is complete but no user - redirect to login
+        router.push('/login')
+      }
+    }
+  }, [authLoading, user, router])
+
+  // Handle template selection - create pipeline and redirect to fields page
+  const handleTemplateSelected = async (template: PipelineTemplate) => {
+    try {
+      setShowTemplateLoader(false)
+      
+      // Create the pipeline first
+      const pipelineData = {
+        name: template.name,
+        description: template.description,
+        pipeline_type: template.category || 'custom',
+        visibility: 'private'
+      }
+      
+      console.log('Creating pipeline from template:', pipelineData)
+      const pipelineResponse = await pipelinesApi.create(pipelineData)
+      const newPipeline = pipelineResponse.data
+      
+      // Show success notification
+      const successNotification = document.createElement('div')
+      successNotification.className = 'fixed top-4 right-4 bg-green-500 text-white px-4 py-2 rounded-md shadow-lg z-50'
+      successNotification.textContent = `Pipeline "${template.name}" created! Redirecting to field builder...`
+      document.body.appendChild(successNotification)
+      
+      setTimeout(() => {
+        if (document.body.contains(successNotification)) {
+          document.body.removeChild(successNotification)
+        }
+      }, 2000)
+      
+      // Redirect to the fields page to configure fields
+      router.push(`/pipelines/${newPipeline.id}/fields`)
+      
+    } catch (error: any) {
+      console.error('Failed to create pipeline:', error)
+      
+      const errorNotification = document.createElement('div')
+      errorNotification.className = 'fixed top-4 right-4 bg-red-500 text-white px-4 py-2 rounded-md shadow-lg z-50 max-w-md'
+      errorNotification.innerHTML = `
+        <div class="font-semibold">Failed to create pipeline</div>
+        <div class="text-sm mt-1">${error?.response?.data?.error || error?.message || 'Unknown error occurred'}</div>
+      `
+      document.body.appendChild(errorNotification)
+      
+      setTimeout(() => {
+        if (document.body.contains(errorNotification)) {
+          document.body.removeChild(errorNotification)
+        }
+      }, 5000)
+    }
+  }
+
+
+  // Handle pipeline edit - redirect to dedicated fields page
+  const handleEditPipeline = (pipeline: Pipeline) => {
+    router.push(`/pipelines/${pipeline.id}/fields`)
+  }
+
+
+  // Filter pipelines based on search and access permissions
+  const filteredPipelines = pipelines.filter(pipeline => {
+    // Debug mode: show all pipelines
+    if (showAllPipelines) {
+      return searchQuery === '' ||
+        pipeline.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        pipeline.description.toLowerCase().includes(searchQuery.toLowerCase())
+    }
+    
+    // First check access permissions
+    const hasAccess = hasPipelineAccess(pipeline.id)
+    if (!hasAccess) {
+      return false
+    }
+    
+    // Then check search criteria
+    const matchesSearch = searchQuery === '' ||
+      pipeline.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      pipeline.description.toLowerCase().includes(searchQuery.toLowerCase())
+    
+    return matchesSearch
+  })
+  
+  // Pipeline filtering completed
+
+  const formatDate = (dateString: string) => {
+    return new Date(dateString).toLocaleDateString()
+  }
+
+  const getVisibilityColor = (visibility?: string) => {
+    if (!visibility) return 'bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-200'
+    
+    switch (visibility.toLowerCase()) {
+      case 'public':
+        return 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200'
+      case 'internal':
+        return 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200'
+      case 'private':
+        return 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200'
+      default:
+        return 'bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-200'
+    }
+  }
+
+  if (authLoading || loading) {
+    return (
+      <div className="p-6">
+        <div className="animate-pulse">
+          <div className="h-8 bg-gray-300 dark:bg-gray-600 rounded w-1/4 mb-4"></div>
+          <div className="h-4 bg-gray-300 dark:bg-gray-600 rounded w-1/2 mb-8"></div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {[...Array(6)].map((_, i) => (
+              <div key={i} className="h-48 bg-gray-300 dark:bg-gray-600 rounded-lg"></div>
+            ))}
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="p-6">
+      {/* Header */}
+      <div className="mb-8">
+        <div className="flex items-start justify-between">
+          <div>
+            <h1 className="text-3xl font-bold text-gray-900 dark:text-white">
+              Pipelines
+            </h1>
+            <p className="text-gray-600 dark:text-gray-400 mt-2">
+              Manage your data pipelines and workflow configurations.
+            </p>
+          </div>
+          
+          {/* Simple real-time indicator */}
+          {isConnected && (
+            <div className="flex items-center gap-2">
+              <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+              <span className="text-xs text-green-600">Live Updates</span>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Actions Bar */}
+      <div className="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        {/* Search */}
+        <div className="relative">
+          <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+            <Search className="h-4 w-4 text-gray-400" />
+          </div>
+          <input
+            type="text"
+            placeholder="Search pipelines..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="block w-full sm:w-64 pl-10 pr-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md leading-5 bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent text-sm"
+          />
+        </div>
+
+        {/* Add Pipeline Button */}
+        <button 
+          onClick={() => setShowTemplateLoader(true)}
+          className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-primary hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary"
+        >
+          <Plus className="w-4 h-4 mr-2" />
+          Create Pipeline
+        </button>
+      </div>
+
+      {/* Pipelines Grid */}
+      {filteredPipelines.length > 0 ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {filteredPipelines.map((pipeline) => (
+            <div key={pipeline.id} className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 hover:shadow-lg transition-shadow">
+              {/* Card Header */}
+              <div className="p-6 pb-4">
+                <div className="flex items-start justify-between">
+                  <div className="flex-1">
+                    <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">
+                      {pipeline.name}
+                    </h3>
+                    <p className="text-sm text-gray-600 dark:text-gray-400 line-clamp-2">
+                      {pipeline.description || 'No description provided.'}
+                    </p>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <Link 
+                      href={`/pipelines/${pipeline.id}`}
+                      className="text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 p-1"
+                      title="View Records"
+                    >
+                      <Eye className="w-4 h-4" />
+                    </Link>
+                    <button 
+                      onClick={() => handleEditPipeline(pipeline)}
+                      className="text-gray-400 hover:text-green-600 dark:hover:text-green-400 p-1"
+                      title="Edit Pipeline"
+                    >
+                      <Edit className="w-4 h-4" />
+                    </button>
+                    <button className="text-gray-400 hover:text-gray-500 dark:hover:text-gray-300 p-1">
+                      <MoreHorizontal className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Card Stats */}
+              <div className="px-6 py-4 border-t border-gray-200 dark:border-gray-700">
+                <div className="flex items-center justify-between text-sm">
+                  <div className="flex items-center text-gray-500 dark:text-gray-400">
+                    <Database className="w-4 h-4 mr-1" />
+                    {pipeline.record_count || 0} records
+                  </div>
+                  <span className={`inline-flex px-2 py-1 text-xs font-medium rounded-full ${getVisibilityColor(pipeline.visibility)}`}>
+                    {pipeline.visibility || 'private'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Card Footer */}
+              <div className="px-6 py-4 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-700/50 rounded-b-lg">
+                <div className="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
+                  <div className="flex items-center">
+                    <Users className="w-3 h-3 mr-1" />
+                    {pipeline.created_by ? `${pipeline.created_by.first_name} ${pipeline.created_by.last_name}` : 'Unknown'}
+                  </div>
+                  <div className="flex items-center">
+                    <Calendar className="w-3 h-3 mr-1" />
+                    {formatDate(pipeline.created_at)}
+                  </div>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="text-center py-12">
+          <Database className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+          <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">
+            {searchQuery ? 'No accessible pipelines match your search' : 'No accessible pipelines'}
+          </h3>
+          <p className="text-gray-500 dark:text-gray-400 mb-6">
+            {searchQuery 
+              ? 'Try adjusting your search terms or check if you have access to more pipelines.'
+              : 'You don\'t have access to any pipelines yet. Contact your administrator or create a new pipeline.'}
+          </p>
+          {!searchQuery && (
+            <button 
+              onClick={() => setShowTemplateLoader(true)}
+              className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-primary hover:bg-primary/90"
+            >
+              <Plus className="w-4 h-4 mr-2" />
+              Create Pipeline
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Summary Stats */}
+      {filteredPipelines.length > 0 && (
+        <div className="mt-8 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4">
+            <div className="flex items-center">
+              <Database className="w-5 h-5 text-primary mr-2" />
+              <div>
+                <div className="text-2xl font-bold text-gray-900 dark:text-white">
+                  {pipelines.filter(p => hasPipelineAccess(p.id)).length}
+                </div>
+                <div className="text-sm text-gray-500 dark:text-gray-400">
+                  Accessible Pipelines
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4">
+            <div className="flex items-center">
+              <Activity className="w-5 h-5 text-green-500 mr-2" />
+              <div>
+                <div className="text-2xl font-bold text-gray-900 dark:text-white">
+                  {pipelines.filter(p => hasPipelineAccess(p.id) && p.visibility === 'public').length}
+                </div>
+                <div className="text-sm text-gray-500 dark:text-gray-400">
+                  Public Accessible
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4">
+            <div className="flex items-center">
+              <Users className="w-5 h-5 text-blue-500 mr-2" />
+              <div>
+                <div className="text-2xl font-bold text-gray-900 dark:text-white">
+                  {pipelines.filter(p => hasPipelineAccess(p.id)).reduce((sum, p) => sum + (p.record_count || 0), 0)}
+                </div>
+                <div className="text-sm text-gray-500 dark:text-gray-400">
+                  Total Records
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4">
+            <div className="flex items-center">
+              <Calendar className="w-5 h-5 text-purple-500 mr-2" />
+              <div>
+                <div className="text-2xl font-bold text-gray-900 dark:text-white">
+                  {pipelines.filter(p => {
+                    const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
+                    return hasPipelineAccess(p.id) && new Date(p.created_at) > weekAgo
+                  }).length}
+                </div>
+                <div className="text-sm text-gray-500 dark:text-gray-400">
+                  Created This Week
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Template Loader Modal */}
+      {showTemplateLoader && (
+        <PipelineTemplateLoader
+          onSelectTemplate={handleTemplateSelected}
+          onCancel={() => setShowTemplateLoader(false)}
+        />
+      )}
+
+
+    </div>
+  )
+}

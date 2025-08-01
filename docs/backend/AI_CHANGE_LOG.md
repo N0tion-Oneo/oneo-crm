@@ -32,4 +32,34 @@
 - **URL**: https://github.com/N0tion-Oneo/oneo-crm
 - **Commit**: 7c71c5f - "Restructure project: Reorganize into backend/frontend architecture with updated README and documentation"
 - **Files Pushed**: 822 objects successfully pushed to GitHub
-- **Architecture**: Now properly separated backend/frontend with modern development workflow 
+- **Architecture**: Now properly separated backend/frontend with modern development workflow
+
+## 2024-12-19 16:00:00 - Git Tracking Fix and Build Cache Cleanup
+
+**Description**: Fixed git tracking issues by removing Next.js build cache files and updating .gitignore to prevent future tracking of build artifacts.
+
+**Reason**: User reported that many files were untracked, which was primarily due to Next.js build cache files (.next/ directory) being tracked in git. These files should be excluded from version control.
+
+**Actions Taken**:
+1. **Updated .gitignore**: Added Next.js specific patterns (`.next/`, `out/`, `*.tsbuildinfo`, `next-env.d.ts`)
+2. **Removed Build Cache**: Used `git rm -r --cached frontend/.next/` to remove all build files from tracking
+3. **Committed Important Changes**: Added only source code changes and documentation updates
+4. **Pushed Clean Repository**: Successfully pushed cleaned repository to GitHub
+
+**Major Changes**:
+- **378 files changed** with **818 insertions** and **32,697 deletions**
+- **Removed**: All `.next/` build cache files from git tracking
+- **Updated**: `.gitignore` with proper Next.js exclusions
+- **Committed**: Important frontend component changes and documentation updates
+
+**Affected Files**:
+- **Updated**: `.gitignore` (added Next.js patterns)
+- **Removed**: All `frontend/.next/` build cache files
+- **Committed**: `docs/backend/AI_CHANGE_LOG.md`, frontend component updates
+- **Excluded**: Hot-update files, webpack cache, build manifests
+
+**Repository Status**:
+- **URL**: https://github.com/N0tion-Oneo/oneo-crm
+- **Commit**: bc92677 - "Fix git tracking: Update .gitignore for Next.js, remove build cache files, and commit important changes"
+- **Clean State**: No more untracked build files
+- **Future Protection**: Build cache files will be automatically ignored 

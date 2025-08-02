@@ -288,26 +288,89 @@ class RecordViewSet(viewsets.ModelViewSet):
         """Get change history for a record"""
         record = self.get_object()
         
-        # This would integrate with an audit logging system
-        # For now, return basic information
+        # Get audit logs for this record
+        from core.models import AuditLog
+        audit_logs = AuditLog.objects.filter(
+            model_name='Record',
+            object_id=str(record.id)
+        ).order_by('-timestamp')
+        
+        # Format audit logs into activity entries
+        activities = []
+        for log in audit_logs:
+            activity = {
+                'id': log.id,
+                'timestamp': log.timestamp,
+                'user': log.user.email if log.user else 'System',
+                'user_name': f"{log.user.first_name} {log.user.last_name}".strip() if log.user else 'System',
+                'action': log.action,
+                'changes': self._format_audit_changes(log.changes, log.action)
+            }
+            activities.append(activity)
+        
         history = {
             'record_id': record.id,
+            'pipeline_id': record.pipeline_id,
+            'pipeline_name': record.pipeline.name,
+            'record_title': record.title,
             'created_at': record.created_at,
             'created_by': record.created_by.email if record.created_by else None,
             'updated_at': record.updated_at,
             'updated_by': record.updated_by.email if record.updated_by else None,
-            'changes': [
-                {
-                    'timestamp': record.updated_at,
-                    'user': record.updated_by.email if record.updated_by else None,
-                    'action': 'updated',
-                    'changes': 'Data modified'  # This would be more detailed with audit logs
-                }
-            ]
+            'activities': activities,
+            'activity_count': len(activities)
         }
         
         return Response(history)
     
+    def _format_audit_changes(self, changes, action):
+        """Format audit log changes for display"""
+        if action == 'created':
+            return f"Record created in {changes.get('pipeline', 'Unknown')} pipeline"
+        
+        elif action == 'updated':
+            formatted_changes = []
+            
+            # Format data changes
+            if 'data_changes' in changes:
+                for field, change in changes['data_changes'].items():
+                    old_val = change.get('old', '')
+                    new_val = change.get('new', '')
+                    
+                    # Truncate long values for display
+                    if isinstance(old_val, str) and len(old_val) > 50:
+                        old_val = old_val[:47] + "..."
+                    if isinstance(new_val, str) and len(new_val) > 50:
+                        new_val = new_val[:47] + "..."
+                    
+                    formatted_changes.append(f"{field}: '{old_val}' → '{new_val}'")
+            
+            # Format status changes
+            if 'status' in changes:
+                status_change = changes['status']
+                formatted_changes.append(f"Status: {status_change.get('old')} → {status_change.get('new')}")
+            
+            return '; '.join(formatted_changes) if formatted_changes else 'Record updated'
+        
+        elif action == 'deleted':
+            return f"Record deleted from {changes.get('pipeline', 'Unknown')} pipeline"
+        
+        return f"Record {action}"
+    
+    @extend_schema(
+        summary="Get stage trigger status",
+        description="Get current stage and missing required fields information"
+    )
+    @action(detail=True, methods=['get'])
+    def stage_trigger_status(self, request, pk=None, pipeline_pk=None):
+        """Get stage trigger status for a record"""
+        record = self.get_object()
+        
+        from pipelines.triggers import get_stage_trigger_status
+        trigger_status = get_stage_trigger_status(record)
+        
+        return Response(trigger_status)
+
     @extend_schema(
         summary="Duplicate record",
         description="Create a copy of an existing record"

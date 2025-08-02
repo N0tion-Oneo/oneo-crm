@@ -51,7 +51,7 @@ if MODELS_AVAILABLE:
             }
             
             # Broadcast to pipeline subscribers
-            pipeline_group = f"pipeline_records:{instance.pipeline_id}"
+            pipeline_group = f"pipeline_records_{instance.pipeline_id}"
             async_to_sync(channel_layer.group_send)(pipeline_group, {
                 'type': 'record_update',
                 'data': event_data
@@ -66,7 +66,7 @@ if MODELS_AVAILABLE:
             
             # Store for SSE subscribers
             store_sse_message(
-                f"pipeline_records:{instance.pipeline_id}",
+                f"pipeline_records_{instance.pipeline_id}",
                 event_data
             )
             
@@ -108,7 +108,7 @@ if MODELS_AVAILABLE:
             }
             
             # Broadcast to pipeline subscribers
-            pipeline_group = f"pipeline_records:{instance.pipeline_id}"
+            pipeline_group = f"pipeline_records_{instance.pipeline_id}"
             async_to_sync(channel_layer.group_send)(pipeline_group, {
                 'type': 'record_deleted',
                 'data': event_data
@@ -123,7 +123,7 @@ if MODELS_AVAILABLE:
             
             # Store for SSE subscribers
             store_sse_message(
-                f"pipeline_records:{instance.pipeline_id}",
+                f"pipeline_records_{instance.pipeline_id}",
                 event_data
             )
             
@@ -159,7 +159,7 @@ if MODELS_AVAILABLE:
             })
             
             # Broadcast to specific pipeline subscribers
-            pipeline_group = f"pipeline_updates:{instance.id}"
+            pipeline_group = f"pipeline_updates_{instance.id}"
             async_to_sync(channel_layer.group_send)(pipeline_group, {
                 'type': 'pipeline_update',
                 'data': event_data

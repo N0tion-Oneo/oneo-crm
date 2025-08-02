@@ -22,6 +22,7 @@ from api.serializers import (
 from api.filters import PipelineFilter
 from api.permissions import PipelinePermission
 from authentication.permissions import SyncPermissionManager as PermissionManager
+from rest_framework.exceptions import PermissionDenied
 
 
 class PipelineViewSet(viewsets.ModelViewSet):
@@ -440,6 +441,28 @@ class FieldViewSet(viewsets.ModelViewSet):
             pipeline=pipeline,
             created_by=self.request.user
         )
+    
+    def _check_business_rules_permission(self, data):
+        """Check if user has permission to modify business rules"""
+        if 'business_rules' in data:
+            permission_manager = PermissionManager(self.request.user)
+            if not permission_manager.has_permission('action', 'business_rules', 'update'):
+                raise PermissionDenied(
+                    "You don't have permission to modify business rules. "
+                    "Required permission: business_rules.update"
+                )
+    
+    def perform_update(self, serializer):
+        """Check business rules permissions before updating field"""
+        # Check if business rules are being modified
+        self._check_business_rules_permission(self.request.data)
+        serializer.save()
+    
+    def perform_partial_update(self, serializer):
+        """Check business rules permissions before partial update"""
+        # Check if business rules are being modified
+        self._check_business_rules_permission(self.request.data)
+        serializer.save()
     
     @extend_schema(
         summary="Reorder fields",

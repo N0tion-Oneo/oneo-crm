@@ -37,7 +37,8 @@ class FieldSerializer(serializers.ModelSerializer):
             'storage_constraints', 'business_rules', 'display_name', 'help_text',
             'enforce_uniqueness', 'create_index', 'is_searchable',
             'is_ai_field', 'display_order', 'is_visible_in_list',
-            'is_visible_in_detail', 'ai_config', 'created_at', 'updated_at'
+            'is_visible_in_detail', 'is_visible_in_public_forms', 'ai_config', 
+            'created_at', 'updated_at'
         ]
 
 
@@ -51,7 +52,7 @@ class PipelineSerializer(serializers.ModelSerializer):
         model = Pipeline
         fields = [
             'id', 'name', 'slug', 'description', 'icon', 'color',
-            'pipeline_type', 'is_active', 'settings', 'record_count',
+            'pipeline_type', 'access_level', 'is_active', 'settings', 'record_count',
             'fields', 'created_by', 'created_at', 'updated_at'
         ]
         read_only_fields = ['slug', 'record_count']
@@ -70,7 +71,7 @@ class PipelineListSerializer(serializers.ModelSerializer):
         model = Pipeline
         fields = [
             'id', 'name', 'slug', 'description', 'icon', 'color',
-            'pipeline_type', 'is_active', 'record_count', 'field_count',
+            'pipeline_type', 'access_level', 'is_active', 'record_count', 'field_count',
             'created_at', 'updated_at'
         ]
     
@@ -190,12 +191,10 @@ class DynamicRecordSerializer(serializers.ModelSerializer):
     
     def _is_field_required(self, field):
         """Check if field is required based on business rules"""
-        business_rules = field.business_rules or {}
-        stage_requirements = business_rules.get('stage_requirements', {})
-        
-        # For now, consider field required if it has any stage requirements
-        # In the future, this could be more sophisticated based on current stage
-        return bool(stage_requirements)
+        # For dynamic field creation, we can't determine stage context yet
+        # So we'll make all fields optional at the serializer level
+        # and let the pipeline validation handle stage-specific requirements
+        return False
     
     @classmethod
     def for_pipeline(cls, pipeline):

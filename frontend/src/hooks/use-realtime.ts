@@ -81,14 +81,30 @@ export function useRealtime({
     let url = `${protocol}//${host}:${port}/ws/realtime/`
     
     console.log('🍪 Cookie check:', {
-      allCookies: document.cookie,
-      accessToken: accessToken ? `${accessToken.substring(0, 20)}...` : 'NOT FOUND'
+      cookieCount: document.cookie.split(';').length,
+      hasAccessToken: !!accessToken,
+      tokenLength: accessToken ? accessToken.length : 0
     })
     
     // Add JWT token as query parameter if available
     if (accessToken) {
+      // Basic token validation - check if it looks like a JWT
+      const tokenParts = accessToken.split('.')
+      const isValidFormat = tokenParts.length === 3
+      
+      if (!isValidFormat) {
+        console.log('❌ Invalid JWT token format')
+        return url // Return URL without token
+      }
+      
       url += `?token=${encodeURIComponent(accessToken)}`
-      console.log('🔑 WebSocket URL with token:', `${url.substring(0, 50)}...`)
+      console.log('🔑 WebSocket URL constructed:', {
+        protocol,
+        host,
+        port,
+        hasToken: true,
+        tokenValid: isValidFormat
+      })
     } else {
       console.log('❌ No access token found in cookies')
     }
@@ -197,13 +213,14 @@ export function useRealtime({
       wsRef.current = new WebSocket(wsUrl)
 
       wsRef.current.onopen = () => {
-        console.log('WebSocket connected')
+        console.log('✅ WebSocket connected successfully')
         setIsConnected(true)
         setConnectionStatus('connected')
         reconnectAttempts.current = 0
 
         // Join room if specified
         if (room) {
+          console.log(`🚪 Joining room: ${room}`)
           setTimeout(() => joinRoom(room), 100)
         }
 
@@ -248,7 +265,11 @@ export function useRealtime({
       }
 
       wsRef.current.onclose = (event) => {
-        console.log('WebSocket closed:', event.code, event.reason)
+        console.log('🔌 WebSocket closed:', {
+          code: event.code,
+          reason: event.reason,
+          wasClean: event.wasClean
+        })
         setIsConnected(false)
         
         if (event.code !== 1000) { // Not a normal closure
@@ -257,14 +278,14 @@ export function useRealtime({
           // Attempt to reconnect
           if (reconnectAttempts.current < maxReconnectAttempts) {
             const delay = Math.pow(2, reconnectAttempts.current) * 1000 // Exponential backoff
-            console.log(`Attempting to reconnect in ${delay}ms (attempt ${reconnectAttempts.current + 1}/${maxReconnectAttempts})`)
+            console.log(`🔄 Attempting to reconnect in ${delay}ms (attempt ${reconnectAttempts.current + 1}/${maxReconnectAttempts})`)
             
             reconnectTimeoutRef.current = setTimeout(() => {
               reconnectAttempts.current++
               connect()
             }, delay)
           } else {
-            console.log('Max reconnection attempts reached')
+            console.log('❌ Max reconnection attempts reached')
             setConnectionStatus('disconnected')
           }
         } else {
@@ -273,12 +294,14 @@ export function useRealtime({
       }
 
       wsRef.current.onerror = (error) => {
-        console.error('❌ WebSocket error details:', {
-          error,
-          errorType: error.type,
-          target: error.target,
+        const hasToken = document.cookie.includes('oneo_access_token=')
+        console.error('❌ WebSocket connection failed:', {
           readyState: (error.target as any)?.readyState,
-          url: (error.target as any)?.url
+          hasToken,
+          connectionAttempt: reconnectAttempts.current + 1,
+          room: room || 'none',
+          currentUrl: window.location.href,
+          wsUrl: getWebSocketUrl().replace(/token=[^&]+/, 'token=HIDDEN')
         })
         setConnectionStatus('error')
       }
@@ -311,10 +334,18 @@ export function useRealtime({
     reconnectAttempts.current = 0
   }, [])
 
-  // Auto-connect effect
+  // Auto-connect effect with small delay to ensure authentication is stable
   useEffect(() => {
     if (autoConnect && isAuthenticated) {
-      connect()
+      // Add small delay to ensure authentication is fully established
+      const connectTimeout = setTimeout(() => {
+        connect()
+      }, 500) // 500ms delay
+      
+      return () => {
+        clearTimeout(connectTimeout)
+        disconnect()
+      }
     }
 
     return () => {

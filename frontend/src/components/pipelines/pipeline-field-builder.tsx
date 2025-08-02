@@ -24,6 +24,8 @@ import {
   Layout,
   Zap,
   Copy,
+  CheckCircle,
+  AlertCircle,
 } from 'lucide-react'
 
 // Complete field interface matching new architecture
@@ -39,6 +41,7 @@ interface PipelineField {
   display_order: number
   is_visible_in_list: boolean
   is_visible_in_detail: boolean
+  is_visible_in_public_forms?: boolean  // Dynamic forms: public visibility
   
   // Behavior
   is_searchable: boolean
@@ -89,6 +92,26 @@ const FIELD_ICONS: Record<string, any> = {
   url: Link,
   file: FileText,
   ai_generated: Bot,
+}
+
+// Helper function to extract required stages from field business rules
+const getRequiredStages = (field: PipelineField): string[] => {
+  const stageReqs = field.business_rules?.stage_requirements || {}
+  
+  // Debug logging for contact_email field
+  if (field.name === 'contact_email') {
+    console.log('=== CONTACT EMAIL FIELD DEBUG ===')
+    console.log('Field object:', field)
+    console.log('field.required:', field.required)
+    console.log('field.business_rules:', field.business_rules)
+    console.log('stage_requirements:', stageReqs)
+    console.log('Entries:', Object.entries(stageReqs))
+    console.log('Filtered entries:', Object.entries(stageReqs).filter(([stage, config]: [string, any]) => config.required === true))
+  }
+  
+  return Object.entries(stageReqs)
+    .filter(([stage, config]: [string, any]) => config.required === true)
+    .map(([stage]) => stage)
 }
 
 export function PipelineFieldBuilder({ pipelineId, fields, onFieldsChange, onSave }: Props) {
@@ -143,6 +166,7 @@ export function PipelineFieldBuilder({ pipelineId, fields, onFieldsChange, onSav
       display_order: fields.length,
       is_visible_in_list: true,
       is_visible_in_detail: true,
+      is_visible_in_public_forms: false,  // Default to private
       
       // Behavior
       is_searchable: true,
@@ -407,11 +431,15 @@ export function PipelineFieldBuilder({ pipelineId, fields, onFieldsChange, onSav
 
                     {/* Field Status Badges */}
                     <div className="flex flex-wrap gap-1 mb-3">
-                      {(field.required || field.business_rules?.stage_requirements) && (
-                        <span className="inline-flex items-center px-2 py-0.5 text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-300 rounded-full">
-                          Required
+                      
+                      {/* Legacy required field support - REMOVED: Use stage-specific badges only */}
+                      
+                      {/* Stage-specific required badges */}
+                      {getRequiredStages(field).map((stage) => (
+                        <span key={stage} className="inline-flex items-center px-2 py-0.5 text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-300 rounded-full">
+                          Required: {stage.charAt(0).toUpperCase() + stage.slice(1)}
                         </span>
-                      )}
+                      ))}
                       {!(field.is_visible_in_list ?? field.visible ?? true) && (
                         <span className="inline-flex items-center px-2 py-0.5 text-xs font-medium bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300 rounded-full">
                           Hidden
@@ -582,16 +610,16 @@ function FieldEditor({
       description: 'Field name, type, and basic settings'
     },
     {
-      id: 'validation',
-      label: 'Validation',
-      icon: Shield,
-      description: 'Field validation rules and constraints'
-    },
-    {
       id: 'display',
       label: 'Display',
       icon: Layout,
       description: 'Visibility and display options'
+    },
+    {
+      id: 'validation',
+      label: 'Validation',
+      icon: CheckCircle,
+      description: 'Form validation rules and requirements'
     },
     {
       id: 'advanced',
@@ -684,15 +712,16 @@ function FieldEditor({
             />
           )}
           
-          {activeTab === 'validation' && (
-            <ValidationSettings 
-              field={field} 
-              onUpdate={onUpdate}
-            />
-          )}
           
           {activeTab === 'display' && (
             <DisplaySettings 
+              field={field} 
+              onUpdate={onUpdate} 
+            />
+          )}
+          
+          {activeTab === 'validation' && (
+            <ValidationSettings 
               field={field} 
               onUpdate={onUpdate} 
             />
@@ -894,111 +923,6 @@ function BasicFieldSettings({
   )
 }
 
-// Validation Settings Tab Component
-function ValidationSettings({ 
-  field, 
-  onUpdate 
-}: {
-  field: PipelineField
-  onUpdate: (updates: Partial<PipelineField>) => void
-}) {
-  const hasBusinessRules = field.business_rules && Object.keys(field.business_rules).length > 0
-  const hasStageRequirements = field.business_rules?.stage_requirements && Object.keys(field.business_rules.stage_requirements).length > 0
-  
-  return (
-    <div className="space-y-6">
-      <div>
-        <h4 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
-          Business Validation Rules
-        </h4>
-        <div className="space-y-4">
-          {/* Current validation status */}
-          <div className="p-4 bg-gray-50 dark:bg-gray-800 rounded-lg border-l-4 border-gray-300 dark:border-gray-600">
-            <div className="flex items-start space-x-3">
-              <Shield className="w-5 h-5 text-gray-500 mt-0.5" />
-              <div>
-                <h5 className="font-medium text-gray-900 dark:text-white">
-                  Current Validation Status
-                </h5>
-                <div className="mt-2 space-y-1">
-                  {hasStageRequirements ? (
-                    <div className="flex items-center space-x-2">
-                      <div className="w-2 h-2 bg-green-500 rounded-full"></div>
-                      <span className="text-sm text-gray-700 dark:text-gray-300">Stage-based requirements configured</span>
-                    </div>
-                  ) : (
-                    <div className="flex items-center space-x-2">
-                      <div className="w-2 h-2 bg-gray-400 rounded-full"></div>
-                      <span className="text-sm text-gray-500 dark:text-gray-400">No stage requirements set</span>
-                    </div>
-                  )}
-                  
-                  {field.enforce_uniqueness ? (
-                    <div className="flex items-center space-x-2">
-                      <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
-                      <span className="text-sm text-gray-700 dark:text-gray-300">Unique values enforced</span>
-                    </div>
-                  ) : (
-                    <div className="flex items-center space-x-2">
-                      <div className="w-2 h-2 bg-gray-400 rounded-full"></div>
-                      <span className="text-sm text-gray-500 dark:text-gray-400">Duplicate values allowed</span>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
-          
-          {/* Navigation to advanced configuration */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
-              <div className="flex items-start space-x-3">
-                <Zap className="w-5 h-5 text-blue-600 dark:text-blue-400 mt-0.5" />
-                <div>
-                  <h5 className="font-medium text-blue-800 dark:text-blue-200">
-                    Field-Specific Rules
-                  </h5>
-                  <p className="text-sm text-blue-700 dark:text-blue-300 mt-1">
-                    Configure validation rules specific to this field type in the <strong>Advanced</strong> tab.
-                  </p>
-                </div>
-              </div>
-            </div>
-            
-            <div className="p-4 bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800 rounded-lg">
-              <div className="flex items-start space-x-3">
-                <Settings className="w-5 h-5 text-purple-600 dark:text-purple-400 mt-0.5" />
-                <div>
-                  <h5 className="font-medium text-purple-800 dark:text-purple-200">
-                    Storage & Database
-                  </h5>
-                  <p className="text-sm text-purple-700 dark:text-purple-300 mt-1">
-                    Database constraints, indexing, and storage settings are in the <strong>Advanced</strong> tab.
-                  </p>
-                </div>
-              </div>
-            </div>
-          </div>
-          
-          {/* Help text */}
-          <div className="p-4 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg">
-            <div className="flex items-start space-x-3">
-              <Layout className="w-5 h-5 text-amber-600 dark:text-amber-400 mt-0.5" />
-              <div>
-                <h5 className="font-medium text-amber-800 dark:text-amber-200">
-                  Validation Overview
-                </h5>
-                <p className="text-sm text-amber-700 dark:text-amber-300 mt-1">
-                  This tab shows your current validation status. All validation rules are configured in the Advanced tab to avoid duplication and provide a comprehensive configuration experience.
-                </p>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  )
-}
 
 // Display Settings Tab Component
 function DisplaySettings({ 
@@ -1054,6 +978,23 @@ function DisplaySettings({
                   checked={field.is_visible_in_detail !== false}
                   onChange={(e) => onUpdate({ is_visible_in_detail: e.target.checked })}
                   className="w-4 h-4 text-primary bg-white border-gray-300 rounded focus:ring-primary focus:ring-2"
+                />
+              </div>
+              
+              <div className="flex items-center justify-between p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
+                <div className="flex items-center space-x-3">
+                  <Settings className="w-5 h-5 text-blue-600 dark:text-blue-400" />
+                  <div>
+                    <div className="font-medium text-gray-900 dark:text-white">Public Forms Visible</div>
+                    <div className="text-sm text-gray-500 dark:text-gray-400">Show this field in public forms (external users)</div>
+                  </div>
+                </div>
+                <input
+                  type="checkbox"
+                  id="visible-public-forms"
+                  checked={field.is_visible_in_public_forms || false}
+                  onChange={(e) => onUpdate({ is_visible_in_public_forms: e.target.checked })}
+                  className="w-4 h-4 text-blue-600 bg-white border-gray-300 rounded focus:ring-blue-500 focus:ring-2"
                 />
               </div>
               
@@ -1125,8 +1066,6 @@ function AdvancedSettings({
             enforce_uniqueness: newConstraints.enforce_uniqueness || false,
             create_index: newConstraints.create_index || false
           })}
-          businessRules={field.business_rules || {}}
-          onBusinessRulesChange={(newRules) => onUpdate({ business_rules: newRules })}
           isVisible={true}
           availableFields={fields.filter(f => f.id !== field.id).map(f => ({
             id: f.id,
@@ -1136,6 +1075,212 @@ function AdvancedSettings({
             field_config: f.field_config || f.config || {}
           }))}
         />
+      </div>
+    </div>
+  )
+}
+
+// Validation Settings Tab Component
+function ValidationSettings({ 
+  field, 
+  onUpdate 
+}: {
+  field: PipelineField
+  onUpdate: (updates: Partial<PipelineField>) => void
+}) {
+  const validationRules = field.form_validation_rules || {}
+
+  const updateValidationRule = (key: string, value: any) => {
+    const newRules = { ...validationRules, [key]: value }
+    // Remove empty/false values to keep the object clean
+    if (value === '' || value === false || value === null || value === undefined) {
+      delete newRules[key]
+    }
+    onUpdate({ form_validation_rules: newRules })
+  }
+
+  const fieldType = field.field_type || field.type || 'text'
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h4 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
+          Form Validation Rules
+        </h4>
+        <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-4 mb-6">
+          <div className="flex items-start space-x-3">
+            <CheckCircle className="w-5 h-5 text-yellow-600 dark:text-yellow-400 mt-0.5" />
+            <div>
+              <h5 className="font-medium text-yellow-800 dark:text-yellow-200">
+                Validation Applied at Form Level
+              </h5>
+              <p className="text-sm text-yellow-700 dark:text-yellow-300 mt-1">
+                These rules are applied when users submit forms, not when data is stored directly in the database.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="space-y-6">
+          {/* Basic Required Field */}
+          <div className="flex items-center justify-between p-4 bg-red-50 dark:bg-red-900/20 rounded-lg border border-red-200 dark:border-red-800">
+            <div className="flex items-center space-x-3">
+              <AlertCircle className="w-5 h-5 text-red-600 dark:text-red-400" />
+              <div>
+                <div className="font-medium text-gray-900 dark:text-white">Required Field</div>
+                <div className="text-sm text-gray-500 dark:text-gray-400">User must fill this field in forms</div>
+              </div>
+            </div>
+            <input
+              type="checkbox"
+              checked={validationRules.required || false}
+              onChange={(e) => updateValidationRule('required', e.target.checked)}
+              className="w-4 h-4 text-red-600 bg-white border-gray-300 rounded focus:ring-red-500 focus:ring-2"
+            />
+          </div>
+
+          {/* Text Length Validation (for text fields) */}
+          {(fieldType === 'text' || fieldType === 'textarea' || fieldType === 'email' || fieldType === 'url') && (
+            <div className="border border-gray-200 dark:border-gray-700 rounded-lg p-4">
+              <h5 className="font-medium text-gray-900 dark:text-white mb-4">Text Length Validation</h5>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                    Minimum Length
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={validationRules.minLength || ''}
+                    onChange={(e) => updateValidationRule('minLength', e.target.value ? parseInt(e.target.value) : '')}
+                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
+                    placeholder="0"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                    Maximum Length
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={validationRules.maxLength || ''}
+                    onChange={(e) => updateValidationRule('maxLength', e.target.value ? parseInt(e.target.value) : '')}
+                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
+                    placeholder="No limit"
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Number Range Validation (for number fields) */}
+          {(fieldType === 'number' || fieldType === 'decimal') && (
+            <div className="border border-gray-200 dark:border-gray-700 rounded-lg p-4">
+              <h5 className="font-medium text-gray-900 dark:text-white mb-4">Number Range Validation</h5>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                    Minimum Value
+                  </label>
+                  <input
+                    type="number"
+                    step={fieldType === 'decimal' ? '0.01' : '1'}
+                    value={validationRules.min || ''}
+                    onChange={(e) => updateValidationRule('min', e.target.value ? parseFloat(e.target.value) : '')}
+                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
+                    placeholder="No minimum"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                    Maximum Value
+                  </label>
+                  <input
+                    type="number"
+                    step={fieldType === 'decimal' ? '0.01' : '1'}
+                    value={validationRules.max || ''}
+                    onChange={(e) => updateValidationRule('max', e.target.value ? parseFloat(e.target.value) : '')}
+                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
+                    placeholder="No maximum"
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Email Validation (automatic for email fields) */}
+          {fieldType === 'email' && (
+            <div className="border border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/20 rounded-lg p-4">
+              <div className="flex items-center space-x-3">
+                <CheckCircle className="w-5 h-5 text-green-600 dark:text-green-400" />
+                <div>
+                  <div className="font-medium text-gray-900 dark:text-white">Email Format Validation</div>
+                  <div className="text-sm text-gray-500 dark:text-gray-400">Automatically validates email format</div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* URL Validation (automatic for url fields) */}
+          {fieldType === 'url' && (
+            <div className="border border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/20 rounded-lg p-4">
+              <div className="flex items-center space-x-3">
+                <CheckCircle className="w-5 h-5 text-green-600 dark:text-green-400" />
+                <div>
+                  <div className="font-medium text-gray-900 dark:text-white">URL Format Validation</div>
+                  <div className="text-sm text-gray-500 dark:text-gray-400">Automatically validates URL format</div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Pattern/Regex Validation */}
+          <div className="border border-gray-200 dark:border-gray-700 rounded-lg p-4">
+            <h5 className="font-medium text-gray-900 dark:text-white mb-4">Custom Pattern Validation</h5>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  Regular Expression Pattern
+                </label>
+                <input
+                  type="text"
+                  value={validationRules.pattern || ''}
+                  onChange={(e) => updateValidationRule('pattern', e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white font-mono text-sm"
+                  placeholder="^[A-Z0-9-]+$ (example: uppercase letters, numbers, hyphens)"
+                />
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                  JavaScript regular expression for custom validation
+                </p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  Custom Error Message
+                </label>
+                <input
+                  type="text"
+                  value={validationRules.customMessage || ''}
+                  onChange={(e) => updateValidationRule('customMessage', e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
+                  placeholder="Please enter a valid value (optional custom message)"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Show current validation rules summary */}
+          {Object.keys(validationRules).length > 0 && (
+            <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
+              <h5 className="font-medium text-blue-800 dark:text-blue-200 mb-2">Active Validation Rules</h5>
+              <div className="text-sm text-blue-700 dark:text-blue-300">
+                <pre className="font-mono bg-white dark:bg-gray-800 p-2 rounded border">
+                  {JSON.stringify(validationRules, null, 2)}
+                </pre>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   )

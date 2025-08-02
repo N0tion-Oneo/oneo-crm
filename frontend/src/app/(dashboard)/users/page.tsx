@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { Search, Plus, MoreHorizontal, Edit, Trash2, Shield, Mail } from 'lucide-react'
 import { useAuth } from '@/features/auth/context'
 import { api } from '@/lib/api'
+import { PermissionGuard, PermissionButton } from '@/components/permissions/PermissionGuard'
 import UserCreateModal from './components/UserCreateModal'
 import UserEditModal from './components/UserEditModal'
 import UserActionsDropdown from './components/UserActionsDropdown'
@@ -32,6 +33,25 @@ interface UserType {
   description: string
   level: number
 }
+
+const UsersAccessDenied = () => (
+  <div className="flex items-center justify-center h-64">
+    <div className="text-center max-w-md">
+      <Shield className="w-12 h-12 text-red-500 mx-auto mb-4" />
+      <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-2">
+        Access Denied
+      </h2>
+      <p className="text-gray-600 dark:text-gray-400 mb-4">
+        You don't have permission to view user management. Please contact your administrator to request access.
+      </p>
+      <div className="bg-red-50 dark:bg-red-950/30 rounded-lg p-3">
+        <p className="text-sm text-red-700 dark:text-red-300">
+          Required permission: <code className="bg-red-100 dark:bg-red-900/50 px-1 rounded">users.read</code>
+        </p>
+      </div>
+    </div>
+  </div>
+)
 
 export default function UsersPage() {
   const { user: currentUser } = useAuth()
@@ -148,16 +168,21 @@ export default function UsersPage() {
   }
 
   return (
-    <div className="p-6">
-      {/* Header */}
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-900 dark:text-white">
-          Users
-        </h1>
-        <p className="text-gray-600 dark:text-gray-400 mt-2">
-          Manage users, roles, and permissions for your organization.
-        </p>
-      </div>
+    <PermissionGuard 
+      category="users" 
+      action="read"
+      fallback={<UsersAccessDenied />}
+    >
+      <div className="p-6">
+        {/* Header */}
+        <div className="mb-8">
+          <h1 className="text-3xl font-bold text-gray-900 dark:text-white">
+            Users
+          </h1>
+          <p className="text-gray-600 dark:text-gray-400 mt-2">
+            Manage users, roles, and permissions for your organization.
+          </p>
+        </div>
 
       {/* Filters and Actions */}
       <div className="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
@@ -192,13 +217,15 @@ export default function UsersPage() {
         </div>
 
         {/* Add User Button */}
-        <button
+        <PermissionButton
+          category="users"
+          action="create"
           onClick={() => setShowCreateModal(true)}
           className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-primary hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary"
         >
           <Plus className="w-4 h-4 mr-2" />
           Add User
-        </button>
+        </PermissionButton>
       </div>
 
       {/* Users Table */}
@@ -345,6 +372,7 @@ export default function UsersPage() {
         }}
         onUserUpdated={handleUserUpdated}
       />
-    </div>
+      </div>
+    </PermissionGuard>
   )
 }

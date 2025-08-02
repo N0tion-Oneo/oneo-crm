@@ -200,7 +200,10 @@ class BaseRealtimeConsumer(AsyncWebsocketConsumer):
             return
         
         # Validate subscription permissions
-        if not await self.can_subscribe_to_channel(channel):
+        can_subscribe = await self.can_subscribe_to_channel(channel)
+        logger.info(f"👤 User {self.user.username} requesting subscription to '{channel}': {'ALLOWED' if can_subscribe else 'DENIED'}")
+        
+        if not can_subscribe:
             await self.send_error('Permission denied')
             return
         
@@ -226,7 +229,7 @@ class BaseRealtimeConsumer(AsyncWebsocketConsumer):
                 
                 # Subscribe to individual pipeline record channels
                 for pipeline_id in user_pipelines:
-                    channels_to_subscribe.append(f'pipeline_records:{pipeline_id}')
+                    channels_to_subscribe.append(f'pipeline_records_{pipeline_id}')
                     
             except Exception as e:
                 logger.warning(f"Could not subscribe to individual pipeline channels: {e}")
@@ -468,6 +471,10 @@ class BaseRealtimeConsumer(AsyncWebsocketConsumer):
         if channel.startswith('pipeline:'):
             pipeline_id = channel.split(':')[1]
             return await check_user_permissions(self.user, 'pipelines', pipeline_id, 'read')
+        elif channel.startswith('pipeline_records_'):
+            # Handle pipeline_records_X format (new format without colons)
+            pipeline_id = channel.replace('pipeline_records_', '')
+            return await check_user_permissions(self.user, 'pipelines', pipeline_id, 'read')
         elif channel.startswith('document:'):
             document_id = channel.split(':')[1]
             return await check_user_permissions(self.user, 'records', document_id, 'read')
@@ -477,8 +484,8 @@ class BaseRealtimeConsumer(AsyncWebsocketConsumer):
             return True  # All authenticated users can subscribe to pipeline overview
         elif channel == 'pipeline_updates':
             return True  # All authenticated users can subscribe to general pipeline updates
-        elif channel.startswith('pipeline_records:'):
-            pipeline_id = channel.split(':')[1] 
+        elif channel.startswith('pipeline_records_'):
+            pipeline_id = channel.split('_')[2] 
             return await check_user_permissions(self.user, 'pipelines', pipeline_id, 'read')
         
         return False

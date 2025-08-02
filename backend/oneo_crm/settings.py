@@ -106,8 +106,10 @@ TENANT_APPS = [
     'relationships',  # Relationship engine app
     'api',  # Phase 05 - API Layer
     'realtime',  # Phase 06 - Real-time collaboration
-    'workflows',  # Phase 07 - Workflow Automation
+    'workflows',  # Phase 07 - Workflow Automation  
     'communications',  # Phase 08 - Communication Layer
+    'forms',  # Forms and validation system
+    'duplicates',  # Duplicate detection system
 ]
 
 # Combine apps (avoid duplicates)

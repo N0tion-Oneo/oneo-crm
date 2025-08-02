@@ -150,7 +150,7 @@ class Pipeline(models.Model):
     template = models.ForeignKey(PipelineTemplate, on_delete=models.SET_NULL, null=True, blank=True)
     
     # Access control
-    access_level = models.CharField(max_length=20, choices=ACCESS_LEVELS, default='private')
+    access_level = models.CharField(max_length=20, choices=ACCESS_LEVELS, default='internal')
     permission_config = models.JSONField(default=dict)
     
     # Status and metadata
@@ -183,34 +183,32 @@ class Pipeline(models.Model):
         if not self.slug:
             self.slug = slugify(self.name)
         
+        # Debug: Log the save operation
+        logger.info(f"💾 Saving pipeline {self.name} (ID: {self.pk}) with access_level: {self.access_level}")
+        
         # Update field schema cache
         if self.pk:  # Only if pipeline already exists
             self._update_field_schema()
         
         super().save(*args, **kwargs)
         
-        # Broadcast pipeline update
-        from api.events import broadcaster
+        logger.info(f"✅ Pipeline {self.name} saved successfully with access_level: {self.access_level}")
+        
+        # Broadcast pipeline update (temporarily disabled to fix toggle)
         if hasattr(self, '_skip_broadcast') and self._skip_broadcast:
             return
         
-        try:
-            import asyncio
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                loop.create_task(broadcaster.broadcast_pipeline_update(
-                    self, 
-                    event_type="updated" if self.pk else "created",
-                    user_id=getattr(self, '_current_user_id', None)
-                ))
-            else:
-                broadcaster.sync_broadcast_pipeline_update(
-                    self, 
-                    event_type="updated" if self.pk else "created",
-                    user_id=getattr(self, '_current_user_id', None)
-                )
-        except Exception:
-            pass  # Don't fail save if broadcast fails
+        # TODO: Re-enable broadcasting once async issues are resolved
+        # try:
+        #     from api.events import broadcaster
+        #     broadcaster.sync_broadcast_pipeline_update(
+        #         self, 
+        #         event_type="updated" if self.pk else "created",
+        #         user_id=getattr(self, '_current_user_id', None)
+        #     )
+        # except Exception as e:
+        #     logger.error(f"Error handling pipeline save signal: {e}")
+        #     # Don't fail save if broadcast fails
     
     def _update_field_schema(self):
         """Update cached field schema from related fields"""
@@ -222,10 +220,12 @@ class Pipeline(models.Model):
                 'config': field.field_config,
                 'storage_constraints': field.storage_constraints,
                 'business_rules': field.business_rules,
+                'form_validation_rules': field.form_validation_rules,
                 'enforce_uniqueness': field.enforce_uniqueness,
                 'create_index': field.create_index,
                 'searchable': field.is_searchable,
                 'ai_field': field.is_ai_field,
+                'visible_in_public_forms': field.is_visible_in_public_forms,
             }
         self.field_schema = fields_data
     
@@ -293,6 +293,7 @@ class Pipeline(models.Model):
                 field_config=field.field_config.copy(),
                 storage_constraints=field.storage_constraints.copy(),
                 business_rules=field.business_rules.copy(),
+                form_validation_rules=field.form_validation_rules.copy(),
                 display_name=field.display_name,
                 help_text=field.help_text,
                 enforce_uniqueness=field.enforce_uniqueness,
@@ -302,6 +303,7 @@ class Pipeline(models.Model):
                 display_order=field.display_order,
                 is_visible_in_list=field.is_visible_in_list,
                 is_visible_in_detail=field.is_visible_in_detail,
+                is_visible_in_public_forms=field.is_visible_in_public_forms,
                 ai_config=field.ai_config.copy(),
                 created_by=created_by
             )
@@ -328,6 +330,9 @@ class Field(models.Model):
     # Business rules (pipeline stage requirements, conditional logic)
     business_rules = models.JSONField(default=dict)
     
+    # Form validation rules (applied at form level, not storage level)
+    form_validation_rules = models.JSONField(default=dict)
+    
     # Display configuration
     display_name = models.CharField(max_length=255, blank=True)
     help_text = models.TextField(blank=True)
@@ -343,6 +348,7 @@ class Field(models.Model):
     display_order = models.IntegerField(default=0)
     is_visible_in_list = models.BooleanField(default=True)
     is_visible_in_detail = models.BooleanField(default=True)
+    is_visible_in_public_forms = models.BooleanField(default=False)  # Dynamic forms: public visibility
     
     # AI configuration (for AI fields)
     ai_config = models.JSONField(default=dict)

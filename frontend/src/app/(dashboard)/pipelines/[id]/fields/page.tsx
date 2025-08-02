@@ -84,6 +84,7 @@ export default function PipelineFieldsPage() {
             display_order: field.display_order || index,
             is_visible_in_list: field.is_visible_in_list !== false,
             is_visible_in_detail: field.is_visible_in_detail !== false,
+            is_visible_in_public_forms: field.is_visible_in_public_forms || false,
             is_searchable: field.is_searchable !== false,
             create_index: field.create_index || false,
             enforce_uniqueness: field.enforce_uniqueness || false,
@@ -176,6 +177,7 @@ export default function PipelineFieldsPage() {
           display_order: field.display_order !== undefined ? field.display_order : (field.order !== undefined ? field.order : index),
           is_visible_in_list: field.is_visible_in_list !== undefined ? field.is_visible_in_list : (field.visible !== undefined ? field.visible : true),
           is_visible_in_detail: field.is_visible_in_detail !== false,
+          is_visible_in_public_forms: field.is_visible_in_public_forms || false,
           
           // AI configuration
           ai_config: field.ai_config || {}

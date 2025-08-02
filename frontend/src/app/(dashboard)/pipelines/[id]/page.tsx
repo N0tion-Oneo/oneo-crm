@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { useAuth } from '@/features/auth/context'
-import { ArrowLeft, Edit, Settings } from 'lucide-react'
+import { ArrowLeft, Edit, Settings, Target } from 'lucide-react'
 import { RecordListView, type Pipeline, type Record } from '@/components/pipelines/record-list-view'
 import { RecordDetailDrawer } from '@/components/pipelines/record-detail-drawer'
 import { pipelinesApi } from '@/lib/api'
@@ -16,6 +16,7 @@ export default function PipelineRecordsPage() {
 
   const [pipeline, setPipeline] = useState<Pipeline | null>(null)
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const [selectedRecord, setSelectedRecord] = useState<Record | null>(null)
   const [showRecordDrawer, setShowRecordDrawer] = useState(false)
   const [creatingNewRecord, setCreatingNewRecord] = useState(false)
@@ -27,6 +28,9 @@ export default function PipelineRecordsPage() {
         setLoading(true)
         const response = await pipelinesApi.get(pipelineId)
         
+        // Debug: Log the original field data from backend
+        console.log('Original backend field data:', response.data.fields)
+        
         // Transform API response to match frontend interface
         const transformedPipeline: Pipeline = {
           id: response.data.id?.toString() || pipelineId,
@@ -36,12 +40,18 @@ export default function PipelineRecordsPage() {
           fields: (response.data.fields || []).map((field: any) => ({
             id: field.id?.toString() || `field_${Date.now()}`,
             name: field.slug || field.name?.toLowerCase().replace(/\s+/g, '_'),
-            label: field.name || field.slug || 'Unknown Field',
+            display_name: field.name || field.display_name || field.slug || 'Unknown Field',
             field_type: field.field_type || 'text',
-            required: field.is_required || false,
-            visible: field.is_visible_in_list !== false,
-            order: field.display_order || 0,
-            config: field.field_config || {}
+            // is_required removed - use stage-specific business rules only
+            is_visible_in_list: field.is_visible_in_list !== false,
+            is_visible_in_detail: field.is_visible_in_detail !== false,
+            is_visible_in_public_forms: field.is_visible_in_public_forms || false,
+            display_order: field.display_order || 0,
+            field_config: field.field_config || {},
+            config: field.field_config || {}, // Legacy support
+            // Preserve original slug for backend API calls
+            original_slug: field.slug,
+            business_rules: field.business_rules || {}
           })),
           stages: response.data.stages || []
         }
@@ -72,107 +82,9 @@ export default function PipelineRecordsPage() {
           }
         }, 8000)
         
-        // Fallback to mock data for development
-        const mockPipeline: Pipeline = {
-          id: pipelineId,
-          name: 'Sales CRM Pipeline',
-          description: 'Track sales opportunities and customer relationships',
-          record_count: 45,
-          fields: [
-            {
-              id: '1',
-              name: 'company_name',
-              label: 'Company Name',
-              field_type: 'text',
-              required: true,
-              visible: true,
-              order: 0,
-              config: {}
-            },
-            {
-              id: '2',
-              name: 'contact_email',
-              label: 'Contact Email',
-              field_type: 'email',
-              required: true,
-              visible: true,
-              order: 1,
-              config: {}
-            },
-            {
-              id: '3',
-              name: 'contact_phone',
-              label: 'Contact Phone',
-              field_type: 'phone',
-              required: false,
-              visible: true,
-              order: 2,
-              config: {}
-            },
-            {
-              id: '4',
-              name: 'deal_size',
-              label: 'Deal Size',
-              field_type: 'decimal',
-              required: false,
-              visible: true,
-              order: 3,
-              config: {}
-            },
-            {
-              id: '5',
-              name: 'stage',
-              label: 'Sales Stage',
-              field_type: 'select',
-              required: true,
-              visible: true,
-              order: 4,
-              config: {
-                options: [
-                  { value: 'lead', label: 'Lead' },
-                  { value: 'qualified', label: 'Qualified' },
-                  { value: 'proposal', label: 'Proposal' },
-                  { value: 'negotiation', label: 'Negotiation' },
-                  { value: 'closed', label: 'Closed Won' },
-                  { value: 'lost', label: 'Closed Lost' }
-                ]
-              }
-            },
-            {
-              id: '6',
-              name: 'notes',
-              label: 'Notes',
-              field_type: 'textarea',
-              required: false,
-              visible: true,
-              order: 5,
-              config: {}
-            },
-            {
-              id: '7',
-              name: 'next_follow_up',
-              label: 'Next Follow-up',
-              field_type: 'datetime',
-              required: false,
-              visible: true,
-              order: 6,
-              config: {}
-            },
-            {
-              id: '8',
-              name: 'priority',
-              label: 'Priority',
-              field_type: 'boolean',
-              required: false,
-              visible: true,
-              order: 7,
-              config: {}
-            }
-          ],
-          stages: ['lead', 'qualified', 'proposal', 'negotiation', 'closed', 'lost']
-        }
-        
-        setPipeline(mockPipeline)
+        // No fallback - let the error state be handled properly
+        console.error('Failed to load pipeline after timeout')
+        setError('Failed to load pipeline data')
       } finally {
         setLoading(false)
       }
@@ -205,23 +117,53 @@ export default function PipelineRecordsPage() {
   // Handle record save
   const handleRecordSave = async (recordId: string, data: { [key: string]: any }) => {
     try {
-      if (creatingNewRecord) {
-        // Create new record
+      let savedRecord
+      if (creatingNewRecord && recordId === 'new') {
+        // Create new record (only if not already created)
         const response = await pipelinesApi.createRecord(pipelineId, { data })
-        console.log('Created record:', response.data)
+        savedRecord = response.data
+        console.log('Created record:', savedRecord)
+      } else if (creatingNewRecord && recordId !== 'new') {
+        // Record was already created by the drawer, just update UI state
+        console.log('Record already created with ID:', recordId, 'updating UI state only')
+        savedRecord = { id: recordId, data }
       } else {
         // Update existing record
         const response = await pipelinesApi.updateRecord(pipelineId, recordId, { data })
-        console.log('Updated record:', response.data)
+        savedRecord = response.data
+        console.log('Updated record:', savedRecord)
       }
       
-      // Update local state if needed
+      // Update local state
       if (selectedRecord) {
         setSelectedRecord({
           ...selectedRecord,
           data: data,
           updated_at: new Date().toISOString()
         })
+      }
+      
+      // Refresh the pipeline data to update record count (for new records)
+      if (creatingNewRecord) {
+        const pipelineResponse = await pipelinesApi.get(pipelineId)
+        const transformedPipeline: Pipeline = {
+          id: pipelineResponse.data.id?.toString() || pipelineId,
+          name: pipelineResponse.data.name || 'Unknown Pipeline',
+          description: pipelineResponse.data.description || '',
+          record_count: pipelineResponse.data.record_count || 0,
+          fields: (pipelineResponse.data.fields || []).map((field: any) => ({
+            id: field.id?.toString() || `field_${Date.now()}`,
+            name: field.slug || field.name?.toLowerCase().replace(/\s+/g, '_'),
+            label: field.name || field.slug || 'Unknown Field',
+            field_type: field.field_type || 'text',
+            // required removed - use stage-specific business rules only
+            visible: field.is_visible_in_list !== false,
+            order: field.display_order || 0,
+            config: field.field_config || {}
+          })),
+          stages: pipelineResponse.data.stages || []
+        }
+        setPipeline(transformedPipeline)
       }
     } catch (error) {
       console.error('Failed to save record:', error)
@@ -232,10 +174,30 @@ export default function PipelineRecordsPage() {
   // Handle record delete
   const handleRecordDelete = async (recordId: string) => {
     try {
-      // TODO: Implement actual API call
-      console.log('Deleting record:', recordId)
+      await pipelinesApi.deleteRecord(pipelineId, recordId)
       setShowRecordDrawer(false)
       setSelectedRecord(null)
+      
+      // Refresh the pipeline data to update record count and list
+      const response = await pipelinesApi.get(pipelineId)
+      const transformedPipeline: Pipeline = {
+        id: response.data.id?.toString() || pipelineId,
+        name: response.data.name || 'Unknown Pipeline',
+        description: response.data.description || '',
+        record_count: response.data.record_count || 0,
+        fields: (response.data.fields || []).map((field: any) => ({
+          id: field.id?.toString() || `field_${Date.now()}`,
+          name: field.slug || field.name?.toLowerCase().replace(/\s+/g, '_'),
+          label: field.name || field.slug || 'Unknown Field',
+          field_type: field.field_type || 'text',
+          required: field.is_required || false,
+          visible: field.is_visible_in_list !== false,
+          order: field.display_order || 0,
+          config: field.field_config || {}
+        })),
+        stages: response.data.stages || []
+      }
+      setPipeline(transformedPipeline)
     } catch (error) {
       console.error('Failed to delete record:', error)
       throw error
@@ -304,12 +266,13 @@ export default function PipelineRecordsPage() {
         </div>
 
         <div className="flex items-center space-x-2">
+          
           <button
-            onClick={() => router.push(`/pipelines/${pipelineId}/fields`)}
-            className="px-3 py-1.5 text-sm bg-blue-500 text-white rounded-md hover:bg-blue-600 flex items-center"
+            onClick={() => router.push(`/pipelines/${pipelineId}/business-rules`)}
+            className="px-3 py-1.5 text-sm bg-purple-500 text-white rounded-md hover:bg-purple-600 flex items-center"
           >
-            <Edit className="w-4 h-4 mr-1" />
-            🆕 NEW FIELD BUILDER
+            <Target className="w-4 h-4 mr-1" />
+            Business Rules
           </button>
           
           <button
@@ -328,7 +291,6 @@ export default function PipelineRecordsPage() {
           pipeline={pipeline}
           onEditRecord={handleEditRecord}
           onCreateRecord={handleCreateRecord}
-          onEditPipeline={handleEditPipeline}
         />
       </div>
 

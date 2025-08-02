@@ -42,6 +42,12 @@ export function usePermissions() {
   const canUpdateWorkflows = () => hasPermission('workflows', 'update')
   const canDeleteWorkflows = () => hasPermission('workflows', 'delete')
 
+  // Business rules permissions
+  const canCreateBusinessRules = () => hasPermission('business_rules', 'create')
+  const canReadBusinessRules = () => hasPermission('business_rules', 'read')
+  const canUpdateBusinessRules = () => hasPermission('business_rules', 'update')
+  const canDeleteBusinessRules = () => hasPermission('business_rules', 'delete')
+
   // Communication permissions
   const canSendCommunications = () => hasPermission('communications', 'send')
   const canCreateCommunications = () => hasPermission('communications', 'create')
@@ -70,6 +76,7 @@ export function usePermissions() {
   const hasFullUserManagement = () => hasAllPermissions('users', ['create', 'read', 'update', 'delete'])
   const hasPipelineAccess = () => hasAnyPermission('pipelines', ['read', 'create', 'update'])
   const hasWorkflowAccess = () => hasAnyPermission('workflows', ['read', 'create', 'execute'])
+  const hasBusinessRulesAccess = () => hasAnyPermission('business_rules', ['read', 'create', 'update'])
 
   // Complex permission combinations
   const canManageSystem = () => isSystemAdmin() || canManageSettings()
@@ -131,6 +138,12 @@ export function usePermissions() {
     canUpdateWorkflows,
     canDeleteWorkflows,
 
+    // Business rules management
+    canCreateBusinessRules,
+    canReadBusinessRules,
+    canUpdateBusinessRules,
+    canDeleteBusinessRules,
+
     // Communication management
     canSendCommunications,
     canCreateCommunications,
@@ -159,6 +172,7 @@ export function usePermissions() {
     hasFullUserManagement,
     hasPipelineAccess,
     hasWorkflowAccess,
+    hasBusinessRulesAccess,
 
     // Complex combinations
     canManageSystem,

@@ -36,8 +36,6 @@ interface FieldConfigurationPanelProps {
   onChange: (config: Record<string, any>) => void
   storageConstraints?: Record<string, any>
   onStorageConstraintsChange?: (constraints: Record<string, any>) => void
-  businessRules?: Record<string, any>
-  onBusinessRulesChange?: (rules: Record<string, any>) => void
   isVisible?: boolean
   availableFields?: { id: string; name: string; display_name: string; field_type: string; field_config?: Record<string, any> }[]
 }
@@ -48,8 +46,6 @@ export function FieldConfigurationPanel({
   onChange,
   storageConstraints = {},
   onStorageConstraintsChange,
-  businessRules = {},
-  onBusinessRulesChange,
   isVisible = true,
   availableFields = []
 }: FieldConfigurationPanelProps) {
@@ -58,11 +54,7 @@ export function FieldConfigurationPanel({
   const [pipelines, setPipelines] = useState<Pipeline[]>([])
   const [targetPipelineFields, setTargetPipelineFields] = useState<{ id: string; name: string; display_name: string; field_type: string }[]>([])
   const [loading, setLoading] = useState(true)
-  const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set(['field_config', 'storage_constraints', 'business_rules']))
-  
-  // Dynamic stages for business rules
-  const [stageFieldOptions, setStageFieldOptions] = useState<{ value: string; label: string }[]>([])
-  const [loadingStageOptions, setLoadingStageOptions] = useState(false)
+  const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set(['field_config', 'storage_constraints']))
 
   // Load field type configuration and global options
   useEffect(() => {
@@ -132,7 +124,7 @@ export function FieldConfigurationPanel({
           setTargetPipelineFields(fields)
           
           // If display_field is not set or doesn't exist in target fields, set it to first available field
-          if (fields.length > 0 && (!config.display_field || !fields.find(f => f.name === config.display_field))) {
+          if (fields.length > 0 && (!config.display_field || !fields.find((f: any) => f.name === config.display_field))) {
             onChange({ ...config, display_field: fields[0].name })
           }
         } catch (error: any) {
@@ -153,55 +145,6 @@ export function FieldConfigurationPanel({
     loadTargetPipelineFields()
   }, [fieldType, config.target_pipeline_id])
 
-  // Load stage field options when stage field is selected
-  useEffect(() => {
-    const loadStageFieldOptions = async () => {
-      if (businessRules.stage_field && availableFields.length > 0) {
-        try {
-          setLoadingStageOptions(true)
-          
-          // Find the selected stage field in available fields
-          const selectedField = availableFields.find(field => field.name === businessRules.stage_field)
-          if (!selectedField) {
-            console.warn('Selected stage field not found in available fields')
-            setStageFieldOptions([])
-            return
-          }
-
-          console.log('Loading options for stage field:', selectedField)
-          
-          let stageOptions: { value: string; label: string }[] = []
-          
-          // Get the actual field configuration options
-          if (selectedField.field_config?.options && Array.isArray(selectedField.field_config.options)) {
-            stageOptions = selectedField.field_config.options.map((option: any) => ({
-              value: option.value || option,
-              label: option.label || option.value || option
-            }))
-            console.log('Loaded options from field config:', stageOptions)
-          } else {
-            console.warn('No options found in field config for', selectedField.name)
-            console.log('Field config:', selectedField.field_config)
-            
-            // If no options available, show a message instead of fallback options
-            stageOptions = []
-          }
-          
-          setStageFieldOptions(stageOptions)
-          
-        } catch (error) {
-          console.error('Failed to load stage field options:', error)
-          setStageFieldOptions([])
-        } finally {
-          setLoadingStageOptions(false)
-        }
-      } else {
-        setStageFieldOptions([])
-      }
-    }
-
-    loadStageFieldOptions()
-  }, [businessRules.stage_field, availableFields])
 
   // Toggle section expansion
   const toggleSection = (section: string) => {
@@ -234,15 +177,6 @@ export function FieldConfigurationPanel({
     }
   }
 
-  // Update business rules
-  const updateBusinessRules = (key: string, value: any) => {
-    if (onBusinessRulesChange) {
-      onBusinessRulesChange({
-        ...businessRules,
-        [key]: value
-      })
-    }
-  }
 
   // Get user-friendly labels for enum values
   const getEnumLabel = (key: string, value: string) => {
@@ -1633,198 +1567,6 @@ export function FieldConfigurationPanel({
         </div>
       )}
 
-      {/* Business Rules Section */}
-      {onBusinessRulesChange && (
-        <div className="border border-gray-200 dark:border-gray-700 rounded-md">
-          <button
-            onClick={() => toggleSection('business_rules')}
-            className="w-full px-3 py-2 flex items-center justify-between text-left bg-gray-50 dark:bg-gray-800/50 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
-          >
-            <span className="text-sm font-medium text-gray-900 dark:text-white">
-              Business Rules
-            </span>
-            {expandedSections.has('business_rules') ? (
-              <ChevronDown className="w-4 h-4 text-gray-500" />
-            ) : (
-              <ChevronRight className="w-4 h-4 text-gray-500" />
-            )}
-          </button>
-          
-          {expandedSections.has('business_rules') && (
-            <div className="p-3 space-y-4 border-t border-gray-200 dark:border-gray-700">
-              <div className="text-xs text-gray-500 dark:text-gray-400 mb-3">
-                Configure when this field is required based on pipeline stages and other field values.
-              </div>
-
-              {/* Stage Requirements */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                  Stage Requirements
-                </label>
-                <div className="text-xs text-gray-500 dark:text-gray-400 mb-3">
-                  Specify which pipeline stages require this field to be filled.
-                </div>
-                
-                {/* Stage Field Selection */}
-                <div className="mb-4">
-                  <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
-                    Stage Field *
-                  </label>
-                  <select
-                    value={businessRules.stage_field || ''}
-                    onChange={(e) => {
-                      // Update both stage_field and clear stage_requirements in a single update
-                      if (onBusinessRulesChange) {
-                        onBusinessRulesChange({
-                          ...businessRules,
-                          stage_field: e.target.value,
-                          stage_requirements: {} // Clear existing stage requirements when changing stage field
-                        })
-                      }
-                    }}
-                    className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary dark:bg-gray-700 dark:text-white relative z-10"
-                    style={{ pointerEvents: 'auto' }}
-                  >
-                    <option value="">Select which field represents stages...</option>
-                    {availableFields
-                      .filter(field => field.field_type === 'select' || field.field_type === 'multiselect')
-                      .map((field) => (
-                        <option key={field.id} value={field.name}>
-                          {field.display_name} ({field.field_type})
-                        </option>
-                      ))}
-                  </select>
-                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                    Choose which select field in your pipeline represents the stages/status values.
-                    {availableFields.length === 0 && (
-                      <span className="text-amber-600"> No fields available - add other fields to the pipeline first.</span>
-                    )}
-                    {availableFields.length > 0 && availableFields.filter(field => 
-                      field.field_type === 'select' || field.field_type === 'multiselect'
-                    ).length === 0 && (
-                      <span className="text-amber-600"> No select/multiselect fields available - add select fields to the pipeline first.</span>
-                    )}
-                  </p>
-                </div>
-
-                {/* Stage Options (shown when stage field is selected) */}
-                {businessRules.stage_field && (
-                  <div className="space-y-2">
-                    <div className="text-xs text-gray-500 dark:text-gray-400 mb-2">
-                      Select which stages require this field:
-                    </div>
-                    
-                    {loadingStageOptions ? (
-                      <div className="p-3 bg-blue-50 dark:bg-blue-900/20 rounded-md text-sm text-blue-700 dark:text-blue-300">
-                        <div className="flex items-center space-x-2">
-                          <div className="animate-spin w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full"></div>
-                          <div>Loading stages from {businessRules.stage_field}...</div>
-                        </div>
-                      </div>
-                    ) : stageFieldOptions.length > 0 ? (
-                      <div className="space-y-2">
-                        {stageFieldOptions.map((stage) => (
-                          <div key={stage.value} className="flex items-center">
-                            <input
-                              type="checkbox"
-                              id={`stage-${stage.value}`}
-                              checked={businessRules.stage_requirements?.[stage.value]?.required || false}
-                              onChange={(e) => {
-                                const stageRequirements = businessRules.stage_requirements || {}
-                                updateBusinessRules('stage_requirements', {
-                                  ...stageRequirements,
-                                  [stage.value]: { required: e.target.checked }
-                                })
-                              }}
-                              className="w-4 h-4 text-primary bg-white border-gray-300 rounded focus:ring-primary focus:ring-2"
-                            />
-                            <label htmlFor={`stage-${stage.value}`} className="ml-2 text-sm text-gray-700 dark:text-gray-300">
-                              Required for <span className="font-medium">{stage.label}</span> stage
-                            </label>
-                          </div>
-                        ))}
-                        <div className="mt-3 p-2 bg-green-50 dark:bg-green-900/20 rounded text-xs text-green-700 dark:text-green-300">
-                          ✅ Loaded {stageFieldOptions.length} stage options from "{businessRules.stage_field}" field
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="p-3 bg-amber-50 dark:bg-amber-900/20 rounded-md text-sm text-amber-700 dark:text-amber-300">
-                        <div className="flex items-start space-x-2">
-                          <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
-                          <div>
-                            <div className="font-medium mb-1">No Stage Options Found</div>
-                            <div>The selected field "{businessRules.stage_field}" doesn't have any configured options. Please:</div>
-                            <ul className="mt-2 ml-4 list-disc space-y-1">
-                              <li>Configure the field as a select field with options</li>
-                              <li>Add at least one option (value and label) to the field</li>
-                              <li>Save the field configuration first</li>
-                            </ul>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )}
-                
-                {!businessRules.stage_field && (
-                  <div className="p-3 bg-gray-50 dark:bg-gray-800 rounded-md text-sm text-gray-600 dark:text-gray-400">
-                    Select a stage field above to configure stage-specific requirements.
-                  </div>
-                )}
-              </div>
-
-              {/* Validation Settings */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                  Validation Behavior
-                </label>
-                
-                <div className="space-y-2">
-                  <div className="flex items-center">
-                    <input
-                      type="checkbox"
-                      id="block-transitions"
-                      checked={businessRules.block_transitions !== false}
-                      onChange={(e) => updateBusinessRules('block_transitions', e.target.checked)}
-                      className="w-4 h-4 text-primary bg-white border-gray-300 rounded focus:ring-primary focus:ring-2"
-                    />
-                    <label htmlFor="block-transitions" className="ml-2 text-sm text-gray-700 dark:text-gray-300">
-                      Block stage transitions if requirements not met
-                    </label>
-                  </div>
-                  
-                  <div className="flex items-center">
-                    <input
-                      type="checkbox"
-                      id="show-warnings"
-                      checked={businessRules.show_warnings !== false}
-                      onChange={(e) => updateBusinessRules('show_warnings', e.target.checked)}
-                      className="w-4 h-4 text-primary bg-white border-gray-300 rounded focus:ring-primary focus:ring-2"
-                    />
-                    <label htmlFor="show-warnings" className="ml-2 text-sm text-gray-700 dark:text-gray-300">
-                      Show warnings for missing data
-                    </label>
-                  </div>
-                </div>
-              </div>
-
-              {/* Warning Message */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  Custom Warning Message
-                </label>
-                <input
-                  type="text"
-                  value={businessRules.warning_message || ''}
-                  onChange={(e) => updateBusinessRules('warning_message', e.target.value)}
-                  placeholder="This field is needed for lead qualification"
-                  className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary dark:bg-gray-700 dark:text-white"
-                />
-              </div>
-            </div>
-          )}
-        </div>
-      )}
     </div>
   )
 }

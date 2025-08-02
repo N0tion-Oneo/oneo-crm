@@ -11,20 +11,86 @@ import logging
 
 from .models import Pipeline, Field, Record
 from .ai_processor import AIFieldManager
+from core.models import AuditLog
 
 logger = logging.getLogger(__name__)
 
 
 @receiver(pre_save, sender=Record)
-def validate_record_data(sender, instance, **kwargs):
-    """Validate record data before saving"""
-    # This is handled in the model's save method, but we can add additional logic here
-    pass
+def capture_record_changes(sender, instance, **kwargs):
+    """Capture previous record data before saving for audit trail"""
+    if instance.pk:  # Only for updates, not new records
+        try:
+            old_instance = Record.objects.get(pk=instance.pk)
+            instance._old_data = old_instance.data
+            instance._old_status = old_instance.status
+        except Record.DoesNotExist:
+            instance._old_data = {}
+            instance._old_status = None
 
 
 @receiver(post_save, sender=Record)
 def handle_record_save(sender, instance, created, **kwargs):
     """Handle record save events"""
+    # Create audit log entry
+    try:
+        if created:
+            # New record created
+            AuditLog.objects.create(
+                user=instance.created_by,
+                action='created',
+                model_name='Record',
+                object_id=str(instance.id),
+                changes={
+                    'pipeline': instance.pipeline.name,
+                    'title': instance.title,
+                    'data': instance.data,
+                    'status': instance.status
+                }
+            )
+        else:
+            # Record updated - compare with old data
+            changes = {}
+            old_data = getattr(instance, '_old_data', {})
+            old_status = getattr(instance, '_old_status', None)
+            
+            # Check for data changes
+            if old_data != instance.data:
+                # Find specific field changes
+                field_changes = {}
+                all_fields = set(list(old_data.keys()) + list(instance.data.keys()))
+                for field in all_fields:
+                    old_value = old_data.get(field)
+                    new_value = instance.data.get(field)
+                    if old_value != new_value:
+                        field_changes[field] = {
+                            'old': old_value,
+                            'new': new_value
+                        }
+                
+                if field_changes:
+                    changes['data_changes'] = field_changes
+            
+            # Check for status changes
+            if old_status != instance.status:
+                changes['status'] = {
+                    'old': old_status,
+                    'new': instance.status
+                }
+            
+            # Only create audit log if there are actual changes
+            if changes:
+                AuditLog.objects.create(
+                    user=instance.updated_by,
+                    action='updated',
+                    model_name='Record',
+                    object_id=str(instance.id),
+                    changes=changes
+                )
+    
+    except Exception as e:
+        logger.error(f"Failed to create audit log for record {instance.id}: {e}")
+    
     # Update pipeline statistics
     if created:
         Pipeline.objects.filter(id=instance.pipeline_id).update(
@@ -52,6 +118,23 @@ def handle_record_save(sender, instance, created, **kwargs):
 @receiver(post_delete, sender=Record)
 def handle_record_delete(sender, instance, **kwargs):
     """Handle record deletion"""
+    # Create audit log entry for deletion
+    try:
+        AuditLog.objects.create(
+            user=getattr(instance, 'deleted_by', None),  # This would need to be set by the view
+            action='deleted',
+            model_name='Record',
+            object_id=str(instance.id),
+            changes={
+                'pipeline': instance.pipeline.name,
+                'title': instance.title,
+                'final_data': instance.data,
+                'final_status': instance.status
+            }
+        )
+    except Exception as e:
+        logger.error(f"Failed to create audit log for deleted record {instance.id}: {e}")
+    
     # Update pipeline statistics
     Pipeline.objects.filter(id=instance.pipeline_id).update(
         record_count=models.F('record_count') - 1

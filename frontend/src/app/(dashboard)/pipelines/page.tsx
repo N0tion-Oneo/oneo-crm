@@ -3,9 +3,10 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { Search, Plus, MoreHorizontal, Database, Users, Calendar, Edit, Eye, Activity } from 'lucide-react'
+import { Search, Plus, MoreHorizontal, Database, Users, Calendar, Edit, Eye, Activity, Shield } from 'lucide-react'
 import { useAuth } from '@/features/auth/context'
 import { api, pipelinesApi } from '@/lib/api'
+import { PermissionGuard, PermissionButton } from '@/components/permissions/PermissionGuard'
 import { PipelineTemplateLoader, type PipelineTemplate } from '@/components/pipelines/pipeline-template-loader'
 import { useRealtime, type RealtimeMessage, type UserPresence } from '@/hooks/use-realtime'
 
@@ -22,6 +23,25 @@ interface Pipeline {
     last_name: string
   }
 }
+
+const PipelinesAccessDenied = () => (
+  <div className="flex items-center justify-center h-64">
+    <div className="text-center max-w-md">
+      <Shield className="w-12 h-12 text-red-500 mx-auto mb-4" />
+      <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-2">
+        Access Denied
+      </h2>
+      <p className="text-gray-600 dark:text-gray-400 mb-4">
+        You don't have permission to view pipelines. Please contact your administrator to request access.
+      </p>
+      <div className="bg-red-50 dark:bg-red-950/30 rounded-lg p-3">
+        <p className="text-sm text-red-700 dark:text-red-300">
+          Required permission: <code className="bg-red-100 dark:bg-red-900/50 px-1 rounded">pipelines.read</code>
+        </p>
+      </div>
+    </div>
+  </div>
+)
 
 export default function PipelinesPage() {
   const { user, isLoading: authLoading } = useAuth()
@@ -277,18 +297,23 @@ export default function PipelinesPage() {
   }
 
   return (
-    <div className="p-6">
-      {/* Header */}
-      <div className="mb-8">
-        <div className="flex items-start justify-between">
-          <div>
-            <h1 className="text-3xl font-bold text-gray-900 dark:text-white">
-              Pipelines
-            </h1>
-            <p className="text-gray-600 dark:text-gray-400 mt-2">
-              Manage your data pipelines and workflow configurations.
-            </p>
-          </div>
+    <PermissionGuard 
+      category="pipelines" 
+      action="read"
+      fallback={<PipelinesAccessDenied />}
+    >
+      <div className="p-6">
+        {/* Header */}
+        <div className="mb-8">
+          <div className="flex items-start justify-between">
+            <div>
+              <h1 className="text-3xl font-bold text-gray-900 dark:text-white">
+                Pipelines
+              </h1>
+              <p className="text-gray-600 dark:text-gray-400 mt-2">
+                Manage your data pipelines and workflow configurations.
+              </p>
+            </div>
           
           {/* Simple real-time indicator */}
           {isConnected && (
@@ -317,13 +342,15 @@ export default function PipelinesPage() {
         </div>
 
         {/* Add Pipeline Button */}
-        <button 
+        <PermissionButton
+          category="pipelines"
+          action="create"
           onClick={() => setShowTemplateLoader(true)}
           className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-primary hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary"
         >
           <Plus className="w-4 h-4 mr-2" />
           Create Pipeline
-        </button>
+        </PermissionButton>
       </div>
 
       {/* Pipelines Grid */}
@@ -343,23 +370,29 @@ export default function PipelinesPage() {
                     </p>
                   </div>
                   <div className="flex items-center space-x-2">
-                    <Link 
-                      href={`/pipelines/${pipeline.id}`}
-                      className="text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 p-1"
-                      title="View Records"
-                    >
-                      <Eye className="w-4 h-4" />
-                    </Link>
-                    <button 
-                      onClick={() => handleEditPipeline(pipeline)}
-                      className="text-gray-400 hover:text-green-600 dark:hover:text-green-400 p-1"
-                      title="Edit Pipeline"
-                    >
-                      <Edit className="w-4 h-4" />
-                    </button>
-                    <button className="text-gray-400 hover:text-gray-500 dark:hover:text-gray-300 p-1">
-                      <MoreHorizontal className="w-4 h-4" />
-                    </button>
+                    <PermissionGuard category="records" action="read">
+                      <Link 
+                        href={`/pipelines/${pipeline.id}`}
+                        className="text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 p-1"
+                        title="View Records"
+                      >
+                        <Eye className="w-4 h-4" />
+                      </Link>
+                    </PermissionGuard>
+                    <PermissionGuard category="pipelines" action="update">
+                      <button 
+                        onClick={() => handleEditPipeline(pipeline)}
+                        className="text-gray-400 hover:text-green-600 dark:hover:text-green-400 p-1"
+                        title="Edit Pipeline"
+                      >
+                        <Edit className="w-4 h-4" />
+                      </button>
+                    </PermissionGuard>
+                    <PermissionGuard category="pipelines" action="read">
+                      <button className="text-gray-400 hover:text-gray-500 dark:hover:text-gray-300 p-1">
+                        <MoreHorizontal className="w-4 h-4" />
+                      </button>
+                    </PermissionGuard>
                   </div>
                 </div>
               </div>
@@ -405,13 +438,15 @@ export default function PipelinesPage() {
               : 'You don\'t have access to any pipelines yet. Contact your administrator or create a new pipeline.'}
           </p>
           {!searchQuery && (
-            <button 
+            <PermissionButton
+              category="pipelines"
+              action="create"
               onClick={() => setShowTemplateLoader(true)}
               className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-primary hover:bg-primary/90"
             >
               <Plus className="w-4 h-4 mr-2" />
               Create Pipeline
-            </button>
+            </PermissionButton>
           )}
         </div>
       )}
@@ -488,7 +523,7 @@ export default function PipelinesPage() {
         />
       )}
 
-
-    </div>
+      </div>
+    </PermissionGuard>
   )
 }

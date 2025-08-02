@@ -49,28 +49,33 @@ class JWTWebSocketAuthMiddleware(BaseMiddleware):
     
     @database_sync_to_async
     def get_user_from_token(self, token):
-        """Get user from JWT token."""
+        """Get user from JWT token using rest_framework_simplejwt."""
         if not token:
             return AnonymousUser()
         
         try:
-            # Decode JWT token
-            payload = jwt.decode(
-                token,
-                settings.SECRET_KEY,
-                algorithms=['HS256']
-            )
+            # Use rest_framework_simplejwt for token validation
+            from rest_framework_simplejwt.tokens import AccessToken
+            from rest_framework_simplejwt.exceptions import TokenError
             
-            user_id = payload.get('user_id')
+            # Validate token using simplejwt
+            access_token = AccessToken(token)
+            user_id = access_token.payload.get('user_id')
+            
             if not user_id:
+                logger.warning("JWT token missing user_id")
                 return AnonymousUser()
             
             # Get user from database
             user = User.objects.get(id=user_id, is_active=True)
+            logger.info(f"✅ JWT authentication successful for user: {user.username}")
             return user
             
-        except (jwt.DecodeError, jwt.ExpiredSignatureError, User.DoesNotExist) as e:
-            logger.warning(f"JWT authentication failed: {e}")
+        except TokenError as e:
+            logger.warning(f"JWT token validation failed: {e}")
+            return AnonymousUser()
+        except User.DoesNotExist:
+            logger.warning(f"JWT token valid but user {user_id} not found")
             return AnonymousUser()
         except Exception as e:
             logger.error(f"Unexpected error in JWT authentication: {e}")

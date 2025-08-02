@@ -126,15 +126,8 @@ class FieldValidator:
         
         value = value.strip()
         
-        if self.config:
-            if self.config.min_length and len(value) < self.config.min_length:
-                raise ValueError(f'Text must be at least {self.config.min_length} characters')
-            
-            if self.config.max_length and len(value) > self.config.max_length:
-                raise ValueError(f'Text must not exceed {self.config.max_length} characters')
-            
-            if self.config.pattern and not re.match(self.config.pattern, value):
-                raise ValueError('Text does not match required pattern')
+        # Storage validation only - no min/max length constraints
+        # Form validation and business rules handle completeness requirements
         
         return value
     
@@ -151,12 +144,8 @@ class FieldValidator:
         except (TypeError, ValueError):
             raise ValueError('Value must be a number')
         
-        if self.config:
-            if self.config.min_value is not None and num < self.config.min_value:
-                raise ValueError(f'Number must be at least {self.config.min_value}')
-            
-            if self.config.max_value is not None and num > self.config.max_value:
-                raise ValueError(f'Number must not exceed {self.config.max_value}')
+        # Storage validation only - no min/max value constraints
+        # Form validation and business rules handle range requirements
         
         return num
     
@@ -169,16 +158,8 @@ class FieldValidator:
         except (TypeError, ValueError, InvalidOperation):
             raise ValueError('Value must be a valid decimal number')
         
-        if self.config:
-            if self.config.min_value is not None and decimal_value < Decimal(str(self.config.min_value)):
-                raise ValueError(f'Decimal must be at least {self.config.min_value}')
-            
-            if self.config.max_value is not None and decimal_value > Decimal(str(self.config.max_value)):
-                raise ValueError(f'Decimal must not exceed {self.config.max_value}')
-            
-            # Check decimal places
-            if decimal_value.as_tuple().exponent < -self.config.decimal_places:
-                raise ValueError(f'Decimal cannot have more than {self.config.decimal_places} decimal places')
+        # Storage validation only - no min/max value or decimal place constraints
+        # Form validation handles decimal formatting and range requirements
         
         return float(decimal_value)
     
@@ -463,11 +444,38 @@ def validate_record_data(field_definitions: List[Dict[str, Any]], record_data: D
     errors = {}
     cleaned_data = {}
     
+    # First determine the current stage from the data
+    current_stage = None
+    stage_field_slug = None
+    
+    # Find stage field (look for fields that might represent pipeline stages)
+    for field_def in field_definitions:
+        field_slug = field_def['slug']
+        business_rules = field_def.get('business_rules', {})
+        stage_requirements = business_rules.get('stage_requirements', {})
+        
+        # If this field has stage requirements, it might be used to determine current stage
+        # Or if it's in the data, use it as potential stage value
+        if field_slug in record_data and stage_requirements:
+            current_stage = record_data[field_slug]
+            stage_field_slug = field_slug
+            break
+    
+    # If no stage field found, check for common stage field names
+    if current_stage is None:
+        common_stage_fields = ['stage', 'pipeline_stage', 'pipeline_stages', 'status']
+        for stage_field in common_stage_fields:
+            if stage_field in record_data:
+                current_stage = record_data[stage_field]
+                stage_field_slug = stage_field
+                break
+    
     for field_def in field_definitions:
         field_slug = field_def['slug']
         field_type = FieldType(field_def['field_type'])
         field_config = field_def.get('field_config', {})
         storage_constraints = field_def.get('storage_constraints', {})
+        business_rules = field_def.get('business_rules', {})
         
         # Get field value
         value = record_data.get(field_slug)
@@ -488,6 +496,18 @@ def validate_record_data(field_definitions: List[Dict[str, Any]], record_data: D
             errors[field_slug] = result.errors
         else:
             cleaned_data[field_slug] = result.cleaned_value
+        
+        # Check business rules if we have a current stage
+        if current_stage and business_rules:
+            stage_requirements = business_rules.get('stage_requirements', {})
+            if current_stage in stage_requirements:
+                requirements = stage_requirements[current_stage]
+                if requirements.get('required') and not value:
+                    # Get display name from field config or use slug
+                    display_name = field_def.get('display_name') or field_def.get('name') or field_slug
+                    if field_slug not in errors:
+                        errors[field_slug] = []
+                    errors[field_slug].append(f"This field is required.")
     
     return {
         'is_valid': len(errors) == 0,

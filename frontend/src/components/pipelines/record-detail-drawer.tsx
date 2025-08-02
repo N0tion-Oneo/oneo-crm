@@ -2,7 +2,8 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { pipelinesApi, recordsApi } from '@/lib/api'
-import { useRealtime, type RealtimeMessage, type UserPresence, type FieldLock } from '@/hooks/use-realtime'
+import { useDocumentSubscription } from '@/hooks/use-websocket-subscription'
+import { type RealtimeMessage, type UserPresence, type FieldLock } from '@/contexts/websocket-context'
 import { 
   X, 
   Save, 
@@ -32,19 +33,31 @@ import {
   Phone,
   CheckSquare,
   Square,
-  Bot
+  Bot,
+  Share2
 } from 'lucide-react'
 
 interface RecordField {
   id: string
   name: string
-  label: string
+  display_name?: string
   field_type: string
-  required: boolean
-  visible: boolean
-  order: number
-  config: { [key: string]: any }
-  stage_visibility?: { [key: string]: boolean }
+  is_required?: boolean
+  is_visible_in_list?: boolean
+  is_visible_in_detail?: boolean
+  display_order: number
+  field_config?: { [key: string]: any }
+  config?: { [key: string]: any } // Legacy support
+  original_slug?: string // Preserve original backend slug for API calls
+  business_rules?: {
+    stage_requirements?: { [key: string]: { 
+      required: boolean
+      block_transitions?: boolean
+      show_warnings?: boolean
+      warning_message?: string
+    }}
+    user_visibility?: { [key: string]: { visible: boolean; editable: boolean }}
+  }
 }
 
 interface Record {
@@ -123,19 +136,10 @@ export function RecordDetailDrawer({
   const drawerRef = useRef<HTMLDivElement>(null)
 
   // Real-time collaboration
-  const {
-    isConnected,
-    activeUsers,
-    fieldLocks,
-    lockField,
-    unlockField,
-    broadcastRecordUpdate,
-    isFieldLocked,
-    getFieldLock
-  } = useRealtime({
-    room: record ? `document:${record.id}` : undefined,
-    autoConnect: false, // Disabled to prevent WebSocket errors
-    onMessage: (message: RealtimeMessage) => {
+  // Subscribe to document updates for collaborative editing
+  const { isConnected } = useDocumentSubscription(
+    record?.id || '',
+    (message: RealtimeMessage) => {
       if (message.type === 'record_update' && message.payload.record_id === record?.id) {
         // Update form data with real-time changes from other users
         if (message.payload.field_name && message.payload.value !== undefined) {
@@ -145,8 +149,20 @@ export function RecordDetailDrawer({
           }))
         }
       }
-    }
-  })
+    },
+    !!record?.id // Only enable when we have a record ID
+  )
+
+  // Simplified collaborative editing (advanced features disabled for now)
+  const activeUsers: UserPresence[] = []
+  const fieldLocks: FieldLock[] = []
+  const lockField = (recordId: string, fieldName: string) => {}
+  const unlockField = (recordId: string, fieldName: string) => {}
+  const broadcastRecordUpdate = (recordId: string, fieldName: string, value: any) => {
+    // TODO: Implement real-time broadcasting
+  }
+  const isFieldLocked = (recordId: string, fieldName: string) => false
+  const getFieldLock = (recordId: string, fieldName: string): FieldLock | null => null
 
   // Initialize form data when record changes
   useEffect(() => {
@@ -159,11 +175,17 @@ export function RecordDetailDrawer({
       // New record - initialize with default values
       const defaultData: { [key: string]: any } = {}
       pipeline.fields.forEach(field => {
-        // Defensive programming: check if config exists and has default_value
-        const defaultValue = field.config?.default_value
+        // Check both field_config and config for default values (legacy support)
+        const defaultValue = field.field_config?.default_value || field.config?.default_value
         if (defaultValue !== undefined) {
+          // Use field.name as the key since that's what our frontend uses internally
           defaultData[field.name] = defaultValue
         }
+      })
+      
+      console.log('Initializing new record with default data:', {
+        defaultData,
+        fieldMap: pipeline.fields.map(f => ({ name: f.name, display_name: f.display_name }))
       })
       setFormData(defaultData)
       setOriginalData({})
@@ -172,6 +194,20 @@ export function RecordDetailDrawer({
     }
     setEditingFields(new Set())
     setValidationErrors([])
+  }, [record, pipeline.fields])
+
+  // Auto-enable editing for new records
+  useEffect(() => {
+    if (!record && pipeline.fields.length > 0) {
+      // New record: enable editing for all visible fields
+      const editableFields = pipeline.fields
+        .filter(field => field.is_visible_in_detail !== false)
+        .map(field => field.name)
+      setEditingFields(new Set(editableFields))
+    } else if (record) {
+      // Existing record: start with no fields in edit mode
+      setEditingFields(new Set())
+    }
   }, [record, pipeline.fields])
 
   // Auto-save functionality
@@ -205,67 +241,159 @@ export function RecordDetailDrawer({
   // Load activities
   const loadActivities = async (recordId: string) => {
     try {
-      // TODO: Replace with actual API call
-      const mockActivities: Activity[] = [
-        {
-          id: '1',
-          type: 'field_change',
-          field: 'stage',
-          old_value: 'lead',
-          new_value: 'qualified',
-          message: 'Changed stage from Lead to Qualified',
-          user: { first_name: 'John', last_name: 'Doe', email: 'john@example.com' },
-          created_at: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString()
-        },
-        {
-          id: '2',
-          type: 'comment',
-          message: 'Had a great call with the client. They are very interested in our solution.',
-          user: { first_name: 'Jane', last_name: 'Smith', email: 'jane@example.com' },
-          created_at: new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString()
-        },
-        {
-          id: '3',
-          type: 'system',
-          message: 'Record created',
-          user: { first_name: 'System', last_name: '', email: '' },
-          created_at: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
-        }
-      ]
-      setActivities(mockActivities)
-      
-      // TODO: Replace with actual API call when backend is ready
-      // const response = await recordsApi.getRecordActivity(pipeline.id, recordId)
-      // setActivities(response.data.results || response.data)
-    } catch (error) {
+      const response = await recordsApi.getRecordActivity(pipeline.id, recordId)
+      // Backend now returns {record_id, activities: [...], activity_count: n} 
+      // Extract the activities array for the frontend
+      const historyData = response.data
+      const activities = historyData.activities || historyData.changes || historyData.results || historyData || []
+      setActivities(Array.isArray(activities) ? activities : [])
+    } catch (error: any) {
       console.error('Failed to load activities:', error)
+      // Fall back to empty array if API call fails
+      setActivities([])
     }
+  }
+
+  // Transform form data to use backend field slugs
+  const transformFormDataForBackend = (data: { [key: string]: any }): { [key: string]: any } => {
+    console.log('🔄 Starting field transformation...')
+    console.log('Pipeline fields available:', pipeline.fields.map(f => ({ 
+      name: f.name, 
+      original_slug: f.original_slug,
+      display_name: f.display_name 
+    })))
+    
+    const transformedData: { [key: string]: any } = {}
+    
+    // Map frontend field names to backend field slugs
+    Object.keys(data).forEach(fieldName => {
+      console.log(`🔍 Processing field: ${fieldName} with value:`, data[fieldName])
+      
+      const field = pipeline.fields.find(f => f.name === fieldName)
+      if (field) {
+        // Use original_slug if available, otherwise use the field name
+        const backendSlug = field.original_slug || field.name
+        transformedData[backendSlug] = data[fieldName]
+        
+        console.log('✅ Field mapped:', {
+          frontendName: fieldName,
+          backendSlug: backendSlug,
+          value: data[fieldName],
+          hasOriginalSlug: !!field.original_slug
+        })
+      } else {
+        console.log('❌ Field not found in pipeline:', fieldName)
+      }
+    })
+    
+    console.log('🔄 Transformation complete:', {
+      originalData: data,
+      transformedData: transformedData,
+      originalKeys: Object.keys(data),
+      transformedKeys: Object.keys(transformedData)
+    })
+    
+    return transformedData
   }
 
   // Handle auto-save
   const handleAutoSave = async () => {
-    if (!record) return
-
+    const saveId = `save_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+    console.log(`🚀 handleAutoSave called [${saveId}]`)
+    
+    // Prevent multiple simultaneous saves
+    if (isAutoSaving) {
+      console.log(`⚠️ Save already in progress, skipping... [${saveId}]`)
+      return
+    }
+    
     try {
+      // Clear any pending auto-save timeout to prevent double execution
+      if (autoSaveTimeoutRef.current) {
+        clearTimeout(autoSaveTimeoutRef.current)
+        autoSaveTimeoutRef.current = undefined
+      }
+      
       setIsAutoSaving(true)
       const errors = validateForm()
+      console.log('Form validation results:', {
+        errors: errors,
+        errorCount: errors.length,
+        formData: formData,
+        isNewRecord: !record
+      })
       
       if (errors.length === 0) {
-        // Use API directly for auto-save
-        await pipelinesApi.updateRecord(pipeline.id, record.id, {
-          data: formData,
-          tags: tags
-        })
-        setOriginalData({ ...formData })
-        setLastSaved(new Date())
-        
-        // Also call parent onSave for UI updates
-        await onSave(record.id, formData)
+        if (record) {
+          // Existing record: update - transform data to use backend field slugs
+          const transformedData = transformFormDataForBackend(formData)
+          await pipelinesApi.updateRecord(pipeline.id, record.id, { data: transformedData })
+          setOriginalData({ ...formData })
+          setLastSaved(new Date())
+          
+          // Also call parent onSave for UI updates (use original formData for UI)
+          await onSave(record.id, formData)
+        } else {
+          // New record: create - transform data to use backend field slugs
+          console.log('🚀 About to transform form data:', formData)
+          console.log('🚀 Pipeline fields structure:', pipeline.fields)
+          const transformedData = transformFormDataForBackend(formData)
+          console.log('🚀 Transformation result:', transformedData)
+          
+          console.log(`📝 Creating new record [${saveId}]:`, {
+            pipelineId: pipeline.id,
+            originalFormData: formData,
+            transformedPayload: { data: transformedData },
+            fieldsCount: Object.keys(formData).length,
+            fieldNames: Object.keys(formData),
+            pipelineFields: pipeline.fields.map(f => ({ 
+              id: f.id, 
+              name: f.name, 
+              display_name: f.display_name,
+              field_type: f.field_type,
+              original_slug: f.original_slug
+            }))
+          })
+          
+          const response = await pipelinesApi.createRecord(pipeline.id, { data: transformedData })
+          console.log('Create record response:', response)
+          
+          const newRecord = response.data
+          setOriginalData({ ...formData })
+          setLastSaved(new Date())
+          
+          // Call parent onSave with new record ID (use original formData for UI)
+          await onSave(newRecord.id || 'new', formData)
+        }
       } else {
+        console.log('Setting validation errors:', errors)
         setValidationErrors(errors)
       }
-    } catch (error) {
-      console.error('Auto-save failed:', error)
+    } catch (error: any) {
+      console.error('Save failed:', error)
+      console.error('Error details:', {
+        message: error?.message,
+        response: error?.response?.data,
+        responseText: error?.response?.statusText,
+        status: error?.response?.status,
+        headers: error?.response?.headers,
+        config: error?.config,
+        formData,
+        pipelineId: pipeline.id,
+        isNewRecord: !record,
+        url: error?.config?.url,
+        method: error?.config?.method,
+        requestData: error?.config?.data
+      })
+      
+      // Also try to parse and log the response data if it exists
+      if (error?.response?.data) {
+        console.error('Backend error response:', JSON.stringify(error.response.data, null, 2))
+        console.error('Backend error response (object):', error.response.data)
+      }
+      
+      // Also log the full error object structure
+      console.error('Full error object:', JSON.stringify(error, null, 2))
     } finally {
       setIsAutoSaving(false)
     }
@@ -277,12 +405,29 @@ export function RecordDetailDrawer({
 
     pipeline.fields.forEach(field => {
       const value = formData[field.name]
+      const currentStage = formData['pipeline_stages'] || 'Lead' // Default stage
+      const stageRequirements = field.business_rules?.stage_requirements?.[currentStage]
+      const isRequiredForStage = stageRequirements?.required || false
       
-      // Required field validation
-      if (field.required && (!value || value === '')) {
+      // Debug logging for each field validation
+      console.log('Validating field:', {
+        name: field.name,
+        display_name: field.display_name,
+        is_required: field.is_required,
+        currentStage: currentStage,
+        isRequiredForStage: isRequiredForStage,
+        stageRequirements: stageRequirements,
+        value: value,
+        hasValue: !!value
+      })
+      
+      // Stage-specific required field validation (only use business rules, ignore generic is_required)
+      const fieldIsRequired = isRequiredForStage
+      if (fieldIsRequired && (!value || value === '')) {
+        console.log('Required field missing for stage:', field.name, 'stage:', currentStage)
         errors.push({
           field: field.name,
-          message: `${field.label} is required`
+          message: `${field.display_name || field.name} is required for ${currentStage} stage`
         })
       }
 
@@ -344,24 +489,27 @@ export function RecordDetailDrawer({
 
   // Handle field edit mode
   const toggleFieldEdit = (fieldName: string) => {
-    if (!record) return
-
-    // Check if field is locked by another user
-    if (isFieldLocked(record.id, fieldName)) {
-      return // Cannot edit locked field
+    // For new records (when record is null), allow editing without restrictions
+    if (record) {
+      // Existing record: check if field is locked by another user
+      if (isFieldLocked(record.id, fieldName)) {
+        return // Cannot edit locked field
+      }
     }
 
     const newEditing = new Set(editingFields)
     if (newEditing.has(fieldName)) {
-      // Exiting edit mode - unlock field
+      // Exiting edit mode
       newEditing.delete(fieldName)
-      if (isConnected) {
+      // Only handle real-time locking for existing records
+      if (record && isConnected) {
         unlockField(record.id, fieldName)
       }
     } else {
-      // Entering edit mode - lock field
+      // Entering edit mode
       newEditing.add(fieldName)
-      if (isConnected) {
+      // Only handle real-time locking for existing records
+      if (record && isConnected) {
         lockField(record.id, fieldName)
       }
     }
@@ -385,7 +533,8 @@ export function RecordDetailDrawer({
   // Render field input
   const renderFieldInput = (field: RecordField) => {
     const value = formData[field.name] || ''
-    const isEditing = editingFields.has(field.name)
+    const isNewRecord = !record
+    const isEditing = isNewRecord || editingFields.has(field.name)
     const hasError = validationErrors.some(error => error.field === field.name)
     const error = validationErrors.find(error => error.field === field.name)
     const fieldLock = record ? getFieldLock(record.id, field.name) : null
@@ -413,7 +562,7 @@ export function RecordDetailDrawer({
             </span>
             
             <div className="flex items-center space-x-2">
-              {isLocked && fieldLock && (
+              {isLocked && fieldLock && 'user_name' in fieldLock && (
                 <div className="flex items-center space-x-1 text-red-600 dark:text-red-400">
                   <Lock className="w-3 h-3" />
                   <span className="text-xs">{fieldLock.user_name}</span>
@@ -444,7 +593,7 @@ export function RecordDetailDrawer({
               onChange={(e) => handleFieldChange(field.name, e.target.value)}
               onBlur={() => toggleFieldEdit(field.name)}
               className={`${inputClass} min-h-[100px] resize-vertical`}
-              placeholder={`Enter ${field.label.toLowerCase()}...`}
+              placeholder={`Enter ${(field.display_name || field.name).toLowerCase()}...`}
               autoFocus
             />
             {hasError && (
@@ -454,7 +603,7 @@ export function RecordDetailDrawer({
         )
 
       case 'select':
-        const options = field.config.options || []
+        const options = field.config?.options || []
         return (
           <div>
             <select
@@ -464,7 +613,7 @@ export function RecordDetailDrawer({
               className={inputClass}
               autoFocus
             >
-              <option value="">Select {field.label}</option>
+              <option value="">Select {field.display_name || field.name}</option>
               {options.map((option: any) => (
                 <option key={option.value} value={option.value}>
                   {option.label}
@@ -489,7 +638,7 @@ export function RecordDetailDrawer({
                 className="mr-2 rounded border-gray-300 text-primary focus:ring-primary"
                 autoFocus
               />
-              <span className="text-sm">{field.label}</span>
+              <span className="text-sm">{field.display_name || field.name}</span>
             </label>
           </div>
         )
@@ -539,7 +688,7 @@ export function RecordDetailDrawer({
               onChange={(e) => handleFieldChange(field.name, e.target.value)}
               onBlur={() => toggleFieldEdit(field.name)}
               className={inputClass}
-              placeholder={`Enter ${field.label.toLowerCase()}...`}
+              placeholder={`Enter ${(field.display_name || field.name).toLowerCase()}...`}
               autoFocus
             />
             {hasError && (
@@ -557,7 +706,7 @@ export function RecordDetailDrawer({
               onChange={(e) => handleFieldChange(field.name, e.target.value)}
               onBlur={() => toggleFieldEdit(field.name)}
               className={inputClass}
-              placeholder={`Enter ${field.label.toLowerCase()}...`}
+              placeholder={`Enter ${(field.display_name || field.name).toLowerCase()}...`}
               autoFocus
             />
             {hasError && (
@@ -590,7 +739,12 @@ export function RecordDetailDrawer({
 
   // Format activity timestamp
   const formatActivityTime = (timestamp: string) => {
+    if (!timestamp) return 'Unknown time'
+    
     const date = new Date(timestamp)
+    // Check if date is valid
+    if (isNaN(date.getTime())) return 'Invalid date'
+    
     const now = new Date()
     const diffMs = now.getTime() - date.getTime()
     const diffMins = Math.floor(diffMs / 60000)
@@ -761,13 +915,13 @@ export function RecordDetailDrawer({
               {/* Fields */}
               <div className="space-y-4">
                 {pipeline.fields
-                  .filter(field => field.visible)
-                  .sort((a, b) => a.order - b.order)
+                  .filter(field => field.is_visible_in_detail !== false)
+                  .sort((a, b) => (a.display_order || 0) - (b.display_order || 0))
                   .map((field) => (
                     <div key={field.name}>
                       <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                        {field.label}
-                        {field.required && <span className="text-red-500 ml-1">*</span>}
+                        {field.display_name || field.name}
+                        {field.is_required && <span className="text-red-500 ml-1">*</span>}
                       </label>
                       {renderFieldInput(field)}
                     </div>
@@ -779,26 +933,27 @@ export function RecordDetailDrawer({
           {activeTab === 'activity' && (
             <div className="p-6">
               <div className="space-y-4">
-                {activities.map((activity) => (
-                  <div key={activity.id} className="flex space-x-3">
+                {activities.map((activity, index) => (
+                  <div key={activity.id || `activity-${index}-${Date.now()}`} className="flex space-x-3">
                     <div className="flex-shrink-0">
                       <div className="w-8 h-8 bg-gray-200 dark:bg-gray-600 rounded-full flex items-center justify-center">
-                        {activity.type === 'field_change' && <Edit className="w-4 h-4 text-gray-600 dark:text-gray-400" />}
-                        {activity.type === 'comment' && <MessageSquare className="w-4 h-4 text-gray-600 dark:text-gray-400" />}
-                        {activity.type === 'system' && <Clock className="w-4 h-4 text-gray-600 dark:text-gray-400" />}
+                        {activity.action === 'created' && <Plus className="w-4 h-4 text-green-600 dark:text-green-400" />}
+                        {activity.action === 'updated' && <Edit className="w-4 h-4 text-blue-600 dark:text-blue-400" />}
+                        {activity.action === 'deleted' && <Trash2 className="w-4 h-4 text-red-600 dark:text-red-400" />}
+                        {!['created', 'updated', 'deleted'].includes(activity.action) && <Clock className="w-4 h-4 text-gray-600 dark:text-gray-400" />}
                       </div>
                     </div>
                     
                     <div className="flex-1 min-w-0">
                       <div className="text-sm text-gray-900 dark:text-white">
                         <span className="font-medium">
-                          {activity.user.first_name} {activity.user.last_name}
+                          {activity.user_name || activity.user || 'System'}
                         </span>
                         {' '}
-                        <span>{activity.message}</span>
+                        <span>{activity.changes}</span>
                       </div>
                       <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                        {formatActivityTime(activity.created_at)}
+                        {formatActivityTime(activity.timestamp || activity.created_at)}
                       </div>
                     </div>
                   </div>
@@ -839,6 +994,22 @@ export function RecordDetailDrawer({
           </div>
           
           <div className="flex items-center space-x-3">
+            {record && (
+              <button
+                onClick={() => {
+                  // TODO: Implement record sharing in Phase 6
+                  const shareUrl = `${window.location.origin}/forms/shared/${pipeline.slug}/${record.id}?token=sharing_token_here`
+                  navigator.clipboard.writeText(shareUrl)
+                  alert('Share link copied to clipboard! (Full sharing system coming in Phase 6)')
+                }}
+                className="px-4 py-2 text-blue-600 hover:text-blue-700 border border-blue-300 hover:border-blue-400 rounded-md hover:bg-blue-50 dark:hover:bg-blue-900/20"
+                title="Share record (Phase 6 feature preview)"
+              >
+                <Share2 className="w-4 h-4 mr-2 inline" />
+                Share
+              </button>
+            )}
+            
             {record && onDelete && (
               <button
                 onClick={() => onDelete(record.id)}
@@ -857,7 +1028,7 @@ export function RecordDetailDrawer({
             </button>
             
             <button
-              onClick={() => record && handleAutoSave()}
+              onClick={() => handleAutoSave()}
               disabled={validationErrors.length > 0}
               className="px-4 py-2 bg-primary text-white rounded-md hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
             >

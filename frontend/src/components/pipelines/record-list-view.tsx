@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useMemo } from 'react'
 import { pipelinesApi } from '@/lib/api'
+import { usePipelineRecordsSubscription } from '@/hooks/use-websocket-subscription'
+import { type RealtimeMessage } from '@/contexts/websocket-context'
 import { 
   Search, 
   Filter, 
@@ -31,7 +33,8 @@ import {
   Image,
   Database,
   Users,
-  Bot
+  Bot,
+  AlertCircle
 } from 'lucide-react'
 
 // Field type icons
@@ -61,12 +64,23 @@ const FIELD_ICONS = {
 export interface RecordField {
   id: string
   name: string
-  label: string
+  display_name?: string
   field_type: keyof typeof FIELD_ICONS
-  required: boolean
-  visible: boolean
-  order: number
-  config: { [key: string]: any }
+  is_required?: boolean
+  is_visible_in_list?: boolean
+  is_visible_in_detail?: boolean
+  display_order: number
+  field_config?: { [key: string]: any }
+  config?: { [key: string]: any } // Legacy support
+  business_rules?: {
+    stage_requirements?: Record<string, { 
+      required: boolean
+      block_transitions?: boolean
+      show_warnings?: boolean
+      warning_message?: string
+    }>
+    user_visibility?: Record<string, { visible: boolean; editable: boolean }>
+  }
 }
 
 export interface Record {
@@ -97,7 +111,6 @@ export interface RecordListViewProps {
   pipeline: Pipeline
   onEditRecord: (record: Record) => void
   onCreateRecord: () => void
-  onEditPipeline: () => void
 }
 
 type SortDirection = 'asc' | 'desc' | null
@@ -114,9 +127,10 @@ interface Sort {
   direction: SortDirection
 }
 
-export function RecordListView({ pipeline, onEditRecord, onCreateRecord, onEditPipeline }: RecordListViewProps) {
+export function RecordListView({ pipeline, onEditRecord, onCreateRecord }: RecordListViewProps) {
   const [records, setRecords] = useState<Record[]>([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedRecords, setSelectedRecords] = useState<Set<string>>(new Set())
   const [showFilters, setShowFilters] = useState(false)
@@ -126,10 +140,72 @@ export function RecordListView({ pipeline, onEditRecord, onCreateRecord, onEditP
   const [currentPage, setCurrentPage] = useState(1)
   const [recordsPerPage] = useState(50)
 
+  // WebSocket integration for real-time updates
+  const handleRealtimeMessage = (message: RealtimeMessage) => {
+    console.log('📨 Record list received realtime message:', message)
+    
+    switch (message.type) {
+      case 'record_create':
+        if (message.payload?.pipeline_id === pipeline.id) {
+          // Construct record object from payload
+          const newRecord = {
+            id: message.payload.record_id,
+            data: message.payload.data || {},
+            created_at: message.payload.updated_at || new Date().toISOString(),
+            updated_at: message.payload.updated_at || new Date().toISOString(),
+            created_by: message.payload.updated_by
+          }
+          setRecords(prev => [newRecord, ...prev])
+          console.log('✅ Added new record to list:', newRecord.id)
+        }
+        break
+        
+      case 'record_update':
+        if (message.payload?.pipeline_id === pipeline.id) {
+          // Construct updated record object from payload
+          const updatedRecord = {
+            id: message.payload.record_id,
+            data: message.payload.data || {},
+            updated_at: message.payload.updated_at || new Date().toISOString(),
+            created_by: message.payload.updated_by
+          }
+          setRecords(prev => prev.map(record => 
+            record.id === updatedRecord.id ? { ...record, ...updatedRecord } : record
+          ))
+          console.log('✅ Updated record in list:', updatedRecord.id)
+        }
+        break
+        
+      case 'record_delete':
+        if (message.payload?.pipeline_id === pipeline.id) {
+          // Remove record from the list
+          const deletedRecordId = message.payload.record_id
+          setRecords(prev => prev.filter(record => record.id !== deletedRecordId))
+          console.log('✅ Removed record from list:', deletedRecordId)
+        }
+        break
+    }
+  }
+
+  // Subscribe to pipeline record updates using centralized WebSocket
+  const { isConnected } = usePipelineRecordsSubscription(
+    pipeline.id,
+    handleRealtimeMessage
+  )
+
+  // Debug log for WebSocket connection
+  useEffect(() => {
+    console.log('🔌 Centralized WebSocket connection for pipeline records:', {
+      pipelineId: pipeline.id,
+      channel: `pipeline_records_${pipeline.id}`,
+      isConnected
+    })
+  }, [pipeline.id, isConnected])
+
   // Initialize visible fields
   useEffect(() => {
     const defaultVisible = pipeline.fields
-      .filter(field => field.visible)
+      .filter(field => field.is_visible_in_list !== false)
       .map(field => field.name)
     setVisibleFields(new Set(defaultVisible))
   }, [pipeline.fields])
@@ -139,6 +215,7 @@ export function RecordListView({ pipeline, onEditRecord, onCreateRecord, onEditP
     const loadRecords = async () => {
       try {
         setLoading(true)
+        setError(null)
         
         // Build query parameters
         const params: any = {
@@ -167,9 +244,9 @@ export function RecordListView({ pipeline, onEditRecord, onCreateRecord, onEditP
         
         const response = await pipelinesApi.getRecords(pipeline.id, params)
         setRecords(response.data.results || response.data)
-      } catch (error) {
+      } catch (error: any) {
         console.error('Failed to load records:', error)
-        // Fall back to empty array on error
+        setError(error.response?.data?.message || error.message || 'Failed to load records')
         setRecords([])
       } finally {
         setLoading(false)
@@ -305,7 +382,7 @@ export function RecordListView({ pipeline, onEditRecord, onCreateRecord, onEditP
   // Get visible fields for table
   const visibleFieldsList = pipeline.fields
     .filter(field => visibleFields.has(field.name))
-    .sort((a, b) => a.order - b.order)
+    .sort((a, b) => (a.display_order || 0) - (b.display_order || 0))
 
   if (loading) {
     return (
@@ -313,6 +390,29 @@ export function RecordListView({ pipeline, onEditRecord, onCreateRecord, onEditP
         <div className="text-center">
           <RefreshCw className="w-8 h-8 animate-spin text-primary mx-auto mb-4" />
           <p className="text-gray-600 dark:text-gray-400">Loading records...</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="h-full flex items-center justify-center">
+        <div className="text-center max-w-md">
+          <AlertCircle className="w-12 h-12 text-red-500 mx-auto mb-4" />
+          <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">
+            Failed to Load Records
+          </h3>
+          <p className="text-gray-600 dark:text-gray-400 mb-4">
+            {error}
+          </p>
+          <button
+            onClick={() => window.location.reload()}
+            className="px-4 py-2 bg-primary text-white rounded-md hover:bg-primary/90"
+          >
+            <RefreshCw className="w-4 h-4 mr-2 inline" />
+            Try Again
+          </button>
         </div>
       </div>
     )
@@ -334,19 +434,18 @@ export function RecordListView({ pipeline, onEditRecord, onCreateRecord, onEditP
           
           <div className="flex items-center space-x-3">
             <button
-              onClick={onEditPipeline}
-              className="px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700"
-            >
-              <Edit className="w-4 h-4 mr-1 inline" />
-              Edit Pipeline
-            </button>
-            <button
               onClick={onCreateRecord}
               className="px-4 py-2 bg-primary text-white rounded-md hover:bg-primary/90"
             >
               <Plus className="w-4 h-4 mr-2 inline" />
               Add Record
             </button>
+            
+            {/* WebSocket Connection Status */}
+            <div className="flex items-center space-x-2 text-sm text-gray-500 dark:text-gray-400">
+              <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-500' : 'bg-red-500'}`}></div>
+              <span>{isConnected ? 'Live' : 'Offline'}</span>
+            </div>
           </div>
         </div>
 
@@ -460,7 +559,7 @@ export function RecordListView({ pipeline, onEditRecord, onCreateRecord, onEditP
                       className="flex items-center space-x-2 hover:text-gray-700 dark:hover:text-gray-200"
                     >
                       <Icon className="w-4 h-4" />
-                      <span>{field.label}</span>
+                      <span>{field.display_name || field.name}</span>
                       {isSorted && (
                         sort.direction === 'asc' ? (
                           <ArrowUp className="w-3 h-3" />

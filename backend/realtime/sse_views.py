@@ -189,11 +189,11 @@ def activity_stream(request):
         # Subscribe to activity channels
         channels = []
         for pipeline_id in accessible_pipelines:
-            channels.append(f"pipeline_activity:{pipeline_id}")
+            channels.append(f"pipeline_activity_{pipeline_id}")
         
         # Add user-specific activity
         channels.extend([
-            f"user_activity:{request.user.id}",
+            f"user_activity_{request.user.id}",
             "global_activity"
         ])
         
@@ -306,9 +306,9 @@ def pipeline_stream(request, pipeline_id):
         
         # Subscribe to pipeline-specific channels
         channels = [
-            f"pipeline_updates:{pipeline_id}",
-            f"pipeline_records:{pipeline_id}",
-            f"pipeline_activity:{pipeline_id}"
+            f"pipeline_updates_{pipeline_id}",
+            f"pipeline_records_{pipeline_id}",
+            f"pipeline_activity_{pipeline_id}"
         ]
         
         # Get initial pipeline data

@@ -34,12 +34,6 @@ urlpatterns = [
     # DRF API endpoints - using nested structure from api app
     path('api/', include('api.urls')),
     
-    # Phase 06 - Real-time Collaboration
-    path('realtime/', include('realtime.urls')),
-    
-    # Phase 07 - Workflow Automation
-    path('workflows/', include('workflows.urls')),
-    
-    # Phase 08 - Communication Layer
-    path('communications/', include('communications.urls')),
+    # Note: Real-time SSE endpoints now available at /api/v1/realtime/
+    # WebSocket routing handled separately in asgi.py
 ]

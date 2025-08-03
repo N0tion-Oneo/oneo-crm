@@ -22,21 +22,36 @@ class TenantAwareJWTAuthentication(JWTAuthentication):
     
     def get_user(self, validated_token):
         """
-        Get user from validated token, ensuring tenant context is used
+        Get user from validated token, ensuring tenant context is used and validated
         """
         try:
             user_id = validated_token['user_id']
+            token_tenant_schema = validated_token.get('tenant_schema')
             
             # Get tenant from current request context
             request = getattr(self, '_current_request', None)
             tenant = getattr(request, 'tenant', None) if request else None
+            current_schema = tenant.schema_name if tenant else None
+            
+            logger.debug(f"JWT token validation - User ID: {user_id}, Token tenant: {token_tenant_schema}, Current tenant: {current_schema}")
+            
+            # Validate tenant context matches token
+            if token_tenant_schema and current_schema and token_tenant_schema != current_schema:
+                logger.warning(f"Tenant mismatch - Token tenant: {token_tenant_schema}, Current tenant: {current_schema}")
+                raise InvalidToken("Token not valid for current tenant")
             
             if tenant:
                 # Use tenant schema context explicitly
                 with schema_context(tenant.schema_name):
                     try:
                         user = User.objects.get(id=user_id)
-                        logger.debug(f"Found user {user.email} in tenant {tenant.schema_name}")
+                        logger.debug(f"Found user {user.email} (ID: {user.id}) in tenant {tenant.schema_name}")
+                        
+                        # Additional validation: ensure user exists in the correct tenant
+                        if token_tenant_schema and token_tenant_schema != tenant.schema_name:
+                            logger.error(f"User {user_id} token tenant {token_tenant_schema} != current tenant {tenant.schema_name}")
+                            raise InvalidToken("User not valid for current tenant")
+                        
                         return user
                     except User.DoesNotExist:
                         logger.error(f"User {user_id} not found in tenant {tenant.schema_name}")
@@ -51,8 +66,8 @@ class TenantAwareJWTAuthentication(JWTAuthentication):
                     logger.error(f"User {user_id} not found in any schema")
                     raise InvalidToken("User not found")
                 
-        except KeyError:
-            logger.error("No user_id in token")
+        except KeyError as e:
+            logger.error(f"Missing required field in token: {e}")
             raise InvalidToken("Token contained no recognizable user identification")
     
     def get_current_request(self):
@@ -73,7 +88,8 @@ class TenantAwareJWTAuthentication(JWTAuthentication):
             
             # Debug tenant context
             tenant = getattr(request, 'tenant', None)
-            logger.debug(f"JWT authenticate called - Tenant: {tenant}")
+            tenant_schema = tenant.schema_name if tenant else None
+            logger.debug(f"JWT authenticate called - Tenant: {tenant} (schema: {tenant_schema})")
             logger.debug(f"Request host: {request.get_host()}")
             logger.debug(f"Request path: {request.path}")
             
@@ -97,11 +113,11 @@ class TenantAwareJWTAuthentication(JWTAuthentication):
             # Get the user (this will use our custom get_user method with tenant context)
             user = self.get_user(validated_token)
             
-            logger.info(f"JWT authentication successful for user: {user.email}")
+            logger.info(f"JWT authentication successful for user: {user.email} (ID: {user.id})")
             
             # Log tenant context if available
             if tenant:
-                logger.info(f"Authenticated user {user.email} in tenant {tenant.schema_name}")
+                logger.info(f"Authenticated user {user.email} (ID: {user.id}) in tenant {tenant.schema_name}")
             else:
                 logger.warning("No tenant context available during JWT authentication")
             

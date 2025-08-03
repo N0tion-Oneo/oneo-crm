@@ -150,7 +150,7 @@ class RecoveryStrategyViewSet(viewsets.ModelViewSet):
         """Get filtered queryset"""
         queryset = RecoveryStrategy.objects.select_related(
             'workflow', 'created_by'
-        ).order_by('-priority', '-success_rate')
+        ).order_by('-priority', '-success_count')
         
         # Filter by active status
         is_active = self.request.query_params.get('is_active')

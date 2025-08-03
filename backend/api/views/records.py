@@ -8,6 +8,7 @@ from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.utils import extend_schema, OpenApiParameter
 from django.db.models import Q
 from django.utils import timezone
+from django.shortcuts import get_object_or_404
 
 from pipelines.models import Pipeline, Record
 from api.serializers import (
@@ -411,6 +412,136 @@ class RecordViewSet(viewsets.ModelViewSet):
             'pipeline_id': pipeline.id,
             'pipeline_name': pipeline.name
         })
+    
+    def destroy(self, request, *args, **kwargs):
+        """
+        Hard delete a record (permanent deletion)
+        This triggers post_delete signal for real-time updates
+        """
+        instance = self.get_object()
+        
+        # Perform hard deletion (triggers post_delete signal)
+        instance.delete()
+        
+        return Response(status=status.HTTP_204_NO_CONTENT)
+    
+    @extend_schema(
+        summary="Soft delete a record",
+        description="Marks a record as deleted without removing it from database. Can be restored later.",
+        responses={200: {"description": "Record soft deleted successfully"}}
+    )
+    @action(detail=True, methods=['post'])
+    def soft_delete(self, request, pk=None, pipeline_pk=None):
+        """Soft delete a record (can be restored)"""
+        record = self.get_object()
+        
+        # Perform soft deletion (triggers post_save signal with is_deleted=True)
+        record.soft_delete(request.user)
+        
+        return Response({
+            'message': 'Record soft deleted successfully',
+            'record_id': str(record.id),
+            'deleted_at': record.deleted_at.isoformat() if record.deleted_at else None
+        })
+    
+    @extend_schema(
+        summary="Restore a soft-deleted record",
+        description="Restores a previously soft-deleted record, making it active again.",
+        responses={200: DynamicRecordSerializer}
+    )
+    @action(detail=True, methods=['post'])
+    def restore(self, request, pk=None, pipeline_pk=None):
+        """Restore a soft-deleted record"""
+        # Find the soft-deleted record
+        pipeline_pk = self.kwargs.get('pipeline_pk')
+        if pipeline_pk:
+            record = get_object_or_404(
+                Record, 
+                pk=pk, 
+                pipeline_id=pipeline_pk, 
+                is_deleted=True
+            )
+        else:
+            record = get_object_or_404(Record, pk=pk, is_deleted=True)
+        
+        # Restore the record (triggers post_save signal)
+        record.restore()
+        
+        # Return the restored record
+        serializer = self.get_serializer(record)
+        return Response({
+            'message': 'Record restored successfully',
+            'record': serializer.data
+        })
+    
+    @extend_schema(
+        summary="Get deleted records",
+        description="List all soft-deleted records for the pipeline",
+        responses={200: DynamicRecordSerializer(many=True)}
+    )
+    @action(detail=False, methods=['get'])
+    def deleted(self, request, pipeline_pk=None):
+        """Get all soft-deleted records"""
+        pipeline_pk = self.kwargs.get('pipeline_pk')
+        
+        if pipeline_pk:
+            # Pipeline-specific deleted records
+            queryset = Record.objects.filter(
+                pipeline_id=pipeline_pk,
+                is_deleted=True
+            ).select_related('pipeline', 'created_by', 'updated_by', 'deleted_by')
+        else:
+            # Cross-pipeline deleted records (with permission checking)
+            user = request.user
+            permission_manager = PermissionManager(user)
+            
+            # Get accessible pipeline IDs
+            accessible_pipelines = []
+            for pipeline in Pipeline.objects.filter(is_active=True):
+                if permission_manager.has_permission('action', 'pipelines', 'read', pipeline.id):
+                    accessible_pipelines.append(pipeline.id)
+            
+            queryset = Record.objects.filter(
+                pipeline_id__in=accessible_pipelines,
+                is_deleted=True
+            ).select_related('pipeline', 'created_by', 'updated_by', 'deleted_by')
+        
+        # Apply pagination
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+        
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
+    
+    @extend_schema(
+        summary="Search suggestions",
+        description="Get search suggestions based on partial query"
+    )
+    @action(detail=False, methods=['get'])
+    def suggestions(self, request):
+        """Get search suggestions"""
+        query = request.query_params.get('q', '')
+        if len(query) < 2:
+            return Response({'suggestions': []})
+        
+        # Get title suggestions
+        title_suggestions = Record.objects.filter(
+            title__icontains=query,
+            is_deleted=False
+        ).values_list('title', flat=True).distinct()[:10]
+        
+        # Get data field suggestions (this could be more sophisticated)
+        data_suggestions = []
+        
+        suggestions = {
+            'titles': list(title_suggestions),
+            'data_fields': data_suggestions,
+            'query': query
+        }
+        
+        return Response({'suggestions': suggestions})
 
 
 class GlobalSearchViewSet(viewsets.ReadOnlyModelViewSet):

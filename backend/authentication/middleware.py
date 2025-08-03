@@ -287,3 +287,9 @@ class AsyncPermissionMiddleware:
                 request.permission_manager = AsyncPermissionManager(request.user)
         
         return await self.get_response(scope, receive, send)
+
+
+
+
+
+

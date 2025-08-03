@@ -46,7 +46,7 @@ class WorkflowViewSet(viewsets.ModelViewSet):
         user = self.request.user
         return Workflow.objects.filter(
             Q(created_by=user) | 
-            Q(is_public=True) | 
+            Q(visibility='public') | 
             Q(allowed_users=user)
         ).distinct()
     

@@ -24,7 +24,20 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const [isLoading, setIsLoading] = useState(true)
   const router = useRouter()
 
-  const isAuthenticated = !!user && !!tenant
+  // Check authentication status - ensure we have essential user data
+  const isAuthenticated = !!user && !!tenant && !!user.email
+  
+  // Debug authentication state
+  useEffect(() => {
+    console.log('🔐 Auth state changed:', {
+      hasUser: !!user,
+      hasTenant: !!tenant,
+      hasEmail: !!user?.email,
+      isAuthenticated,
+      userFirstName: user?.firstName,
+      userEmail: user?.email
+    })
+  }, [user, tenant, isAuthenticated])
 
   // Initialize auth state on mount
   useEffect(() => {
@@ -73,56 +86,49 @@ export function AuthProvider({ children }: AuthProviderProps) {
         }
       }
 
-      // Try to get user and tenant data
-      const [userResponse, tenantResponse] = await Promise.allSettled([
-        authApi.getCurrentUser(),
+      // Get complete user and tenant data in one go
+      const [meResponse, tenantResponse] = await Promise.allSettled([
+        authApi.getCurrentUser(), // This already calls /auth/me/ and returns full data
         authApi.getCurrentTenant()
       ])
 
-      if (userResponse.status === 'fulfilled' && tenantResponse.status === 'fulfilled') {
-        if (userResponse.value.data && tenantResponse.value.data) {
-          // Get user permissions from the me endpoint which includes permissions
-          try {
-            const meResponse = await fetch(`${window.location.protocol}//${window.location.hostname}:8000/auth/me/`, {
-              headers: {
-                'Authorization': `Bearer ${Cookies.get('oneo_access_token')}`,
-                'Content-Type': 'application/json'
-              }
-            })
-            
-            if (meResponse.ok) {
-              const meData = await meResponse.json()
-              const userWithPermissions = {
-                ...userResponse.value.data,
-                permissions: meData.permissions || {},
-                // Transform backend user structure to frontend interface
-                id: meData.user.id.toString(),
-                email: meData.user.email,
-                username: meData.user.username,
-                firstName: meData.user.first_name,
-                lastName: meData.user.last_name,
-                isActive: meData.user.is_active,
-                isSuperuser: meData.user.is_staff,
-                userType: {
-                  id: meData.user.user_type.toString(),
-                  name: meData.user.user_type_name,
-                  slug: meData.user.user_type_name.toLowerCase().replace(/\s+/g, '_'),
-                  description: '',
-                  basePermissions: {},
-                  isSystemDefault: true
-                },
-                tenantId: '1', // TODO: Get from tenant context
-                lastActivity: meData.user.last_activity,
-                createdAt: meData.user.date_joined
-              }
-              setUser(userWithPermissions)
-            } else {
-              setUser(userResponse.value.data)
-            }
-          } catch (error) {
-            console.warn('Failed to load user permissions:', error)
-            setUser(userResponse.value.data)
+      if (meResponse.status === 'fulfilled' && tenantResponse.status === 'fulfilled') {
+        const userData = meResponse.value.data
+        const tenantData = tenantResponse.value.data
+        
+        if (userData && tenantData) {
+          // Transform the complete user data from /auth/me/
+          const completeUser = {
+            id: userData.id?.toString() || '1',
+            email: userData.email || '',
+            username: userData.username || userData.email || '',
+            firstName: userData.first_name || userData.email?.split('@')[0] || 'User',
+            lastName: userData.last_name || '',
+            isActive: userData.is_active !== false,
+            isSuperuser: userData.is_staff || false,
+            userType: {
+              id: userData.user_type?.toString() || '1',
+              name: userData.user_type_name || 'User',
+              slug: (userData.user_type_name || 'user').toLowerCase().replace(/\s+/g, '_'),
+              description: '',
+              basePermissions: userData.permissions || {},
+              isSystemDefault: true
+            },
+            tenantId: '1', // TODO: Get from tenant context
+            lastActivity: userData.last_activity,
+            createdAt: userData.date_joined,
+            permissions: userData.permissions || {}
           }
+          
+          console.log('🔧 Setting complete user data:', {
+            firstName: completeUser.firstName,
+            lastName: completeUser.lastName,
+            email: completeUser.email,
+            permissions: completeUser.permissions,
+            userType: completeUser.userType.name,
+            source: 'auth/me endpoint'
+          })
+          setUser(completeUser)
           
           setTenant(tenantResponse.value.data as any)
           
@@ -150,30 +156,75 @@ export function AuthProvider({ children }: AuthProviderProps) {
     try {
       setIsLoading(true)
       
+      // Perform login to get JWT tokens
       const response = await authApi.login(credentials)
-      const { user: userData, permissions } = response.data
+      console.log('🔑 Login successful, getting complete user data...')
 
-      // Get tenant info after successful login
-      const tenantResponse = await authApi.getCurrentTenant()
-      const tenantData = tenantResponse.data
+      // Get complete user and tenant data (same as initializeAuth)
+      const [meResponse, tenantResponse] = await Promise.allSettled([
+        authApi.getCurrentUser(), // This calls /auth/me/ with full user data
+        authApi.getCurrentTenant()
+      ])
 
-      // Store tenant info for tenant identification
-      Cookies.set('oneo_tenant', tenantData?.schema_name || 'unknown', {
-        expires: 7,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: 'lax'
-      })
+      if (meResponse.status === 'fulfilled' && tenantResponse.status === 'fulfilled') {
+        const userData = meResponse.value.data
+        const tenantData = tenantResponse.value.data
+        
+        if (userData && tenantData) {
+          // Transform the complete user data (same logic as initializeAuth)
+          const completeUser = {
+            id: userData.id?.toString() || '1',
+            email: userData.email || '',
+            username: userData.username || userData.email || '',
+            firstName: userData.first_name || userData.email?.split('@')[0] || 'User',
+            lastName: userData.last_name || '',
+            isActive: userData.is_active !== false,
+            isSuperuser: userData.is_staff || false,
+            userType: {
+              id: userData.user_type?.toString() || '1',
+              name: userData.user_type_name || 'User',
+              slug: (userData.user_type_name || 'user').toLowerCase().replace(/\s+/g, '_'),
+              description: '',
+              basePermissions: userData.permissions || {},
+              isSystemDefault: true
+            },
+            tenantId: '1',
+            lastActivity: userData.last_activity,
+            createdAt: userData.date_joined,
+            permissions: userData.permissions || {}
+          }
 
-      setUser({...userData, permissions})
-      setTenant(tenantData as any)
+          console.log('🔧 Login: Setting complete user data:', {
+            firstName: completeUser.firstName,
+            lastName: completeUser.lastName,
+            email: completeUser.email,
+            permissions: completeUser.permissions,
+            userType: completeUser.userType.name
+          })
+          
+          setUser(completeUser)
+          setTenant(tenantData as any)
 
-      // Use setTimeout to ensure state updates are processed before redirect
-      setTimeout(() => {
-        const urlParams = new URLSearchParams(window.location.search)
-        const redirectTo = urlParams.get('redirect') || '/dashboard'
-        console.log('Redirecting to:', redirectTo)
-        router.push(redirectTo)
-      }, 100)
+          // Store tenant info for API requests
+          Cookies.set('oneo_tenant', tenantData?.schema_name || 'unknown', {
+            expires: 7,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: 'lax'
+          })
+
+          // Use setTimeout to ensure state updates are processed before redirect
+          setTimeout(() => {
+            const urlParams = new URLSearchParams(window.location.search)
+            const redirectTo = urlParams.get('redirect') || '/dashboard'
+            console.log('🚀 Redirecting to:', redirectTo)
+            router.push(redirectTo)
+          }, 100)
+        } else {
+          throw new Error('Failed to get complete user data after login')
+        }
+      } else {
+        throw new Error('Failed to fetch user or tenant data after login')
+      }
     } catch (error: any) {
       console.error('Login failed:', error)
       
@@ -235,17 +286,32 @@ export function AuthProvider({ children }: AuthProviderProps) {
   }
 
   const hasPermission = (category: string, action: string): boolean => {
-    if (!user || !user.permissions) return false
+    if (!user || !user.permissions) {
+      console.log('🔒 Permission check failed: No user or permissions', { category, action, hasUser: !!user, hasPermissions: !!user?.permissions })
+      return false
+    }
     
     // Check system-level permissions first
     const systemPermissions = user.permissions.system || []
     if (systemPermissions.includes('full_access')) {
+      console.log('🔑 Permission granted via system full_access', { category, action })
       return true
     }
     
     // Check category-specific permissions
     const categoryPermissions = user.permissions[category] || []
-    return categoryPermissions.includes(action)
+    const hasAccess = categoryPermissions.includes(action)
+    
+    console.log('🔍 Permission check:', { 
+      category, 
+      action, 
+      categoryPermissions, 
+      systemPermissions,
+      hasAccess,
+      allPermissions: user.permissions 
+    })
+    
+    return hasAccess
   }
 
   const hasAnyPermission = (category: string, actions: string[]): boolean => {

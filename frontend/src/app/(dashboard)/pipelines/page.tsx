@@ -8,7 +8,8 @@ import { useAuth } from '@/features/auth/context'
 import { api, pipelinesApi } from '@/lib/api'
 import { PermissionGuard, PermissionButton } from '@/components/permissions/PermissionGuard'
 import { PipelineTemplateLoader, type PipelineTemplate } from '@/components/pipelines/pipeline-template-loader'
-import { useRealtime, type RealtimeMessage, type UserPresence } from '@/hooks/use-realtime'
+import { usePipelinesOverviewSubscription } from '@/hooks/use-websocket-subscription'
+import { type RealtimeMessage } from '@/contexts/websocket-context'
 
 interface Pipeline {
   id: number
@@ -58,27 +59,46 @@ export default function PipelinesPage() {
 
   // Handle real-time record updates
   const handleRealtimeMessage = useCallback((message: RealtimeMessage) => {
-    console.log('📡 Real-time record update:', message)
+    console.log('📡 Pipeline overview received real-time message:', message)
     
     // Only handle record-related updates
     if (message.type === 'record_create' || message.type === 'record_update' || message.type === 'record_delete') {
-      if (message.payload.pipeline_id) {
-        // Update record count for the affected pipeline
-        setPipelines(prev => prev.map(pipeline => 
-          pipeline.id === message.payload.pipeline_id 
-            ? { ...pipeline, record_count: message.payload.new_count || pipeline.record_count }
-            : pipeline
-        ))
+      if (message.payload?.pipeline_id) {
+        // Convert pipeline_id to number for comparison (backend sends strings, frontend uses numbers)
+        const messagesPipelineId = parseInt(message.payload.pipeline_id)
+        
+        console.log('🔄 Updating pipeline record count:', {
+          messageType: message.type,
+          pipelineId: messagesPipelineId,
+          newCount: message.payload.new_count,
+          recordId: message.payload.record_id
+        })
+        
+        setPipelines(prev => {
+          const updated = prev.map(pipeline => {
+            if (pipeline.id === messagesPipelineId) {
+              const updatedPipeline = { 
+                ...pipeline, 
+                record_count: message.payload.new_count !== undefined ? message.payload.new_count : pipeline.record_count 
+              }
+              console.log(`✅ Updated pipeline ${pipeline.id} count: ${pipeline.record_count} → ${updatedPipeline.record_count}`)
+              return updatedPipeline
+            }
+            return pipeline
+          })
+          return updated
+        })
+      } else {
+        console.warn('❌ Real-time message missing pipeline_id:', message)
       }
     }
   }, [])
 
-  // Real-time WebSocket connection for record updates (disabled temporarily)
-  const { isConnected } = useRealtime({
-    room: 'pipelines_overview',
-    onMessage: handleRealtimeMessage,
-    autoConnect: false // Disabled to prevent WebSocket errors
-  })
+  // Real-time WebSocket connection for record updates using centralized system
+  const { isConnected } = usePipelinesOverviewSubscription(
+    handleRealtimeMessage,
+    true // Always enabled
+  )
 
   // Check if user has access to a pipeline
   const hasPipelineAccess = (pipelineId: number): boolean => {

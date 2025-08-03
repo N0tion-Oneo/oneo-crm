@@ -22,6 +22,42 @@ from .views.duplicates import (
 from .views.dynamic_forms import DynamicFormViewSet, PublicFormViewSet, SharedRecordViewSet
 from relationships.views import AssignmentViewSet
 
+# Import new API modules
+from .views.workflows import (
+    WorkflowViewSet, WorkflowExecutionViewSet, 
+    WorkflowApprovalViewSet, WorkflowScheduleViewSet,
+    webhook_endpoint, workflow_status
+)
+# Import workflow sub-module ViewSets directly to avoid namespace conflicts
+from workflows.recovery.views import (
+    WorkflowCheckpointViewSet, RecoveryStrategyViewSet,
+    WorkflowRecoveryLogViewSet, WorkflowReplaySessionViewSet,
+    RecoveryConfigurationViewSet, RecoveryAnalyticsViewSet
+)
+from workflows.content.views import (
+    ContentLibraryViewSet, ContentAssetViewSet, ContentTagViewSet,
+    ContentUsageViewSet, ContentApprovalViewSet
+)
+from .views.communications import (
+    ChannelViewSet, ConversationViewSet, 
+    MessageViewSet, CommunicationAnalyticsViewSet
+)
+from .views.tracking import (
+    CommunicationTrackingViewSet, DeliveryTrackingViewSet,
+    ReadTrackingViewSet, ResponseTrackingViewSet,
+    CampaignTrackingViewSet, PerformanceMetricsViewSet,
+    PerformanceTrendsView, ChannelComparisonView,
+    TimingAnalysisView, AudienceEngagementView,
+    PerformanceReportView, TrackingPixelView,
+    DeliveryWebhookView, UniPileWebhookView,
+    ChannelDashboardView, CampaignDashboardView,
+    OverviewDashboardView
+)
+from .views.realtime import (
+    notifications_stream, activity_stream,
+    dashboard_stream, pipeline_stream
+)
+
 # Create main router
 router = DefaultRouter()
 
@@ -50,6 +86,41 @@ router.register(r'duplicate-exclusions', DuplicateExclusionViewSet, basename='du
 router.register(r'public-forms', PublicFormViewSet, basename='public-forms')
 router.register(r'shared-records', SharedRecordViewSet, basename='shared-records')
 
+# Workflow endpoints
+router.register(r'workflows', WorkflowViewSet, basename='workflow')
+router.register(r'executions', WorkflowExecutionViewSet, basename='execution')
+router.register(r'approvals', WorkflowApprovalViewSet, basename='approval')
+router.register(r'schedules', WorkflowScheduleViewSet, basename='schedule')
+
+# Workflow recovery endpoints
+router.register(r'workflow-checkpoints', WorkflowCheckpointViewSet, basename='workflow-checkpoint')
+router.register(r'recovery-strategies', RecoveryStrategyViewSet, basename='recovery-strategy')
+router.register(r'workflow-recovery-logs', WorkflowRecoveryLogViewSet, basename='workflow-recovery-log')
+router.register(r'workflow-replay-sessions', WorkflowReplaySessionViewSet, basename='workflow-replay-session')
+router.register(r'recovery-configurations', RecoveryConfigurationViewSet, basename='recovery-configuration')
+router.register(r'recovery-analytics', RecoveryAnalyticsViewSet, basename='recovery-analytics')
+
+# Workflow content management endpoints
+router.register(r'content-libraries', ContentLibraryViewSet, basename='content-library')
+router.register(r'content-assets', ContentAssetViewSet, basename='content-asset')
+router.register(r'content-tags', ContentTagViewSet, basename='content-tag')
+router.register(r'content-usage', ContentUsageViewSet, basename='content-usage')
+router.register(r'content-approvals', ContentApprovalViewSet, basename='content-approval')
+
+# Communication endpoints
+router.register(r'channels', ChannelViewSet, basename='channel')
+router.register(r'conversations', ConversationViewSet, basename='conversation')
+router.register(r'messages', MessageViewSet, basename='message')
+router.register(r'communication-analytics', CommunicationAnalyticsViewSet, basename='communication-analytics')
+
+# Communication tracking endpoints
+router.register(r'communication-tracking', CommunicationTrackingViewSet, basename='communication-tracking')
+router.register(r'delivery-tracking', DeliveryTrackingViewSet, basename='delivery-tracking')
+router.register(r'read-tracking', ReadTrackingViewSet, basename='read-tracking')
+router.register(r'response-tracking', ResponseTrackingViewSet, basename='response-tracking')
+router.register(r'campaign-tracking', CampaignTrackingViewSet, basename='campaign-tracking')
+router.register(r'performance-metrics', PerformanceMetricsViewSet, basename='performance-metrics')
+
 # Create nested routers for pipeline-specific endpoints
 pipelines_router = routers.NestedDefaultRouter(router, r'pipelines', lookup='pipeline')
 pipelines_router.register(r'fields', FieldViewSet, basename='pipeline-fields')
@@ -64,12 +135,34 @@ api_patterns = [
     path('', include(router.urls)),
     path('', include(pipelines_router.urls)),
     
-    # Dynamic form generation endpoints will be added later
+    # Workflow endpoints (non-ViewSet)
+    path('workflows/webhook/<uuid:workflow_id>/', webhook_endpoint, name='workflow-webhook'),
+    path('workflows/status/<uuid:execution_id>/', workflow_status, name='workflow-status'),
     
-    # Authentication endpoints (removed to fix namespace conflict)
-    # path('auth/', include('rest_framework.urls')),
+    # Workflow content management and recovery routes now registered as ViewSets above
     
-    # GraphQL endpoint removed - using DRF only
+    # Communication tracking analytics endpoints
+    path('tracking/analytics/trends/', PerformanceTrendsView.as_view(), name='tracking-performance-trends'),
+    path('tracking/analytics/channel-comparison/', ChannelComparisonView.as_view(), name='tracking-channel-comparison'),
+    path('tracking/analytics/timing-analysis/', TimingAnalysisView.as_view(), name='tracking-timing-analysis'),
+    path('tracking/analytics/audience-engagement/', AudienceEngagementView.as_view(), name='tracking-audience-engagement'),
+    path('tracking/analytics/performance-report/', PerformanceReportView.as_view(), name='tracking-performance-report'),
+    
+    # Real-time tracking endpoints
+    path('tracking/pixel/<uuid:message_id>/', TrackingPixelView.as_view(), name='tracking-pixel'),
+    path('tracking/webhook/delivery/', DeliveryWebhookView.as_view(), name='tracking-delivery-webhook'),
+    path('tracking/webhook/unipile/', UniPileWebhookView.as_view(), name='tracking-unipile-webhook'),
+    
+    # Dashboard endpoints
+    path('tracking/dashboard/channel/<uuid:channel_id>/', ChannelDashboardView.as_view(), name='tracking-channel-dashboard'),
+    path('tracking/dashboard/campaign/<uuid:campaign_id>/', CampaignDashboardView.as_view(), name='tracking-campaign-dashboard'),
+    path('tracking/dashboard/overview/', OverviewDashboardView.as_view(), name='tracking-overview-dashboard'),
+    
+    # Real-time SSE endpoints
+    path('realtime/notifications/', notifications_stream, name='realtime-notifications'),
+    path('realtime/activity/', activity_stream, name='realtime-activity'),
+    path('realtime/dashboard/<str:dashboard_id>/', dashboard_stream, name='realtime-dashboard'),
+    path('realtime/pipeline/<str:pipeline_id>/', pipeline_stream, name='realtime-pipeline'),
     
     # API documentation
     path('schema/', SpectacularAPIView.as_view(), name='schema'),

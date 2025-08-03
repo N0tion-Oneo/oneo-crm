@@ -318,8 +318,21 @@ export const pipelinesApi = {
   updateRecord: (pipelineId: string, recordId: string, data: any) =>
     api.patch(`/api/pipelines/${pipelineId}/records/${recordId}/`, data),
   
+  // Soft delete (default) - can be restored
   deleteRecord: (pipelineId: string, recordId: string) =>
+    api.post(`/api/pipelines/${pipelineId}/records/${recordId}/soft_delete/`),
+  
+  // Hard delete (permanent) - cannot be restored  
+  hardDeleteRecord: (pipelineId: string, recordId: string) =>
     api.delete(`/api/pipelines/${pipelineId}/records/${recordId}/`),
+  
+  // Restore soft-deleted record
+  restoreRecord: (pipelineId: string, recordId: string) =>
+    api.post(`/api/pipelines/${pipelineId}/records/${recordId}/restore/`),
+  
+  // Get deleted records
+  getDeletedRecords: (pipelineId: string, params?: any) =>
+    api.get(`/api/pipelines/${pipelineId}/records/deleted/`, { params }),
   
   // Bulk operations
   bulkUpdateRecords: (pipelineId: string, data: any) =>

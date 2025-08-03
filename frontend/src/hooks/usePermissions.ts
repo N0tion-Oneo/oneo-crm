@@ -1,13 +1,24 @@
 'use client'
 
 import { useAuth } from '@/features/auth/context'
+import { usePermissionSchema } from './use-permission-schema'
+import { useMemo, useCallback } from 'react'
 
 /**
- * Custom hook for permission checking
+ * Enhanced custom hook for permission checking
+ * Integrates static permission checking with dynamic schema-based features
  * Provides convenient methods for common permission patterns
  */
 export function usePermissions() {
   const { hasPermission, hasAnyPermission, hasAllPermissions, user } = useAuth()
+  const { 
+    frontendConfig, 
+    getCategoryActions, 
+    isStaticCategory, 
+    isDynamicCategory,
+    getDynamicResources,
+    validatePermissionSet
+  } = usePermissionSchema()
 
   // User management permissions
   const canCreateUsers = () => hasPermission('users', 'create')
@@ -96,6 +107,142 @@ export function usePermissions() {
   // Get all user permissions for debugging
   const getAllPermissions = () => user?.permissions || {}
 
+  // Enhanced dynamic permission functions
+  
+  // Get available actions for a category from schema
+  const getAvailableActions = useCallback((category: string): string[] => {
+    return getCategoryActions(category)
+  }, [getCategoryActions])
+  
+  // Check if a category exists in the schema
+  const isCategoryAvailable = useCallback((category: string): boolean => {
+    return frontendConfig?.categories?.[category] !== undefined
+  }, [frontendConfig])
+  
+  // Check if an action is valid for a category
+  const isActionAvailable = useCallback((category: string, action: string): boolean => {
+    const actions = getCategoryActions(category)
+    return actions.includes(action)
+  }, [getCategoryActions])
+  
+  // Get dynamic resource permissions (e.g., pipeline_123, workflow_456)
+  const getDynamicResourcePermissions = useCallback((resourceType?: string) => {
+    const dynamicResources = getDynamicResources()
+    
+    if (resourceType) {
+      return dynamicResources.filter(resource => 
+        resource.data.resource_type === resourceType
+      )
+    }
+    
+    return dynamicResources
+  }, [getDynamicResources])
+  
+  // Check permission on a specific dynamic resource
+  const hasResourcePermission = useCallback((
+    resourceType: string, 
+    resourceId: string | number, 
+    action: string
+  ): boolean => {
+    const resourceKey = `${resourceType}_${resourceId}`
+    return hasPermission(resourceKey, action)
+  }, [hasPermission])
+  
+  // Check pipeline-specific permissions
+  const hasPipelinePermission = useCallback((pipelineId: string | number, action: string): boolean => {
+    return hasResourcePermission('pipeline', pipelineId, action)
+  }, [hasResourcePermission])
+  
+  // Check workflow-specific permissions
+  const hasWorkflowPermission = useCallback((workflowId: string | number, action: string): boolean => {
+    return hasResourcePermission('workflow', workflowId, action)
+  }, [hasResourcePermission])
+  
+  // Check form-specific permissions
+  const hasFormPermission = useCallback((formId: string | number, action: string): boolean => {
+    return hasResourcePermission('form', formId, action)
+  }, [hasResourcePermission])
+  
+  // Get all pipelines user has access to
+  const getAccessiblePipelines = useCallback(() => {
+    const pipelineResources = getDynamicResourcePermissions('pipeline')
+    return pipelineResources.filter(resource => 
+      hasResourcePermission('pipeline', resource.data.resource_id!, 'access') ||
+      hasResourcePermission('pipeline', resource.data.resource_id!, 'read')
+    )
+  }, [getDynamicResourcePermissions, hasResourcePermission])
+  
+  // Get all workflows user can execute
+  const getExecutableWorkflows = useCallback(() => {
+    const workflowResources = getDynamicResourcePermissions('workflow')
+    return workflowResources.filter(resource => 
+      hasResourcePermission('workflow', resource.data.resource_id!, 'execute') ||
+      hasResourcePermission('workflow', resource.data.resource_id!, 'view')
+    )
+  }, [getDynamicResourcePermissions, hasResourcePermission])
+  
+  // Enhanced permission validation
+  const validateUserPermissions = useCallback(async (permissions: Record<string, string[]>) => {
+    try {
+      return await validatePermissionSet(permissions)
+    } catch (error) {
+      console.error('Permission validation error:', error)
+      return {
+        valid: false,
+        errors: ['Failed to validate permissions'],
+        warnings: [],
+        validated_permissions: {}
+      }
+    }
+  }, [validatePermissionSet])
+  
+  // Get permission summary for current user
+  const getPermissionSummary = useMemo(() => {
+    if (!user?.permissions || !frontendConfig?.categories) {
+      return {
+        totalCategories: 0,
+        totalPermissions: 0,
+        staticCategories: 0,
+        dynamicResources: 0,
+        hasSystemAccess: false,
+        hasAdminAccess: false
+      }
+    }
+    
+    const userPermissions = user.permissions
+    const allCategories = Object.keys(frontendConfig.categories)
+    const staticCats = allCategories.filter(cat => isStaticCategory(cat))
+    const dynamicResources = getDynamicResources()
+    
+    const totalPermissions = Object.values(userPermissions).reduce(
+      (total, actions) => total + (Array.isArray(actions) ? actions.length : 0), 0
+    )
+    
+    return {
+      totalCategories: allCategories.length,
+      totalPermissions,
+      staticCategories: staticCats.length,
+      dynamicResources: dynamicResources.length,
+      hasSystemAccess: isSystemAdmin(),
+      hasAdminAccess: isAdmin()
+    }
+  }, [user?.permissions, frontendConfig, isStaticCategory, getDynamicResources, isSystemAdmin, isAdmin])
+  
+  // Get category-specific permissions for user
+  const getCategoryPermissions = useCallback((category: string) => {
+    const userPerms = user?.permissions?.[category] || []
+    const availableActions = getCategoryActions(category)
+    
+    return {
+      category,
+      userPermissions: userPerms,
+      availableActions,
+      hasFullAccess: availableActions.every(action => userPerms.includes(action)),
+      hasPartialAccess: availableActions.some(action => userPerms.includes(action)),
+      missingPermissions: availableActions.filter(action => !userPerms.includes(action))
+    }
+  }, [user?.permissions, getCategoryActions])
+
   return {
     // Core permission functions
     hasPermission,
@@ -180,6 +327,26 @@ export function usePermissions() {
     canManageTeam,
 
     // User info
-    user
+    user,
+
+    // Enhanced dynamic permission functions
+    getAvailableActions,
+    isCategoryAvailable,
+    isActionAvailable,
+    getDynamicResourcePermissions,
+    hasResourcePermission,
+    hasPipelinePermission,
+    hasWorkflowPermission,
+    hasFormPermission,
+    getAccessiblePipelines,
+    getExecutableWorkflows,
+    validateUserPermissions,
+    getPermissionSummary,
+    getCategoryPermissions,
+
+    // Schema integration helpers
+    frontendConfig,
+    isStaticCategory,
+    isDynamicCategory
   }
 }

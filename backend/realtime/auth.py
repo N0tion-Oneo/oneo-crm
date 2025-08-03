@@ -193,11 +193,260 @@ def extract_session_from_scope(scope):
 
 async def check_user_permissions(user, resource_type: str, resource_id: str = None, action: str = 'read'):
     """
-    Check if user has permissions for WebSocket operations
+    Enhanced permission checking for WebSocket operations.
+    Integrates with the full permission system including dynamic resources.
+    """
+    if not user or not user.is_authenticated:
+        logger.warning("Permission check failed: User not authenticated")
+        return False
+    
+    try:
+        # Import permission manager (avoid circular imports)
+        from authentication.permissions import AsyncPermissionManager
+        
+        # Create permission manager for the user
+        permission_manager = AsyncPermissionManager(user)
+        
+        # Handle different resource types
+        if resource_type == 'pipelines':
+            # Check general pipeline permission first
+            general_permission = await permission_manager.has_permission(
+                'action', 'pipelines', action
+            )
+            
+            if general_permission:
+                return True
+            
+            # If no general permission, check specific pipeline permission
+            if resource_id:
+                specific_permission = await permission_manager.has_permission(
+                    'action', f'pipeline_{resource_id}', action
+                )
+                return specific_permission
+            
+            return False
+        
+        elif resource_type == 'workflows':
+            # Check general workflow permission first
+            general_permission = await permission_manager.has_permission(
+                'action', 'workflows', action
+            )
+            
+            if general_permission:
+                return True
+            
+            # If no general permission, check specific workflow permission
+            if resource_id:
+                specific_permission = await permission_manager.has_permission(
+                    'action', f'workflow_{resource_id}', action
+                )
+                return specific_permission
+            
+            return False
+        
+        elif resource_type == 'forms':
+            # Check general form permission first
+            general_permission = await permission_manager.has_permission(
+                'action', 'forms', action
+            )
+            
+            if general_permission:
+                return True
+            
+            # If no general permission, check specific form permission
+            if resource_id:
+                specific_permission = await permission_manager.has_permission(
+                    'action', f'form_{resource_id}', action
+                )
+                return specific_permission
+            
+            return False
+        
+        elif resource_type == 'records':
+            # Records require pipeline access
+            # First check if user has general record permissions
+            record_permission = await permission_manager.has_permission(
+                'action', 'records', action
+            )
+            
+            if record_permission:
+                # Still need to check if they have access to the pipeline this record belongs to
+                if resource_id:
+                    # Try to get the record and check pipeline access
+                    try:
+                        from asgiref.sync import sync_to_async
+                        from pipelines.models import Record
+                        
+                        # Get record to find its pipeline
+                        record = await sync_to_async(Record.objects.select_related('pipeline').get)(
+                            id=resource_id
+                        )
+                        
+                        # Check pipeline access
+                        pipeline_access = await check_user_permissions(
+                            user, 'pipelines', str(record.pipeline.id), 'access'
+                        )
+                        
+                        return pipeline_access
+                    except:
+                        # If we can't find the record, deny access
+                        return False
+                
+                return True
+            
+            return False
+        
+        elif resource_type == 'user_presence':
+            # All authenticated users can see presence (but implement privacy controls later)
+            return True
+        
+        elif resource_type == 'notifications':
+            # Users can see their own notifications
+            return True
+        
+        elif resource_type == 'system':
+            # System-level permissions
+            return await permission_manager.has_permission('action', 'system', action)
+        
+        else:
+            # For any other resource type, check general permission
+            return await permission_manager.has_permission('action', resource_type, action)
+    
+    except Exception as e:
+        logger.error(f"Permission check error for user {user.id}, resource {resource_type}:{resource_id}, action {action}: {e}")
+        # Fail closed - deny access on error
+        return False
+
+
+async def check_channel_subscription_permission(user, channel: str):
+    """
+    Enhanced channel subscription permission checking.
+    Maps channel patterns to appropriate permission checks.
     """
     if not user or not user.is_authenticated:
         return False
     
-    # For authenticated users, return True (can be enhanced with permission system later)
-    # This simplifies the authentication flow while maintaining security
-    return True
+    try:
+        # Parse different channel patterns
+        if channel.startswith('pipeline:') or channel.startswith('pipeline_'):
+            # Extract pipeline ID from channel name
+            if ':' in channel:
+                pipeline_id = channel.split(':')[1]
+            else:
+                # Handle pipeline_records_X format
+                parts = channel.split('_')
+                if len(parts) >= 3:
+                    pipeline_id = parts[2]
+                else:
+                    return False
+            
+            return await check_user_permissions(user, 'pipelines', pipeline_id, 'read')
+        
+        elif channel.startswith('workflow:') or channel.startswith('workflow_'):
+            # Extract workflow ID from channel name
+            if ':' in channel:
+                workflow_id = channel.split(':')[1]
+            else:
+                parts = channel.split('_')
+                if len(parts) >= 2:
+                    workflow_id = parts[1]
+                else:
+                    return False
+            
+            return await check_user_permissions(user, 'workflows', workflow_id, 'read')
+        
+        elif channel.startswith('document:') or channel.startswith('document_'):
+            # Document-level permissions (records) - handle both formats
+            if ':' in channel:
+                document_id = channel.split(':')[1]
+            else:
+                # Handle document_21 format
+                document_id = channel.split('_')[1]
+            return await check_user_permissions(user, 'records', document_id, 'read')
+        
+        elif channel.startswith('form:') or channel.startswith('form_'):
+            # Form-specific channels
+            if ':' in channel:
+                form_id = channel.split(':')[1]
+            else:
+                parts = channel.split('_')
+                if len(parts) >= 2:
+                    form_id = parts[1]
+                else:
+                    return False
+            
+            return await check_user_permissions(user, 'forms', form_id, 'read')
+        
+        elif channel in ['user_presence', 'pipelines_overview', 'pipeline_updates', 'permission_updates']:
+            # General channels - all authenticated users can subscribe
+            return True
+        
+        elif channel.startswith('tenant_'):
+            # Tenant-specific channels - users can subscribe to their own tenant channels
+            return True
+        
+        elif channel.startswith('user_'):
+            # User-specific channels - users can only subscribe to their own channels
+            user_id_from_channel = channel.split('_')[1]
+            return str(user.id) == user_id_from_channel
+        
+        else:
+            # Unknown channel pattern - deny access
+            logger.warning(f"Unknown channel pattern for permission check: {channel}")
+            return False
+    
+    except Exception as e:
+        logger.error(f"Channel subscription permission error for user {user.id}, channel {channel}: {e}")
+        return False
+
+
+async def get_user_accessible_channels(user):
+    """
+    Get list of channels the user can access.
+    Useful for permission-based channel filtering.
+    """
+    if not user or not user.is_authenticated:
+        return []
+    
+    try:
+        from authentication.permissions import AsyncPermissionManager
+        
+        permission_manager = AsyncPermissionManager(user)
+        accessible_channels = []
+        
+        # Always accessible channels for authenticated users
+        accessible_channels.extend([
+            'user_presence',
+            'pipelines_overview',
+            'pipeline_updates',
+            f'user_{user.id}',  # User's own channel
+            f'tenant_{getattr(user, "tenant_id", "default")}'  # Tenant channel
+        ])
+        
+        # Check pipeline access
+        accessible_pipelines = await permission_manager.get_accessible_pipelines()
+        if accessible_pipelines == 'all':
+            # User has access to all pipelines - we'd need to fetch all pipeline IDs
+            # For now, return a flag that they have broad access
+            accessible_channels.append('pipelines:*')
+        elif isinstance(accessible_pipelines, list):
+            # Add specific pipeline channels
+            for pipeline_id in accessible_pipelines:
+                accessible_channels.extend([
+                    f'pipeline:{pipeline_id}',
+                    f'pipeline_records_{pipeline_id}'
+                ])
+        
+        # Check workflow access if user has workflow permissions
+        if await permission_manager.has_permission('action', 'workflows', 'read'):
+            accessible_channels.append('workflows:*')
+        
+        # Check form access if user has form permissions
+        if await permission_manager.has_permission('action', 'forms', 'read'):
+            accessible_channels.append('forms:*')
+        
+        return accessible_channels
+    
+    except Exception as e:
+        logger.error(f"Error getting accessible channels for user {user.id}: {e}")
+        return ['user_presence']  # Minimal fallback

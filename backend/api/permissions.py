@@ -65,8 +65,13 @@ class RecordPermission(permissions.BasePermission):
             return True  # Object-level check in has_object_permission
         elif view.action in ['update', 'partial_update']:
             return True  # Object-level check in has_object_permission
-        elif view.action == 'destroy':
+        elif view.action in ['destroy', 'soft_delete', 'restore']:
             return True  # Object-level check in has_object_permission
+        elif view.action == 'deleted':
+            # List deleted records - requires read permission for the pipeline
+            if pipeline_id:
+                return permission_manager.has_permission('action', 'records', 'read', pipeline_id)
+            return permission_manager.has_permission('action', 'records', 'read')
         
         return False
     
@@ -79,7 +84,10 @@ class RecordPermission(permissions.BasePermission):
             return permission_manager.has_permission('action', 'records', 'read', pipeline_id)
         elif view.action in ['update', 'partial_update']:
             return permission_manager.has_permission('action', 'records', 'update', pipeline_id)
-        elif view.action == 'destroy':
+        elif view.action in ['destroy', 'soft_delete']:
+            return permission_manager.has_permission('action', 'records', 'delete', pipeline_id)
+        elif view.action == 'restore':
+            # Restore requires delete permission (ability to manage deleted records)
             return permission_manager.has_permission('action', 'records', 'delete', pipeline_id)
         
         return False

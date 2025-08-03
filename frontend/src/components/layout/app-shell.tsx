@@ -179,7 +179,12 @@ export function AppShell({ children }: AppShellProps) {
                 </div>
                 <div className="ml-3 min-w-0 flex-1">
                   <p className="text-sm font-medium text-gray-900 dark:text-white truncate">
-                    {`${user.firstName} ${user.lastName}`}
+                    {user.firstName && user.lastName 
+                      ? `${user.firstName} ${user.lastName}` 
+                      : user.firstName 
+                        ? user.firstName
+                        : user.email?.split('@')[0] || 'Loading...'
+                    }
                   </p>
                   <p className="text-xs text-gray-500 dark:text-gray-400 truncate">
                     {user.userType?.name || 'User'}
@@ -237,7 +242,12 @@ export function AppShell({ children }: AppShellProps) {
                       <User className="w-3 h-3 text-gray-600 dark:text-gray-300" />
                     </div>
                     <span className="text-sm font-medium text-gray-900 dark:text-white">
-                      {user.firstName}
+                      {user.firstName && user.lastName 
+                        ? `${user.firstName} ${user.lastName}`
+                        : user.firstName 
+                          ? user.firstName
+                          : user.email?.split('@')[0] || 'User'
+                      }
                     </span>
                     <ChevronDown className="w-4 h-4 ml-1" />
                   </button>
@@ -246,7 +256,7 @@ export function AppShell({ children }: AppShellProps) {
                     <div className="absolute right-0 mt-2 w-48 bg-white dark:bg-gray-800 rounded-md shadow-lg ring-1 ring-black ring-opacity-5 z-50">
                       <div className="py-1">
                         <div className="px-4 py-2 text-xs text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-gray-700">
-                          {user.email}
+                          {user.email || 'Loading...'}
                         </div>
                         <Link
                           href="/profile"

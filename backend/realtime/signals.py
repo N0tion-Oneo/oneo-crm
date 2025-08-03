@@ -3,6 +3,8 @@ Signal handlers for real-time feature integration
 """
 import json
 import time
+import asyncio
+from threading import Thread
 from django.db.models.signals import post_save, post_delete, pre_save
 from django.dispatch import receiver
 from django.core.cache import cache
@@ -11,6 +13,36 @@ from asgiref.sync import async_to_sync
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+def safe_group_send_sync(channel_layer, group_name, message):
+    """
+    Safely send message to channel group from sync context.
+    Handles event loop issues properly.
+    """
+    try:
+        # Simple approach: use async_to_sync directly with the coroutine
+        async_to_sync(channel_layer.group_send)(group_name, message)
+        logger.debug(f"Sent message to group {group_name}: {message.get('type', 'unknown')}")
+    except Exception as e:
+        logger.error(f"Failed to send message to group {group_name}: {e}")
+        # Try alternative approach if the first fails
+        try:
+            import asyncio
+            asyncio.run(channel_layer.group_send(group_name, message))
+            logger.debug(f"Sent message to group {group_name} (fallback): {message.get('type', 'unknown')}")
+        except Exception as e2:
+            logger.error(f"Fallback also failed for group {group_name}: {e2}")
+
+
+async def safe_group_send(channel_layer, group_name, message):
+    """Safely send message to channel group"""
+    try:
+        await channel_layer.group_send(group_name, message)
+        logger.debug(f"Sent message to group {group_name}: {message.get('type', 'unknown')}")
+    except Exception as e:
+        logger.error(f"Failed to send message to group {group_name}: {e}")
+
 
 # Import models when they're available
 try:
@@ -25,62 +57,99 @@ if MODELS_AVAILABLE:
     
     @receiver(post_save, sender=Record)
     def handle_record_saved(sender, instance, created, **kwargs):
-        """Handle record creation/update for real-time broadcasting"""
+        """Handle record creation/update/soft deletion for real-time broadcasting"""
         try:
             channel_layer = get_channel_layer()
             if not channel_layer:
                 return
             
-            # Get updated record count for the pipeline
-            new_record_count = Record.objects.filter(pipeline_id=instance.pipeline_id).count()
+            # Get updated record count for the pipeline (exclude soft deleted)
+            new_record_count = Record.objects.filter(pipeline_id=instance.pipeline_id, is_deleted=False).count()
             
-            # Create event data
-            event_data = {
-                'type': 'record_created' if created else 'record_updated',
-                'record_id': str(instance.id),
-                'pipeline_id': str(instance.pipeline_id),
-                'title': getattr(instance, 'title', f'Record {instance.id}'),
-                'data': instance.data,
-                'updated_at': instance.updated_at.isoformat() if instance.updated_at else None,
-                'updated_by': {
-                    'id': instance.updated_by.id if instance.updated_by else None,
-                    'username': instance.updated_by.username if instance.updated_by else None,
-                },
-                'new_count': new_record_count,  # Add the updated count
-                'timestamp': time.time()
-            }
+            # Check if this is a soft deletion
+            if not created and instance.is_deleted:
+                # This is a soft deletion - broadcast as record_deleted
+                event_data = {
+                    'type': 'record_deleted',
+                    'record_id': str(instance.id),
+                    'pipeline_id': str(instance.pipeline_id),
+                    'title': getattr(instance, 'title', f'Record {instance.id}'),
+                    'new_count': new_record_count,  # Updated count after deletion
+                    'timestamp': time.time()
+                }
+                
+                # Broadcast to pipeline subscribers
+                pipeline_group = f"pipeline_records_{instance.pipeline_id}"
+                safe_group_send_sync(channel_layer, pipeline_group, {
+                    'type': 'record_deleted',
+                    'data': event_data
+                })
+                
+                # Broadcast to document subscribers
+                document_group = f"document_{instance.id}"
+                safe_group_send_sync(channel_layer, document_group, {
+                    'type': 'document_deleted',
+                    'data': event_data
+                })
+                
+                # Store for SSE subscribers
+                store_sse_message(
+                    f"pipeline_records_{instance.pipeline_id}",
+                    event_data
+                )
+                
+                logger.debug(f"Broadcasted record soft deleted: {instance.id}")
+                return
             
-            # Broadcast to pipeline subscribers
-            pipeline_group = f"pipeline_records_{instance.pipeline_id}"
-            async_to_sync(channel_layer.group_send)(pipeline_group, {
-                'type': 'record_update',
-                'data': event_data
-            })
-            
-            # Broadcast to document subscribers (for collaborative editing)
-            document_group = f"document:{instance.id}"
-            async_to_sync(channel_layer.group_send)(document_group, {
-                'type': 'document_updated',
-                'data': event_data
-            })
-            
-            # Store for SSE subscribers
-            store_sse_message(
-                f"pipeline_records_{instance.pipeline_id}",
-                event_data
-            )
-            
-            # Store activity
-            store_activity_event({
-                'type': 'record_activity',
-                'action': 'created' if created else 'updated',
-                'record_id': str(instance.id),
-                'pipeline_id': str(instance.pipeline_id),
-                'user_id': instance.updated_by.id if instance.updated_by else None,
-                'timestamp': time.time()
-            })
-            
-            logger.debug(f"Broadcasted record {'created' if created else 'updated'}: {instance.id}")
+            # Handle normal creation/update (not soft deletion)
+            if not instance.is_deleted:  # Only broadcast if record is not deleted
+                # Create event data
+                event_data = {
+                    'type': 'record_created' if created else 'record_updated',
+                    'record_id': str(instance.id),
+                    'pipeline_id': str(instance.pipeline_id),
+                    'title': getattr(instance, 'title', f'Record {instance.id}'),
+                    'data': instance.data,
+                    'updated_at': instance.updated_at.isoformat() if instance.updated_at else None,
+                    'updated_by': {
+                        'id': instance.updated_by.id if instance.updated_by else None,
+                        'username': instance.updated_by.username if instance.updated_by else None,
+                    },
+                    'new_count': new_record_count,  # Add the updated count
+                    'timestamp': time.time()
+                }
+                
+                # Broadcast to pipeline subscribers
+                pipeline_group = f"pipeline_records_{instance.pipeline_id}"
+                safe_group_send_sync(channel_layer, pipeline_group, {
+                    'type': 'record_update',
+                    'data': event_data
+                })
+                
+                # Broadcast to document subscribers (for collaborative editing)
+                document_group = f"document_{instance.id}"
+                safe_group_send_sync(channel_layer, document_group, {
+                    'type': 'document_updated',
+                    'data': event_data
+                })
+                
+                # Store for SSE subscribers
+                store_sse_message(
+                    f"pipeline_records_{instance.pipeline_id}",
+                    event_data
+                )
+                
+                # Store activity
+                store_activity_event({
+                    'type': 'record_activity',
+                    'action': 'created' if created else 'updated',
+                    'record_id': str(instance.id),
+                    'pipeline_id': str(instance.pipeline_id),
+                    'user_id': instance.updated_by.id if instance.updated_by else None,
+                    'timestamp': time.time()
+                })
+                
+                logger.debug(f"Broadcasted record {'created' if created else 'updated'}: {instance.id}")
             
         except Exception as e:
             logger.error(f"Error handling record save signal: {e}")
@@ -109,14 +178,14 @@ if MODELS_AVAILABLE:
             
             # Broadcast to pipeline subscribers
             pipeline_group = f"pipeline_records_{instance.pipeline_id}"
-            async_to_sync(channel_layer.group_send)(pipeline_group, {
+            safe_group_send_sync(channel_layer, pipeline_group, {
                 'type': 'record_deleted',
                 'data': event_data
             })
             
             # Broadcast to document subscribers
-            document_group = f"document:{instance.id}"
-            async_to_sync(channel_layer.group_send)(document_group, {
+            document_group = f"document_{instance.id}"
+            safe_group_send_sync(channel_layer, document_group, {
                 'type': 'document_deleted',
                 'data': event_data
             })
@@ -153,14 +222,14 @@ if MODELS_AVAILABLE:
             }
             
             # Broadcast to general pipeline subscribers
-            async_to_sync(channel_layer.group_send)("pipeline_updates", {
+            safe_group_send_sync(channel_layer, "pipeline_updates", {
                 'type': 'pipeline_update',
                 'data': event_data
             })
             
             # Broadcast to specific pipeline subscribers
             pipeline_group = f"pipeline_updates_{instance.id}"
-            async_to_sync(channel_layer.group_send)(pipeline_group, {
+            safe_group_send_sync(channel_layer, pipeline_group, {
                 'type': 'pipeline_update',
                 'data': event_data
             })
@@ -194,15 +263,15 @@ if MODELS_AVAILABLE:
             }
             
             # Broadcast to relationship subscribers
-            async_to_sync(channel_layer.group_send)("relationship_updates", {
+            safe_group_send_sync(channel_layer, "relationship_updates", {
                 'type': 'relationship_update',
                 'data': event_data
             })
             
             # Broadcast to both record documents
             for record_id in [instance.source_record_id, instance.target_record_id]:
-                document_group = f"document:{record_id}"
-                async_to_sync(channel_layer.group_send)(document_group, {
+                document_group = f"document_{record_id}"
+                safe_group_send_sync(channel_layer, document_group, {
                     'type': 'relationship_update',
                     'data': event_data
                 })

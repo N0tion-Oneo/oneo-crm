@@ -22,6 +22,11 @@ from .serializers import (
 )
 from .jwt_authentication import TenantAwareJWTAuthentication
 from .permissions import SyncPermissionManager
+from .permissions_registry import (
+    get_complete_permission_schema, 
+    get_permission_matrix_configuration
+)
+from tenants.models import Tenant
 
 User = get_user_model()
 
@@ -602,6 +607,25 @@ class UserTypeViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(user_type)
         return Response(serializer.data)
     
+    def _normalize_category_name(self, category):
+        """Normalize category names to prevent conflicts"""
+        # Map singular forms to plural forms
+        category_mapping = {
+            'user': 'users',
+            'record': 'records',
+            'field': 'fields',
+            'pipeline': 'pipelines',
+            'workflow': 'workflows',
+            'relationship': 'relationships',
+            'communication': 'communications',
+            'business': 'business_rules',
+            'ai': 'ai_features',
+            'api': 'api_access'
+        }
+        
+        # Return normalized form if mapping exists, otherwise return original
+        return category_mapping.get(category.lower(), category.lower())
+    
     @action(detail=True, methods=['post'])
     def add_permission(self, request, pk=None):
         """Add a specific permission to a user type"""
@@ -615,6 +639,9 @@ class UserTypeViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
+        # Normalize category name to prevent conflicts
+        normalized_category = self._normalize_category_name(category)
+        
         # Check permission
         permission_manager = SyncPermissionManager(request.user)
         if not permission_manager.has_permission('action', 'user_types', 'update'):
@@ -623,20 +650,16 @@ class UserTypeViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_403_FORBIDDEN
             )
         
-        # Add permission
+        # Add permission using normalized category
         permissions = user_type.base_permissions.copy()
-        if category not in permissions:
-            permissions[category] = []
+        if normalized_category not in permissions:
+            permissions[normalized_category] = []
         
-        if action not in permissions[category]:
-            permissions[category].append(action)
+        if action not in permissions[normalized_category]:
+            permissions[normalized_category].append(action)
             user_type.base_permissions = permissions
             user_type.save()
             
-            # Clear cache
-            from asgiref.sync import async_to_sync
-            from .permissions import AsyncPermissionManager
-            async_to_sync(AsyncPermissionManager.clear_user_type_cache)(user_type.id)
         
         serializer = self.get_serializer(user_type)
         return Response(serializer.data)
@@ -654,6 +677,9 @@ class UserTypeViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
+        # Normalize category name to prevent conflicts
+        normalized_category = self._normalize_category_name(category)
+        
         # Check permission
         permission_manager = SyncPermissionManager(request.user)
         if not permission_manager.has_permission('action', 'user_types', 'update'):
@@ -663,28 +689,24 @@ class UserTypeViewSet(viewsets.ModelViewSet):
             )
         
         # Prevent removing critical permissions from Admin
-        if user_type.slug == 'admin' and category == 'system' and action == 'full_access':
+        if user_type.slug == 'admin' and normalized_category == 'system' and action == 'full_access':
             return Response(
                 {'error': 'Cannot remove full_access from Admin user type'},
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        # Remove permission
+        # Remove permission using normalized category
         permissions = user_type.base_permissions.copy()
-        if category in permissions and action in permissions[category]:
-            permissions[category].remove(action)
+        if normalized_category in permissions and action in permissions[normalized_category]:
+            permissions[normalized_category].remove(action)
             
             # Remove empty categories
-            if not permissions[category]:
-                del permissions[category]
+            if not permissions[normalized_category]:
+                del permissions[normalized_category]
             
             user_type.base_permissions = permissions
             user_type.save()
             
-            # Clear cache
-            from asgiref.sync import async_to_sync
-            from .permissions import AsyncPermissionManager
-            async_to_sync(AsyncPermissionManager.clear_user_type_cache)(user_type.id)
         
         serializer = self.get_serializer(user_type)
         return Response(serializer.data)

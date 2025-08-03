@@ -143,6 +143,11 @@ export function RecordListView({ pipeline, onEditRecord, onCreateRecord }: Recor
   // WebSocket integration for real-time updates
   const handleRealtimeMessage = (message: RealtimeMessage) => {
     console.log('📨 Record list received realtime message:', message)
+    console.log('🔍 Pipeline comparison:', {
+      messagePipelineId: message.payload?.pipeline_id,
+      currentPipelineId: pipeline.id,
+      matches: message.payload?.pipeline_id === pipeline.id
+    })
     
     switch (message.type) {
       case 'record_create':
@@ -182,6 +187,11 @@ export function RecordListView({ pipeline, onEditRecord, onCreateRecord }: Recor
           const deletedRecordId = message.payload.record_id
           setRecords(prev => prev.filter(record => record.id !== deletedRecordId))
           console.log('✅ Removed record from list:', deletedRecordId)
+        } else {
+          console.log('❌ Pipeline ID mismatch for record_delete:', {
+            messagePipelineId: message.payload?.pipeline_id,
+            currentPipelineId: pipeline.id
+          })
         }
         break
     }

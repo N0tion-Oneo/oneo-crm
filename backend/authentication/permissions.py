@@ -3,8 +3,6 @@ Async permission manager for Oneo CRM
 Uses Django's native async capabilities for permission checking
 """
 
-import asyncio
-from django.core.cache import cache
 from django.contrib.auth import get_user_model
 from asgiref.sync import sync_to_async, async_to_sync
 from .models import UserType, UserTypePermission, ExtendedPermission
@@ -15,20 +13,12 @@ User = get_user_model()
 class AsyncPermissionManager:
     """Async permission manager using Django's native async capabilities"""
     
-    CACHE_TTL = 300  # 5 minutes
-    
     def __init__(self, user):
         self.user = user
-        self.cache_key = f"user_permissions:{user.id}"
     
     async def get_user_permissions(self):
-        """Get all permissions for a user with async caching"""
-        # Use Django's async cache operations
-        permissions = await sync_to_async(cache.get)(self.cache_key)
-        if permissions is None:
-            permissions = await self._calculate_user_permissions()
-            await sync_to_async(cache.set)(self.cache_key, permissions, self.CACHE_TTL)
-        return permissions
+        """Get all permissions for a user"""
+        return await self._calculate_user_permissions()
     
     async def _get_user_type_permissions(self):
         """Async database query using Django's async ORM"""
@@ -97,24 +87,7 @@ class AsyncPermissionManager:
             'delete': field_perms.get('delete', False)
         }
     
-    async def clear_cache(self):
-        """Clear cached permissions for user"""
-        await sync_to_async(cache.delete)(self.cache_key)
     
-    @classmethod
-    async def clear_user_type_cache(cls, user_type_id):
-        """Clear cache for all users of a specific user type using Django async ORM"""
-        # Use Django's async ORM to get user IDs
-        user_ids = []
-        async for user in User.objects.filter(user_type_id=user_type_id).values_list('id', flat=True):
-            user_ids.append(user)
-        
-        # Clear caches concurrently using asyncio.gather
-        clear_tasks = [
-            sync_to_async(cache.delete)(f"user_permissions:{user_id}") 
-            for user_id in user_ids
-        ]
-        await asyncio.gather(*clear_tasks)
     
     async def can_access_user(self, target_user):
         """Check if current user can access another user's data"""
@@ -302,9 +275,6 @@ class SyncPermissionManager:
         """Get list of pipelines user can access (sync wrapper)"""
         return async_to_sync(self.async_manager.get_accessible_pipelines)()
     
-    def clear_cache(self):
-        """Clear cached permissions for user (sync wrapper)"""
-        return async_to_sync(self.async_manager.clear_cache)()
 
 
 class PermissionManager:

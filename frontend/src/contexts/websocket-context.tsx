@@ -4,7 +4,7 @@ import React, { createContext, useContext, useEffect, useRef, useState, useCallb
 import { useAuth } from '@/features/auth/context'
 
 export interface RealtimeMessage {
-  type: 'record_create' | 'record_update' | 'record_delete' | 'pipeline_update' | 'user_presence' | 'field_lock' | 'field_unlock'
+  type: 'record_create' | 'record_update' | 'record_delete' | 'pipeline_update' | 'user_presence' | 'field_lock' | 'field_unlock' | 'permission_update'
   payload: any
   user?: {
     id: string
@@ -110,12 +110,31 @@ export function WebSocketProvider({ children, autoConnect = true }: WebSocketPro
     const accessToken = getCookie('oneo_access_token')
     let url = `${protocol}//${host}:${port}/ws/realtime/`
     
+    console.log('🍪 WebSocket Cookie Debug:', {
+      allCookies: document.cookie,
+      accessToken: accessToken ? 'PRESENT' : 'MISSING',
+      tokenLength: accessToken ? accessToken.length : 0
+    })
+    
     if (accessToken) {
       // Basic token validation
       const tokenParts = accessToken.split('.')
       const isValidFormat = tokenParts.length === 3
       
+      // Decode JWT payload to see what user it contains
       if (isValidFormat) {
+        try {
+          const payload = JSON.parse(atob(tokenParts[1]))
+          console.log('🔓 JWT Token Contents:', {
+            user_id: payload.user_id,
+            username: payload.username,
+            exp: new Date(payload.exp * 1000),
+            iat: new Date(payload.iat * 1000)
+          })
+        } catch (e) {
+          console.warn('❌ Could not decode JWT payload:', e)
+        }
+        
         url += `?token=${encodeURIComponent(accessToken)}`
         console.log('🔑 WebSocket URL constructed with valid token')
       } else {
@@ -216,7 +235,9 @@ export function WebSocketProvider({ children, autoConnect = true }: WebSocketPro
         message.type === 'record_update' && subscription.channel.startsWith('pipeline_records_') ||
         message.type === 'record_delete' && subscription.channel.startsWith('pipeline_records_') ||
         message.type === 'pipeline_update' && subscription.channel === 'pipeline_updates' ||
-        message.type === 'user_presence' && subscription.channel === 'user_presence'
+        message.type === 'user_presence' && subscription.channel === 'user_presence' ||
+        message.type === 'permission_update' && subscription.channel.startsWith('permission') ||
+        subscription.channel === 'pipelines_overview' // Special case for overview page
       
       if (isRelevant) {
         try {
@@ -343,6 +364,17 @@ export function WebSocketProvider({ children, autoConnect = true }: WebSocketPro
   // Auto-connect effect
   useEffect(() => {
     if (autoConnect && isAuthenticated) {
+      console.log('👤 WebSocket Auth Context:', {
+        isAuthenticated,
+        user: user ? {
+          id: user.id,
+          email: user.email,
+          username: user.username || 'NO_USERNAME',
+          first_name: user.first_name,
+          last_name: user.last_name
+        } : 'NO_USER'
+      })
+      
       // Add delay to ensure authentication is stable
       const connectTimeout = setTimeout(() => {
         connect()
@@ -352,7 +384,7 @@ export function WebSocketProvider({ children, autoConnect = true }: WebSocketPro
         clearTimeout(connectTimeout)
       }
     }
-  }, [autoConnect, isAuthenticated, connect])
+  }, [autoConnect, isAuthenticated, connect, user])
 
   // Cleanup on unmount
   useEffect(() => {

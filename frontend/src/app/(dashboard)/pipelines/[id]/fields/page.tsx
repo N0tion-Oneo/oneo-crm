@@ -19,6 +19,7 @@ interface PipelineField {
   display_order: number
   is_visible_in_list: boolean
   is_visible_in_detail: boolean
+  is_visible_in_public_forms?: boolean
   
   // Behavior
   is_searchable: boolean

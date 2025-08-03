@@ -11,6 +11,7 @@ Architecture:
 
 from typing import Dict, List, Any
 from django.utils import timezone
+from django_tenants.utils import schema_context
 
 
 # Global permission schema available to all tenants
@@ -299,3 +300,221 @@ def get_permission_registry_info() -> Dict[str, Any]:
         'category_stats': category_stats,
         'available_role_levels': ['admin', 'manager', 'user', 'viewer', 'custom']
     }
+
+
+def get_dynamic_tenant_permissions(tenant) -> Dict[str, Any]:
+    """
+    Generate dynamic permissions based on tenant-specific resources.
+    
+    Args:
+        tenant: Tenant instance
+        
+    Returns:
+        Dict containing dynamic permission categories for tenant resources
+    """
+    dynamic_permissions = {}
+    
+    try:
+        with schema_context(tenant.schema_name):
+            # Import models within tenant context to avoid import issues
+            from pipelines.models import Pipeline
+            from workflows.models import Workflow
+            from forms.models import FormTemplate
+            
+            # Add pipeline-specific permissions
+            try:
+                pipelines = Pipeline.objects.filter(is_active=True).select_related('created_by')
+                for pipeline in pipelines:
+                    permission_key = f'pipeline_{pipeline.id}'
+                    dynamic_permissions[permission_key] = {
+                        'actions': ['access', 'read', 'create', 'update', 'delete', 'export', 'import'],
+                        'description': f'Permissions for {pipeline.name} pipeline',
+                        'category_display': f'Pipeline: {pipeline.name}',
+                        'resource_type': 'pipeline',
+                        'resource_id': pipeline.id,
+                        'is_dynamic': True,
+                        'parent_category': 'pipelines',
+                        'metadata': {
+                            'pipeline_name': pipeline.name,
+                            'pipeline_type': pipeline.pipeline_type,
+                            'access_level': pipeline.access_level,
+                            'created_by': pipeline.created_by.email if pipeline.created_by else None,
+                            'created_at': pipeline.created_at.isoformat() if pipeline.created_at else None,
+                            'record_count': pipeline.record_count,
+                        }
+                    }
+            except Exception:
+                # Pipeline model might not exist in some tenants
+                pass
+            
+            # Add workflow-specific permissions
+            try:
+                workflows = Workflow.objects.filter(status='active').select_related('created_by')
+                for workflow in workflows:
+                    permission_key = f'workflow_{workflow.id}'
+                    dynamic_permissions[permission_key] = {
+                        'actions': ['view', 'execute', 'edit', 'clone', 'delete'],
+                        'description': f'Permissions for {workflow.name} workflow',
+                        'category_display': f'Workflow: {workflow.name}',
+                        'resource_type': 'workflow',
+                        'resource_id': str(workflow.id),  # UUID field
+                        'is_dynamic': True,
+                        'parent_category': 'workflows',
+                        'metadata': {
+                            'workflow_name': workflow.name,
+                            'workflow_category': workflow.category,
+                            'workflow_status': workflow.status,
+                            'created_by': workflow.created_by.email if workflow.created_by else None,
+                            'created_at': workflow.created_at.isoformat() if workflow.created_at else None,
+                            'version': workflow.version,
+                        }
+                    }
+            except Exception:
+                # Workflow model might not exist in some tenants
+                pass
+            
+            # Add form-specific permissions
+            try:
+                forms = FormTemplate.objects.filter(is_active=True).select_related('created_by')
+                for form in forms:
+                    permission_key = f'form_{form.id}'
+                    dynamic_permissions[permission_key] = {
+                        'actions': ['view', 'submit', 'edit', 'delete', 'configure'],
+                        'description': f'Permissions for {form.name} form',
+                        'category_display': f'Form: {form.name}',
+                        'resource_type': 'form',
+                        'resource_id': form.id,
+                        'is_dynamic': True,
+                        'parent_category': 'forms',
+                        'metadata': {
+                            'form_name': form.name,
+                            'form_type': getattr(form, 'form_type', 'standard'),
+                            'is_public': getattr(form, 'is_public', False),
+                            'created_by': form.created_by.email if form.created_by else None,
+                            'created_at': form.created_at.isoformat() if form.created_at else None,
+                        }
+                    }
+            except Exception:
+                # Form model might not exist in some tenants
+                pass
+                
+    except Exception as e:
+        # Log error but continue - tenant might not be properly set up
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning(f"Failed to generate dynamic permissions for tenant {tenant.schema_name}: {e}")
+    
+    return dynamic_permissions
+
+
+def get_complete_permission_schema(tenant) -> Dict[str, Any]:
+    """
+    Get complete permission schema including static and dynamic permissions.
+    
+    Args:
+        tenant: Tenant instance
+        
+    Returns:
+        Dict containing complete permission schema for the tenant
+    """
+    # Start with base static permissions
+    complete_schema = PERMISSION_CATEGORIES.copy()
+    
+    # Add tenant-specific dynamic permissions
+    dynamic_permissions = get_dynamic_tenant_permissions(tenant)
+    complete_schema.update(dynamic_permissions)
+    
+    return complete_schema
+
+
+def get_permission_matrix_configuration(tenant) -> Dict[str, Any]:
+    """
+    Get complete permission matrix configuration for frontend.
+    
+    Args:
+        tenant: Tenant instance
+        
+    Returns:
+        Dict containing permission matrix configuration for UI
+    """
+    complete_schema = get_complete_permission_schema(tenant)
+    
+    # Group permissions by parent category for UI organization
+    grouped_categories = {}
+    
+    # Always include potential resource types for auto-generated tabs
+    potential_resource_types = ['pipelines', 'workflows', 'forms', 'reports', 'dashboards']
+    for resource_type in potential_resource_types:
+        grouped_categories[resource_type] = {
+            'items': [],
+            'is_expandable': True,
+            'total_resources': 0,
+            'resource_type': resource_type
+        }
+    
+    for category_key, category_data in complete_schema.items():
+        parent_category = category_data.get('parent_category', category_key)
+        
+        if parent_category not in grouped_categories:
+            grouped_categories[parent_category] = {
+                'items': [],
+                'is_expandable': False,
+                'total_resources': 0
+            }
+        
+        if category_data.get('is_dynamic', False):
+            grouped_categories[parent_category]['items'].append({
+                'key': category_key,
+                'data': category_data
+            })
+            grouped_categories[parent_category]['is_expandable'] = True
+            grouped_categories[parent_category]['total_resources'] += 1
+        else:
+            # Static categories go directly in the root
+            if parent_category == category_key:
+                grouped_categories[category_key] = {
+                    'items': [{'key': category_key, 'data': category_data}],
+                    'is_expandable': False,
+                    'total_resources': 1
+                }
+    
+    return {
+        'categories': complete_schema,
+        'grouped_categories': grouped_categories,
+        'action_descriptions': ACTION_DESCRIPTIONS,
+        'tenant_info': {
+            'schema_name': tenant.schema_name,
+            'name': tenant.name,
+            'max_users': tenant.max_users,
+            'features_enabled': tenant.features_enabled
+        },
+        'ui_config': {
+            'collapsible_categories': True,
+            'bulk_operations': True,
+            'search_enabled': True,
+            'export_enabled': True,
+            'real_time_updates': True,
+            'resource_grouping': True
+        },
+        'validation_rules': {
+            'required_admin_permissions': ['system.full_access'],
+            'protected_permissions': [
+                'system.full_access',
+                'users.delete',
+                'user_types.delete'
+            ],
+            'category_dependencies': {
+                'records': ['pipelines.access'],
+                'fields': ['pipelines.access'],
+                'workflows': ['pipelines.access'],
+                'forms': ['pipelines.access']
+            },
+            'dynamic_resource_limits': {
+                'max_pipeline_permissions': 50,
+                'max_workflow_permissions': 25,
+                'max_form_permissions': 25
+            }
+        }
+    }
+
+

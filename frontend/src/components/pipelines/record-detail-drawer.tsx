@@ -1014,9 +1014,10 @@ export function RecordDetailDrawer({
               <button
                 onClick={() => onDelete(record.id)}
                 className="px-4 py-2 text-red-600 hover:text-red-700 border border-red-300 hover:border-red-400 rounded-md hover:bg-red-50 dark:hover:bg-red-900/20"
+                title="Move record to trash (can be restored)"
               >
                 <Trash2 className="w-4 h-4 mr-2 inline" />
-                Delete
+                Move to Trash
               </button>
             )}
             

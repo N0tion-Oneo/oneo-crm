@@ -25,6 +25,7 @@ try:
     from realtime.routing import websocket_urlpatterns as realtime_websocket_patterns
     from communications.routing import websocket_urlpatterns as communications_websocket_patterns
     from api.middleware import (
+        WebSocketTenantMiddleware,
         JWTWebSocketAuthMiddleware,
         RateLimitMiddleware, 
         SecurityHeadersMiddleware,
@@ -45,12 +46,15 @@ except ImportError as e:
 # Create final application
 if websocket_enabled:
     # Create WebSocket application with middleware stack
+    # Note: WebSocketTenantMiddleware must be first to set schema context
     websocket_application = AllowedHostsOriginValidator(
         WebSocketLoggingMiddleware(
             SecurityHeadersMiddleware(
                 RateLimitMiddleware(
-                    JWTWebSocketAuthMiddleware(
-                        URLRouter(websocket_urlpatterns)
+                    WebSocketTenantMiddleware(
+                        JWTWebSocketAuthMiddleware(
+                            URLRouter(websocket_urlpatterns)
+                        )
                     )
                 )
             )

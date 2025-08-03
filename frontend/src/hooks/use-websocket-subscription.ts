@@ -113,3 +113,32 @@ export function useUserPresenceSubscription(
     enabled
   })
 }
+
+/**
+ * Hook for subscribing to permission updates
+ * Note: Users are automatically subscribed to permission channels on connection
+ */
+export function usePermissionUpdatesSubscription(
+  onMessage?: (message: RealtimeMessage) => void,
+  enabled = true
+) {
+  return useWebSocketSubscription({
+    channel: 'permission_updates',
+    onMessage,
+    enabled
+  })
+}
+
+/**
+ * Hook for subscribing to pipelines overview updates (all pipeline record counts)
+ */
+export function usePipelinesOverviewSubscription(
+  onMessage?: (message: RealtimeMessage) => void,
+  enabled = true
+) {
+  return useWebSocketSubscription({
+    channel: 'pipelines_overview',
+    onMessage,
+    enabled
+  })
+}

@@ -9,7 +9,7 @@ from channels.exceptions import DenyConnection
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
 from .connection_manager import connection_manager
-from .auth import authenticate_websocket_session, authenticate_websocket_jwt, extract_session_from_scope, extract_auth_from_scope, check_user_permissions
+from .auth import authenticate_websocket_session, authenticate_websocket_jwt, extract_session_from_scope, extract_auth_from_scope, check_user_permissions, check_channel_subscription_permission, get_user_accessible_channels
 import logging
 import time
 
@@ -60,12 +60,37 @@ class BaseRealtimeConsumer(AsyncWebsocketConsumer):
             await self._set_authenticated_user(user)
             await self.accept()
             
+            # Get user's accessible channels for enhanced permission-based features
+            accessible_channels = await get_user_accessible_channels(user)
+            
             await self.send(text_data=json.dumps({
                 'type': 'authenticated',
                 'user_id': str(self.user_id),
                 'message': 'Authentication successful',
-                'auth_method': 'middleware' if middleware_user and middleware_user.is_authenticated else 'consumer'
+                'auth_method': 'middleware' if middleware_user and middleware_user.is_authenticated else 'consumer',
+                'accessible_channels': accessible_channels,
+                'permission_info': {
+                    'has_system_access': await check_user_permissions(user, 'system', None, 'full_access'),
+                    'has_pipeline_access': await check_user_permissions(user, 'pipelines', None, 'read'),
+                    'has_workflow_access': await check_user_permissions(user, 'workflows', None, 'read'),
+                    'has_form_access': await check_user_permissions(user, 'forms', None, 'read')
+                }
             }))
+
+            # Subscribe to permission update channels
+            if user:
+                # Subscribe to user-specific permission updates
+                await self.channel_layer.group_add(
+                    f'user_{user.id}',
+                    self.channel_name
+                )
+                
+                # Subscribe to tenant-wide permission updates
+                tenant_schema = getattr(self.scope.get('tenant', {}), 'schema_name', 'public')
+                await self.channel_layer.group_add(
+                    f'tenant_permissions_{tenant_schema}',
+                    self.channel_name
+                )
             
             await self.send_initial_presence()
             logger.info(f"✅ WebSocket connection authenticated for user: {user.username}")
@@ -91,6 +116,11 @@ class BaseRealtimeConsumer(AsyncWebsocketConsumer):
             # Leave all subscribed groups
             for subscription in self.subscriptions:
                 await self.channel_layer.group_discard(subscription, self.channel_name)
+            
+            # Leave permission update channels
+            await self.channel_layer.group_discard(f'user_{self.user_id}', self.channel_name)
+            tenant_schema = getattr(self.scope.get('tenant', {}), 'schema_name', 'public')
+            await self.channel_layer.group_discard(f'tenant_permissions_{tenant_schema}', self.channel_name)
         
         logger.info(f"WebSocket disconnected: {close_code}")
     
@@ -283,7 +313,7 @@ class BaseRealtimeConsumer(AsyncWebsocketConsumer):
             return
         
         # Join document group
-        group_name = f"document:{document_id}"
+        group_name = f"document_{document_id}"
         await self.channel_layer.group_add(group_name, self.channel_name)
         
         # Update presence
@@ -329,7 +359,7 @@ class BaseRealtimeConsumer(AsyncWebsocketConsumer):
             return
         
         # Leave document group
-        group_name = f"document:{document_id}"
+        group_name = f"document_{document_id}"
         await self.channel_layer.group_discard(group_name, self.channel_name)
         
         # Remove presence
@@ -466,29 +496,8 @@ class BaseRealtimeConsumer(AsyncWebsocketConsumer):
         }))
     
     async def can_subscribe_to_channel(self, channel: str) -> bool:
-        """Check if user can subscribe to channel"""
-        # Extract resource info from channel name
-        if channel.startswith('pipeline:'):
-            pipeline_id = channel.split(':')[1]
-            return await check_user_permissions(self.user, 'pipelines', pipeline_id, 'read')
-        elif channel.startswith('pipeline_records_'):
-            # Handle pipeline_records_X format (new format without colons)
-            pipeline_id = channel.replace('pipeline_records_', '')
-            return await check_user_permissions(self.user, 'pipelines', pipeline_id, 'read')
-        elif channel.startswith('document:'):
-            document_id = channel.split(':')[1]
-            return await check_user_permissions(self.user, 'records', document_id, 'read')
-        elif channel == 'user_presence':
-            return True  # All authenticated users can subscribe to presence
-        elif channel == 'pipelines_overview':
-            return True  # All authenticated users can subscribe to pipeline overview
-        elif channel == 'pipeline_updates':
-            return True  # All authenticated users can subscribe to general pipeline updates
-        elif channel.startswith('pipeline_records_'):
-            pipeline_id = channel.split('_')[2] 
-            return await check_user_permissions(self.user, 'pipelines', pipeline_id, 'read')
-        
-        return False
+        """Enhanced channel subscription permission checking"""
+        return await check_channel_subscription_permission(self.user, channel)
     
     async def can_access_document(self, document_id: str, document_type: str) -> bool:
         """Check if user can access document"""
@@ -546,7 +555,7 @@ class BaseRealtimeConsumer(AsyncWebsocketConsumer):
                 'data': data.get('data'),
                 'updated_at': data.get('updated_at'),
                 'updated_by': data.get('updated_by'),
-                'new_count': None  # Will be populated by pipeline count update
+                'new_count': data.get('new_count')  # Include the updated record count
             },
             'user': {
                 'id': data.get('updated_by', {}).get('id'),
@@ -569,7 +578,7 @@ class BaseRealtimeConsumer(AsyncWebsocketConsumer):
                 'record_id': data.get('record_id'),
                 'pipeline_id': data.get('pipeline_id'),
                 'title': data.get('title'),
-                'new_count': None  # Will be populated by pipeline count update
+                'new_count': data.get('new_count')  # Include the updated record count
             },
             'timestamp': data.get('timestamp')
         }
@@ -627,6 +636,20 @@ class BaseRealtimeConsumer(AsyncWebsocketConsumer):
             'type': 'user_left_document',
             'user_id': event['user_id']
         }))
+    
+    async def send_permission_update(self, event):
+        """Handle permission change signals and broadcast to connected clients"""
+        message = event.get('message', {})
+        
+        # Send permission update to the client
+        await self.send(text_data=json.dumps({
+            'type': 'permission_update',
+            'data': message.get('data', {}),
+            'timestamp': message.get('data', {}).get('timestamp')
+        }))
+        
+        # Log the permission update for debugging
+        logger.info(f"Permission update sent to user {self.user_id}: {message.get('data', {}).get('event_type', 'unknown')}")
 
 
 class CollaborativeEditingConsumer(BaseRealtimeConsumer):

@@ -1,0 +1,332 @@
+{
+  "tenant": "oneotalent",
+  "tenant_name": "Oneo Talent",
+  "backup_date": "2025-08-03T06:31:20.804541",
+  "user_types": [
+    {
+      "id": 1,
+      "name": "Admin",
+      "slug": "admin",
+      "base_permissions": {
+        "users": [
+          "create",
+          "read",
+          "update",
+          "impersonate",
+          "delete",
+          "assign_roles"
+        ],
+        "fields": [
+          "create",
+          "read",
+          "update",
+          "delete",
+          "configure"
+        ],
+        "system": [
+          "full_access"
+        ],
+        "records": [
+          "create",
+          "read",
+          "update",
+          "delete",
+          "import",
+          "export",
+          "bulk_edit"
+        ],
+        "reports": [
+          "export",
+          "create",
+          "delete",
+          "read",
+          "update"
+        ],
+        "settings": [
+          "read",
+          "update"
+        ],
+        "pipelines": [
+          "create",
+          "read",
+          "update",
+          "delete",
+          "access",
+          "import",
+          "clone",
+          "export"
+        ],
+        "workflows": [
+          "execute",
+          "delete",
+          "update",
+          "read",
+          "create"
+        ],
+        "api_access": [
+          "full_access",
+          "read",
+          "write"
+        ],
+        "monitoring": [
+          "update",
+          "read"
+        ],
+        "user_types": [
+          "create",
+          "read",
+          "update",
+          "delete"
+        ],
+        "ai_features": [
+          "read",
+          "update",
+          "create",
+          "configure",
+          "delete"
+        ],
+        "relationships": [
+          "create",
+          "read",
+          "update",
+          "delete",
+          "traverse"
+        ],
+        "business_rules": [
+          "update",
+          "read",
+          "delete",
+          "create"
+        ],
+        "communications": [
+          "read",
+          "create",
+          "send",
+          "update",
+          "delete"
+        ]
+      },
+      "is_system_default": true
+    },
+    {
+      "id": 2,
+      "name": "Manager",
+      "slug": "manager",
+      "base_permissions": {
+        "users": [
+          "create",
+          "read",
+          "update",
+          "assign_roles"
+        ],
+        "fields": [
+          "configure",
+          "read",
+          "create",
+          "update"
+        ],
+        "records": [
+          "import",
+          "export",
+          "create",
+          "bulk_edit",
+          "read",
+          "update"
+        ],
+        "reports": [
+          "read",
+          "update",
+          "create"
+        ],
+        "settings": [
+          "update"
+        ],
+        "pipelines": [
+          "update",
+          "import",
+          "export",
+          "create",
+          "clone",
+          "read"
+        ],
+        "workflows": [
+          "execute",
+          "read",
+          "create",
+          "update"
+        ],
+        "api_access": [
+          "full_access",
+          "read",
+          "write"
+        ],
+        "monitoring": [
+          "update",
+          "read"
+        ],
+        "user_types": [
+          "read"
+        ],
+        "ai_features": [
+          "configure",
+          "read",
+          "create",
+          "update"
+        ],
+        "relationships": [
+          "traverse",
+          "read",
+          "create",
+          "update"
+        ],
+        "business_rules": [
+          "delete",
+          "read",
+          "create",
+          "update"
+        ],
+        "communications": [
+          "delete",
+          "create",
+          "read",
+          "send",
+          "update"
+        ]
+      },
+      "is_system_default": true
+    },
+    {
+      "id": 3,
+      "name": "User",
+      "slug": "user",
+      "base_permissions": {
+        "user": [
+          "assign_roles",
+          "delete"
+        ],
+        "fields": [
+          "read",
+          "update"
+        ],
+        "system": [
+          "update"
+        ],
+        "records": [
+          "create",
+          "read",
+          "update",
+          "export"
+        ],
+        "reports": [
+          "read",
+          "export"
+        ],
+        "business": [
+          "create"
+        ],
+        "settings": [
+          "read"
+        ],
+        "pipelines": [
+          "read",
+          "update"
+        ],
+        "workflows": [
+          "read",
+          "execute"
+        ],
+        "api_access": [
+          "read",
+          "write"
+        ],
+        "user_types": [
+          "read"
+        ],
+        "ai_features": [
+          "read",
+          "update"
+        ],
+        "relationships": [
+          "create",
+          "read",
+          "update",
+          "traverse"
+        ],
+        "communications": [
+          "create",
+          "read",
+          "update"
+        ]
+      },
+      "is_system_default": true
+    },
+    {
+      "id": 4,
+      "name": "Viewer",
+      "slug": "viewer",
+      "base_permissions": {
+        "fields": [
+          "read",
+          "update",
+          "configure"
+        ],
+        "system": [
+          "update"
+        ],
+        "records": [
+          "read",
+          "export",
+          "create",
+          "bulk_edit",
+          "import"
+        ],
+        "reports": [
+          "read",
+          "export",
+          "delete",
+          "update"
+        ],
+        "business": [
+          "delete"
+        ],
+        "settings": [
+          "read",
+          "update"
+        ],
+        "pipelines": [
+          "read",
+          "access",
+          "create",
+          "export"
+        ],
+        "workflows": [
+          "read",
+          "update"
+        ],
+        "api_access": [
+          "read",
+          "full_access"
+        ],
+        "user_types": [
+          "read"
+        ],
+        "ai_features": [
+          "read",
+          "delete"
+        ],
+        "relationships": [
+          "read",
+          "delete"
+        ],
+        "business_rules": [
+          "delete"
+        ],
+        "communications": [
+          "read",
+          "create"
+        ]
+      },
+      "is_system_default": true
+    }
+  ]
+}

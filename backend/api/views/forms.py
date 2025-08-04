@@ -19,7 +19,7 @@ class ValidationRuleViewSet(viewsets.ModelViewSet):
     ViewSet for managing validation rules with proper tenant isolation
     """
     serializer_class = ValidationRuleSerializer
-    permission_classes = [permissions.IsAuthenticated, ValidationRulePermission]
+    permission_classes = [ValidationRulePermission]
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['rule_type', 'is_active']
     search_fields = ['name', 'description']
@@ -45,7 +45,7 @@ class FormTemplateViewSet(viewsets.ModelViewSet):
     ViewSet for managing form templates
     """
     serializer_class = FormTemplateSerializer
-    permission_classes = [permissions.IsAuthenticated, FormPermission]
+    permission_classes = [FormPermission]
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['form_type', 'is_active', 'pipeline']
     search_fields = ['name', 'description']
@@ -73,7 +73,7 @@ class FormFieldConfigurationViewSet(viewsets.ModelViewSet):
     ViewSet for managing form field configurations
     """
     serializer_class = FormFieldConfigurationSerializer
-    permission_classes = [permissions.IsAuthenticated, FormPermission]
+    permission_classes = [FormPermission]
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['form_template', 'is_visible', 'is_readonly', 'is_active']
     search_fields = ['custom_label', 'custom_help_text']

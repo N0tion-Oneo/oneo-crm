@@ -231,12 +231,26 @@ class DateFieldConfig(BaseFieldConfig):
 
 
 class PhoneFieldConfig(BaseFieldConfig):
-    """Configuration for phone fields with dynamic country support - Tier 1 (no validation strictness)"""
-    default_country: Optional[str] = None    # Selected from global country list
+    """Configuration for phone fields with dynamic country support and formatting"""
+    default_country: Optional[str] = None    # Selected from global country list (e.g., 'US', 'ZA', 'GB')
     allowed_countries: List[str] = []        # Restrict to specific countries (dynamic)
-    format_display: bool = True              # Auto-format display (+1 (555) 123-4567)
-    require_country_code: bool = True
-    # validation_strict removed per requirements - validation happens at form level
+    format_display: bool = True              # Auto-format display with country-specific patterns
+    require_country_code: bool = True        # Show country selector vs simple input
+    
+    # Country-specific formatting options
+    auto_format_input: bool = True           # Format phone number as user types
+    validation_pattern: Optional[str] = None # Custom regex pattern for validation
+    
+    # Display preferences
+    display_format: str = 'international'    # 'international', 'national', 'compact'
+    show_country_flag: bool = False          # Show country flag in display (future feature)
+    
+    @validator('display_format')
+    def validate_display_format(cls, v):
+        valid_formats = ['international', 'national', 'compact']
+        if v not in valid_formats:
+            raise ValueError(f'Display format must be one of: {valid_formats}')
+        return v
 
 
 class AddressFieldConfig(BaseFieldConfig):

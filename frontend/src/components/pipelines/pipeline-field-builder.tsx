@@ -1,8 +1,9 @@
 'use client'
 
 import React, { useState, useEffect } from 'react'
-import { fieldTypesApi } from '@/lib/api'
+import { fieldTypesApi, permissionsApi } from '@/lib/api'
 import { FieldConfigurationPanel } from './field-configuration-panel'
+import { ConditionalRulesBuilder } from './conditional-rules-builder'
 import { 
   Plus, 
   Trash2, 
@@ -54,6 +55,7 @@ interface PipelineField {
   storage_constraints: Record<string, any>
   business_rules: Record<string, any>
   ai_config?: Record<string, any>       // For AI fields only
+  form_validation_rules?: Record<string, any> // Form validation rules
   
   // Legacy support (remove these gradually)
   label?: string                  // Maps to display_name
@@ -116,14 +118,16 @@ const getRequiredStages = (field: PipelineField): string[] => {
 
 export function PipelineFieldBuilder({ pipelineId, fields, onFieldsChange, onSave }: Props) {
   const [availableFieldTypes, setAvailableFieldTypes] = useState<FieldType[]>([])
+  const [userTypes, setUserTypes] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [showAddField, setShowAddField] = useState(false)
   const [editingField, setEditingField] = useState<string | null>(null)
   
-  // Load available field types
+  // Load available field types and user types
   useEffect(() => {
-    const loadFieldTypes = async () => {
+    const loadData = async () => {
       try {
+        // Load field types
         const response = await fieldTypesApi.getAll()
         const allTypes: FieldType[] = []
         
@@ -141,6 +145,22 @@ export function PipelineFieldBuilder({ pipelineId, fields, onFieldsChange, onSav
         })
         
         setAvailableFieldTypes(allTypes)
+
+        // Load user types for conditional rules
+        try {
+          const userTypesResponse = await permissionsApi.getUserTypes()
+          const userTypesData = userTypesResponse.data.results || userTypesResponse.data || []
+          setUserTypes(userTypesData)
+        } catch (userTypeError) {
+          console.error('Failed to load user types:', userTypeError)
+          // Set fallback user types if API fails
+          setUserTypes([
+            { id: '1', name: 'Admin', slug: 'admin', description: 'System Administrator' },
+            { id: '2', name: 'Manager', slug: 'manager', description: 'Manager' },
+            { id: '3', name: 'User', slug: 'user', description: 'Regular User' },
+            { id: '4', name: 'Viewer', slug: 'viewer', description: 'Read-only Access' }
+          ])
+        }
       } catch (error) {
         console.error('Failed to load field types:', error)
       } finally {
@@ -148,7 +168,7 @@ export function PipelineFieldBuilder({ pipelineId, fields, onFieldsChange, onSav
       }
     }
     
-    loadFieldTypes()
+    loadData()
   }, [])
   
   // Add new field with new architecture
@@ -175,7 +195,8 @@ export function PipelineFieldBuilder({ pipelineId, fields, onFieldsChange, onSav
       is_ai_field: fieldType.key === 'ai_generated',
       
       // Configuration objects - NEW ARCHITECTURE
-      field_config: {},
+      field_config: fieldType.key === 'select' ? { allow_multiple: false } : 
+                   fieldType.key === 'multiselect' ? { allow_multiple: true } : {},
       storage_constraints: {
         allow_null: true,  // Always true for modern architecture
         max_storage_length: null,
@@ -188,7 +209,17 @@ export function PipelineFieldBuilder({ pipelineId, fields, onFieldsChange, onSav
         block_transitions: true,
         show_warnings: true
       },
-      ai_config: fieldType.key === 'ai_generated' ? {} : undefined,
+      ai_config: fieldType.key === 'ai_generated' ? {
+        prompt: 'Analyze this record: {*}', // Default prompt to prevent validation error
+        model: 'gpt-4.1-mini',
+        temperature: 0.3,
+        output_type: 'text',
+        enable_tools: false,
+        allowed_tools: [],
+        trigger_fields: [],
+        cache_duration: 3600,
+        fallback_value: 'Analysis unavailable'
+      } : undefined,
       
       // Legacy support
       label: `${fieldType.label} ${fields.length + 1}`,
@@ -277,8 +308,8 @@ export function PipelineFieldBuilder({ pipelineId, fields, onFieldsChange, onSav
   return (
     <div className="h-full flex">
       {/* Fields List */}
-      <div className="w-80 flex-shrink-0 border-r border-gray-200 dark:border-gray-700">
-        <div className="p-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50">
+      <div className="w-80 flex-shrink-0 border-r border-gray-200 dark:border-gray-700 flex flex-col">
+        <div className="flex-shrink-0 p-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50">
           <div className="flex items-center justify-between mb-3">
             <div>
               <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
@@ -354,7 +385,7 @@ export function PipelineFieldBuilder({ pipelineId, fields, onFieldsChange, onSav
           </button>
         </div>
         
-        <div className="flex-1 overflow-y-auto">
+        <div className="flex-1 overflow-y-auto min-h-0">
           {fields.length === 0 ? (
             <div className="p-8 text-center">
               <div className="w-20 h-20 bg-gradient-to-br from-blue-50 to-indigo-50 dark:from-blue-900/20 dark:to-indigo-900/20 rounded-2xl flex items-center justify-center mx-auto mb-6">
@@ -538,6 +569,7 @@ export function PipelineFieldBuilder({ pipelineId, fields, onFieldsChange, onSav
           <FieldEditor 
             field={fields.find(f => f.id === editingField)!}
             availableFieldTypes={availableFieldTypes}
+            userTypes={userTypes}
             onUpdate={(updates) => updateField(editingField, updates)}
             onClose={() => setEditingField(null)}
             fields={fields}
@@ -589,12 +621,14 @@ export function PipelineFieldBuilder({ pipelineId, fields, onFieldsChange, onSav
 function FieldEditor({ 
   field, 
   availableFieldTypes, 
+  userTypes,
   onUpdate, 
   onClose,
   fields
 }: {
   field: PipelineField
   availableFieldTypes: FieldType[]
+  userTypes: any[]
   onUpdate: (updates: Partial<PipelineField>) => void
   onClose: () => void
   fields: PipelineField[]
@@ -716,6 +750,8 @@ function FieldEditor({
           {activeTab === 'display' && (
             <DisplaySettings 
               field={field} 
+              fields={fields}
+              userTypes={userTypes}
               onUpdate={onUpdate} 
             />
           )}
@@ -927,9 +963,13 @@ function BasicFieldSettings({
 // Display Settings Tab Component
 function DisplaySettings({ 
   field, 
+  fields,
+  userTypes,
   onUpdate 
 }: {
   field: PipelineField
+  fields: PipelineField[]
+  userTypes: any[]
   onUpdate: (updates: Partial<PipelineField>) => void
 }) {
   return (
@@ -1018,6 +1058,31 @@ function DisplaySettings({
           </div>
         </div>
       </div>
+
+      {/* Conditional Display Rules Section */}
+      <div>
+        <h4 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
+          Conditional Display Rules
+        </h4>
+        <ConditionalRulesBuilder
+          field={field}
+          availableFields={fields.map(f => ({
+            id: f.id,
+            name: f.name,
+            display_name: f.display_name || f.name,
+            field_type: f.field_type
+          }))}
+          userTypes={userTypes}
+          onChange={(conditionalRules) => {
+            onUpdate({
+              business_rules: {
+                ...field.business_rules,
+                conditional_rules: conditionalRules
+              }
+            })
+          }}
+        />
+      </div>
     </div>
   )
 }
@@ -1065,6 +1130,11 @@ function AdvancedSettings({
             // Sync legacy properties for backward compatibility
             enforce_uniqueness: newConstraints.enforce_uniqueness || false,
             create_index: newConstraints.create_index || false
+          })}
+          // AI configuration props
+          aiConfig={field.ai_config || {}}
+          onAiConfigChange={(newAiConfig) => onUpdate({
+            ai_config: newAiConfig
           })}
           isVisible={true}
           availableFields={fields.filter(f => f.id !== field.id).map(f => ({

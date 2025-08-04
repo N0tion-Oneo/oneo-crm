@@ -152,7 +152,7 @@ class PipelineTemplateFactory:
                     'display_order': 12,
                     'is_ai_field': True,
                     'ai_config': {
-                        'ai_prompt': 'Analyze this CRM lead comprehensively: Company: {company_name}, Contact: {contact_person}, Industry: {industry}, Deal Value: ${deal_value}, Stage: {stage}, Source: {lead_source}, Notes: {notes}. Use web search to research the company and provide: 1) Company intelligence, 2) Deal assessment, 3) Next action recommendations, 4) Risk factors.',
+                        'prompt': 'Analyze this CRM lead comprehensively: Company: {company_name}, Contact: {contact_person}, Industry: {industry}, Deal Value: ${deal_value}, Stage: {stage}, Source: {lead_source}, Notes: {notes}. Use web search to research the company and provide: 1) Company intelligence, 2) Deal assessment, 3) Next action recommendations, 4) Risk factors.',
                         'enable_tools': True,
                         'allowed_tools': ['web_search'],
                         'include_all_fields': True,
@@ -335,7 +335,7 @@ class PipelineTemplateFactory:
                     'display_order': 13,
                     'is_ai_field': True,
                     'ai_config': {
-                        'ai_prompt': 'Comprehensive candidate analysis for {full_name} applying for {position} in {department}: Experience: {experience_level}, Skills: {skills}, Expected Salary: ${expected_salary}, Interview Score: {interview_score}/10, Notes: {interview_notes}. Use code interpreter to analyze resume if available. Provide: 1) Skill match analysis, 2) Cultural fit assessment, 3) Salary benchmarking, 4) Interview questions, 5) Hiring recommendation.',
+                        'prompt': 'Comprehensive candidate analysis for {full_name} applying for {position} in {department}: Experience: {experience_level}, Skills: {skills}, Expected Salary: ${expected_salary}, Interview Score: {interview_score}/10, Notes: {interview_notes}. Use code interpreter to analyze resume if available. Provide: 1) Skill match analysis, 2) Cultural fit assessment, 3) Salary benchmarking, 4) Interview questions, 5) Hiring recommendation.',
                         'enable_tools': True,
                         'allowed_tools': ['code_interpreter', 'web_search'],
                         'include_all_fields': True,
@@ -496,7 +496,7 @@ class PipelineTemplateFactory:
                     'display_order': 12,
                     'is_ai_field': True,
                     'ai_config': {
-                        'ai_prompt': 'Analyze this {category} content: Title: "{title}", Content: {content}, Category: {category}, Tags: {tags}, Status: {status}. Use web search for topic research if needed. Provide: 1) Content summary, 2) SEO optimization suggestions, 3) Related topics to explore, 4) Content performance prediction, 5) Social media suggestions.',
+                        'prompt': 'Analyze this {category} content: Title: "{title}", Content: {content}, Category: {category}, Tags: {tags}, Status: {status}. Use web search for topic research if needed. Provide: 1) Content summary, 2) SEO optimization suggestions, 3) Related topics to explore, 4) Content performance prediction, 5) Social media suggestions.',
                         'enable_tools': True,
                         'allowed_tools': ['web_search'],
                         'include_all_fields': True,

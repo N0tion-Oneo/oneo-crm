@@ -52,7 +52,7 @@ PERMISSION_CATEGORIES = {
         'category_display': 'Relationship Management'
     },
     'workflows': {
-        'actions': ['create', 'read', 'update', 'delete', 'execute'],
+        'actions': ['create', 'read', 'update', 'delete', 'execute', 'clone', 'export'],
         'description': 'Workflow automation and execution',
         'category_display': 'Workflow Management'
     },
@@ -90,6 +90,21 @@ PERMISSION_CATEGORIES = {
         'actions': ['read', 'write', 'full_access'],
         'description': 'API access control and management',
         'category_display': 'API Access'
+    },
+    'forms': {
+        'actions': ['create', 'read', 'update', 'delete', 'submit', 'configure'],
+        'description': 'Form management and submission',
+        'category_display': 'Form Management'
+    },
+    'validation_rules': {
+        'actions': ['create', 'read', 'update', 'delete', 'test'],
+        'description': 'Validation rule management and testing',
+        'category_display': 'Validation Rules'
+    },
+    'duplicates': {
+        'actions': ['create', 'read', 'update', 'delete', 'resolve', 'detect'],
+        'description': 'Duplicate detection and resolution',
+        'category_display': 'Duplicate Management'
     }
 }
 
@@ -111,7 +126,11 @@ ACTION_DESCRIPTIONS = {
     'assign_roles': 'Assign roles to users',
     'access': 'Basic access to resources',
     'full_access': 'Complete administrative access',
-    'write': 'Create and modify content'
+    'write': 'Create and modify content',
+    'submit': 'Submit forms and data',
+    'resolve': 'Resolve conflicts and duplicates',
+    'detect': 'Detect patterns and anomalies',
+    'test': 'Test configurations and rules'
 }
 
 
@@ -214,14 +233,17 @@ def get_default_permissions_for_role(role_level: str) -> Dict[str, List[str]]:
             'records': ['create', 'read', 'update', 'bulk_edit', 'export'],
             'fields': ['create', 'read', 'update', 'configure'],
             'relationships': ['create', 'read', 'update', 'traverse'],
-            'workflows': ['create', 'read', 'update', 'execute'],
+            'workflows': ['create', 'read', 'update', 'execute', 'clone', 'export'],
             'business_rules': ['create', 'read', 'update'],
             'communications': ['create', 'read', 'update', 'send'],
             'settings': ['read'],
             'monitoring': ['read'],
-            'ai_features': ['create', 'read', 'update'],
+            'ai_features': ['create', 'read', 'update', 'configure'],
             'reports': ['create', 'read', 'update', 'export'],
-            'api_access': ['read', 'write']
+            'api_access': ['read', 'write'],
+            'forms': ['create', 'read', 'update', 'submit', 'configure'],
+            'validation_rules': ['create', 'read', 'update', 'test'],
+            'duplicates': ['create', 'read', 'update', 'resolve', 'detect']
         }
     
     elif role_level == 'user':
@@ -235,11 +257,14 @@ def get_default_permissions_for_role(role_level: str) -> Dict[str, List[str]]:
             'relationships': ['create', 'read', 'update', 'traverse'],
             'workflows': ['read', 'execute'],
             'business_rules': ['read'],
-            'communications': ['create', 'read', 'update'],
+            'communications': ['create', 'read', 'update', 'send'],
             'settings': ['read'],
             'ai_features': ['read', 'update'],
             'reports': ['read', 'export'],
-            'api_access': ['read', 'write']
+            'api_access': ['read', 'write'],
+            'forms': ['read', 'submit'],
+            'validation_rules': ['read'],
+            'duplicates': ['read', 'detect']
         }
     
     elif role_level == 'viewer':
@@ -257,7 +282,10 @@ def get_default_permissions_for_role(role_level: str) -> Dict[str, List[str]]:
             'settings': ['read'],
             'ai_features': ['read'],
             'reports': ['read', 'export'],
-            'api_access': ['read']
+            'api_access': ['read'],
+            'forms': ['read'],
+            'validation_rules': ['read'],
+            'duplicates': ['read']
         }
     
     else:
@@ -267,7 +295,10 @@ def get_default_permissions_for_role(role_level: str) -> Dict[str, List[str]]:
             'pipelines': ['read'],
             'records': ['read'],
             'business_rules': ['read'],
-            'api_access': ['read']
+            'api_access': ['read'],
+            'forms': ['read'],
+            'validation_rules': ['read'],
+            'duplicates': ['read']
         }
 
 
@@ -353,7 +384,7 @@ def get_dynamic_tenant_permissions(tenant) -> Dict[str, Any]:
                 for workflow in workflows:
                     permission_key = f'workflow_{workflow.id}'
                     dynamic_permissions[permission_key] = {
-                        'actions': ['view', 'execute', 'edit', 'clone', 'delete'],
+                        'actions': ['read', 'execute', 'update', 'clone', 'delete', 'export'],
                         'description': f'Permissions for {workflow.name} workflow',
                         'category_display': f'Workflow: {workflow.name}',
                         'resource_type': 'workflow',
@@ -379,7 +410,7 @@ def get_dynamic_tenant_permissions(tenant) -> Dict[str, Any]:
                 for form in forms:
                     permission_key = f'form_{form.id}'
                     dynamic_permissions[permission_key] = {
-                        'actions': ['view', 'submit', 'edit', 'delete', 'configure'],
+                        'actions': ['read', 'submit', 'update', 'delete', 'configure'],
                         'description': f'Permissions for {form.name} form',
                         'category_display': f'Form: {form.name}',
                         'resource_type': 'form',

@@ -154,7 +154,7 @@ export function WebSocketProvider({ children, autoConnect = true }: WebSocketPro
         timestamp: new Date().toISOString(),
         user: user ? {
           id: user.id,
-          name: `${user.first_name} ${user.last_name}`.trim(),
+          name: `${user.firstName} ${user.lastName}`.trim(),
           email: user.email
         } : undefined,
         ...message
@@ -370,8 +370,8 @@ export function WebSocketProvider({ children, autoConnect = true }: WebSocketPro
           id: user.id,
           email: user.email,
           username: user.username || 'NO_USERNAME',
-          first_name: user.first_name,
-          last_name: user.last_name
+          first_name: user.firstName,
+          last_name: user.lastName
         } : 'NO_USER'
       })
       

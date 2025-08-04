@@ -71,8 +71,7 @@ export default function PermissionsPage() {
     getActionIcon,
     getActionDescription,
     getDynamicResources,
-    refreshAll,
-    disableWebSocketRefreshTemporarily
+    refreshAll
   } = usePermissionSchema()
   
   const [userTypes, setUserTypes] = useState<UserType[]>([])
@@ -266,7 +265,7 @@ export default function PermissionsPage() {
     console.log(`🔄 Category toggle: ${category} for ${userTypeName} → ${newValue ? 'Grant All' : 'Revoke All'}`)
 
     // Disable WebSocket refresh during category operation to prevent interference
-    disableWebSocketRefreshTemporarily(5000) // 5 seconds
+    // disableWebSocketRefreshTemporarily(5000) // 5 seconds - function removed
 
     try {
       // Process each permission individually using EXACT same logic as togglePermission
@@ -320,11 +319,11 @@ export default function PermissionsPage() {
 
   // Generate static permissions only (dynamic permissions go to resource access tabs)
   const permissions = React.useMemo(() => {
-    if (!frontendConfig?.static_categories) return []
+    if (!frontendConfig?.categories) return []
     
     const allPermissions: Permission[] = []
     
-    Object.entries(frontendConfig.static_categories).forEach(([categoryKey, categoryData]) => {
+    Object.entries(frontendConfig.categories).forEach(([categoryKey, categoryData]) => {
       const categoryName = categoryData.category_display || categoryKey.charAt(0).toUpperCase() + categoryKey.slice(1)
       
       categoryData.actions.forEach((action: string) => {
@@ -332,7 +331,9 @@ export default function PermissionsPage() {
           id: allPermissions.length + 1,
           name: `${categoryKey}:${action}`,
           description: `${action.charAt(0).toUpperCase() + action.slice(1)} ${categoryName.toLowerCase()}`,
-          category: categoryName
+          category: categoryName,
+          action: action,
+          is_system: false
         })
       })
     })
@@ -708,12 +709,12 @@ export default function PermissionsPage() {
         <nav className="flex space-x-8 border-b border-gray-200 dark:border-gray-700">
           {(() => {
             // Generate tabs dynamically based on resource types
-            const resourceTabs = Object.entries(frontendConfig?.resource_type_metadata || {})
+            const resourceTabs = Object.entries(frontendConfig?.grouped_categories || {})
               .map(([resourceType, metadata]) => ({
                 id: `${resourceType}-access`,
-                name: metadata.display_name,
-                icon: getResourceTypeIcon(metadata.icon),
-                count: metadata.count
+                name: resourceType.charAt(0).toUpperCase() + resourceType.slice(1),
+                icon: getResourceTypeIcon('default'),
+                count: metadata.total_resources
               }))
 
             const allTabs = [
@@ -1149,10 +1150,10 @@ export default function PermissionsPage() {
       {/* Resource Access Tabs (Pipeline, Workflow, Form, etc.) */}
       {activeTab.endsWith('-access') && (() => {
         const resourceType = activeTab.replace('-access', '')
-        const resourceMetadata = frontendConfig?.resource_type_metadata?.[resourceType]
-        const ResourceIcon = resourceMetadata ? getResourceTypeIcon(resourceMetadata.icon) : Database
-        const resourceDisplayName = resourceMetadata?.display_name || 'Resource Access'
-        const resourceCount = resourceMetadata?.count || 0
+        const resourceMetadata = frontendConfig?.grouped_categories?.[resourceType]
+        const ResourceIcon = Database
+        const resourceDisplayName = resourceType.charAt(0).toUpperCase() + resourceType.slice(1) + ' Access'
+        const resourceCount = resourceMetadata?.total_resources || 0
         
         // For now, only pipelines have data - others will show empty state
         const hasData = resourceType === 'pipelines' && pipelines.length > 0

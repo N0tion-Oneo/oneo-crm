@@ -9,6 +9,7 @@ from typing import Dict, Any
 from django.db.models import Q, Count, Avg
 from django.utils import timezone
 from rest_framework import viewsets, status, permissions
+from api.permissions import CommunicationPermission, MessagePermission, ChannelPermission, CommunicationTrackingPermission
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.filters import SearchFilter, OrderingFilter
@@ -34,7 +35,7 @@ class ChannelViewSet(viewsets.ModelViewSet):
     
     queryset = Channel.objects.select_related('created_by')
     serializer_class = ChannelSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [ChannelPermission]
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ['channel_type', 'is_active']
     search_fields = ['name', 'description', 'external_account_id']
@@ -113,7 +114,7 @@ class ConversationViewSet(viewsets.ModelViewSet):
     """ViewSet for conversations"""
     
     queryset = Conversation.objects.select_related('channel', 'primary_contact_record')
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [CommunicationPermission]
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ['channel', 'status', 'priority']
     search_fields = ['subject', 'external_thread_id', 'primary_contact_record__data__first_name', 'primary_contact_record__data__company']
@@ -168,7 +169,7 @@ class MessageViewSet(viewsets.ModelViewSet):
     """ViewSet for messages"""
     
     queryset = Message.objects.select_related('channel', 'conversation', 'contact_record')
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [MessagePermission]
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ['direction', 'status', 'channel', 'conversation']
     search_fields = ['content', 'subject', 'contact_email']
@@ -242,7 +243,7 @@ class CommunicationAnalyticsViewSet(viewsets.ReadOnlyModelViewSet):
     
     queryset = CommunicationAnalytics.objects.all()
     serializer_class = CommunicationAnalyticsSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [CommunicationTrackingPermission]
     filter_backends = [DjangoFilterBackend, OrderingFilter]
     filterset_fields = ['date', 'channel']
     ordering_fields = ['date']

@@ -17,9 +17,10 @@ class FieldSerializer(serializers.ModelSerializer):
         model = Field
         fields = [
             'id', 'pipeline', 'name', 'slug', 'description', 'field_type', 'field_config',
-            'validation_rules', 'display_name', 'help_text',
-            'is_required', 'is_unique', 'is_indexed', 'is_searchable', 'is_ai_field',
-            'display_order', 'is_visible_in_list', 'is_visible_in_detail',
+            'storage_constraints', 'business_rules', 'form_validation_rules', 
+            'display_name', 'help_text', 'enforce_uniqueness', 'create_index', 
+            'is_searchable', 'is_ai_field', 'display_order', 'is_visible_in_list', 
+            'is_visible_in_detail', 'is_visible_in_public_forms',
             'ai_config', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
@@ -47,9 +48,9 @@ class FieldSerializer(serializers.ModelSerializer):
         # Validate AI field configuration
         if attrs.get('is_ai_field') and attrs.get('field_type') == FieldType.AI_GENERATED:
             ai_config = attrs.get('ai_config', {})
-            if not ai_config.get('ai_prompt'):
+            if not ai_config.get('prompt'):  # Fixed: use 'prompt' not 'ai_prompt'
                 raise serializers.ValidationError({
-                    'ai_config': 'AI fields must have an ai_prompt in ai_config'
+                    'ai_config': 'AI fields must have a prompt in ai_config'
                 })
         
         return attrs

@@ -400,12 +400,13 @@ class Field(models.Model):
         
         # Validate AI configuration if it's an AI field
         if self.is_ai_field and self.field_type == FieldType.AI_GENERATED:
-            if not self.ai_config.get('ai_prompt'):
-                raise ValidationError('AI fields must have an ai_prompt in ai_config')
+            if not self.ai_config.get('prompt'):  # Fixed: use 'prompt' not 'ai_prompt'
+                raise ValidationError('AI fields must have a prompt in ai_config')
     
     def get_validator(self):
         """Get validator instance for this field"""
-        return FieldValidator(FieldType(self.field_type), self.field_config)
+        ai_config = self.ai_config if self.is_ai_field else None
+        return FieldValidator(FieldType(self.field_type), self.field_config, ai_config)
     
     def validate_value(self, value, context=None):
         """Validate a value against this field's storage constraints"""

@@ -29,7 +29,7 @@ class PipelineViewSet(viewsets.ModelViewSet):
     """
     Pipeline management API with comprehensive CRUD operations
     """
-    permission_classes = [permissions.IsAuthenticated, PipelinePermission]
+    permission_classes = [PipelinePermission]
     filter_backends = [DjangoFilterBackend]
     filterset_class = PipelineFilter
     search_fields = ['name', 'description']
@@ -419,7 +419,7 @@ class FieldViewSet(viewsets.ModelViewSet):
     Pipeline field management API
     """
     serializer_class = FieldSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [PipelinePermission]
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['field_type', 'is_visible_in_list', 'is_searchable']
     ordering = ['display_order', 'name']

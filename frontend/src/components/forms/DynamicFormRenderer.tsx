@@ -3,6 +3,9 @@
 import React, { useState, useEffect } from 'react'
 import { api } from '@/lib/api'
 import { Save, AlertCircle, CheckCircle, RefreshCw } from 'lucide-react'
+import { useAuth } from '@/features/auth/context'
+import { evaluateConditionalRules, evaluateFieldPermissions, type FieldWithPermissions } from '@/utils/field-permissions'
+import { FieldWrapper, FieldResolver } from '@/lib/field-system'
 
 interface DynamicFieldConfig {
   id: number
@@ -17,6 +20,7 @@ interface DynamicFieldConfig {
   is_readonly: boolean
   display_order: number
   field_config: Record<string, any>
+  ai_config?: Record<string, any> // Add AI config support
   form_validation_rules: Record<string, any>
   default_value: any
   current_value: any
@@ -65,6 +69,7 @@ export function DynamicFormRenderer({
   embedMode = false,
   className = ''
 }: DynamicFormRendererProps) {
+  const { user } = useAuth()
   const [formSchema, setFormSchema] = useState<DynamicFormSchema | null>(null)
   const [formData, setFormData] = useState<Record<string, any>>({})
   const [validationErrors, setValidationErrors] = useState<ValidationError[]>([])
@@ -159,38 +164,42 @@ export function DynamicFormRenderer({
     formSchema.fields.forEach(field => {
       const value = formData[field.slug]
       
-      // Required field validation
-      if (field.is_required && (!value || value === '')) {
+      // Convert DynamicFieldConfig to Field format expected by field system
+      const fieldSystemField = {
+        id: field.id.toString(),
+        name: field.slug,
+        display_name: field.display_name,
+        field_type: field.type,
+        field_config: field.field_config,
+        ai_config: field.ai_config,
+        is_required: field.is_required,
+        is_readonly: field.is_readonly,
+        help_text: field.help_text,
+        placeholder: field.placeholder
+      }
+      
+      // Use the field system's validation
+      const validationResult = FieldResolver.validate(fieldSystemField, value)
+      if (!validationResult.isValid && validationResult.error) {
         errors.push({
           field: field.slug,
-          message: `${field.display_name} is required`
+          message: validationResult.error
         })
       }
 
-      // Form validation rules
+      // Additional form validation rules (custom rules from form builder)
       if (value && field.form_validation_rules) {
         const rules = field.form_validation_rules
         
-        // Type validation
-        if (rules.type === 'email') {
-          const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-          if (!emailRegex.test(value)) {
-            errors.push({
-              field: field.slug,
-              message: rules.customMessage || 'Please enter a valid email address'
-            })
-          }
-        }
-        
         // Length validation
-        if (rules.minLength && value.length < rules.minLength) {
+        if (rules.minLength && String(value).length < rules.minLength) {
           errors.push({
             field: field.slug,
             message: rules.customMessage || `Minimum length is ${rules.minLength} characters`
           })
         }
         
-        if (rules.maxLength && value.length > rules.maxLength) {
+        if (rules.maxLength && String(value).length > rules.maxLength) {
           errors.push({
             field: field.slug,
             message: rules.customMessage || `Maximum length is ${rules.maxLength} characters`
@@ -200,12 +209,27 @@ export function DynamicFormRenderer({
         // Pattern validation
         if (rules.pattern) {
           const regex = new RegExp(rules.pattern)
-          if (!regex.test(value)) {
+          if (!regex.test(String(value))) {
             errors.push({
               field: field.slug,
               message: rules.customMessage || 'Please enter a valid value'
             })
           }
+        }
+        
+        // Range validation for numbers
+        if (rules.min !== undefined && parseFloat(value) < rules.min) {
+          errors.push({
+            field: field.slug,
+            message: rules.customMessage || `Value must be at least ${rules.min}`
+          })
+        }
+        
+        if (rules.max !== undefined && parseFloat(value) > rules.max) {
+          errors.push({
+            field: field.slug,
+            message: rules.customMessage || `Value must be at most ${rules.max}`
+          })
         }
       }
     })
@@ -257,227 +281,38 @@ export function DynamicFormRenderer({
   }
 
   const renderFieldInput = (field: DynamicFieldConfig) => {
-    const value = formData[field.slug] || ''
+    const value = formData[field.slug]
     const hasError = validationErrors.some(error => error.field === field.slug)
     const error = validationErrors.find(error => error.field === field.slug)
-
-    const inputClass = `w-full px-3 py-2 border rounded-lg transition-colors shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-0 ${
-      hasError 
-        ? 'border-red-300 dark:border-red-600 focus:border-red-500 focus:ring-red-500 dark:focus:ring-red-400' 
-        : 'border-gray-300 dark:border-gray-600 focus:border-blue-500 focus:ring-blue-500 dark:focus:ring-blue-400'
-    } ${field.is_readonly 
-        ? 'bg-gray-50 dark:bg-gray-700 cursor-not-allowed text-gray-500 dark:text-gray-400' 
-        : 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white'
-    }`
-
-    switch (field.type) {
-      case 'textarea':
-        return (
-          <div>
-            <textarea
-              value={value}
-              onChange={(e) => handleFieldChange(field.slug, e.target.value)}
-              className={`${inputClass} min-h-[100px] resize-vertical`}
-              placeholder={field.placeholder}
-              disabled={field.is_readonly}
-              required={field.is_required}
-            />
-            {hasError && (
-              <p className="mt-1 text-sm text-red-600 dark:text-red-400">{error?.message}</p>
-            )}
-          </div>
-        )
-
-      case 'select':
-        const options = field.field_config?.options || []
-        return (
-          <div>
-            <select
-              value={value}
-              onChange={(e) => handleFieldChange(field.slug, e.target.value)}
-              className={inputClass}
-              disabled={field.is_readonly}
-              required={field.is_required}
-            >
-              <option value="">Select {field.display_name}</option>
-              {options.map((option: any) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-            {hasError && (
-              <p className="mt-1 text-sm text-red-600 dark:text-red-400">{error?.message}</p>
-            )}
-          </div>
-        )
-
-      case 'boolean':
-        return (
-          <div>
-            <label className="flex items-center">
-              <input
-                type="checkbox"
-                checked={Boolean(value)}
-                onChange={(e) => handleFieldChange(field.slug, e.target.checked)}
-                className="mr-2 rounded border-gray-300 dark:border-gray-600 text-blue-600 focus:ring-blue-500 dark:focus:ring-blue-400 dark:bg-gray-700"
-                disabled={field.is_readonly}
-              />
-              <span className="text-sm">{field.display_name}</span>
-            </label>
-          </div>
-        )
-
-      case 'date':
-        return (
-          <div>
-            <input
-              type="date"
-              value={value ? new Date(value).toISOString().split('T')[0] : ''}
-              onChange={(e) => handleFieldChange(field.slug, e.target.value)}
-              className={inputClass}
-              disabled={field.is_readonly}
-              required={field.is_required}
-            />
-            {hasError && (
-              <p className="mt-1 text-sm text-red-600 dark:text-red-400">{error?.message}</p>
-            )}
-          </div>
-        )
-
-      case 'number':
-      case 'decimal':
-        return (
-          <div>
-            <input
-              type="number"
-              step={field.type === 'decimal' ? '0.01' : '1'}
-              value={value}
-              onChange={(e) => handleFieldChange(field.slug, e.target.value)}
-              className={inputClass}
-              placeholder={field.placeholder}
-              disabled={field.is_readonly}
-              required={field.is_required}
-            />
-            {hasError && (
-              <p className="mt-1 text-sm text-red-600 dark:text-red-400">{error?.message}</p>
-            )}
-          </div>
-        )
-
-      case 'multiselect':
-        const multiselectOptions = field.field_config?.options || []
-        const selectedValues = Array.isArray(value) ? value : []
-        return (
-          <div>
-            <div className="space-y-2">
-              {multiselectOptions.map((option: any) => (
-                <label key={option.value} className="flex items-center">
-                  <input
-                    type="checkbox"
-                    checked={selectedValues.includes(option.value)}
-                    onChange={(e) => {
-                      const newValues = e.target.checked
-                        ? [...selectedValues, option.value]
-                        : selectedValues.filter(v => v !== option.value)
-                      handleFieldChange(field.slug, newValues)
-                    }}
-                    className="mr-2 rounded border-gray-300 dark:border-gray-600 text-blue-600 focus:ring-blue-500 dark:focus:ring-blue-400 dark:bg-gray-700"
-                    disabled={field.is_readonly}
-                  />
-                  <span className="text-sm">{option.label}</span>
-                </label>
-              ))}
-            </div>
-            {hasError && (
-              <p className="mt-1 text-sm text-red-600 dark:text-red-400">{error?.message}</p>
-            )}
-          </div>
-        )
-
-      case 'phone':
-        return (
-          <div>
-            <input
-              type="tel"
-              value={value}
-              onChange={(e) => handleFieldChange(field.slug, e.target.value)}
-              className={inputClass}
-              placeholder={field.placeholder}
-              disabled={field.is_readonly}
-              required={field.is_required}
-            />
-            {hasError && (
-              <p className="mt-1 text-sm text-red-600 dark:text-red-400">{error?.message}</p>
-            )}
-          </div>
-        )
-
-      case 'file':
-        return (
-          <div>
-            <input
-              type="file"
-              onChange={(e) => {
-                const file = e.target.files?.[0]
-                if (file) {
-                  handleFieldChange(field.slug, file.name)
-                }
-              }}
-              className={`${inputClass} file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100`}
-              disabled={field.is_readonly}
-              required={field.is_required}
-            />
-            {hasError && (
-              <p className="mt-1 text-sm text-red-600 dark:text-red-400">{error?.message}</p>
-            )}
-          </div>
-        )
-
-      case 'ai':
-        return (
-          <div>
-            <div className="bg-purple-50 border border-purple-200 rounded-lg p-3 mb-2">
-              <div className="flex items-center text-purple-800 text-sm">
-                <span className="w-2 h-2 bg-purple-500 rounded-full mr-2"></span>
-                AI-Enhanced Field
-              </div>
-              <p className="text-purple-600 text-xs mt-1">
-                This field will be processed by AI after form submission
-              </p>
-            </div>
-            <textarea
-              value={value}
-              onChange={(e) => handleFieldChange(field.slug, e.target.value)}
-              className={`${inputClass} min-h-[80px] resize-vertical`}
-              placeholder={field.placeholder || 'Enter information for AI processing...'}
-              disabled={field.is_readonly}
-              required={field.is_required}
-            />
-            {hasError && (
-              <p className="mt-1 text-sm text-red-600 dark:text-red-400">{error?.message}</p>
-            )}
-          </div>
-        )
-
-      default:
-        return (
-          <div>
-            <input
-              type={field.type === 'email' ? 'email' : field.type === 'url' ? 'url' : 'text'}
-              value={value}
-              onChange={(e) => handleFieldChange(field.slug, e.target.value)}
-              className={inputClass}
-              placeholder={field.placeholder}
-              disabled={field.is_readonly}
-              required={field.is_required}
-            />
-            {hasError && (
-              <p className="mt-1 text-sm text-red-600 dark:text-red-400">{error?.message}</p>
-            )}
-          </div>
-        )
+    
+    // Convert DynamicFieldConfig to Field format expected by field system
+    const fieldSystemField = {
+      id: field.id.toString(),
+      name: field.slug,
+      display_name: field.display_name,
+      field_type: field.type,
+      field_config: field.field_config,
+      ai_config: field.ai_config,
+      is_required: field.is_required,
+      is_readonly: field.is_readonly,
+      help_text: field.help_text,
+      placeholder: field.placeholder
     }
+    
+    return (
+      <FieldWrapper
+        field={fieldSystemField}
+        value={value}
+        onChange={(newValue) => handleFieldChange(field.slug, newValue)}
+        onBlur={() => {}}
+        disabled={field.is_readonly}
+        error={error?.message}
+        autoFocus={false}
+        context="form"
+        showLabel={false} // We handle labels in the outer form
+        showHelp={false}  // We handle help text in the outer form
+      />
+    )
   }
 
   if (loading) {
@@ -542,7 +377,37 @@ export function DynamicFormRenderer({
 
       <form onSubmit={handleSubmit} className="p-6 space-y-6">
         {formSchema.fields
-          .filter(field => field.is_visible)
+          .filter(field => {
+            // Basic visibility check
+            if (!field.is_visible) return false
+            
+            // For public forms, no user permission checks needed
+            if (formType.includes('public')) return true
+            
+            // For internal forms, check user permissions if user is available
+            if (user) {
+              // Convert form field to permission field format
+              const permissionField: FieldWithPermissions = {
+                id: field.id.toString(),
+                name: field.slug,
+                display_name: field.display_name,
+                field_type: field.type,
+                is_required: field.is_required,
+                is_visible_in_detail: field.is_visible,
+                display_order: field.display_order,
+                business_rules: {
+                  // Note: Form fields may not have full business rules yet
+                  // This is where we could extend to support conditional rules in forms
+                }
+              }
+              
+              const permissions = evaluateFieldPermissions(permissionField, user, formData, 'form')
+              return permissions.visible
+            }
+            
+            // Default to visible if no user (shouldn't happen for internal forms)
+            return true
+          })
           .sort((a, b) => a.display_order - b.display_order)
           .map((field) => (
             <div key={field.slug}>

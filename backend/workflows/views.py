@@ -4,7 +4,7 @@ API views for workflow management
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
+from api.permissions import WorkflowPermission, WorkflowExecutionPermission, WorkflowApprovalPermission
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 from django.db.models import Q
@@ -39,7 +39,7 @@ class WorkflowViewSet(viewsets.ModelViewSet):
     """ViewSet for workflow management"""
     
     serializer_class = WorkflowSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [WorkflowPermission]
     
     def get_queryset(self):
         """Filter workflows by user access"""
@@ -315,7 +315,7 @@ class WorkflowExecutionViewSet(viewsets.ReadOnlyModelViewSet):
     """ViewSet for workflow execution management"""
     
     serializer_class = WorkflowExecutionSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [WorkflowExecutionPermission]
     
     def get_queryset(self):
         """Filter executions by user access"""
@@ -399,7 +399,7 @@ class WorkflowApprovalViewSet(viewsets.ModelViewSet):
     """ViewSet for workflow approval management"""
     
     serializer_class = WorkflowApprovalSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [WorkflowApprovalPermission]
     
     def get_queryset(self):
         """Filter approvals by user"""
@@ -495,7 +495,7 @@ class WorkflowScheduleViewSet(viewsets.ModelViewSet):
     """ViewSet for workflow schedule management"""
     
     serializer_class = WorkflowScheduleSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [WorkflowPermission]
     
     def get_queryset(self):
         """Filter schedules by user access"""

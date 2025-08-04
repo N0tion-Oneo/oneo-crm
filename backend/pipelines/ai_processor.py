@@ -127,7 +127,7 @@ class AIFieldProcessor:
     
     def _build_context(self) -> str:
         """Build AI prompt with record data substitution"""
-        context = self.config.ai_prompt
+        context = self.config.prompt  # Fixed: use 'prompt' not 'ai_prompt'
         
         # Get all record data
         record_data = self.record.data.copy()

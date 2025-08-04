@@ -9,6 +9,7 @@ from django.db.models import Q, Count, Prefetch
 from django.core.exceptions import ValidationError
 from django.utils import timezone
 from datetime import timedelta
+from api.permissions import RelationshipPermission
 
 from pipelines.models import Pipeline, Record
 from .models import (
@@ -36,7 +37,7 @@ class RelationshipTypeViewSet(viewsets.ModelViewSet):
     
     queryset = RelationshipType.objects.all()
     serializer_class = RelationshipTypeSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [RelationshipPermission]
     
     def get_queryset(self):
         """Filter queryset based on user permissions and filters"""
@@ -95,7 +96,7 @@ class RelationshipViewSet(viewsets.ModelViewSet):
     """ViewSet for managing relationships"""
     
     queryset = Relationship.objects.filter(is_deleted=False)
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [RelationshipPermission]
     
     def get_serializer_class(self):
         """Return appropriate serializer based on action"""
@@ -269,7 +270,7 @@ class RelationshipPathViewSet(viewsets.ReadOnlyModelViewSet):
     
     queryset = RelationshipPath.objects.all()
     serializer_class = RelationshipPathSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [RelationshipPermission]
     
     def get_queryset(self):
         """Filter queryset and remove expired paths"""
@@ -366,7 +367,7 @@ class PermissionTraversalViewSet(viewsets.ModelViewSet):
     
     queryset = PermissionTraversal.objects.all()
     serializer_class = PermissionTraversalSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [RelationshipPermission]
     
     def get_queryset(self):
         """Filter by user type or relationship type if specified"""
@@ -391,7 +392,7 @@ class PermissionTraversalViewSet(viewsets.ModelViewSet):
 class AssignmentViewSet(viewsets.ViewSet):
     """Simplified viewset for Option A frontend: dropdown/autocomplete with drag-and-drop role management"""
     
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [RelationshipPermission]
     
     def create(self, request):
         """Create a simple assignment (user to record)"""

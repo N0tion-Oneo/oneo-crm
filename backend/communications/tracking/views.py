@@ -16,6 +16,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
+from api.permissions import CommunicationTrackingPermission
 from rest_framework.pagination import PageNumberPagination
 
 from ..models import Channel, Message
@@ -51,7 +52,7 @@ class CommunicationTrackingViewSet(viewsets.ReadOnlyModelViewSet):
         'message', 'channel', 'conversation'
     ).order_by('-event_timestamp')
     serializer_class = CommunicationTrackingSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [CommunicationTrackingPermission]
     pagination_class = StandardPagination
     
     def get_queryset(self):
@@ -96,7 +97,7 @@ class DeliveryTrackingViewSet(viewsets.ReadOnlyModelViewSet):
         'message', 'channel'
     ).order_by('-created_at')
     serializer_class = DeliveryTrackingSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [CommunicationTrackingPermission]
     pagination_class = StandardPagination
     
     def get_queryset(self):
@@ -146,7 +147,7 @@ class ReadTrackingViewSet(viewsets.ReadOnlyModelViewSet):
         'message', 'channel'
     ).order_by('-first_read_at')
     serializer_class = ReadTrackingSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [CommunicationTrackingPermission]
     pagination_class = StandardPagination
     
     @action(detail=False, methods=['get'])
@@ -183,7 +184,7 @@ class ResponseTrackingViewSet(viewsets.ReadOnlyModelViewSet):
         'original_message', 'response_message', 'conversation'
     ).order_by('-response_received_at')
     serializer_class = ResponseTrackingSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [CommunicationTrackingPermission]
     pagination_class = StandardPagination
     
     @action(detail=False, methods=['get'])
@@ -220,7 +221,7 @@ class CampaignTrackingViewSet(viewsets.ModelViewSet):
     
     queryset = CampaignTracking.objects.all().prefetch_related('channels').order_by('-created_at')
     serializer_class = CampaignTrackingSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [CommunicationTrackingPermission]
     pagination_class = StandardPagination
     
     @action(detail=True, methods=['post'])
@@ -259,7 +260,7 @@ class PerformanceMetricsViewSet(viewsets.ReadOnlyModelViewSet):
         'channel', 'campaign'
     ).order_by('-date', '-hour')
     serializer_class = PerformanceMetricsSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [CommunicationTrackingPermission]
     pagination_class = StandardPagination
     
     def get_queryset(self):
@@ -309,7 +310,7 @@ class PerformanceMetricsViewSet(viewsets.ReadOnlyModelViewSet):
 class PerformanceTrendsView(APIView):
     """API view for performance trend analysis"""
     
-    permission_classes = [IsAuthenticated]
+    permission_classes = [CommunicationTrackingPermission]
     
     def get(self, request):
         """Get performance trends analysis"""
@@ -343,7 +344,7 @@ class PerformanceTrendsView(APIView):
 class ChannelComparisonView(APIView):
     """API view for channel performance comparison"""
     
-    permission_classes = [IsAuthenticated]
+    permission_classes = [CommunicationTrackingPermission]
     
     def get(self, request):
         """Get channel performance comparison"""
@@ -376,7 +377,7 @@ class ChannelComparisonView(APIView):
 class TimingAnalysisView(APIView):
     """API view for message timing analysis"""
     
-    permission_classes = [IsAuthenticated]
+    permission_classes = [CommunicationTrackingPermission]
     
     def get(self, request):
         """Get message timing analysis"""
@@ -410,7 +411,7 @@ class TimingAnalysisView(APIView):
 class AudienceEngagementView(APIView):
     """API view for audience engagement analysis"""
     
-    permission_classes = [IsAuthenticated]
+    permission_classes = [CommunicationTrackingPermission]
     
     def get(self, request):
         """Get audience engagement analysis"""
@@ -444,7 +445,7 @@ class AudienceEngagementView(APIView):
 class PerformanceReportView(APIView):
     """API view for comprehensive performance reports"""
     
-    permission_classes = [IsAuthenticated]
+    permission_classes = [CommunicationTrackingPermission]
     
     def get(self, request):
         """Generate performance report"""
@@ -627,7 +628,7 @@ class UniPileWebhookView(APIView):
 class ChannelDashboardView(APIView):
     """Dashboard view for channel performance"""
     
-    permission_classes = [IsAuthenticated]
+    permission_classes = [CommunicationTrackingPermission]
     
     def get(self, request, channel_id):
         """Get channel dashboard data"""
@@ -677,7 +678,7 @@ class ChannelDashboardView(APIView):
 class CampaignDashboardView(APIView):
     """Dashboard view for campaign performance"""
     
-    permission_classes = [IsAuthenticated]
+    permission_classes = [CommunicationTrackingPermission]
     
     def get(self, request, campaign_id):
         """Get campaign dashboard data"""
@@ -722,7 +723,7 @@ class CampaignDashboardView(APIView):
 class OverviewDashboardView(APIView):
     """Overview dashboard for all communication performance"""
     
-    permission_classes = [IsAuthenticated]
+    permission_classes = [CommunicationTrackingPermission]
     
     def get(self, request):
         """Get overview dashboard data"""

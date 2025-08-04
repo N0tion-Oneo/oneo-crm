@@ -1,9 +1,18 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import { pipelinesApi, recordsApi } from '@/lib/api'
 import { useDocumentSubscription } from '@/hooks/use-websocket-subscription'
 import { type RealtimeMessage, type UserPresence, type FieldLock } from '@/contexts/websocket-context'
+import { useAuth } from '@/features/auth/context'
+import { evaluateFieldPermissions, evaluateConditionalRules, type FieldWithPermissions, type FieldPermissionResult } from '@/utils/field-permissions'
+import { FieldRenderer, FieldDisplay, validateFieldValue, getFieldDefaultValue, normalizeRecordData } from '@/lib/field-system/field-renderer'
+import { Field } from '@/lib/field-system/types'
+import { FieldResolver } from '@/lib/field-system/field-registry'
+import { FieldSaveService } from '@/lib/field-system/field-save-service'
+import { parseValidationError, formatErrorForDebug, logValidationError, getCleanErrorMessage } from '@/utils/validation-helpers'
+// Import field system to ensure initialization
+import '@/lib/field-system'
 import { 
   X, 
   Save, 
@@ -37,28 +46,25 @@ import {
   Share2
 } from 'lucide-react'
 
-interface RecordField {
-  id: string
-  name: string
-  display_name?: string
-  field_type: string
-  is_required?: boolean
-  is_visible_in_list?: boolean
-  is_visible_in_detail?: boolean
-  display_order: number
+interface RecordField extends FieldWithPermissions {
   field_config?: { [key: string]: any }
   config?: { [key: string]: any } // Legacy support
   original_slug?: string // Preserve original backend slug for API calls
-  business_rules?: {
-    stage_requirements?: { [key: string]: { 
-      required: boolean
-      block_transitions?: boolean
-      show_warnings?: boolean
-      warning_message?: string
-    }}
-    user_visibility?: { [key: string]: { visible: boolean; editable: boolean }}
-  }
 }
+
+// Convert RecordField to Field type for field registry
+const convertToFieldType = (recordField: RecordField): Field => ({
+  id: recordField.id,
+  name: recordField.name,
+  display_name: recordField.display_name,
+  field_type: recordField.field_type,
+  field_config: recordField.field_config,
+  config: recordField.config, // Legacy support
+  is_required: recordField.is_required,
+  is_readonly: false, // RecordField doesn't have is_readonly
+  help_text: undefined, // RecordField doesn't have help_text
+  placeholder: undefined // RecordField doesn't have placeholder
+})
 
 interface Record {
   id: string
@@ -120,20 +126,50 @@ export function RecordDetailDrawer({
   onSave, 
   onDelete 
 }: RecordDetailDrawerProps) {
+  const { user } = useAuth()
   const [formData, setFormData] = useState<{ [key: string]: any }>({})
   const [originalData, setOriginalData] = useState<{ [key: string]: any }>({})
   const [activeTab, setActiveTab] = useState<'details' | 'activity' | 'communications'>('details')
-  const [editingFields, setEditingFields] = useState<Set<string>>(new Set())
+  
+  // Field-level editing state for enter/exit pattern
+  const [editingField, setEditingField] = useState<string | null>(null)
+  const [localFieldValues, setLocalFieldValues] = useState<{[key: string]: any}>({})
+  const [fieldErrors, setFieldErrors] = useState<{[key: string]: string}>({})
+  
   const [validationErrors, setValidationErrors] = useState<ValidationError[]>([])
   const [isAutoSaving, setIsAutoSaving] = useState(false)
   const [lastSaved, setLastSaved] = useState<Date | null>(null)
   const [activities, setActivities] = useState<Activity[]>([])
-  const [tags, setTags] = useState<string[]>([])
-  const [newTag, setNewTag] = useState('')
-  const [showTagInput, setShowTagInput] = useState(false)
   
   const autoSaveTimeoutRef = useRef<NodeJS.Timeout>()
   const drawerRef = useRef<HTMLDivElement>(null)
+  
+  // FieldSaveService instance for this form
+  const fieldSaveService = useRef(new FieldSaveService()).current
+
+  // Field filtering with conditional visibility support
+  const visibleFields = useMemo(() => {
+    const userTypeSlug = user?.userType?.slug
+    
+    return pipeline.fields
+      .filter(field => {
+        // Basic visibility check
+        if (field.is_visible_in_detail === false) return false
+        
+        // Evaluate conditional rules if they exist
+        if (field.business_rules?.conditional_rules) {
+          const conditionalResult = evaluateConditionalRules(
+            field.business_rules.conditional_rules,
+            formData,
+            userTypeSlug
+          )
+          if (!conditionalResult.visible) return false
+        }
+        
+        return true
+      })
+      .sort((a, b) => (a.display_order || 0) - (b.display_order || 0))
+  }, [pipeline.fields, formData, user])
 
   // Real-time collaboration
   // Subscribe to document updates for collaborative editing
@@ -167,17 +203,25 @@ export function RecordDetailDrawer({
   // Initialize form data when record changes
   useEffect(() => {
     if (record) {
-      setFormData({ ...record.data })
-      setOriginalData({ ...record.data })
-      setTags(record.tags || [])
+      // Use centralized field normalization to ensure proper data types
+      const normalizedData = normalizeRecordData(pipeline.fields, record.data)
+      
+      console.log('🔧 Normalizing record data:', { 
+        raw: record.data, 
+        normalized: normalizedData,
+        fields: pipeline.fields.map(f => ({ name: f.name, type: f.field_type }))
+      })
+      
+      setFormData(normalizedData)
+      setOriginalData(normalizedData)
       loadActivities(record.id)
     } else {
-      // New record - initialize with default values
+      // New record - initialize with default values using field registry
       const defaultData: { [key: string]: any } = {}
       pipeline.fields.forEach(field => {
-        // Check both field_config and config for default values (legacy support)
-        const defaultValue = field.field_config?.default_value || field.config?.default_value
-        if (defaultValue !== undefined) {
+        const fieldType = convertToFieldType(field)
+        const defaultValue = getFieldDefaultValue(fieldType)
+        if (defaultValue !== undefined && defaultValue !== null) {
           // Use field.name as the key since that's what our frontend uses internally
           defaultData[field.name] = defaultValue
         }
@@ -189,54 +233,65 @@ export function RecordDetailDrawer({
       })
       setFormData(defaultData)
       setOriginalData({})
-      setTags([])
       setActivities([])
     }
-    setEditingFields(new Set())
+    
+    // Reset field editing state
+    setEditingField(null)
+    setLocalFieldValues({})
+    setFieldErrors({})
     setValidationErrors([])
   }, [record, pipeline.fields])
 
   // Auto-enable editing for new records
   useEffect(() => {
     if (!record && pipeline.fields.length > 0) {
-      // New record: enable editing for all visible fields
-      const editableFields = pipeline.fields
-        .filter(field => field.is_visible_in_detail !== false)
-        .map(field => field.name)
-      setEditingFields(new Set(editableFields))
+      // New record: enable editing for the first field to get user started
+      const firstEditableField = visibleFields.find(field => {
+        const permissions = getFieldPermissions(field)
+        return permissions.editable && !permissions.readonly
+      })
+      
+      if (firstEditableField) {
+        handleFieldEnter(firstEditableField.name, formData[firstEditableField.name] || '')
+      }
     } else if (record) {
       // Existing record: start with no fields in edit mode
-      setEditingFields(new Set())
+      setEditingField(null)
+      setLocalFieldValues({})
+      setFieldErrors({})
     }
-  }, [record, pipeline.fields])
+  }, [record, pipeline.fields, visibleFields])
 
-  // Auto-save functionality
+  // Cleanup FieldSaveService when component unmounts
   useEffect(() => {
-    if (!record || Object.keys(formData).length === 0) return
+    return () => {
+      fieldSaveService.cleanup()
+    }
+  }, [fieldSaveService])
 
-    // Check if data has changed
-    const hasChanges = Object.keys(formData).some(key => 
-      formData[key] !== originalData[key]
-    )
-
-    if (hasChanges) {
-      // Clear existing timeout
-      if (autoSaveTimeoutRef.current) {
-        clearTimeout(autoSaveTimeoutRef.current)
+  // Handle ESC key to close drawer
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && isOpen) {
+        // Only close drawer if no field is being edited
+        if (!editingField) {
+          e.preventDefault()
+          onClose()
+        }
       }
+    }
 
-      // Set new timeout for auto-save
-      autoSaveTimeoutRef.current = setTimeout(() => {
-        handleAutoSave()
-      }, 2000) // Auto-save after 2 seconds of inactivity
+    if (isOpen) {
+      document.addEventListener('keydown', handleKeyDown)
     }
 
     return () => {
-      if (autoSaveTimeoutRef.current) {
-        clearTimeout(autoSaveTimeoutRef.current)
-      }
+      document.removeEventListener('keydown', handleKeyDown)
     }
-  }, [formData, originalData, record])
+  }, [isOpen, editingField, onClose])
+
+  // Auto-save functionality removed - only save on blur/manual save
 
   // Load activities
   const loadActivities = async (recordId: string) => {
@@ -371,6 +426,18 @@ export function RecordDetailDrawer({
       }
     } catch (error: any) {
       console.error('Save failed:', error)
+      
+      // Parse backend validation errors if they exist
+      const backendErrors = error?.response?.data?.errors
+      if (backendErrors) {
+        console.log('🔧 Backend validation errors detected:')
+        Object.entries(backendErrors).forEach(([field, messages]: [string, any]) => {
+          if (Array.isArray(messages)) {
+            messages.forEach(msg => logValidationError(field, msg, 'backend-save'))
+          }
+        })
+      }
+      
       console.error('Error details:', {
         message: error?.message,
         response: error?.response?.data,
@@ -403,73 +470,41 @@ export function RecordDetailDrawer({
   const validateForm = (): ValidationError[] => {
     const errors: ValidationError[] = []
 
-    pipeline.fields.forEach(field => {
+    visibleFields.forEach(field => {
+      const permissions = getFieldPermissions(field)
       const value = formData[field.name]
-      const currentStage = formData['pipeline_stages'] || 'Lead' // Default stage
-      const stageRequirements = field.business_rules?.stage_requirements?.[currentStage]
-      const isRequiredForStage = stageRequirements?.required || false
       
       // Debug logging for each field validation
       console.log('Validating field:', {
         name: field.name,
         display_name: field.display_name,
-        is_required: field.is_required,
-        currentStage: currentStage,
-        isRequiredForStage: isRequiredForStage,
-        stageRequirements: stageRequirements,
+        permissions: permissions,
         value: value,
         hasValue: !!value
       })
       
-      // Stage-specific required field validation (only use business rules, ignore generic is_required)
-      const fieldIsRequired = isRequiredForStage
-      if (fieldIsRequired && (!value || value === '')) {
-        console.log('Required field missing for stage:', field.name, 'stage:', currentStage)
+      // Use field registry validation with permission awareness
+      const fieldType = convertToFieldType(field)
+      
+      // Override required status based on permissions
+      fieldType.is_required = permissions.required
+      
+      const validationResult = validateFieldValue(fieldType, value)
+      
+      if (!validationResult.isValid && validationResult.error) {
+        // Log validation error with source tracking for debugging
+        logValidationError(field.name, validationResult.error, 'form-validation')
         errors.push({
           field: field.name,
-          message: `${field.display_name || field.name} is required for ${currentStage} stage`
+          message: getCleanErrorMessage(validationResult.error)  // Clean error for display
         })
-      }
-
-      // Type-specific validation
-      if (value && value !== '') {
-        switch (field.field_type) {
-          case 'email':
-            const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-            if (!emailRegex.test(value)) {
-              errors.push({
-                field: field.name,
-                message: 'Please enter a valid email address'
-              })
-            }
-            break
-          case 'url':
-            try {
-              new URL(value)
-            } catch {
-              errors.push({
-                field: field.name,
-                message: 'Please enter a valid URL'
-              })
-            }
-            break
-          case 'number':
-          case 'decimal':
-            if (isNaN(Number(value))) {
-              errors.push({
-                field: field.name,
-                message: 'Please enter a valid number'
-              })
-            }
-            break
-        }
       }
     })
 
     return errors
   }
 
-  // Handle field change
+  // Simple field change handler like DynamicFormRenderer
   const handleFieldChange = (fieldName: string, value: any) => {
     setFormData(prev => ({
       ...prev,
@@ -480,73 +515,181 @@ export function RecordDetailDrawer({
     setValidationErrors(prev => 
       prev.filter(error => error.field !== fieldName)
     )
+  }
 
-    // Broadcast real-time update to other users
+  // Field enter/exit handlers for smooth editing
+  const handleFieldEnter = (fieldName: string, currentValue: any) => {
+    console.log(`🔵 Field enter: ${fieldName}`, currentValue)
+    console.log(`🔍 Current formData for ${fieldName}:`, formData[fieldName])
+    setEditingField(fieldName)
+    setLocalFieldValues(prev => ({ ...prev, [fieldName]: currentValue || '' }))
+    setFieldErrors(prev => ({ ...prev, [fieldName]: '' })) // Clear any errors
+    
+    // Lock field for collaboration if we have a record
     if (record && isConnected) {
-      broadcastRecordUpdate(record.id, fieldName, value)
+      lockField(record.id, fieldName)
     }
   }
 
-  // Handle field edit mode
-  const toggleFieldEdit = (fieldName: string) => {
-    // For new records (when record is null), allow editing without restrictions
-    if (record) {
-      // Existing record: check if field is locked by another user
-      if (isFieldLocked(record.id, fieldName)) {
-        return // Cannot edit locked field
-      }
-    }
-
-    const newEditing = new Set(editingFields)
-    if (newEditing.has(fieldName)) {
-      // Exiting edit mode
-      newEditing.delete(fieldName)
-      // Only handle real-time locking for existing records
+  const handleFieldExit = async (fieldName: string, passedValue?: any) => {
+    const newValue = passedValue !== undefined ? passedValue : localFieldValues[fieldName]
+    const oldValue = formData[fieldName]
+    
+    console.log(`🔴 Field exit: ${fieldName}`, { 
+      oldValue, 
+      newValue, 
+      passedValue,
+      fromState: localFieldValues[fieldName],
+      wasPassedDirectly: passedValue !== undefined
+    })
+    console.log(`🔍 About to update formData with:`, newValue)
+    
+    // If value hasn't changed, just exit edit mode
+    if (newValue === oldValue) {
+      setEditingField(null)
+      setLocalFieldValues(prev => {
+        const { [fieldName]: _, ...rest } = prev
+        return rest
+      })
       if (record && isConnected) {
         unlockField(record.id, fieldName)
       }
-    } else {
-      // Entering edit mode
-      newEditing.add(fieldName)
-      // Only handle real-time locking for existing records
-      if (record && isConnected) {
-        lockField(record.id, fieldName)
+      return
+    }
+
+    // Validate the field before saving
+    const field = pipeline.fields.find(f => f.name === fieldName)
+    if (field) {
+      const fieldValidation = validateSingleField(field, newValue)
+      if (fieldValidation.error) {
+        setFieldErrors(prev => ({ ...prev, [fieldName]: fieldValidation.error! }))
+        return // Don't exit edit mode if validation fails
       }
     }
-    setEditingFields(newEditing)
-  }
 
-  // Add tag
-  const handleAddTag = () => {
-    if (newTag.trim() && !tags.includes(newTag.trim())) {
-      setTags([...tags, newTag.trim()])
-      setNewTag('')
-      setShowTagInput(false)
+    // Update formData (this will trigger conditional field visibility and auto-save)
+    setFormData(prev => {
+      const updated = { ...prev, [fieldName]: newValue }
+      console.log(`💾 Updated formData for ${fieldName}:`, updated[fieldName])
+      return updated
+    })
+
+    // Clear validation error for this field
+    setValidationErrors(prev => prev.filter(error => error.field !== fieldName))
+    
+    // Clean up editing state
+    setEditingField(null)
+    setLocalFieldValues(prev => {
+      const { [fieldName]: _, ...rest } = prev
+      return rest
+    })
+    setFieldErrors(prev => ({ ...prev, [fieldName]: '' }))
+    
+    // Unlock field for collaboration
+    if (record && isConnected) {
+      unlockField(record.id, fieldName)
     }
   }
 
-  // Remove tag
-  const handleRemoveTag = (tagToRemove: string) => {
-    setTags(tags.filter(tag => tag !== tagToRemove))
+  // Validate a single field (used during field exit)
+  const validateSingleField = (field: RecordField, value: any): { error?: string } => {
+    // Convert to field system format and use field system validation
+    const fieldSystemField = convertToFieldType(field)
+    const validationResult = FieldResolver.validate(fieldSystemField, value)
+    
+    // Override required validation with permissions-aware version
+    const permissions = getFieldPermissions(field)
+    if (permissions.required && FieldResolver.isEmpty(fieldSystemField, value)) {
+      return { error: `${field.display_name || field.name} is required` }
+    }
+    
+    // Return field system validation result
+    if (!validationResult.isValid && validationResult.error) {
+      return { error: validationResult.error }
+    }
+
+    return {}
   }
 
-  // Render field input
+  // Simple field permissions evaluation without complex state tracking
+  const getFieldPermissions = (field: RecordField): FieldPermissionResult => {
+    if (!user) {
+      return {
+        visible: false,
+        editable: false,
+        required: false,
+        readonly: true,
+        conditionallyHidden: false,
+        reasonHidden: 'No user logged in'
+      }
+    }
+
+    return evaluateFieldPermissions(field, user, formData, 'detail')
+  }
+
+  // Auto-save functionality
+  useEffect(() => {
+    if (!record || Object.keys(formData).length === 0) return
+
+    // Check if data has changed
+    const hasChanges = Object.keys(formData).some(key => 
+      formData[key] !== originalData[key]
+    )
+
+    if (hasChanges) {
+      // Clear existing timeout
+      if (autoSaveTimeoutRef.current) {
+        clearTimeout(autoSaveTimeoutRef.current)
+      }
+
+      // Set new timeout for auto-save
+      autoSaveTimeoutRef.current = setTimeout(() => {
+        handleAutoSave()
+      }, 2000) // Auto-save after 2 seconds of inactivity
+    }
+
+    return () => {
+      if (autoSaveTimeoutRef.current) {
+        clearTimeout(autoSaveTimeoutRef.current)
+      }
+    }
+  }, [formData, originalData, record])
+
+  // Handle Enter key for field exit
+  const handleFieldKeyDown = (e: React.KeyboardEvent, fieldName: string) => {
+    if (e.key === 'Enter' && !e.shiftKey) { // Allow Shift+Enter for new lines in textarea
+      e.preventDefault()
+      handleFieldExit(fieldName)
+    }
+    if (e.key === 'Escape') {
+      // Cancel editing without saving
+      setEditingField(null)
+      setLocalFieldValues(prev => {
+        const { [fieldName]: _, ...rest } = prev
+        return rest
+      })
+      setFieldErrors(prev => ({ ...prev, [fieldName]: '' }))
+      if (record && isConnected) {
+        unlockField(record.id, fieldName)
+      }
+    }
+  }
+
+  // Tags are now handled by the field system instead of hardcoded logic
+
+  // Render field input with enter/exit pattern using field registry
   const renderFieldInput = (field: RecordField) => {
-    const value = formData[field.name] || ''
-    const isNewRecord = !record
-    const isEditing = isNewRecord || editingFields.has(field.name)
-    const hasError = validationErrors.some(error => error.field === field.name)
-    const error = validationErrors.find(error => error.field === field.name)
+    const isEditing = editingField === field.name
+    const value = isEditing ? localFieldValues[field.name] : formData[field.name]
+    const fieldError = fieldErrors[field.name]
     const fieldLock = record ? getFieldLock(record.id, field.name) : null
     const isLocked = record ? isFieldLocked(record.id, field.name) : false
 
-    const inputClass = `w-full px-3 py-2 border rounded-md transition-colors ${
-      hasError 
-        ? 'border-red-300 focus:border-red-500 focus:ring-red-500' 
-        : 'border-gray-300 dark:border-gray-600 focus:border-primary focus:ring-primary'
-    } bg-white dark:bg-gray-700 text-gray-900 dark:text-white`
-
+    // Display mode (not editing)
     if (!isEditing) {
+      const canEdit = !isLocked
+      const fieldType = convertToFieldType(field)
+      
       return (
         <div>
           <div 
@@ -555,11 +698,18 @@ export function RecordDetailDrawer({
                 ? 'bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800' 
                 : 'bg-gray-50 dark:bg-gray-800 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700'
             }`}
-            onClick={() => !isLocked && toggleFieldEdit(field.name)}
+            onClick={() => canEdit && handleFieldEnter(field.name, value)}
           >
-            <span className={value ? 'text-gray-900 dark:text-white' : 'text-gray-500 italic'}>
-              {formatDisplayValue(field, value) || 'Click to edit'}
-            </span>
+            {value ? (
+              <FieldDisplay 
+                field={fieldType}
+                value={value}
+                context="detail"
+                className="text-gray-900 dark:text-white"
+              />
+            ) : (
+              <span className="text-gray-500 italic">Click to edit</span>
+            )}
             
             <div className="flex items-center space-x-2">
               {isLocked && fieldLock && 'user_name' in fieldLock && (
@@ -568,7 +718,7 @@ export function RecordDetailDrawer({
                   <span className="text-xs">{fieldLock.user_name}</span>
                 </div>
               )}
-              {!isLocked && (
+              {canEdit && (
                 <Edit className="w-4 h-4 text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity" />
               )}
             </div>
@@ -584,158 +734,93 @@ export function RecordDetailDrawer({
       )
     }
 
-    switch (field.field_type) {
-      case 'textarea':
-        return (
-          <div>
-            <textarea
-              value={value}
-              onChange={(e) => handleFieldChange(field.name, e.target.value)}
-              onBlur={() => toggleFieldEdit(field.name)}
-              className={`${inputClass} min-h-[100px] resize-vertical`}
-              placeholder={`Enter ${(field.display_name || field.name).toLowerCase()}...`}
-              autoFocus
-            />
-            {hasError && (
-              <p className="mt-1 text-sm text-red-600 dark:text-red-400">{error?.message}</p>
-            )}
-          </div>
-        )
-
-      case 'select':
-        const options = field.config?.options || []
-        return (
-          <div>
-            <select
-              value={value}
-              onChange={(e) => handleFieldChange(field.name, e.target.value)}
-              onBlur={() => toggleFieldEdit(field.name)}
-              className={inputClass}
-              autoFocus
-            >
-              <option value="">Select {field.display_name || field.name}</option>
-              {options.map((option: any) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-            {hasError && (
-              <p className="mt-1 text-sm text-red-600 dark:text-red-400">{error?.message}</p>
-            )}
-          </div>
-        )
-
-      case 'boolean':
-        return (
-          <div>
-            <label className="flex items-center">
-              <input
-                type="checkbox"
-                checked={Boolean(value)}
-                onChange={(e) => handleFieldChange(field.name, e.target.checked)}
-                onBlur={() => toggleFieldEdit(field.name)}
-                className="mr-2 rounded border-gray-300 text-primary focus:ring-primary"
-                autoFocus
-              />
-              <span className="text-sm">{field.display_name || field.name}</span>
-            </label>
-          </div>
-        )
-
-      case 'date':
-        return (
-          <div>
-            <input
-              type="date"
-              value={value ? new Date(value).toISOString().split('T')[0] : ''}
-              onChange={(e) => handleFieldChange(field.name, e.target.value)}
-              onBlur={() => toggleFieldEdit(field.name)}
-              className={inputClass}
-              autoFocus
-            />
-            {hasError && (
-              <p className="mt-1 text-sm text-red-600 dark:text-red-400">{error?.message}</p>
-            )}
-          </div>
-        )
-
-      case 'datetime':
-        return (
-          <div>
-            <input
-              type="datetime-local"
-              value={value ? new Date(value).toISOString().slice(0, 16) : ''}
-              onChange={(e) => handleFieldChange(field.name, e.target.value)}
-              onBlur={() => toggleFieldEdit(field.name)}
-              className={inputClass}
-              autoFocus
-            />
-            {hasError && (
-              <p className="mt-1 text-sm text-red-600 dark:text-red-400">{error?.message}</p>
-            )}
-          </div>
-        )
-
-      case 'number':
-      case 'decimal':
-        return (
-          <div>
-            <input
-              type="number"
-              step={field.field_type === 'decimal' ? '0.01' : '1'}
-              value={value}
-              onChange={(e) => handleFieldChange(field.name, e.target.value)}
-              onBlur={() => toggleFieldEdit(field.name)}
-              className={inputClass}
-              placeholder={`Enter ${(field.display_name || field.name).toLowerCase()}...`}
-              autoFocus
-            />
-            {hasError && (
-              <p className="mt-1 text-sm text-red-600 dark:text-red-400">{error?.message}</p>
-            )}
-          </div>
-        )
-
-      default:
-        return (
-          <div>
-            <input
-              type={field.field_type === 'email' ? 'email' : field.field_type === 'url' ? 'url' : 'text'}
-              value={value}
-              onChange={(e) => handleFieldChange(field.name, e.target.value)}
-              onBlur={() => toggleFieldEdit(field.name)}
-              className={inputClass}
-              placeholder={`Enter ${(field.display_name || field.name).toLowerCase()}...`}
-              autoFocus
-            />
-            {hasError && (
-              <p className="mt-1 text-sm text-red-600 dark:text-red-400">{error?.message}</p>
-            )}
-          </div>
-        )
+    // Edit mode - use field registry with enter/exit pattern integration
+    const fieldType = convertToFieldType(field)
+    
+    // Special handling for fields that should exit immediately after change
+    const shouldExitImmediately = ['select', 'boolean', 'radio', 'relation'].includes(field.field_type)
+    
+    const handleFieldRegistryChange = (newValue: any) => {
+      console.log(`🟢 Field change: ${field.name}`, { newValue, fieldType: field.field_type })
+      
+      // For NEW records, don't use field-level saving - just update local formData
+      // The record will be created when the user clicks "Create Record"
+      if (!record || !record.id) {
+        console.log(`📝 New record - updating local formData only for ${field.name}`)
+        setFormData(prev => ({ ...prev, [field.name]: newValue }))
+        return
+      }
+      
+      // For EXISTING records, use FieldSaveService for field-level saving
+      const shouldUpdateFormDataImmediately = ['select', 'boolean', 'radio', 'relation'].includes(field.field_type)
+      
+      fieldSaveService.onFieldChange({
+        field: fieldType,
+        newValue,
+        apiEndpoint: `/api/pipelines/${pipeline.id}/records/${record.id}/`,
+        onSuccess: (result) => {
+          // Only update formData immediately for fields that save immediately
+          // This prevents re-renders during typing for text fields
+          if (shouldUpdateFormDataImmediately) {
+            setFormData(prev => ({ ...prev, [field.name]: newValue }))
+          }
+          // Always clear field errors on successful save
+          setFieldErrors(prev => ({ ...prev, [field.name]: '' }))
+        },
+        onError: (error) => {
+          // Show field error
+          setFieldErrors(prev => ({ 
+            ...prev, 
+            [field.name]: error.response?.data?.message || error.message || 'Save failed'
+          }))
+        }
+      })
     }
+
+    const handleFieldRegistryBlur = () => {
+      console.log(`🔵 Field blur: ${field.name}`)
+      
+      // For NEW records, don't try to save - just keep the value in formData
+      if (!record || !record.id) {
+        console.log(`📝 New record - no save on blur for ${field.name}`)
+        return
+      }
+      
+      // For EXISTING records, save via FieldSaveService and update formData when successful
+      fieldSaveService.onFieldExit(field.name).then((result) => {
+        if (result && result.savedValue !== undefined) {
+          console.log(`✅ Field ${field.name} saved on exit with value:`, result.savedValue)
+          // CRITICAL: Update formData with the actual saved value so UI shows the change
+          setFormData(prev => ({ ...prev, [field.name]: result.savedValue }))
+        }
+      }).catch((error) => {
+        // Error already handled by FieldSaveService toast
+        console.log(`❌ Failed to save ${field.name} on exit:`, error)
+      })
+    }
+
+    const handleFieldRegistryKeyDown = (e: React.KeyboardEvent) => {
+      handleFieldKeyDown(e, field.name)
+    }
+
+    return (
+      <div>
+        <FieldRenderer
+          field={fieldType}
+          value={value}
+          onChange={handleFieldRegistryChange}
+          onBlur={handleFieldRegistryBlur}
+          onKeyDown={handleFieldRegistryKeyDown}
+          disabled={false}
+          error={fieldError}
+          autoFocus={true}
+          context="drawer"
+        />
+      </div>
+    )
   }
 
-  // Format display value
-  const formatDisplayValue = (field: RecordField, value: any) => {
-    if (value === null || value === undefined || value === '') return ''
-
-    switch (field.field_type) {
-      case 'date':
-        return new Date(value).toLocaleDateString()
-      case 'datetime':
-        return new Date(value).toLocaleString()
-      case 'boolean':
-        return value ? 'Yes' : 'No'
-      case 'decimal':
-        return typeof value === 'number' ? value.toLocaleString(undefined, { minimumFractionDigits: 2 }) : value
-      case 'number':
-        return typeof value === 'number' ? value.toLocaleString() : value
-      default:
-        return String(value)
-    }
-  }
+  // Removed formatDisplayValue - now using centralized FieldDisplay component
 
   // Format activity timestamp
   const formatActivityTime = (timestamp: string) => {
@@ -866,66 +951,21 @@ export function RecordDetailDrawer({
         <div className="flex-1 overflow-y-auto">
           {activeTab === 'details' && (
             <div className="p-6 space-y-6">
-              {/* Tags */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                  Tags
-                </label>
-                <div className="flex flex-wrap gap-2 mb-2">
-                  {tags.map((tag) => (
-                    <span
-                      key={tag}
-                      className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200"
-                    >
-                      {tag}
-                      <button
-                        onClick={() => handleRemoveTag(tag)}
-                        className="ml-1.5 text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-200"
-                      >
-                        <X className="w-3 h-3" />
-                      </button>
-                    </span>
-                  ))}
-                  
-                  {showTagInput ? (
-                    <div className="flex items-center space-x-2">
-                      <input
-                        type="text"
-                        value={newTag}
-                        onChange={(e) => setNewTag(e.target.value)}
-                        onKeyPress={(e) => e.key === 'Enter' && handleAddTag()}
-                        onBlur={() => setShowTagInput(false)}
-                        className="px-2 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700"
-                        placeholder="Enter tag..."
-                        autoFocus
-                      />
-                    </div>
-                  ) : (
-                    <button
-                      onClick={() => setShowTagInput(true)}
-                      className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border-2 border-dashed border-gray-300 dark:border-gray-600 text-gray-500 hover:border-gray-400 dark:hover:border-gray-500"
-                    >
-                      <Plus className="w-3 h-3 mr-1" />
-                      Add Tag
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              {/* Fields */}
+              {/* Fields (including tags fields handled by field system) */}
               <div className="space-y-4">
-                {pipeline.fields
-                  .filter(field => field.is_visible_in_detail !== false)
-                  .sort((a, b) => (a.display_order || 0) - (b.display_order || 0))
-                  .map((field) => (
+                {visibleFields.map((field) => {
+                  const permissions = getFieldPermissions(field)
+                  return (
                     <div key={field.name}>
                       <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                         {field.display_name || field.name}
-                        {field.is_required && <span className="text-red-500 ml-1">*</span>}
+                        {permissions.required && <span className="text-red-500 ml-1">*</span>}
+                        {permissions.readonly && <span className="text-gray-500 ml-1">(read-only)</span>}
                       </label>
                       {renderFieldInput(field)}
                     </div>
-                  ))}
+                  )
+                })}
               </div>
             </div>
           )}
@@ -937,23 +977,28 @@ export function RecordDetailDrawer({
                   <div key={activity.id || `activity-${index}-${Date.now()}`} className="flex space-x-3">
                     <div className="flex-shrink-0">
                       <div className="w-8 h-8 bg-gray-200 dark:bg-gray-600 rounded-full flex items-center justify-center">
-                        {activity.action === 'created' && <Plus className="w-4 h-4 text-green-600 dark:text-green-400" />}
-                        {activity.action === 'updated' && <Edit className="w-4 h-4 text-blue-600 dark:text-blue-400" />}
-                        {activity.action === 'deleted' && <Trash2 className="w-4 h-4 text-red-600 dark:text-red-400" />}
-                        {!['created', 'updated', 'deleted'].includes(activity.action) && <Clock className="w-4 h-4 text-gray-600 dark:text-gray-400" />}
+                        {activity.type === 'system' && activity.message.includes('created') && <Plus className="w-4 h-4 text-green-600 dark:text-green-400" />}
+                        {activity.type === 'field_change' && <Edit className="w-4 h-4 text-blue-600 dark:text-blue-400" />}
+                        {activity.type === 'stage_change' && <Trash2 className="w-4 h-4 text-red-600 dark:text-red-400" />}
+                        {activity.type === 'comment' && <Clock className="w-4 h-4 text-gray-600 dark:text-gray-400" />}
                       </div>
                     </div>
                     
                     <div className="flex-1 min-w-0">
                       <div className="text-sm text-gray-900 dark:text-white">
                         <span className="font-medium">
-                          {activity.user_name || activity.user || 'System'}
+                          {activity.user ? `${activity.user.first_name} ${activity.user.last_name}` : 'System'}
                         </span>
-                        {' '}
-                        <span>{activity.changes}</span>
+                        <div className="mt-1">
+                          {activity.message.split('\n').map((line, index) => (
+                            <div key={index} className={index > 0 ? 'mt-1' : ''}>
+                              {line}
+                            </div>
+                          ))}
+                        </div>
                       </div>
-                      <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                        {formatActivityTime(activity.timestamp || activity.created_at)}
+                      <div className="text-xs text-gray-500 dark:text-gray-400 mt-2">
+                        {formatActivityTime(activity.created_at)}
                       </div>
                     </div>
                   </div>
@@ -998,7 +1043,7 @@ export function RecordDetailDrawer({
               <button
                 onClick={() => {
                   // TODO: Implement record sharing in Phase 6
-                  const shareUrl = `${window.location.origin}/forms/shared/${pipeline.slug}/${record.id}?token=sharing_token_here`
+                  const shareUrl = `${window.location.origin}/forms/shared/${pipeline.id}/${record.id}?token=sharing_token_here`
                   navigator.clipboard.writeText(shareUrl)
                   alert('Share link copied to clipboard! (Full sharing system coming in Phase 6)')
                 }}

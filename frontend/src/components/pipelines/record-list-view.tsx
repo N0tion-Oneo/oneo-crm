@@ -4,6 +4,11 @@ import { useState, useEffect, useMemo } from 'react'
 import { pipelinesApi } from '@/lib/api'
 import { usePipelineRecordsSubscription } from '@/hooks/use-websocket-subscription'
 import { type RealtimeMessage } from '@/contexts/websocket-context'
+import { useAuth } from '@/features/auth/context'
+import { FieldResolver } from '@/lib/field-system/field-registry'
+import { Field } from '@/lib/field-system/types'
+// Import field system to ensure initialization
+import '@/lib/field-system'
 import { 
   Search, 
   Filter, 
@@ -73,15 +78,29 @@ export interface RecordField {
   field_config?: { [key: string]: any }
   config?: { [key: string]: any } // Legacy support
   business_rules?: {
-    stage_requirements?: Record<string, { 
+    stage_requirements?: {[key: string]: { 
       required: boolean
       block_transitions?: boolean
       show_warnings?: boolean
       warning_message?: string
-    }>
-    user_visibility?: Record<string, { visible: boolean; editable: boolean }>
+    }}
+    user_visibility?: {[key: string]: { visible: boolean; editable: boolean }}
   }
 }
+
+// Convert RecordField to Field type for field registry
+const convertToFieldType = (recordField: RecordField): Field => ({
+  id: recordField.id,
+  name: recordField.name,
+  display_name: recordField.display_name,
+  field_type: recordField.field_type as string,
+  field_config: recordField.field_config,
+  config: recordField.config, // Legacy support
+  is_required: recordField.is_required,
+  is_readonly: false, // List view doesn't handle readonly
+  help_text: undefined,
+  placeholder: undefined
+})
 
 export interface Record {
   id: string
@@ -128,6 +147,7 @@ interface Sort {
 }
 
 export function RecordListView({ pipeline, onEditRecord, onCreateRecord }: RecordListViewProps) {
+  const { user } = useAuth()
   const [records, setRecords] = useState<Record[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -212,7 +232,7 @@ export function RecordListView({ pipeline, onEditRecord, onCreateRecord }: Recor
     })
   }, [pipeline.id, isConnected])
 
-  // Initialize visible fields
+  // Initialize visible fields (show all columns, permissions applied per row)
   useEffect(() => {
     const defaultVisible = pipeline.fields
       .filter(field => field.is_visible_in_list !== false)
@@ -361,32 +381,10 @@ export function RecordListView({ pipeline, onEditRecord, onCreateRecord }: Recor
     setSelectedRecords(newSelected)
   }
 
-  // Format field value for display
+  // Format field value for display using field registry
   const formatFieldValue = (field: RecordField, value: any) => {
-    if (value === null || value === undefined || value === '') {
-      return <span className="text-gray-400 italic">Empty</span>
-    }
-
-    switch (field.field_type) {
-      case 'date':
-        return new Date(value).toLocaleDateString()
-      case 'datetime':
-        return new Date(value).toLocaleString()
-      case 'decimal':
-        return typeof value === 'number' ? value.toLocaleString() : value
-      case 'number':
-        return typeof value === 'number' ? value.toLocaleString() : value
-      case 'boolean':
-        return value ? '✓' : '✗'
-      case 'email':
-        return <a href={`mailto:${value}`} className="text-blue-600 hover:underline">{value}</a>
-      case 'phone':
-        return <a href={`tel:${value}`} className="text-blue-600 hover:underline">{value}</a>
-      case 'url':
-        return <a href={value} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">{value}</a>
-      default:
-        return String(value).substring(0, 100) + (String(value).length > 100 ? '...' : '')
-    }
+    const fieldType = convertToFieldType(field)
+    return FieldResolver.formatValue(fieldType, value, 'table')
   }
 
   // Get visible fields for table

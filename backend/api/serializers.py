@@ -140,19 +140,41 @@ class DynamicRecordSerializer(serializers.ModelSerializer):
                     allow_blank=not is_required
                 )
             elif field.field_type == 'number':
-                self.fields[field_name] = serializers.IntegerField(
-                    source=f'data.{field_name}',
-                    required=is_required,
-                    allow_null=not is_required
-                )
+                # Check if this is a currency field
+                field_config = field.field_config or {}
+                if field_config.get('format') == 'currency':
+                    # Currency fields store objects like {"amount": 123.45, "currency": "USD"}
+                    self.fields[field_name] = serializers.JSONField(
+                        source=f'data.{field_name}',
+                        required=is_required,
+                        allow_null=not is_required
+                    )
+                else:
+                    # Regular number fields
+                    self.fields[field_name] = serializers.IntegerField(
+                        source=f'data.{field_name}',
+                        required=is_required,
+                        allow_null=not is_required
+                    )
             elif field.field_type == 'decimal':
-                self.fields[field_name] = serializers.DecimalField(
-                    source=f'data.{field_name}',
-                    max_digits=10,
-                    decimal_places=2,
-                    required=is_required,
-                    allow_null=not is_required
-                )
+                # Check if this is a currency field
+                field_config = field.field_config or {}
+                if field_config.get('format') == 'currency':
+                    # Currency fields store objects like {"amount": 123.45, "currency": "USD"}
+                    self.fields[field_name] = serializers.JSONField(
+                        source=f'data.{field_name}',
+                        required=is_required,
+                        allow_null=not is_required
+                    )
+                else:
+                    # Regular decimal fields
+                    self.fields[field_name] = serializers.DecimalField(
+                        source=f'data.{field_name}',
+                        max_digits=10,
+                        decimal_places=2,
+                        required=is_required,
+                        allow_null=not is_required
+                    )
             elif field.field_type == 'boolean':
                 self.fields[field_name] = serializers.BooleanField(
                     source=f'data.{field_name}',
@@ -164,6 +186,23 @@ class DynamicRecordSerializer(serializers.ModelSerializer):
                     required=is_required,
                     allow_null=not is_required
                 )
+            elif field.field_type == 'phone':
+                # Check if this phone field requires country code
+                field_config = field.field_config or {}
+                if field_config.get('require_country_code', True):
+                    # Phone fields with country code store objects like {"country_code": "+1", "number": "5551234567"}
+                    self.fields[field_name] = serializers.JSONField(
+                        source=f'data.{field_name}',
+                        required=is_required,
+                        allow_null=not is_required
+                    )
+                else:
+                    # Simple phone fields store strings
+                    self.fields[field_name] = serializers.CharField(
+                        source=f'data.{field_name}',
+                        required=is_required,
+                        allow_blank=not is_required
+                    )
             elif field.field_type in ['select', 'multiselect']:
                 # Handle choice fields
                 choices = field.field_config.get('choices', [])

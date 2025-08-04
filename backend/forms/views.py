@@ -12,6 +12,7 @@ from .serializers import (
     ValidationRuleSerializer, FormTemplateSerializer,
     FormFieldConfigurationSerializer
 )
+from api.permissions import FormPermission, ValidationRulePermission
 from authentication.permissions import SyncPermissionManager
 
 logger = logging.getLogger(__name__)
@@ -23,7 +24,7 @@ class ValidationRuleViewSet(viewsets.ModelViewSet):
     Includes tenant isolation and permission checking
     """
     serializer_class = ValidationRuleSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [ValidationRulePermission]
     
     def get_queryset(self):
         return ValidationRule.objects.filter(
@@ -112,7 +113,7 @@ class FormTemplateViewSet(viewsets.ModelViewSet):
     Supports form building, validation, and analytics
     """
     serializer_class = FormTemplateSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [FormPermission]
     
     def get_queryset(self):
         return FormTemplate.objects.filter(
@@ -356,7 +357,7 @@ class FormTemplateViewSet(viewsets.ModelViewSet):
 class FormFieldConfigurationViewSet(viewsets.ModelViewSet):
     """ViewSet for managing form field configurations"""
     serializer_class = FormFieldConfigurationSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [FormPermission]
     
     def get_queryset(self):
         return FormFieldConfiguration.objects.filter(
@@ -413,7 +414,7 @@ class FormFieldConfigurationViewSet(viewsets.ModelViewSet):
 class FormSubmissionViewSet(viewsets.ReadOnlyModelViewSet):
     """ViewSet for viewing form submissions (read-only)"""
     serializer_class = FormSubmissionSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [FormPermission]
     
     def get_queryset(self):
         return FormSubmission.objects.filter(

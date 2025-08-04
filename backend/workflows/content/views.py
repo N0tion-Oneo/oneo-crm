@@ -9,6 +9,7 @@ from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
 from drf_spectacular.utils import extend_schema, OpenApiParameter
+from api.permissions import WorkflowPermission
 
 from .models import (
     ContentLibrary, ContentAsset, ContentTag, ContentUsage, 
@@ -27,7 +28,7 @@ class ContentLibraryViewSet(viewsets.ModelViewSet):
     """ViewSet for managing content libraries"""
     
     queryset = ContentLibrary.objects.filter(is_active=True)
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [WorkflowPermission]
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ['visibility', 'requires_approval', 'parent_library']
     search_fields = ['name', 'description']
@@ -78,7 +79,7 @@ class ContentAssetViewSet(viewsets.ModelViewSet):
     """ViewSet for managing content assets"""
     
     queryset = ContentAsset.objects.filter(is_current_version=True)
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [WorkflowPermission]
     parser_classes = [MultiPartParser, FormParser, JSONParser]
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ['content_type', 'status', 'visibility', 'library']
@@ -254,7 +255,7 @@ class ContentTagViewSet(viewsets.ModelViewSet):
     
     queryset = ContentTag.objects.all()
     serializer_class = ContentTagSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [WorkflowPermission]
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ['category']
     search_fields = ['name', 'description']
@@ -282,7 +283,7 @@ class ContentUsageViewSet(viewsets.ReadOnlyModelViewSet):
     
     queryset = ContentUsage.objects.all()
     serializer_class = ContentUsageSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [WorkflowPermission]
     filter_backends = [DjangoFilterBackend, OrderingFilter]
     filterset_fields = ['content_asset', 'workflow_id', 'node_type', 'usage_type']
     ordering_fields = ['execution_count', 'last_execution', 'success_rate']
@@ -314,7 +315,7 @@ class ContentApprovalViewSet(viewsets.ModelViewSet):
     
     queryset = ContentApproval.objects.all()
     serializer_class = ContentApprovalSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [WorkflowPermission]
     filter_backends = [DjangoFilterBackend, OrderingFilter]
     filterset_fields = ['status', 'assigned_to', 'content_asset']
     ordering_fields = ['created_at', 'responded_at']

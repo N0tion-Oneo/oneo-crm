@@ -18,7 +18,7 @@ class RelationshipTypeViewSet(viewsets.ReadOnlyModelViewSet):
     Relationship type management (read-only for most users)
     """
     serializer_class = RelationshipTypeSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [RelationshipPermission]
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['cardinality', 'is_bidirectional', 'is_system', 'allow_user_relationships']
     search_fields = ['name', 'description']
@@ -34,7 +34,7 @@ class RelationshipViewSet(viewsets.ModelViewSet):
     Relationship management API
     """
     serializer_class = RelationshipSerializer
-    permission_classes = [permissions.IsAuthenticated, RelationshipPermission]
+    permission_classes = [RelationshipPermission]
     filter_backends = [DjangoFilterBackend]
     filterset_class = RelationshipFilter
     ordering = ['-created_at']

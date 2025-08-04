@@ -21,13 +21,14 @@ from .serializers import (
     RecordSearchSerializer, BulkRecordActionSerializer
 )
 from .ai_processor import AIFieldManager, process_ai_fields_sync
+from api.permissions import PipelinePermission, RecordPermission
 from authentication.permissions import SyncPermissionManager
 
 
 class PipelineViewSet(viewsets.ModelViewSet):
     """ViewSet for managing pipelines"""
     queryset = Pipeline.objects.all()
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [PipelinePermission]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ['pipeline_type', 'is_active', 'access_level']
     search_fields = ['name', 'description']
@@ -284,7 +285,7 @@ class FieldViewSet(viewsets.ModelViewSet):
     """ViewSet for managing pipeline fields"""
     queryset = Field.objects.all()
     serializer_class = FieldSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [PipelinePermission]
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
     filterset_fields = ['pipeline', 'field_type', 'is_required', 'is_ai_field']
     ordering_fields = ['display_order', 'name', 'created_at']
@@ -346,7 +347,7 @@ class RecordViewSet(viewsets.ModelViewSet):
     """ViewSet for managing pipeline records"""
     queryset = Record.objects.filter(is_deleted=False)
     serializer_class = RecordSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [RecordPermission]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ['pipeline', 'status']
     search_fields = ['title', 'data']
@@ -501,7 +502,7 @@ class PipelineTemplateViewSet(viewsets.ModelViewSet):
     """ViewSet for managing pipeline templates"""
     queryset = PipelineTemplate.objects.all()
     serializer_class = PipelineTemplateSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [PipelinePermission]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ['category', 'is_system', 'is_public']
     search_fields = ['name', 'description']
@@ -557,7 +558,7 @@ class PipelineTemplateViewSet(viewsets.ModelViewSet):
 
 class PipelineStatsViewSet(viewsets.ViewSet):
     """ViewSet for pipeline statistics"""
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [PipelinePermission]
     
     def list(self, request):
         """Get overall pipeline statistics"""

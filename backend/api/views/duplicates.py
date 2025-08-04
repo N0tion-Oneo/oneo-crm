@@ -33,7 +33,7 @@ class DuplicateRuleViewSet(viewsets.ModelViewSet):
     ViewSet for managing duplicate detection rules
     """
     serializer_class = DuplicateRuleSerializer
-    permission_classes = [permissions.IsAuthenticated, DuplicatePermission]
+    permission_classes = [DuplicatePermission]
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['pipeline', 'action_on_duplicate', 'is_active', 'enable_fuzzy_matching']
     search_fields = ['name', 'description']
@@ -264,7 +264,7 @@ class DuplicateMatchViewSet(viewsets.ModelViewSet):
     ViewSet for managing duplicate matches
     """
     serializer_class = DuplicateMatchSerializer
-    permission_classes = [permissions.IsAuthenticated, DuplicatePermission]
+    permission_classes = [DuplicatePermission]
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['rule', 'status', 'detection_method']
     search_fields = ['record1__id', 'record2__id']
@@ -389,7 +389,7 @@ class DuplicateAnalyticsViewSet(viewsets.ReadOnlyModelViewSet):
     ViewSet for viewing duplicate analytics (read-only)
     """
     serializer_class = DuplicateAnalyticsSerializer
-    permission_classes = [permissions.IsAuthenticated, TenantMemberPermission]
+    permission_classes = [TenantMemberPermission]
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['rule', 'date']
     ordering_fields = ['date', 'records_processed', 'duplicates_detected']
@@ -519,7 +519,7 @@ class DuplicateExclusionViewSet(viewsets.ModelViewSet):
     ViewSet for managing duplicate exclusions
     """
     serializer_class = DuplicateExclusionSerializer
-    permission_classes = [permissions.IsAuthenticated, DuplicatePermission]
+    permission_classes = [DuplicatePermission]
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['rule', 'created_by']
     search_fields = ['reason', 'record1__id', 'record2__id']

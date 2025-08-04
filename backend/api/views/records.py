@@ -24,7 +24,7 @@ class RecordViewSet(viewsets.ModelViewSet):
     """
     Dynamic record API that adapts to pipeline schema
     """
-    permission_classes = [permissions.IsAuthenticated, RecordPermission]
+    permission_classes = [RecordPermission]
     filter_backends = [DjangoFilterBackend]
     search_fields = ['title', 'data']
     ordering_fields = ['title', 'status', 'created_at', 'updated_at']
@@ -299,13 +299,21 @@ class RecordViewSet(viewsets.ModelViewSet):
         # Format audit logs into activity entries
         activities = []
         for log in audit_logs:
+            # Map action to frontend expected type
+            activity_type = 'field_change' if log.action == 'updated' else (
+                'system' if log.action in ['created', 'deleted'] else 'comment'
+            )
+            
             activity = {
                 'id': log.id,
-                'timestamp': log.timestamp,
-                'user': log.user.email if log.user else 'System',
-                'user_name': f"{log.user.first_name} {log.user.last_name}".strip() if log.user else 'System',
-                'action': log.action,
-                'changes': self._format_audit_changes(log.changes, log.action)
+                'type': activity_type,
+                'message': self._format_audit_changes(log.changes, log.action),
+                'user': {
+                    'first_name': log.user.first_name if log.user else '',
+                    'last_name': log.user.last_name if log.user else '',
+                    'email': log.user.email if log.user else ''
+                } if log.user else None,
+                'created_at': log.timestamp.isoformat()
             }
             activities.append(activity)
         
@@ -327,7 +335,19 @@ class RecordViewSet(viewsets.ModelViewSet):
     def _format_audit_changes(self, changes, action):
         """Format audit log changes for display"""
         if action == 'created':
-            return f"Record created in {changes.get('pipeline', 'Unknown')} pipeline"
+            # Show initial field values when record was created
+            initial_values = []
+            if 'data' in changes and isinstance(changes['data'], dict):
+                for field, value in changes['data'].items():
+                    if value is not None and value != '' and value != 'None':
+                        display_name = self._get_field_display_name(field)
+                        formatted_value = self._format_field_value(value)
+                        initial_values.append(f"{display_name}: {formatted_value}")
+            
+            if initial_values:
+                return f"Record created with:\n" + '\n'.join(initial_values)
+            else:
+                return f"Record created in {changes.get('pipeline', 'Unknown')} pipeline"
         
         elif action == 'updated':
             formatted_changes = []
@@ -335,28 +355,108 @@ class RecordViewSet(viewsets.ModelViewSet):
             # Format data changes
             if 'data_changes' in changes:
                 for field, change in changes['data_changes'].items():
-                    old_val = change.get('old', '')
-                    new_val = change.get('new', '')
+                    old_val = change.get('old')
+                    new_val = change.get('new')
                     
-                    # Truncate long values for display
-                    if isinstance(old_val, str) and len(old_val) > 50:
-                        old_val = old_val[:47] + "..."
-                    if isinstance(new_val, str) and len(new_val) > 50:
-                        new_val = new_val[:47] + "..."
+                    # Get display name for field
+                    display_name = self._get_field_display_name(field)
                     
-                    formatted_changes.append(f"{field}: '{old_val}' → '{new_val}'")
+                    # Format values for better readability
+                    old_display = self._format_field_value(old_val)
+                    new_display = self._format_field_value(new_val)
+                    
+                    formatted_changes.append(f"{display_name}: {old_display} → {new_display}")
             
             # Format status changes
             if 'status' in changes:
                 status_change = changes['status']
-                formatted_changes.append(f"Status: {status_change.get('old')} → {status_change.get('new')}")
+                old_status = self._format_field_value(status_change.get('old'))
+                new_status = self._format_field_value(status_change.get('new'))
+                formatted_changes.append(f"Status: {old_status} → {new_status}")
             
-            return '; '.join(formatted_changes) if formatted_changes else 'Record updated'
+            # Show all changes individually with line breaks for detailed view
+            if formatted_changes:
+                return '\n'.join(formatted_changes)
+            else:
+                return 'Record updated'
         
         elif action == 'deleted':
             return f"Record deleted from {changes.get('pipeline', 'Unknown')} pipeline"
         
         return f"Record {action}"
+    
+    def _get_field_display_name(self, field_name):
+        """Get human-readable display name for a field"""
+        # Try to get the field from the pipeline to get display_name
+        try:
+            # Use request context to get the pipeline for field lookup
+            if hasattr(self.request, '_cached_pipeline'):
+                pipeline = self.request._cached_pipeline
+            else:
+                pipeline_pk = self.kwargs.get('pipeline_pk')
+                if pipeline_pk:
+                    from pipelines.models import Pipeline
+                    pipeline = Pipeline.objects.get(id=pipeline_pk)
+                    self.request._cached_pipeline = pipeline
+                else:
+                    return field_name.replace('_', ' ').title()
+            
+            # Look up the field by name to get display_name
+            field = pipeline.fields.filter(name=field_name).first()
+            if field and field.display_name:
+                return field.display_name
+                
+        except Exception as e:
+            # Log the error but don't fail
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.debug(f"Could not get field display name for {field_name}: {e}")
+        
+        # Fallback to converting field name to readable format
+        return field_name.replace('_', ' ').title()
+    
+    def _format_field_value(self, value):
+        """Format field values for display"""
+        if value is None or value == '' or value == 'None':
+            return "(empty)"
+        
+        # Handle dates
+        if isinstance(value, str) and 'T' in value and value.endswith('+00:00'):
+            try:
+                from datetime import datetime
+                dt = datetime.fromisoformat(value.replace('Z', '+00:00'))
+                return dt.strftime('%b %d, %Y at %I:%M %p')
+            except:
+                pass
+        
+        # Handle phone objects
+        if isinstance(value, dict) and 'country_code' in value and 'number' in value:
+            return f"{value['country_code']} {value['number']}"
+        
+        # Handle currency objects
+        if isinstance(value, dict) and 'amount' in value and 'currency' in value:
+            return f"{value['currency']} {value['amount']}"
+        
+        # Handle lists (like tags)
+        if isinstance(value, list):
+            if len(value) == 0:
+                return "(empty)"
+            elif len(value) <= 3:
+                return ', '.join(str(v) for v in value)
+            else:
+                return f"{', '.join(str(v) for v in value[:2])} and {len(value)-2} more"
+        
+        # Handle strings
+        if isinstance(value, str):
+            # Check if it looks like a JavaScript event object (data quality issue)
+            if value.startswith("{'_targetInst'") or "'type': 'change'" in value:
+                return "(invalid data)"
+            
+            # Truncate long strings
+            if len(value) > 50:
+                return value[:47] + "..."
+        
+        return str(value)
     
     @extend_schema(
         summary="Get stage trigger status",
@@ -395,7 +495,9 @@ class RecordViewSet(viewsets.ModelViewSet):
     
     @extend_schema(
         summary="Validate record data",
-        description="Validate record data against pipeline schema without saving"
+        description="Validate record data against pipeline schema without saving. " \
+                   "Error messages include source prefixes like [BACKEND_VALIDATOR], " \
+                   "[STORAGE_CONSTRAINT], or [BUSINESS_RULES] for debugging."
     )
     @action(detail=False, methods=['post'])
     def validate(self, request, pipeline_pk=None):
@@ -410,7 +512,8 @@ class RecordViewSet(viewsets.ModelViewSet):
             'errors': validation_result['errors'],
             'cleaned_data': validation_result.get('cleaned_data'),
             'pipeline_id': pipeline.id,
-            'pipeline_name': pipeline.name
+            'pipeline_name': pipeline.name,
+            'validation_source': 'backend_validator'  # Clear indicator for API consumers
         })
     
     def destroy(self, request, *args, **kwargs):
@@ -549,7 +652,7 @@ class GlobalSearchViewSet(viewsets.ReadOnlyModelViewSet):
     Global search across all accessible records
     """
     serializer_class = RecordSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [RecordPermission]
     filter_backends = [DjangoFilterBackend]
     filterset_class = GlobalSearchFilter
     

@@ -1,8 +1,8 @@
 'use client'
 
 import React, { useState, useEffect } from 'react'
-import { Save, AlertCircle, Target, Eye, EyeOff, Lock, Unlock, Shield, MessageSquare, Settings, ChevronDown, ChevronRight, CheckCircle, Copy, Check } from 'lucide-react'
-import { pipelinesApi } from '@/lib/api'
+import { Save, AlertCircle, Target, Eye, EyeOff, Lock, Unlock, Shield, MessageSquare, Settings, ChevronDown, ChevronRight, CheckCircle, Copy, Check, Users } from 'lucide-react'
+import { pipelinesApi, permissionsApi } from '@/lib/api'
 import { usePermissions } from '@/hooks/usePermissions'
 import { PermissionGuard, PermissionButton } from '@/components/permissions/PermissionGuard'
 
@@ -20,7 +20,17 @@ interface PipelineField {
       show_warnings?: boolean
       warning_message?: string
     }>
-    user_visibility?: Record<string, { visible: boolean; editable: boolean }>
+    user_visibility?: Record<string, {
+      visible: boolean
+      editable: boolean
+      visibility_level?: 'visible' | 'hidden' | 'conditional' | 'readonly'
+      required?: boolean
+      default_value?: any
+      conditional_rules?: {
+        show_when?: { field: string; condition: string; value: any }[]
+        hide_when?: { field: string; condition: string; value: any }[]
+      }
+    }>
   }
 }
 
@@ -33,12 +43,14 @@ interface Pipeline {
   stages: string[]
 }
 
-const USER_TYPES = [
-  { key: 'admin', label: 'Admin' },
-  { key: 'manager', label: 'Manager' },
-  { key: 'user', label: 'User' },
-  { key: 'viewer', label: 'Viewer' }
-]
+interface UserType {
+  id: number
+  name: string
+  slug: string
+  description: string
+  is_system_default: boolean
+  is_custom: boolean
+}
 
 interface BusinessRulesBuilderProps {
   pipelineId: string
@@ -72,6 +84,8 @@ export function BusinessRulesBuilder({
   onPipelineChange 
 }: BusinessRulesBuilderProps) {
   const [pipeline, setPipeline] = useState<Pipeline | null>(initialPipeline || null)
+  const [userTypes, setUserTypes] = useState<UserType[]>([])
+  const [loadingUserTypes, setLoadingUserTypes] = useState(true)
   const [loading, setLoading] = useState(!initialPipeline)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -117,6 +131,31 @@ export function BusinessRulesBuilder({
       console.error('Failed to copy URL:', err)
     }
   }
+
+  // Load user types
+  useEffect(() => {
+    const loadUserTypes = async () => {
+      try {
+        setLoadingUserTypes(true)
+        const response = await permissionsApi.getUserTypes()
+        const userTypesData = response.data.results || response.data || []
+        setUserTypes(userTypesData)
+      } catch (error) {
+        console.error('Failed to load user types:', error)
+        // Fallback to hardcoded types if API fails
+        setUserTypes([
+          { id: 1, name: 'Admin', slug: 'admin', description: 'System administrator', is_system_default: true, is_custom: false },
+          { id: 2, name: 'Manager', slug: 'manager', description: 'Team manager', is_system_default: true, is_custom: false },
+          { id: 3, name: 'User', slug: 'user', description: 'Standard user', is_system_default: true, is_custom: false },
+          { id: 4, name: 'Viewer', slug: 'viewer', description: 'Read-only user', is_system_default: true, is_custom: false }
+        ])
+      } finally {
+        setLoadingUserTypes(false)
+      }
+    }
+
+    loadUserTypes()
+  }, [])
 
   // Load pipeline data if not provided
   useEffect(() => {
@@ -270,6 +309,8 @@ export function BusinessRulesBuilder({
       onPipelineChange(updatedPipeline)
     }
   }
+
+
 
   // Toggle field-stage expansion
   const toggleFieldStageExpansion = (fieldId: string, stage: string) => {
@@ -699,12 +740,16 @@ export function BusinessRulesBuilder({
       {/* User Visibility Section */}
       <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
         <div className="mb-6">
-          <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">
-            Field Visibility by User Type
-          </h3>
-          <p className="text-sm text-gray-600 dark:text-gray-400">
-            Control which user types can see and edit each field
-          </p>
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">
+                Field Permissions by User Type
+              </h3>
+              <p className="text-sm text-gray-600 dark:text-gray-400">
+                Control visibility, editability, and advanced field settings for each user type
+              </p>
+            </div>
+          </div>
         </div>
 
         <div className="overflow-x-auto">
@@ -714,14 +759,30 @@ export function BusinessRulesBuilder({
                 <th className="text-left py-3 px-4 font-medium text-gray-900 dark:text-white">
                   Field
                 </th>
-                {USER_TYPES.map(userType => (
-                  <th key={userType.key} className="text-center py-3 px-4 font-medium text-gray-900 dark:text-white">
-                    <div>{userType.label}</div>
-                    <div className="text-xs font-normal text-gray-500 dark:text-gray-400 mt-1">
-                      Visible / Editable
+                {loadingUserTypes ? (
+                  <th className="text-center py-3 px-4 font-medium text-gray-900 dark:text-white">
+                    <div className="flex items-center justify-center">
+                      <Users className="w-4 h-4 animate-spin mr-2" />
+                      Loading...
                     </div>
                   </th>
-                ))}
+                ) : (
+                  userTypes.map(userType => (
+                    <th key={userType.slug} className="text-center py-3 px-4 font-medium text-gray-900 dark:text-white">
+                      <div className="flex flex-col items-center">
+                        <div>{userType.name}</div>
+                        {userType.is_system_default && (
+                          <div className="text-xs bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 px-1 rounded mt-1">
+                            System
+                          </div>
+                        )}
+                        <div className="text-xs font-normal text-gray-500 dark:text-gray-400 mt-1">
+                          Visible / Editable
+                        </div>
+                      </div>
+                    </th>
+                  ))
+                )}
               </tr>
             </thead>
             <tbody>
@@ -739,46 +800,60 @@ export function BusinessRulesBuilder({
                       </div>
                     </div>
                   </td>
-                  {USER_TYPES.map(userType => {
-                    const visibility = field.business_rules?.user_visibility?.[userType.key] || { visible: true, editable: true }
-                    
-                    return (
-                      <td key={userType.key} className="py-3 px-4 text-center">
-                        <div className="flex items-center justify-center space-x-3">
-                          {/* Visible toggle */}
-                          <button
-                            onClick={() => handleUserVisibilityChange(field.id, userType.key, 'visible', !visibility.visible)}
-                            className={`p-1 rounded ${
-                              visibility.visible 
-                                ? 'text-green-600 hover:bg-green-100 dark:hover:bg-green-900/20' 
-                                : 'text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'
-                            }`}
-                            title={visibility.visible ? 'Visible' : 'Hidden'}
-                          >
-                            {visibility.visible ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
-                          </button>
-                          
-                          {/* Editable toggle */}
-                          <button
-                            onClick={() => handleUserVisibilityChange(field.id, userType.key, 'editable', !visibility.editable)}
-                            disabled={!visibility.visible}
-                            className={`p-1 rounded ${
-                              !visibility.visible
-                                ? 'text-gray-300 cursor-not-allowed'
-                                : visibility.editable 
-                                  ? 'text-blue-600 hover:bg-blue-100 dark:hover:bg-blue-900/20' 
+                  {loadingUserTypes ? (
+                    <td className="py-3 px-4 text-center">
+                      <div className="flex items-center justify-center">
+                        <div className="animate-pulse bg-gray-200 dark:bg-gray-700 h-8 w-16 rounded"></div>
+                      </div>
+                    </td>
+                  ) : (
+                    userTypes.map(userType => {
+                      const visibility = field.business_rules?.user_visibility?.[userType.slug] || { 
+                        visible: true, 
+                        editable: true,
+                        visibility_level: 'visible',
+                        required: false,
+                        default_value: null
+                      }
+                      
+                      return (
+                        <td key={userType.slug} className="py-3 px-4 text-center">
+                          <div className="flex items-center justify-center space-x-3">
+                            {/* Visible toggle */}
+                            <button
+                              onClick={() => handleUserVisibilityChange(field.id, userType.slug, 'visible', !visibility.visible)}
+                              className={`p-1 rounded ${
+                                visibility.visible 
+                                  ? 'text-green-600 hover:bg-green-100 dark:hover:bg-green-900/20' 
                                   : 'text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'
-                            }`}
-                            title={visibility.editable ? 'Editable' : 'Read-only'}
-                          >
-                            {visibility.editable ? <Unlock className="w-4 h-4" /> : <Lock className="w-4 h-4" />}
-                          </button>
-                        </div>
-                      </td>
-                    )
-                  })}
+                              }`}
+                              title={visibility.visible ? 'Visible' : 'Hidden'}
+                            >
+                              {visibility.visible ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
+                            </button>
+                            
+                            {/* Editable toggle */}
+                            <button
+                              onClick={() => handleUserVisibilityChange(field.id, userType.slug, 'editable', !visibility.editable)}
+                              disabled={!visibility.visible}
+                              className={`p-1 rounded ${
+                                !visibility.visible
+                                  ? 'text-gray-300 cursor-not-allowed'
+                                  : visibility.editable 
+                                    ? 'text-blue-600 hover:bg-blue-100 dark:hover:bg-blue-900/20' 
+                                    : 'text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'
+                              }`}
+                              title={!visibility.visible ? 'Field must be visible to be editable' : visibility.editable ? 'Editable' : 'Read-only'}
+                            >
+                              {visibility.editable ? <Unlock className="w-4 h-4" /> : <Lock className="w-4 h-4" />}
+                            </button>
+                          </div>
+                        </td>
+                      )
+                    })
+                  )}
                 </tr>
-              ))}
+                ))}
             </tbody>
           </table>
         </div>
@@ -1494,7 +1569,7 @@ export function BusinessRulesBuilder({
                         </button>
                       </div>
                       <code className="text-xs text-gray-600 dark:text-gray-400 break-all">
-                        GET http://{getCurrentTenant()}.localhost:8000/api/pipelines/{pipeline?.id}/records/{{record_id}}/stage-trigger-status/
+                        GET http://{getCurrentTenant()}.localhost:8000/api/pipelines/{pipeline?.id}/records/{'{record_id}'}/stage-trigger-status/
                       </code>
                     </div>
                     
@@ -1521,7 +1596,7 @@ export function BusinessRulesBuilder({
                         </button>
                       </div>
                       <code className="text-xs text-blue-600 dark:text-blue-400 break-all">
-                        GET http://{getCurrentTenant()}.localhost:8000/api/pipelines/{pipeline?.id}/forms/stage/{{stage}}/internal/
+                        GET http://{getCurrentTenant()}.localhost:8000/api/pipelines/{pipeline?.id}/forms/stage/{'{stage}'}/internal/
                       </code>
                     </div>
                     
@@ -1549,7 +1624,7 @@ export function BusinessRulesBuilder({
                         </button>
                       </div>
                       <code className="text-xs text-green-600 dark:text-green-400 break-all">
-                        GET http://{getCurrentTenant()}.localhost:8000/api/public-forms/{pipeline?.name?.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '') || pipeline?.id}/stage/{{stage}}/
+                        GET http://{getCurrentTenant()}.localhost:8000/api/public-forms/{pipeline?.name?.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '') || pipeline?.id}/stage/{'{stage}'}/
                       </code>
                     </div>
                   </div>

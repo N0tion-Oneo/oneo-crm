@@ -16,12 +16,25 @@ export const TagsFieldComponent: FieldComponent = {
     const [isEditing, setIsEditing] = useState(false)
     const [tagInput, setTagInput] = useState('')
     
-    // Update local tags when external value changes and not editing
+    // Update local tags when external value changes and not editing, or when value differs significantly
     useEffect(() => {
+      const externalValue = Array.isArray(value) ? value : []
+      
       if (!isEditing) {
-        setLocalTagValues(Array.isArray(value) ? value : [])
+        // Always sync when not editing
+        setLocalTagValues(externalValue)
+      } else {
+        // Even when editing, sync if external value is significantly different
+        // This handles cases where save completed and we have fresh saved data
+        const currentSorted = [...localTagValues].sort().join(',')
+        const externalSorted = [...externalValue].sort().join(',')
+        
+        if (currentSorted !== externalSorted && externalValue.length !== localTagValues.length) {
+          setLocalTagValues(externalValue)
+          setIsEditing(false) // Exit editing mode when syncing saved data
+        }
       }
-    }, [value, isEditing])
+    }, [value, isEditing, localTagValues])
     
     const tagValues = localTagValues
     

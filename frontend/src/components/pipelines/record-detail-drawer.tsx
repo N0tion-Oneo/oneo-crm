@@ -9,7 +9,7 @@ import { evaluateFieldPermissions, evaluateConditionalRules, type FieldWithPermi
 import { FieldRenderer, FieldDisplay, validateFieldValue, getFieldDefaultValue, normalizeRecordData } from '@/lib/field-system/field-renderer'
 import { Field } from '@/lib/field-system/types'
 import { FieldResolver } from '@/lib/field-system/field-registry'
-import { FieldSaveService } from '@/lib/field-system/field-save-service'
+import { FieldSaveService, getSaveStrategy } from '@/lib/field-system/field-save-service'
 import { parseValidationError, formatErrorForDebug, logValidationError, getCleanErrorMessage } from '@/utils/validation-helpers'
 // Import field system to ensure initialization
 import '@/lib/field-system'
@@ -61,6 +61,7 @@ const convertToFieldType = (recordField: RecordField): Field => ({
   field_config: recordField.field_config,
   config: recordField.config, // Legacy support
   is_required: recordField.is_required,
+  original_slug: recordField.original_slug, // ⭐ CRITICAL: Include backend slug for FieldSaveService
   is_readonly: false, // RecordField doesn't have is_readonly
   help_text: undefined, // RecordField doesn't have help_text
   placeholder: undefined // RecordField doesn't have placeholder
@@ -141,11 +142,24 @@ export function RecordDetailDrawer({
   const [lastSaved, setLastSaved] = useState<Date | null>(null)
   const [activities, setActivities] = useState<Activity[]>([])
   
-  const autoSaveTimeoutRef = useRef<NodeJS.Timeout>()
   const drawerRef = useRef<HTMLDivElement>(null)
   
   // FieldSaveService instance for this form
   const fieldSaveService = useRef(new FieldSaveService()).current
+  const isSavingRef = useRef(false)  // Track when we're saving to prevent formData reset
+
+  // Debug formData changes with stack trace
+  useEffect(() => {
+    if (record && Object.keys(formData).length > 0) {
+      console.log(`📋 DRAWER formData changed for record ${record.id}:`, {
+        formDataKeys: Object.keys(formData),
+        formDataSize: Object.keys(formData).length,
+        recordId: record.id,
+        isSaving: isSavingRef.current,
+        stackTrace: new Error().stack?.split('\n').slice(1, 8).join('\n')
+      })
+    }
+  }, [formData, record?.id])
 
   // Field filtering with conditional visibility support
   const visibleFields = useMemo(() => {
@@ -169,7 +183,7 @@ export function RecordDetailDrawer({
         return true
       })
       .sort((a, b) => (a.display_order || 0) - (b.display_order || 0))
-  }, [pipeline.fields, formData, user])
+  }, [pipeline.fields, formData, user?.userType?.slug])
 
   // Real-time collaboration
   // Subscribe to document updates for collaborative editing
@@ -179,10 +193,17 @@ export function RecordDetailDrawer({
       if (message.type === 'record_update' && message.payload.record_id === record?.id) {
         // Update form data with real-time changes from other users
         if (message.payload.field_name && message.payload.value !== undefined) {
+
           setFormData(prev => ({
             ...prev,
             [message.payload.field_name]: message.payload.value
           }))
+        } else {
+          console.log(`🚨 WEBSOCKET message without field_name/value:`, {
+            hasFieldName: !!message.payload.field_name,
+            hasValue: message.payload.value !== undefined,
+            fullPayload: message.payload
+          })
         }
       }
     },
@@ -200,9 +221,11 @@ export function RecordDetailDrawer({
   const isFieldLocked = (recordId: string, fieldName: string) => false
   const getFieldLock = (recordId: string, fieldName: string): FieldLock | null => null
 
-  // Initialize form data when record changes
+  // Initialize form data when record ID changes (not on every record update)
   useEffect(() => {
     if (record) {
+      // Record ID changed - safe to reset formData
+      
       // Use centralized field normalization to ensure proper data types
       const normalizedData = normalizeRecordData(pipeline.fields, record.data)
       
@@ -212,6 +235,12 @@ export function RecordDetailDrawer({
         fields: pipeline.fields.map(f => ({ name: f.name, type: f.field_type }))
       })
       
+      console.log(`🔄 USEEFFECT setting formData (record ID change):`, {
+        recordId: record.id,
+        normalizedDataKeys: Object.keys(normalizedData),
+        normalizedDataSize: Object.keys(normalizedData).length,
+        reason: 'Record ID changed'
+      })
       setFormData(normalizedData)
       setOriginalData(normalizedData)
       loadActivities(record.id)
@@ -227,10 +256,8 @@ export function RecordDetailDrawer({
         }
       })
       
-      console.log('Initializing new record with default data:', {
-        defaultData,
-        fieldMap: pipeline.fields.map(f => ({ name: f.name, display_name: f.display_name }))
-      })
+
+
       setFormData(defaultData)
       setOriginalData({})
       setActivities([])
@@ -241,7 +268,7 @@ export function RecordDetailDrawer({
     setLocalFieldValues({})
     setFieldErrors({})
     setValidationErrors([])
-  }, [record, pipeline.fields])
+  }, [record?.id, pipeline.fields.length])  // 🔧 FIXED: Use length to avoid array recreation issues
 
   // Auto-enable editing for new records
   useEffect(() => {
@@ -261,7 +288,7 @@ export function RecordDetailDrawer({
       setLocalFieldValues({})
       setFieldErrors({})
     }
-  }, [record, pipeline.fields, visibleFields])
+  }, [record, pipeline.fields.length, visibleFields.length])
 
   // Cleanup FieldSaveService when component unmounts
   useEffect(() => {
@@ -311,160 +338,22 @@ export function RecordDetailDrawer({
 
   // Transform form data to use backend field slugs
   const transformFormDataForBackend = (data: { [key: string]: any }): { [key: string]: any } => {
-    console.log('🔄 Starting field transformation...')
-    console.log('Pipeline fields available:', pipeline.fields.map(f => ({ 
-      name: f.name, 
-      original_slug: f.original_slug,
-      display_name: f.display_name 
-    })))
-    
     const transformedData: { [key: string]: any } = {}
     
     // Map frontend field names to backend field slugs
     Object.keys(data).forEach(fieldName => {
-      console.log(`🔍 Processing field: ${fieldName} with value:`, data[fieldName])
-      
       const field = pipeline.fields.find(f => f.name === fieldName)
       if (field) {
         // Use original_slug if available, otherwise use the field name
         const backendSlug = field.original_slug || field.name
         transformedData[backendSlug] = data[fieldName]
-        
-        console.log('✅ Field mapped:', {
-          frontendName: fieldName,
-          backendSlug: backendSlug,
-          value: data[fieldName],
-          hasOriginalSlug: !!field.original_slug
-        })
-      } else {
-        console.log('❌ Field not found in pipeline:', fieldName)
       }
-    })
-    
-    console.log('🔄 Transformation complete:', {
-      originalData: data,
-      transformedData: transformedData,
-      originalKeys: Object.keys(data),
-      transformedKeys: Object.keys(transformedData)
     })
     
     return transformedData
   }
 
-  // Handle auto-save
-  const handleAutoSave = async () => {
-    const saveId = `save_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-    console.log(`🚀 handleAutoSave called [${saveId}]`)
-    
-    // Prevent multiple simultaneous saves
-    if (isAutoSaving) {
-      console.log(`⚠️ Save already in progress, skipping... [${saveId}]`)
-      return
-    }
-    
-    try {
-      // Clear any pending auto-save timeout to prevent double execution
-      if (autoSaveTimeoutRef.current) {
-        clearTimeout(autoSaveTimeoutRef.current)
-        autoSaveTimeoutRef.current = undefined
-      }
-      
-      setIsAutoSaving(true)
-      const errors = validateForm()
-      console.log('Form validation results:', {
-        errors: errors,
-        errorCount: errors.length,
-        formData: formData,
-        isNewRecord: !record
-      })
-      
-      if (errors.length === 0) {
-        if (record) {
-          // Existing record: update - transform data to use backend field slugs
-          const transformedData = transformFormDataForBackend(formData)
-          await pipelinesApi.updateRecord(pipeline.id, record.id, { data: transformedData })
-          setOriginalData({ ...formData })
-          setLastSaved(new Date())
-          
-          // Also call parent onSave for UI updates (use original formData for UI)
-          await onSave(record.id, formData)
-        } else {
-          // New record: create - transform data to use backend field slugs
-          console.log('🚀 About to transform form data:', formData)
-          console.log('🚀 Pipeline fields structure:', pipeline.fields)
-          const transformedData = transformFormDataForBackend(formData)
-          console.log('🚀 Transformation result:', transformedData)
-          
-          console.log(`📝 Creating new record [${saveId}]:`, {
-            pipelineId: pipeline.id,
-            originalFormData: formData,
-            transformedPayload: { data: transformedData },
-            fieldsCount: Object.keys(formData).length,
-            fieldNames: Object.keys(formData),
-            pipelineFields: pipeline.fields.map(f => ({ 
-              id: f.id, 
-              name: f.name, 
-              display_name: f.display_name,
-              field_type: f.field_type,
-              original_slug: f.original_slug
-            }))
-          })
-          
-          const response = await pipelinesApi.createRecord(pipeline.id, { data: transformedData })
-          console.log('Create record response:', response)
-          
-          const newRecord = response.data
-          setOriginalData({ ...formData })
-          setLastSaved(new Date())
-          
-          // Call parent onSave with new record ID (use original formData for UI)
-          await onSave(newRecord.id || 'new', formData)
-        }
-      } else {
-        console.log('Setting validation errors:', errors)
-        setValidationErrors(errors)
-      }
-    } catch (error: any) {
-      console.error('Save failed:', error)
-      
-      // Parse backend validation errors if they exist
-      const backendErrors = error?.response?.data?.errors
-      if (backendErrors) {
-        console.log('🔧 Backend validation errors detected:')
-        Object.entries(backendErrors).forEach(([field, messages]: [string, any]) => {
-          if (Array.isArray(messages)) {
-            messages.forEach(msg => logValidationError(field, msg, 'backend-save'))
-          }
-        })
-      }
-      
-      console.error('Error details:', {
-        message: error?.message,
-        response: error?.response?.data,
-        responseText: error?.response?.statusText,
-        status: error?.response?.status,
-        headers: error?.response?.headers,
-        config: error?.config,
-        formData,
-        pipelineId: pipeline.id,
-        isNewRecord: !record,
-        url: error?.config?.url,
-        method: error?.config?.method,
-        requestData: error?.config?.data
-      })
-      
-      // Also try to parse and log the response data if it exists
-      if (error?.response?.data) {
-        console.error('Backend error response:', JSON.stringify(error.response.data, null, 2))
-        console.error('Backend error response (object):', error.response.data)
-      }
-      
-      // Also log the full error object structure
-      console.error('Full error object:', JSON.stringify(error, null, 2))
-    } finally {
-      setIsAutoSaving(false)
-    }
-  }
+
 
   // Validate form data
   const validateForm = (): ValidationError[] => {
@@ -535,14 +424,7 @@ export function RecordDetailDrawer({
     const newValue = passedValue !== undefined ? passedValue : localFieldValues[fieldName]
     const oldValue = formData[fieldName]
     
-    console.log(`🔴 Field exit: ${fieldName}`, { 
-      oldValue, 
-      newValue, 
-      passedValue,
-      fromState: localFieldValues[fieldName],
-      wasPassedDirectly: passedValue !== undefined
-    })
-    console.log(`🔍 About to update formData with:`, newValue)
+
     
     // If value hasn't changed, just exit edit mode
     if (newValue === oldValue) {
@@ -627,33 +509,47 @@ export function RecordDetailDrawer({
     return evaluateFieldPermissions(field, user, formData, 'detail')
   }
 
-  // Auto-save functionality
-  useEffect(() => {
-    if (!record || Object.keys(formData).length === 0) return
-
-    // Check if data has changed
-    const hasChanges = Object.keys(formData).some(key => 
-      formData[key] !== originalData[key]
-    )
-
-    if (hasChanges) {
-      // Clear existing timeout
-      if (autoSaveTimeoutRef.current) {
-        clearTimeout(autoSaveTimeoutRef.current)
-      }
-
-      // Set new timeout for auto-save
-      autoSaveTimeoutRef.current = setTimeout(() => {
-        handleAutoSave()
-      }, 2000) // Auto-save after 2 seconds of inactivity
+  // Handle new record creation only
+  const handleCreateRecord = async () => {
+    if (record) {
+      // Existing records are auto-saved by FieldSaveService, just close
+      // DO NOT call onSave for existing records to prevent bulk overwrites
+      onClose()
+      return
     }
 
-    return () => {
-      if (autoSaveTimeoutRef.current) {
-        clearTimeout(autoSaveTimeoutRef.current)
+    try {
+      setIsAutoSaving(true)
+      const errors = validateForm()
+      
+      if (errors.length === 0) {
+        // Transform data to use backend field slugs
+        const transformedData = transformFormDataForBackend(formData)
+        const response = await pipelinesApi.createRecord(pipeline.id, { data: transformedData })
+        const newRecord = response.data
+        setOriginalData({ ...formData })
+        setLastSaved(new Date())
+        
+        // Call parent onSave with new record ID
+        console.log(`📤 DRAWER CALLING onSave:`, {
+          recordId: newRecord.id || 'new',
+          isNewRecord: true,
+          formDataKeys: Object.keys(formData),
+          formDataSize: Object.keys(formData).length
+        })
+        await onSave(newRecord.id || 'new', formData)
+        onClose()
+      } else {
+        setValidationErrors(errors)
       }
+    } catch (error: any) {
+      console.error('Create record failed:', error)
+    } finally {
+      setIsAutoSaving(false)
     }
-  }, [formData, originalData, record])
+  }
+
+
 
   // Handle Enter key for field exit
   const handleFieldKeyDown = (e: React.KeyboardEvent, fieldName: string) => {
@@ -741,18 +637,20 @@ export function RecordDetailDrawer({
     const shouldExitImmediately = ['select', 'boolean', 'radio', 'relation'].includes(field.field_type)
     
     const handleFieldRegistryChange = (newValue: any) => {
-      console.log(`🟢 Field change: ${field.name}`, { newValue, fieldType: field.field_type })
-      
       // For NEW records, don't use field-level saving - just update local formData
       // The record will be created when the user clicks "Create Record"
       if (!record || !record.id) {
-        console.log(`📝 New record - updating local formData only for ${field.name}`)
         setFormData(prev => ({ ...prev, [field.name]: newValue }))
         return
       }
       
       // For EXISTING records, use FieldSaveService for field-level saving
       const shouldUpdateFormDataImmediately = ['select', 'boolean', 'radio', 'relation'].includes(field.field_type)
+      
+      // Track saving state for immediate-save field types
+      if (shouldUpdateFormDataImmediately) {
+        isSavingRef.current = true
+      }
       
       fieldSaveService.onFieldChange({
         field: fieldType,
@@ -763,6 +661,12 @@ export function RecordDetailDrawer({
           // This prevents re-renders during typing for text fields
           if (shouldUpdateFormDataImmediately) {
             setFormData(prev => ({ ...prev, [field.name]: newValue }))
+            
+            // Exit editing mode immediately for dropdown fields
+            // This ensures the field shows the saved value from formData instead of old localFieldValues
+            setEditingField(null)
+            
+            isSavingRef.current = false  // Reset saving state
           }
           // Always clear field errors on successful save
           setFieldErrors(prev => ({ ...prev, [field.name]: '' }))
@@ -773,29 +677,39 @@ export function RecordDetailDrawer({
             ...prev, 
             [field.name]: error.response?.data?.message || error.message || 'Save failed'
           }))
+          if (shouldUpdateFormDataImmediately) {
+            // Exit editing mode even on error for immediate save fields
+            setEditingField(null)
+            isSavingRef.current = false  // Reset saving state on error
+          }
         }
       })
     }
 
     const handleFieldRegistryBlur = () => {
-      console.log(`🔵 Field blur: ${field.name}`)
-      
       // For NEW records, don't try to save - just keep the value in formData
       if (!record || !record.id) {
-        console.log(`📝 New record - no save on blur for ${field.name}`)
         return
       }
       
       // For EXISTING records, save via FieldSaveService and update formData when successful
+      isSavingRef.current = true  // Track that we're saving
       fieldSaveService.onFieldExit(field.name).then((result) => {
         if (result && result.savedValue !== undefined) {
-          console.log(`✅ Field ${field.name} saved on exit with value:`, result.savedValue)
-          // CRITICAL: Update formData with the actual saved value so UI shows the change
+          // Update formData with the actual saved value so UI shows the change
           setFormData(prev => ({ ...prev, [field.name]: result.savedValue }))
+          
+          // Exit editing mode for continuous save fields (tags, file uploads)
+          // This ensures fields show the saved value from formData instead of old local state
+          const strategy = getSaveStrategy(field.field_type)
+          if (strategy === 'continuous') {
+            setEditingField(null)
+          }
         }
       }).catch((error) => {
         // Error already handled by FieldSaveService toast
-        console.log(`❌ Failed to save ${field.name} on exit:`, error)
+      }).finally(() => {
+        isSavingRef.current = false  // Reset saving state
       })
     }
 
@@ -1074,12 +988,12 @@ export function RecordDetailDrawer({
             </button>
             
             <button
-              onClick={() => handleAutoSave()}
+              onClick={handleCreateRecord}
               disabled={validationErrors.length > 0}
               className="px-4 py-2 bg-primary text-white rounded-md hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <Save className="w-4 h-4 mr-2 inline" />
-              {record ? 'Save Changes' : 'Create Record'}
+              {record ? 'Close' : 'Create Record'}
             </button>
           </div>
         </div>

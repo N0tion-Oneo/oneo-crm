@@ -2,7 +2,7 @@
 Dynamic forms API views for pipeline-based form generation
 """
 from typing import Optional, Dict, Any
-from rest_framework import viewsets, permissions, status
+from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django.shortcuts import get_object_or_404
@@ -11,8 +11,8 @@ from drf_spectacular.utils import extend_schema, OpenApiParameter
 from drf_spectacular.types import OpenApiTypes
 
 from pipelines.models import Pipeline, Record
-from forms.dynamic import DynamicFormGenerator, generate_pipeline_form
-from ..permissions import PipelinePermission, RecordPermission, TenantMemberPermission
+from pipelines.form_generation import DynamicFormGenerator, generate_pipeline_form
+from ..permissions import PipelinePermission, RecordPermission
 
 
 class DynamicFormViewSet(viewsets.ViewSet):
@@ -20,7 +20,7 @@ class DynamicFormViewSet(viewsets.ViewSet):
     Dynamic form generation API for pipelines
     Supports 5 form types based on pipeline schema and business rules
     """
-    permission_classes = [permissions.IsAuthenticated, TenantMemberPermission]
+    permission_classes = [PipelinePermission]
     
     @extend_schema(
         summary="Generate internal full form",

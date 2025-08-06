@@ -49,12 +49,18 @@ class FieldValidator:
                 # For AI fields, use ai_config instead of field_config
                 if field_type == FieldType.AI_GENERATED and ai_config:
                     self.config = self.config_class(**ai_config)
+                    print(f"🔧 FIELD CONFIG: Loaded AI config for {field_type}: {ai_config}")
                 else:
                     self.config = self.config_class(**field_config)
+                    print(f"🔧 FIELD CONFIG: Loaded config for {field_type}: {field_config}")
             except Exception as e:
+                print(f"❌ FIELD CONFIG: Failed to load config for {field_type}: {e}")
+                print(f"   📦 field_config: {field_config}")
+                print(f"   📦 ai_config: {ai_config}")
                 raise ValueError(f"Invalid field configuration: {e}")
         else:
             self.config = None
+            print(f"⚠️  FIELD CONFIG: No config class found for {field_type}")
     
     def validate_storage(self, value: Any, storage_constraints: Dict[str, Any]) -> ValidationResult:
         """Validate value against storage constraints only - never reject for completeness"""
@@ -113,6 +119,173 @@ class FieldValidator:
             result.add_error(str(e), f'{self.field_type.value}_field_validator')
         except Exception as e:
             result.add_error(f"Validation error: {e}", f'{self.field_type.value}_field_validator')
+        
+        return result
+    
+    def validate_field_config(self, value: Any) -> ValidationResult:
+        """Validate value against field configuration constraints"""
+        result = ValidationResult(cleaned_value=value, source='backend_field_config_validator')
+        
+        # Skip validation for empty values
+        if self._is_empty(value):
+            return result
+        
+        # Field-specific configuration validation
+        try:
+            if self.field_type == FieldType.SELECT and self.config:
+                # Validate against allowed options
+                options = getattr(self.config, 'options', [])
+                if options:
+                    valid_values = [opt.get('value') for opt in options if opt.get('value') is not None]
+                    if value not in valid_values:
+                        result.add_error(f"Value '{value}' is not in allowed options: {valid_values}", 'field_config')
+            
+            elif self.field_type == FieldType.NUMBER and self.config:
+                # Comprehensive number field configuration validation
+                number_format = getattr(self.config, 'format', 'integer')
+                print(f"🔢 NUMBER FIELD CONFIG: Validating {number_format} format")
+                
+                # Format-specific validation
+                if number_format == 'currency':
+                    if isinstance(value, dict):
+                        # Currency object validation
+                        currency_code = value.get('currency')
+                        config_currency = getattr(self.config, 'currency_code', None)
+                        amount = value.get('amount')
+                        
+                        if config_currency and currency_code != config_currency:
+                            result.add_error(f"Currency '{currency_code}' does not match configured currency '{config_currency}'", 'field_config')
+                        
+                        if amount is not None:
+                            try:
+                                amount_val = float(amount)
+                                if amount_val < 0:
+                                    result.add_error("Currency amount cannot be negative", 'field_config')
+                            except (ValueError, TypeError):
+                                result.add_error("Currency amount must be a valid number", 'field_config')
+                    elif isinstance(value, (int, float)):
+                        # Simple number for currency
+                        if value < 0:
+                            result.add_error("Currency amount cannot be negative", 'field_config')
+                
+                elif number_format == 'percentage':
+                    try:
+                        float_val = float(value)
+                        percentage_display = getattr(self.config, 'percentage_display', 'decimal')
+                        
+                        if percentage_display == 'whole':
+                            # Expecting whole numbers (0-100)
+                            if float_val < 0 or float_val > 100:
+                                result.add_error("Percentage must be between 0 and 100", 'field_config')
+                        else:
+                            # Expecting decimal (0-1)
+                            if float_val < 0 or float_val > 1:
+                                result.add_error("Percentage must be between 0 and 1", 'field_config')
+                    except (ValueError, TypeError):
+                        result.add_error("Percentage must be a valid number", 'field_config')
+                
+                elif number_format == 'integer':
+                    try:
+                        num_val = float(value)
+                        if num_val != int(num_val):
+                            result.add_error("Value must be a whole number (integer format)", 'field_config')
+                    except (ValueError, TypeError):
+                        result.add_error("Integer must be a valid whole number", 'field_config')
+                
+                elif number_format == 'decimal':
+                    try:
+                        float(value)  # Just ensure it's a valid number
+                        decimal_places = getattr(self.config, 'decimal_places', 2)
+                        
+                        # Check decimal places if specified
+                        if decimal_places is not None:
+                            str_val = str(value)
+                            if '.' in str_val:
+                                actual_decimals = len(str_val.split('.')[1])
+                                if actual_decimals > decimal_places:
+                                    result.add_error(f"Number has too many decimal places. Maximum allowed: {decimal_places}", 'field_config')
+                    except (ValueError, TypeError):
+                        result.add_error("Decimal must be a valid number", 'field_config')
+                
+                elif number_format == 'auto_increment':
+                    # Auto-increment fields should be system-generated, not user input
+                    if value is not None:
+                        auto_prefix = getattr(self.config, 'auto_increment_prefix', '')
+                        if auto_prefix and not str(value).startswith(auto_prefix):
+                            result.add_error(f"Auto-increment value must start with '{auto_prefix}'", 'field_config')
+                
+                else:
+                    result.add_error(f"Invalid number format '{number_format}'. Must be one of: integer, decimal, currency, percentage, auto_increment", 'field_config')
+            
+            elif self.field_type == FieldType.PHONE and self.config:
+                # Validate against allowed countries (handle both calling codes and ISO codes)
+                allowed_countries = getattr(self.config, 'allowed_countries', [])
+                if allowed_countries and isinstance(value, dict):
+                    country_code = value.get('country_code')
+                    if country_code:
+                        # Create mapping between calling codes and ISO codes
+                        calling_code_to_iso = {
+                            '+1': 'US', '+44': 'GB', '+27': 'ZA', '+33': 'FR', '+49': 'DE',
+                            '+39': 'IT', '+34': 'ES', '+31': 'NL', '+32': 'BE', '+41': 'CH',
+                            '+43': 'AT', '+45': 'DK', '+46': 'SE', '+47': 'NO', '+358': 'FI',
+                            '+353': 'IE', '+351': 'PT', '+30': 'GR', '+48': 'PL', '+420': 'CZ',
+                            '+36': 'HU', '+40': 'RO', '+359': 'BG', '+385': 'HR', '+386': 'SI',
+                            '+421': 'SK', '+370': 'LT', '+371': 'LV', '+372': 'EE', '+376': 'AD',
+                            '+377': 'MC', '+378': 'SM', '+380': 'UA', '+381': 'RS', '+382': 'ME',
+                            '+383': 'XK', '+385': 'HR', '+386': 'SI', '+387': 'BA', '+389': 'MK',
+                            '+91': 'IN', '+86': 'CN', '+81': 'JP', '+82': 'KR', '+65': 'SG',
+                            '+60': 'MY', '+66': 'TH', '+84': 'VN', '+63': 'PH', '+62': 'ID',
+                            '+852': 'HK', '+853': 'MO', '+886': 'TW', '+7': 'RU', '+994': 'AZ',
+                            '+374': 'AM', '+995': 'GE', '+996': 'KG', '+998': 'UZ', '+992': 'TJ',
+                            '+993': 'TM', '+61': 'AU', '+64': 'NZ', '+679': 'FJ', '+685': 'WS'
+                        }
+                        
+                        # Check if country_code is allowed (support both formats)
+                        is_allowed = (
+                            country_code in allowed_countries or  # Direct ISO match (ZA, US, etc.)
+                            calling_code_to_iso.get(country_code) in allowed_countries  # Calling code to ISO ('+27' -> 'ZA')
+                        )
+                        
+                        if not is_allowed:
+                            # Show both formats in error for clarity
+                            iso_code = calling_code_to_iso.get(country_code, 'Unknown')
+                            result.add_error(
+                                f"Country '{country_code}' (ISO: {iso_code}) is not in allowed countries: {allowed_countries}. "
+                                f"Allowed calling codes: {[code for code, iso in calling_code_to_iso.items() if iso in allowed_countries]}", 
+                                'field_config'
+                            )
+            
+            elif self.field_type == FieldType.FILE and self.config:
+                # Validate file type and size
+                allowed_types = getattr(self.config, 'allowed_types', [])
+                max_size = getattr(self.config, 'max_size', None)
+                
+                if isinstance(value, dict):
+                    file_type = value.get('type', '')
+                    file_size = value.get('size', 0)
+                    
+                    if allowed_types and not any(file_type.startswith(allowed_type) for allowed_type in allowed_types):
+                        result.add_error(f"File type '{file_type}' is not allowed. Allowed types: {allowed_types}", 'field_config')
+                    
+                    if max_size and file_size > max_size:
+                        result.add_error(f"File size {file_size} bytes exceeds maximum {max_size} bytes", 'field_config')
+            
+            elif self.field_type == FieldType.TAGS and self.config:
+                # Validate against max tags limit
+                max_tags = getattr(self.config, 'max_tags', None)
+                if max_tags and isinstance(value, list) and len(value) > max_tags:
+                    result.add_error(f"Number of tags ({len(value)}) exceeds maximum ({max_tags})", 'field_config')
+                
+                # Validate against predefined tags if allow_custom_tags is False
+                predefined_tags = getattr(self.config, 'predefined_tags', [])
+                allow_custom = getattr(self.config, 'allow_custom_tags', True)
+                if not allow_custom and predefined_tags and isinstance(value, list):
+                    invalid_tags = [tag for tag in value if tag not in predefined_tags]
+                    if invalid_tags:
+                        result.add_error(f"Custom tags not allowed. Invalid tags: {invalid_tags}", 'field_config')
+                        
+        except Exception as e:
+            result.add_error(f"Field configuration validation error: {e}", 'field_config')
         
         return result
     
@@ -190,33 +363,76 @@ class FieldValidator:
         except (TypeError, ValueError):
             raise ValueError('Value must be a number')
         
-        # Apply format-specific validation
+        # Apply format-specific validation and respect field configuration
         if config and hasattr(config, 'format'):
+            print(f"🔢 NUMBER STORAGE: Validating {config.format} format, value={value}")
+            
             if config.format == 'percentage':
                 # Handle percentage validation based on display format
-                if hasattr(config, 'percentage_display') and config.percentage_display == 'whole':
+                percentage_display = getattr(config, 'percentage_display', 'decimal')
+                percentage_decimal_places = getattr(config, 'percentage_decimal_places', 2)
+                
+                if percentage_display == 'whole':
                     # Input as whole number (75 for 75%)
                     if num < 0 or num > 100:
                         raise ValueError('Percentage must be between 0 and 100')
+                    # Store as decimal (0.75) regardless of input format
+                    num = num / 100
                 else:
                     # Input as decimal (0.75 for 75%)
                     if num < 0 or num > 1:
                         raise ValueError('Percentage must be between 0 and 1')
+                
+                # Apply decimal places for percentage
+                return round(num, percentage_decimal_places)
             
             elif config.format == 'currency':
                 # Currency cannot be negative (in most cases)
-                if num < 0:
-                    raise ValueError('Currency amount cannot be negative')
-                
-                # For currency objects, return the original object (already validated)
                 if isinstance(value, dict) and 'amount' in value:
-                    return value
+                    # Validate currency object
+                    amount = float(value['amount'])
+                    if amount < 0:
+                        raise ValueError('Currency amount cannot be negative')
+                    
+                    # Validate currency code if configured
+                    if hasattr(config, 'currency_code') and config.currency_code:
+                        currency_code = value.get('currency')
+                        if currency_code and currency_code != config.currency_code:
+                            raise ValueError(f"Currency '{currency_code}' does not match configured currency '{config.currency_code}'")
+                    
+                    return value  # Return the currency object as-is
+                else:
+                    # Simple number for currency
+                    if num < 0:
+                        raise ValueError('Currency amount cannot be negative')
+                    return num
             
             elif config.format == 'integer':
                 # Ensure it's a whole number
                 if num != int(num):
-                    raise ValueError('Value must be a whole number')
+                    raise ValueError('Value must be a whole number (integer format)')
                 return int(num)
+            
+            elif config.format == 'decimal':
+                # Apply decimal places constraint
+                decimal_places = getattr(config, 'decimal_places', 2)
+                return round(num, decimal_places)
+            
+            elif config.format == 'auto_increment':
+                # Auto-increment values should be strings with prefix
+                auto_prefix = getattr(config, 'auto_increment_prefix', '')
+                auto_padding = getattr(config, 'auto_increment_padding', None)
+                
+                if auto_prefix or auto_padding:
+                    # Convert to proper auto-increment format
+                    if auto_padding:
+                        num_str = str(int(num)).zfill(auto_padding)
+                    else:
+                        num_str = str(int(num))
+                    
+                    return f"{auto_prefix}{num_str}" if auto_prefix else num_str
+                else:
+                    return int(num)  # Simple integer for auto-increment
         
         # Apply decimal places validation
         if config and hasattr(config, 'decimal_places'):
@@ -701,6 +917,57 @@ class FieldValidator:
         return value
 
 
+def _evaluate_condition(field_value: Any, operator: str, expected_value: Any) -> bool:
+    """
+    Evaluate a conditional rule based on operator
+    
+    Supports operators from conditional-rules-builder.tsx:
+    equals, not_equals, contains, not_contains, greater_than, less_than,
+    is_empty, is_not_empty, starts_with, ends_with
+    """
+    # Handle empty/null values
+    is_empty = field_value is None or field_value == '' or field_value == []
+    
+    if operator == 'is_empty':
+        return is_empty
+    elif operator == 'is_not_empty':
+        return not is_empty
+    
+    # For other operators, return False if field is empty
+    if is_empty:
+        return False
+    
+    # Convert to string for string operations
+    field_str = str(field_value)
+    expected_str = str(expected_value)
+    
+    if operator == 'equals':
+        return field_value == expected_value
+    elif operator == 'not_equals':
+        return field_value != expected_value
+    elif operator == 'contains':
+        return expected_str.lower() in field_str.lower()
+    elif operator == 'not_contains':
+        return expected_str.lower() not in field_str.lower()
+    elif operator == 'starts_with':
+        return field_str.lower().startswith(expected_str.lower())
+    elif operator == 'ends_with':
+        return field_str.lower().endswith(expected_str.lower())
+    elif operator == 'greater_than':
+        try:
+            return float(field_value) > float(expected_value)
+        except (ValueError, TypeError):
+            return False
+    elif operator == 'less_than':
+        try:
+            return float(field_value) < float(expected_value)
+        except (ValueError, TypeError):
+            return False
+    
+    # Default to equals if operator not recognized
+    return field_value == expected_value
+
+
 def validate_record_data(field_definitions: List[Dict[str, Any]], record_data: Dict[str, Any], context: str = 'storage') -> Dict[str, Any]:
     """
     Validate complete record data against field definitions
@@ -758,28 +1025,84 @@ def validate_record_data(field_definitions: List[Dict[str, Any]], record_data: D
         
         # Validate based on context
         if context == 'storage':
+            # Storage context: ONLY validate storage constraints (for partial updates)
             result = validator.validate_storage(value, storage_constraints)
+            print(f"🔓 STORAGE VALIDATION: {field_slug} - no field config validation")
+        elif context == 'business_rules':
+            # Business rules context: Full validation (storage + field config + business rules)
+            result = validator.validate_storage(value, storage_constraints)
+            
+            # Additional field configuration validation for business rules context
+            if result.is_valid:
+                config_result = validator.validate_field_config(value)
+                if not config_result.is_valid:
+                    result = config_result
+                    print(f"🔒 FIELD CONFIG: {field_slug} validation failed")
+                else:
+                    print(f"🔒 FIELD CONFIG: {field_slug} validation passed")
         else:
-            # For now, other contexts use storage validation
-            # Form and business validation will be implemented later
+            # Form context: Storage validation only (field config should be handled on frontend)
             result = validator.validate_storage(value, storage_constraints)
+            print(f"🔓 FORM VALIDATION: {field_slug} - no field config validation (frontend handles this)")
         
         if not result.is_valid:
             errors[field_slug] = result.errors
         else:
             cleaned_data[field_slug] = result.cleaned_value
         
-        # Check business rules if we have a current stage
-        if current_stage and business_rules:
+        # Check business rules ONLY if context allows it
+        if context == 'business_rules' and current_stage and business_rules:
+            print(f"🔒 BUSINESS RULES: Checking {field_slug} for stage '{current_stage}'")
+            
+            # Check stage requirements
             stage_requirements = business_rules.get('stage_requirements', {})
             if current_stage in stage_requirements:
                 requirements = stage_requirements[current_stage]
                 if requirements.get('required') and not value:
-                    # Get display name from field config or use slug
                     display_name = field_def.get('display_name') or field_def.get('name') or field_slug
                     if field_slug not in errors:
                         errors[field_slug] = []
                     errors[field_slug].append(f"[BUSINESS_RULES] This field is required.")
+                    print(f"   ❌ {field_slug} required for stage {current_stage}")
+            
+            # Check conditional rules (new format: show_when, hide_when, require_when)
+            conditional_rules = business_rules.get('conditional_rules', {})
+            require_when_rules = conditional_rules.get('require_when', [])
+            
+            for rule in require_when_rules:
+                condition_field = rule.get('field')
+                condition_value = rule.get('value')
+                condition_operator = rule.get('condition', 'equals')
+                
+                if condition_field in record_data:
+                    field_value = record_data[condition_field]
+                    condition_met = _evaluate_condition(field_value, condition_operator, condition_value)
+                    
+                    if condition_met and not value:
+                        display_name = field_def.get('display_name') or field_def.get('name') or field_slug
+                        if field_slug not in errors:
+                            errors[field_slug] = []
+                        errors[field_slug].append(f"[BUSINESS_RULES] Required when {condition_field} {condition_operator} {condition_value}")
+                        print(f"   ❌ {field_slug} required due to conditional rule")
+            
+            # Support legacy conditional_requirements format
+            legacy_conditional_rules = business_rules.get('conditional_requirements', [])
+            for rule in legacy_conditional_rules:
+                condition_field = rule.get('condition_field')
+                condition_value = rule.get('condition_value')
+                requires_field = rule.get('requires_field') == field_slug
+                
+                if (requires_field and 
+                    condition_field in record_data and 
+                    record_data[condition_field] == condition_value and 
+                    not value):
+                    display_name = field_def.get('display_name') or field_def.get('name') or field_slug
+                    if field_slug not in errors:
+                        errors[field_slug] = []
+                    errors[field_slug].append(f"[BUSINESS_RULES] Required when {condition_field} is {condition_value}")
+                    print(f"   ❌ {field_slug} required due to legacy conditional rule")
+        elif context != 'business_rules' and business_rules:
+            print(f"🔓 BUSINESS RULES: Skipping {field_slug} validation (context: {context})")
     
     return {
         'is_valid': len(errors) == 0,

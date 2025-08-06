@@ -390,13 +390,10 @@ class AIGeneratedFieldConfig(BaseFieldConfig):
     
     @validator('model')
     def validate_model(cls, v):
-        # Latest OpenAI models (2025) - will be dynamically loaded from global options
-        allowed_models = [
-            'gpt-4.1', 'gpt-4.1-mini', 'o3', 'o4-mini', 'o3-mini', 
-            'gpt-4o', 'gpt-3.5-turbo'
-        ]
-        if v not in allowed_models:
-            raise ValueError(f'AI model must be one of: {allowed_models}')
+        # Model validation is now handled at tenant level via AI configuration
+        # This allows tenant admins to configure which models are available
+        if not v or not isinstance(v, str) or len(v.strip()) == 0:
+            raise ValueError('AI model must be a non-empty string')
         return v
     
     @validator('allowed_tools')

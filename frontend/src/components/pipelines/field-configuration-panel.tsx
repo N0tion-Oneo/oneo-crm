@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { fieldTypesApi, globalOptionsApi, pipelinesApi } from '@/lib/api'
+import { fieldTypesApi, globalOptionsApi, pipelinesApi, aiApi } from '@/lib/api'
 import { 
   Plus, 
   Trash2, 
@@ -61,6 +61,10 @@ export function FieldConfigurationPanel({
   const [targetPipelineFields, setTargetPipelineFields] = useState<{ id: string; name: string; display_name: string; field_type: string }[]>([])
   const [loading, setLoading] = useState(true)
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set(['field_config', 'storage_constraints']))
+  // AI tenant configuration
+  const [tenantAiConfig, setTenantAiConfig] = useState<any>(null)
+  const [loadingAiConfig, setLoadingAiConfig] = useState(false)
+  const [aiConfigError, setAiConfigError] = useState<string | null>(null)
 
   // Load field type configuration and global options
   useEffect(() => {
@@ -151,6 +155,26 @@ export function FieldConfigurationPanel({
     loadTargetPipelineFields()
   }, [fieldType, config.target_pipeline_id])
 
+  // Load AI tenant configuration when field type is AI
+  useEffect(() => {
+    const loadAiConfig = async () => {
+      if (fieldType === 'ai_generated' && !tenantAiConfig && !loadingAiConfig) {
+        try {
+          setLoadingAiConfig(true)
+          const aiConfigResponse = await aiApi.jobs.tenantConfig()
+          setTenantAiConfig(aiConfigResponse.data)
+        } catch (error) {
+          console.error('Failed to load AI tenant config:', error)
+          setAiConfigError(`Failed to load AI configuration: ${(error as any).response?.data?.error || (error as any).message}`)
+          setTenantAiConfig(null)
+        } finally {
+          setLoadingAiConfig(false)
+        }
+      }
+    }
+
+    loadAiConfig()
+  }, [fieldType, tenantAiConfig, loadingAiConfig])
 
   // Toggle section expansion
   const toggleSection = (section: string) => {
@@ -563,18 +587,35 @@ export function FieldConfigurationPanel({
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                 AI Model
               </label>
-              <select
-                value={aiConfig.model || 'gpt-4.1-mini'}
-                onChange={(e) => updateAiConfig('model', e.target.value)}
-                className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary dark:bg-gray-700 dark:text-white"
-              >
-                <option value="gpt-4.1-mini">GPT-4.1 Mini (Fast & Cost-Effective)</option>
-                <option value="gpt-4.1">GPT-4.1 (Most Capable)</option>
-                <option value="o3-mini">O3 Mini (Fast Reasoning)</option>
-                <option value="o3">O3 (Advanced Reasoning)</option>
-                <option value="gpt-4o">GPT-4o (Multimodal)</option>
-                <option value="gpt-3.5-turbo">GPT-3.5 Turbo (Legacy)</option>
-              </select>
+              {loadingAiConfig ? (
+                <div className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-gray-50 dark:bg-gray-700">
+                  Loading tenant AI configuration...
+                </div>
+              ) : aiConfigError ? (
+                <div className="w-full px-3 py-2 text-sm border border-red-300 dark:border-red-600 rounded-md bg-red-50 dark:bg-red-900 text-red-700 dark:text-red-300">
+                  {aiConfigError}
+                </div>
+              ) : (
+                <select
+                  value={aiConfig.model || ''}
+                  onChange={(e) => updateAiConfig('model', e.target.value)}
+                  className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary dark:bg-gray-700 dark:text-white"
+                >
+                  <option value="" disabled>Select AI model...</option>
+                  {tenantAiConfig?.available_models?.map((model: string) => (
+                    <option key={model} value={model}>
+                      {model === tenantAiConfig.default_model ? `${model} (Recommended)` : model}
+                    </option>
+                  )) || (
+                    <option value="" disabled>Error: AI configuration not loaded</option>
+                  )}
+                </select>
+              )}
+              {tenantAiConfig && (
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                  Select the AI model that best fits your use case. Recommended: {tenantAiConfig.default_model}
+                </p>
+              )}
             </div>
 
             <div>

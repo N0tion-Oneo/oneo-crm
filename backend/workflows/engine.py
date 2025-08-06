@@ -317,7 +317,7 @@ class WorkflowEngine:
         node_config: Dict[str, Any],
         context: Dict[str, Any]
     ) -> Dict[str, Any]:
-        """Process AI prompt node using existing AIFieldProcessor"""
+        """Process AI prompt node using ai.integrations.AIIntegrationManager"""
         
         prompt_template = node_config.get('prompt', '')
         ai_config = node_config.get('ai_config', {})

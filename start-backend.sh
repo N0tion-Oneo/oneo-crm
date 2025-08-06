@@ -74,6 +74,34 @@ if [ "$1" = "--production" ]; then
     python manage.py collectstatic --noinput
 fi
 
+# Function to handle cleanup on exit
+cleanup() {
+    echo ""
+    echo "🛑 Shutting down backend services..."
+    
+    # Kill Django server
+    echo "🧹 Stopping Django server..."
+    lsof -ti :8000 | xargs kill -9 2>/dev/null || true
+    
+    # Kill Celery workers
+    echo "🧹 Stopping Celery workers..."
+    pkill -f "celery.*worker" 2>/dev/null || true
+    
+    echo "✅ Backend services stopped."
+    exit 0
+}
+
+# Set up signal handlers
+trap cleanup SIGINT SIGTERM
+
+# Start Celery worker in background
+echo "🤖 Starting Celery worker for AI processing..."
+celery -A oneo_crm worker --loglevel=info --queues=ai_processing,maintenance --concurrency=1 --pool=solo &
+CELERY_PID=$!
+
+# Give Celery a moment to start
+sleep 2
+
 # Start the Django development server with ASGI support
 echo "🌟 Starting Django ASGI server (daphne) with WebSocket support..."
 echo "📡 Backend will be available at:"
@@ -87,7 +115,16 @@ echo "   • Real-time: ws://localhost:8000/ws/realtime/"
 echo "   • Collaboration: ws://localhost:8000/ws/collaborate/"
 echo "   • Workflows: ws://localhost:8000/ws/workflows/"
 echo ""
-echo "✨ Backend ready with real-time messaging (ASGI + daphne)! Press Ctrl+C to stop."
+echo "🤖 Background services:"
+echo "   ✅ Django ASGI server (WebSocket + HTTP)"
+echo "   ✅ Celery worker (AI processing + maintenance)"
+echo ""
+echo "📋 Useful commands:"
+echo "   • View Celery logs: celery -A oneo_crm events"
+echo "   • Monitor Celery: celery -A oneo_crm inspect active"
+echo "   • Stop everything: Press Ctrl+C"
+echo ""
+echo "✨ Backend ready with real-time messaging and AI processing! Press Ctrl+C to stop."
 echo ""
 
 python manage.py runserver 0.0.0.0:8000

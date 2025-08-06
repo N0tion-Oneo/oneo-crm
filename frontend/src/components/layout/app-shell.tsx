@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { usePathname } from 'next/navigation'
-import { Menu, X, Bell, Search, Settings, LogOut, User, Users, Database, Workflow, ChevronDown } from 'lucide-react'
+import { Menu, X, Bell, Search, Settings, LogOut, User, Users, Database, Workflow, ChevronDown, Brain } from 'lucide-react'
 import Link from 'next/link'
 import { useAuth } from '@/features/auth/context'
 import { cn } from '@/lib/utils'
@@ -50,6 +50,12 @@ export function AppShell({ children }: AppShellProps) {
       href: '/pipelines',
       icon: Workflow,
       description: 'Data pipelines and workflows',
+    },
+    {
+      name: 'AI',
+      href: '/ai',
+      icon: Brain,
+      description: 'AI jobs, analytics & templates',
     },
   ]
 

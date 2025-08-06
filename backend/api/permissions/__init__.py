@@ -23,12 +23,6 @@ from .relationships import (
     RelationshipPermission,
 )
 
-# Form permissions
-from .forms import (
-    FormPermission,
-    ValidationRulePermission,
-)
-
 # Duplicate permissions
 from .duplicates import (
     DuplicatePermission,
@@ -88,10 +82,6 @@ __all__ = [
     
     # Relationship permissions
     'RelationshipPermission',
-    
-    # Form permissions
-    'FormPermission',
-    'ValidationRulePermission',
     
     # Duplicate permissions
     'DuplicatePermission',

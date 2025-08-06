@@ -25,8 +25,14 @@ class AIPermission(permissions.BasePermission):
             return True  # Object-level check in has_object_permission
         elif view.action == 'destroy':
             return True  # Object-level check in has_object_permission
-        elif view.action in ['configure', 'test']:
-            return True  # Object-level check in has_object_permission
+        elif view.action in ['configure', 'test', 'analyze']:
+            return permission_manager.has_permission('action', 'ai_features', 'create')
+        elif view.action == 'tenant_config':
+            return permission_manager.has_permission('action', 'ai_features', 'read')
+        elif view.action == 'update_tenant_config':
+            return permission_manager.has_permission('action', 'ai_features', 'configure')
+        elif view.action == 'delete_api_key':
+            return permission_manager.has_permission('action', 'ai_features', 'configure')
         
         return False
     

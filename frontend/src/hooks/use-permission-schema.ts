@@ -155,7 +155,7 @@ export function usePermissionSchema(): UsePermissionSchemaReturn {
     setSchemaError(null)
     
     try {
-      const response = await api.get('/api/v1/auth/permission_schema/')
+      const response = await api.get('/api/auth/permission_schema/')
       setSchema(response.data.schema)
     } catch (err: any) {
       const errorMessage = err.response?.data?.error || 'Failed to fetch permission schema'
@@ -172,7 +172,7 @@ export function usePermissionSchema(): UsePermissionSchemaReturn {
     setMatrixError(null)
     
     try {
-      const response = await api.get('/api/v1/auth/permission_matrix/')
+      const response = await api.get('/api/auth/permission_matrix/')
       setMatrix(response.data.matrix)
     } catch (err: any) {
       const errorMessage = err.response?.data?.error || 'Failed to fetch permission matrix'
@@ -189,7 +189,7 @@ export function usePermissionSchema(): UsePermissionSchemaReturn {
     setFrontendError(null)
     
     try {
-      const response = await api.get('/api/v1/auth/frontend_matrix/')
+      const response = await api.get('/api/auth/frontend_matrix/')
       setFrontendConfig(response.data)
     } catch (err: any) {
       const errorMessage = err.response?.data?.error || 'Failed to fetch frontend configuration'
@@ -274,7 +274,7 @@ export function usePermissionSchema(): UsePermissionSchemaReturn {
   // Validation functions
   const validatePermissionSet = useCallback(async (permissions: Record<string, string[]>) => {
     try {
-      const response = await api.post('/api/v1/auth/validate_permissions/', { permissions })
+      const response = await api.post('/api/auth/validate_permissions/', { permissions })
       return response.data
     } catch (err: any) {
       console.error('Permission validation error:', err)
@@ -289,7 +289,7 @@ export function usePermissionSchema(): UsePermissionSchemaReturn {
     customPermissions?: string[]
   ) => {
     try {
-      const response = await api.post('/api/v1/auth/bulk_permission_operation/', {
+      const response = await api.post('/api/auth/bulk_permission_operation/', {
         user_type_id: userTypeId,
         operation_name: operationName,
         custom_permissions: customPermissions
@@ -310,7 +310,7 @@ export function usePermissionSchema(): UsePermissionSchemaReturn {
   // Comparison
   const compareUserTypes = useCallback(async (userTypeIds: number[]) => {
     try {
-      const response = await api.post('/api/v1/auth/compare_user_types/', { user_type_ids: userTypeIds })
+      const response = await api.post('/api/auth/compare_user_types/', { user_type_ids: userTypeIds })
       return response.data
     } catch (err: any) {
       console.error('User type comparison error:', err)
@@ -321,7 +321,7 @@ export function usePermissionSchema(): UsePermissionSchemaReturn {
   // Analytics
   const getAnalytics = useCallback(async () => {
     try {
-      const response = await api.get('/api/v1/auth/permission_analytics/')
+      const response = await api.get('/api/auth/permission_analytics/')
       return response.data
     } catch (err: any) {
       console.error('Permission analytics error:', err)

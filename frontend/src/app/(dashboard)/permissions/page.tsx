@@ -7,6 +7,12 @@ import { api } from '@/lib/api'
 import UserTypeModal from '@/components/user-types/UserTypeModal'
 import DeleteUserTypeModal from '@/components/user-types/DeleteUserTypeModal'
 import { usePermissionSchema } from '@/hooks/use-permission-schema'
+import { PermissionGuard } from '@/components/permissions/PermissionGuard'
+import DependencyWarning from '@/components/permissions/DependencyWarning'
+import PermissionCheckbox from '@/components/permissions/PermissionCheckbox'
+import { 
+  getPermissionState
+} from '@/utils/permission-dependencies'
 
 interface Permission {
   id: number
@@ -73,6 +79,8 @@ export default function PermissionsPage() {
     getDynamicResources,
     refreshAll
   } = usePermissionSchema()
+
+
   
   const [userTypes, setUserTypes] = useState<UserType[]>([])
   const [pipelines, setPipelines] = useState<Pipeline[]>([])
@@ -111,6 +119,11 @@ export default function PermissionsPage() {
         setPipelines(pipelinesData)
         setPipelinePermissions(pipelinePermissionsData)
 
+        // Debug logging for pipeline permissions
+        console.log('🔍 Pipeline permissions loaded:', pipelinePermissionsData)
+        console.log('👤 Manager permissions:', pipelinePermissionsData.filter((p: any) => p.user_type === 2))
+        console.log('📊 Total permissions loaded:', pipelinePermissionsData.length)
+
       } catch (error) {
         console.error('Failed to load local permissions data:', error)
       } finally {
@@ -123,9 +136,17 @@ export default function PermissionsPage() {
 
   // Helper functions
   const hasPipelineAccess = (userTypeId: number, pipelineId: number): boolean => {
-    return pipelinePermissions.some(
+    const hasAccess = pipelinePermissions.some(
       perm => perm.user_type === userTypeId && perm.pipeline_id === pipelineId
     )
+    
+    // Debug logging for Manager
+    if (userTypeId === 2) {
+      console.log(`🔍 hasPipelineAccess(${userTypeId}, ${pipelineId}):`, hasAccess)
+      console.log('Available permissions:', pipelinePermissions.filter(p => p.user_type === userTypeId))
+    }
+    
+    return hasAccess
   }
 
 
@@ -134,56 +155,45 @@ export default function PermissionsPage() {
     const pipeline = pipelines.find(p => p.id === pipelineId)
     if (!userType || !pipeline) return
 
+    // Create unique key for this dynamic permission change
+    const changeKey = `dynamic-pipelines-${userTypeId}-${pipelineId}`
+    
+    // Prevent multiple simultaneous calls for the same permission
+    if (ongoingPermissionChanges.has(changeKey)) {
+      console.log(`🚫 Ignoring duplicate dynamic permission change for ${changeKey}`)
+      return
+    }
+
+    // Mark this permission change as ongoing
+    setOngoingPermissionChanges(prev => new Set([...prev, changeKey]))
+
     try {
       if (hasAccess) {
-        // Try new backend endpoint first
-        try {
-          const response = await api.post(`/auth/user-types/${userTypeId}/grant_pipeline_access/`, {
-            pipeline_id: pipelineId,
-            access_level: 'read',
-            permissions: ['read']
-          })
+        // Grant access - Create new permission using standard REST endpoint
+        const response = await api.post('/auth/user-type-pipeline-permissions/', {
+          user_type: userTypeId,
+          pipeline_id: pipelineId,
+          permissions: ['read'],
+          access_level: 'read'
+        })
+        
+        // Update local state
+        setPipelinePermissions(prev => [...prev, response.data])
+      } else {
+        // Revoke access - Find and delete existing permission using standard REST endpoint
+        const existingPermission = pipelinePermissions.find(
+          perm => perm.user_type === userTypeId && perm.pipeline_id === pipelineId
+        )
+        
+        if (existingPermission) {
+          await api.delete(`/auth/user-type-pipeline-permissions/${existingPermission.id}/`)
           
           // Update local state
-          setPipelinePermissions(prev => [...prev, response.data.pipeline_permission])
-        } catch (newApiError) {
-          console.log('New API failed, trying fallback...')
-          // Fallback to old API
-          const response = await api.post('/auth/user-type-pipeline-permissions/', {
-            user_type: userTypeId,
-            pipeline_id: pipelineId,
-            permissions: ['read'],
-            access_level: 'read'
-          })
-          
-          setPipelinePermissions(prev => [...prev, response.data])
-        }
-      } else {
-        // Try new backend endpoint first
-        try {
-          await api.post(`/auth/user-types/${userTypeId}/revoke_pipeline_access/`, {
-            pipeline_id: pipelineId
-          })
-          
-          // Update local state - remove the permission
           setPipelinePermissions(prev => 
-            prev.filter(perm => !(perm.user_type === userTypeId && perm.pipeline_id === pipelineId))
+            prev.filter(perm => perm.id !== existingPermission.id)
           )
-        } catch (newApiError) {
-          console.log('New API failed, trying fallback...')
-          // Fallback to old API - find and delete existing permission
-          const existingPermission = pipelinePermissions.find(
-            perm => perm.user_type === userTypeId && perm.pipeline_id === pipelineId
-          )
-          
-          if (existingPermission) {
-            await api.delete(`/auth/user-type-pipeline-permissions/${existingPermission.id}/`)
-            
-            // Update local state
-            setPipelinePermissions(prev => 
-              prev.filter(perm => perm.id !== existingPermission.id)
-            )
-          }
+        } else {
+          throw new Error(`No permission found for UserType ${userTypeId} and Pipeline ${pipelineId}`)
         }
       }
 
@@ -226,6 +236,13 @@ export default function PermissionsPage() {
           document.body.removeChild(notification)
         }
       }, 8000)
+    } finally {
+      // Remove from ongoing changes
+      setOngoingPermissionChanges(prev => {
+        const newSet = new Set(prev)
+        newSet.delete(changeKey)
+        return newSet
+      })
     }
   }
 
@@ -317,28 +334,35 @@ export default function PermissionsPage() {
     }
   }
 
-  // Generate static permissions only (dynamic permissions go to resource access tabs)
+  // Generate ONLY static permissions for the matrix (dynamic permissions go to resource access tabs)
   const permissions = React.useMemo(() => {
     if (!frontendConfig?.categories) return []
     
-    const allPermissions: Permission[] = []
+    const staticPermissions: Permission[] = []
     
     Object.entries(frontendConfig.categories).forEach(([categoryKey, categoryData]) => {
+      // Skip dynamic permissions - they are handled in resource access tabs
+      if (categoryData.is_dynamic) {
+        console.log(`⏩ Skipping dynamic permission category: ${categoryKey}`)
+        return
+      }
+      
       const categoryName = categoryData.category_display || categoryKey.charAt(0).toUpperCase() + categoryKey.slice(1)
       
       categoryData.actions.forEach((action: string) => {
-        allPermissions.push({
-          id: allPermissions.length + 1,
+        staticPermissions.push({
+          id: staticPermissions.length + 1,
           name: `${categoryKey}:${action}`,
           description: `${action.charAt(0).toUpperCase() + action.slice(1)} ${categoryName.toLowerCase()}`,
           category: categoryName,
           action: action,
-          is_system: false
+          is_system: categoryKey === 'system'
         })
       })
     })
     
-    return allPermissions
+    console.log(`📊 Generated ${staticPermissions.length} static permissions for matrix view`)
+    return staticPermissions
   }, [frontendConfig])
   
   // Filter and search logic
@@ -561,6 +585,8 @@ export default function PermissionsPage() {
     }, type === 'error' ? 5000 : 3000)
   }
 
+
+
   // User type management handlers
   const handleCreateUserType = () => {
     setSelectedUserType(null)
@@ -609,7 +635,9 @@ export default function PermissionsPage() {
     }
   }
 
+  // Enhanced icon mapping using fallback logic (category_icons not available in backend yet)
   const getPermissionIcon = (category: string) => {
+    // Fallback to existing logic (backend category_icons not implemented yet)
     switch (category.toLowerCase()) {
       case 'user management':
       case 'users':
@@ -688,7 +716,25 @@ export default function PermissionsPage() {
   }
 
   return (
-    <div className="p-6">
+    <PermissionGuard 
+      category="permissions" 
+      action="read"
+      fallback={
+        <div className="p-6">
+          <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-6 text-center">
+            <Shield className="w-12 h-12 text-red-500 mx-auto mb-4" />
+            <h3 className="text-lg font-semibold text-red-900 dark:text-red-200 mb-2">
+              Access Denied
+            </h3>
+            <p className="text-red-700 dark:text-red-300">
+              You don't have permission to view the permissions management page. 
+              Contact your administrator to request access.
+            </p>
+          </div>
+        </div>
+      }
+    >
+      <div className="p-6">
       {/* Header */}
       <div className="mb-8">
         <div className="flex items-center justify-between">
@@ -697,32 +743,44 @@ export default function PermissionsPage() {
               Permissions
             </h1>
             <p className="text-gray-600 dark:text-gray-400 mt-2">
-              Manage system permissions and pipeline access. Use <strong>System Permissions</strong> for platform-wide access and <strong>Pipeline Access</strong> for specific pipeline selection.
+              Manage user permissions across the platform. <strong>Static Permissions</strong> control system-wide access to features, while <strong>Resource Access</strong> tabs control access to specific resources (pipelines, workflows, etc.).
             </p>
           </div>
         </div>
       </div>
 
 
+
       {/* Tabs */}
       <div className="mb-6">
         <nav className="flex space-x-8 border-b border-gray-200 dark:border-gray-700">
           {(() => {
-            // Generate tabs dynamically based on resource types
+            // Generate tabs for static permissions and dynamic resource access
             const resourceTabs = Object.entries(frontendConfig?.grouped_categories || {})
-              .map(([resourceType, metadata]) => ({
-                id: `${resourceType}-access`,
-                name: resourceType.charAt(0).toUpperCase() + resourceType.slice(1),
-                icon: getResourceTypeIcon('default'),
-                count: metadata.total_resources
-              }))
+              .filter(([resourceType, metadata]) => {
+                // Count only dynamic permissions for resource access tabs
+                const dynamicCount = metadata.items?.filter(item => item.data?.is_dynamic)?.length || 0
+                return dynamicCount > 0 || ['pipelines', 'workflows'].includes(resourceType)
+              })
+              .map(([resourceType, metadata]) => {
+                // Count only dynamic permissions, not static ones
+                const dynamicCount = metadata.items?.filter(item => item.data?.is_dynamic)?.length || 0
+                return {
+                  id: `${resourceType}-access`,
+                  name: `${resourceType.charAt(0).toUpperCase() + resourceType.slice(1)} Access`,
+                  icon: getResourceTypeIcon('database'),
+                  count: dynamicCount
+                }
+              })
 
             const allTabs = [
-              { id: 'matrix', name: 'System Permissions', icon: Shield, count: permissions.length },
+              { id: 'matrix', name: 'Static Permissions', icon: Shield, count: permissions.length },
               ...resourceTabs,
               { id: 'roles', name: 'User Roles', icon: Users, count: userTypes.length },
             ]
 
+            console.log(`🏷️ Generated tabs:`, allTabs.map(t => `${t.name} (${t.count})`))
+            console.log(`📊 Tab counts: Static permissions = ${permissions.length}, Dynamic permissions only for resource tabs`)
             return allTabs
           })().map((tab) => (
             <button
@@ -807,6 +865,12 @@ export default function PermissionsPage() {
                   <Lock className="w-4 h-4 text-gray-400 mr-2" />
                   <span className="text-gray-600 dark:text-gray-400">Protected</span>
                 </div>
+                <div className="flex items-center">
+                  <div className="w-4 h-4 bg-gray-100 border border-gray-200 rounded opacity-30 mr-2 flex items-center justify-center">
+                    <Lock className="w-2 h-2 text-gray-400" />
+                  </div>
+                  <span className="text-gray-600 dark:text-gray-400">Requires Static Permission</span>
+                </div>
               </div>
             </div>
           </div>
@@ -822,7 +886,7 @@ export default function PermissionsPage() {
                     <div className="flex-none w-80 px-6 py-4">
                       <div className="flex items-center justify-between">
                         <h4 className="text-sm font-semibold text-gray-900 dark:text-white">
-                          System Permissions
+                          Static Permissions
                         </h4>
                         <div className="flex items-center space-x-2">
                           <button 
@@ -973,7 +1037,18 @@ export default function PermissionsPage() {
                         <div className="flex flex-1 min-w-0">
                           {userTypes.map((userType) => {
                             const hasPermission = permissionMatrix[userType.name]?.[permission.name]
-                            const isSystemProtected = permission.is_system && userType.slug !== 'admin'
+                            
+                            // Check if current user can modify permissions for this user type
+                            const currentUserPermissions = user?.permissions || user?.userType?.basePermissions || {}
+                            const canModifyPermissions = 
+                              currentUserPermissions.permissions?.includes('grant') || 
+                              currentUserPermissions.permissions?.includes('revoke') ||
+                              currentUserPermissions.permissions?.includes('update')
+                            
+
+                            
+                            // System permissions are protected unless user has permission management rights
+                            const isSystemProtected = permission.is_system && !canModifyPermissions
                             const isCustomType = userType.is_custom
                             
                             // Special handling for "Access Pipelines" permission - show multiselect instead of checkbox
@@ -1051,6 +1126,10 @@ export default function PermissionsPage() {
                             const [, extractedAction] = permission.name.split(':')
                             const changeKey = `${userType.id}-${schemaCategory}-${extractedAction}`
                             
+                            // Get dynamic color for this category from backend
+                            const categoryColor = getCategoryColor(schemaCategory) || '#64748b'
+                            const actionIcon = getActionIcon(extractedAction || 'circle')
+                            
                             return (
                               <div key={`permission-${permission.id}-usertype-${userType.id}`} className="flex-1 min-w-32 px-4 py-4 border-l border-gray-200 dark:border-gray-600 flex items-center justify-center">
                                 <div className="relative group">
@@ -1074,12 +1153,17 @@ export default function PermissionsPage() {
                                     }}
                                     data-permission-toggle={changeKey}
                                     disabled={isSystemProtected || ongoingPermissionChanges.has(changeKey)}
+                                    style={hasPermission && !ongoingPermissionChanges.has(changeKey) ? {
+                                      backgroundColor: categoryColor,
+                                      borderColor: categoryColor,
+                                      boxShadow: `0 4px 6px -1px ${categoryColor}20, 0 2px 4px -1px ${categoryColor}10`
+                                    } : {}}
                                     className={`w-8 h-8 rounded-lg border-2 transition-all duration-150 flex items-center justify-center ${
                                       ongoingPermissionChanges.has(changeKey)
                                         ? 'bg-blue-500 border-blue-500 text-white animate-pulse'
                                         : hasPermission
-                                        ? 'bg-green-500 border-green-500 text-white shadow-md shadow-green-200 dark:shadow-green-900/30'
-                                        : 'border-gray-300 dark:border-gray-600 hover:border-green-400 hover:shadow-md hover:shadow-green-100 dark:hover:shadow-green-900/20 bg-white dark:bg-gray-800'
+                                        ? 'text-white shadow-md'
+                                        : 'border-gray-300 dark:border-gray-600 hover:shadow-md bg-white dark:bg-gray-800'
                                     } ${
                                       isSystemProtected || ongoingPermissionChanges.has(changeKey)
                                         ? 'opacity-50 cursor-not-allowed'
@@ -1129,18 +1213,60 @@ export default function PermissionsPage() {
               </div>
             </div>
             
-            {/* Matrix Footer with Summary */}
+            {/* Enhanced Matrix Footer with Rich Data Summary */}
             <div className="border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-750 px-6 py-3">
               <div className="flex items-center justify-between text-sm text-gray-600 dark:text-gray-400">
                 <div>
-                  <strong>System Permissions:</strong> Showing {filteredPermissions.length} of {permissions.length} platform-wide permissions
+                  <strong>Static Permissions:</strong> Showing {filteredPermissions.length} of {permissions.length} platform-wide permissions
+                  {frontendConfig?.frontend_helpers && (
+                    <span className="ml-2 inline-flex items-center px-2 py-1 text-xs bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300 rounded-full">
+                      <Circle className="w-3 h-3 mr-1" />
+                      Enhanced UI Active
+                    </span>
+                  )}
                 </div>
                 <div className="flex items-center space-x-4">
                   <span>{userTypes.length} user types configured</span>
                   <span>•</span>
                   <span>{Object.keys(permissionsByCategory).length} permission categories</span>
+                  {frontendConfig?.bulk_operation_templates && (
+                    <>
+                      <span>•</span>
+                      <span className="text-blue-600 dark:text-blue-400">
+                        {Object.keys(frontendConfig.bulk_operation_templates).length} bulk operations available
+                      </span>
+                    </>
+                  )}
+                  {frontendConfig?.frontend_helpers?.action_icons && (
+                    <>
+                      <span>•</span>
+                      <span className="text-purple-600 dark:text-purple-400">
+                        {Object.keys(frontendConfig.frontend_helpers.action_icons).length} action icons
+                      </span>
+                    </>
+                  )}
                 </div>
               </div>
+              
+              {/* Rich Data Indicators */}
+              {frontendConfig?.frontend_helpers && (
+                <div className="flex items-center justify-center mt-2 pt-2 border-t border-gray-200 dark:border-gray-600">
+                  <div className="flex items-center space-x-6 text-xs">
+                    <div className="flex items-center text-green-600 dark:text-green-400">
+                      <div className="w-2 h-2 bg-green-500 rounded-full mr-1"></div>
+                      Dynamic Colors Active
+                    </div>
+                    <div className="flex items-center text-blue-600 dark:text-blue-400">
+                      <div className="w-2 h-2 bg-blue-500 rounded-full mr-1"></div>
+                      Backend Data Connected
+                    </div>
+                    <div className="flex items-center text-purple-600 dark:text-purple-400">
+                      <div className="w-2 h-2 bg-purple-500 rounded-full mr-1"></div>
+                      Advanced Features Enabled
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 
@@ -1153,11 +1279,26 @@ export default function PermissionsPage() {
         const resourceMetadata = frontendConfig?.grouped_categories?.[resourceType]
         const ResourceIcon = Database
         const resourceDisplayName = resourceType.charAt(0).toUpperCase() + resourceType.slice(1) + ' Access'
-        const resourceCount = resourceMetadata?.total_resources || 0
+        const dynamicResourceCount = resourceMetadata?.items?.filter(item => item.data?.is_dynamic)?.length || 0
         
-        // For now, only pipelines have data - others will show empty state
-        const hasData = resourceType === 'pipelines' && pipelines.length > 0
-        const items = resourceType === 'pipelines' ? pipelines : []
+        // Use dynamic permissions from backend config
+        const dynamicItems = resourceMetadata?.items?.filter(item => item.data?.is_dynamic) || []
+        const hasData = dynamicItems.length > 0
+        const items = dynamicItems.map(item => ({
+          id: item.data?.resource_id,
+          name: item.data?.metadata?.pipeline_name || item.data?.category_display || item.key,
+          description: item.data?.description || '',
+          color: '#3B82F6', // Default blue
+          // Convert backend dynamic item to frontend format
+          ...item.data?.metadata
+        }))
+        
+        console.log(`🎯 Resource Tab: ${resourceType}`)
+        console.log(`   Metadata:`, resourceMetadata)
+        console.log(`   Total items: ${resourceMetadata?.items?.length || 0}`)
+        console.log(`   Dynamic items: ${dynamicItems.length}`)
+        console.log(`   Processed items:`, items)
+        console.log(`   Has data: ${hasData}`)
         
         return (
           <div className="space-y-6">
@@ -1169,7 +1310,7 @@ export default function PermissionsPage() {
                       {resourceDisplayName} Management
                     </h3>
                     <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-                      Control which {resourceType} each user type can access. This is the first level of the permission hierarchy - users can only access {resourceType} selected here.
+                      Control access to specific {resourceType} resources. This manages <strong>dynamic permissions</strong> - individual resource access. Users must first have static "{resourceType}" permissions, then specific resource access.
                     </p>
                   </div>
                   <ResourceIcon className="w-5 h-5 text-blue-500" />
@@ -1196,12 +1337,23 @@ export default function PermissionsPage() {
                   )}
                 </div>
               ) : (
-              <div className="overflow-x-auto">
+                <div>
+                  <div className="p-6 space-y-4">
+                    {/* Dependency Warnings for each user type */}
+                    {userTypes.map((userType) => (
+                                          <DependencyWarning
+                      key={userType.id}
+                      userType={userType}
+                      resourceType={resourceType}
+                    />
+                    ))}
+                  </div>
+                  <div className="overflow-x-auto">
                 <table className="w-full">
                   <thead className="bg-gray-50 dark:bg-gray-700/50">
                     <tr>
                       <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                        Pipeline
+                        {resourceType.charAt(0).toUpperCase() + resourceType.slice(1)} Resource
                       </th>
                       {userTypes.map((userType) => (
                         <th 
@@ -1219,44 +1371,61 @@ export default function PermissionsPage() {
                     </tr>
                   </thead>
                   <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
-                    {pipelines.map((pipeline) => (
-                      <tr key={pipeline.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
+                    {items.map((item) => (
+                      <tr key={item.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
                         <td className="px-6 py-4 whitespace-nowrap">
                           <div className="flex items-center">
                             <div 
                               className="w-3 h-3 rounded-full mr-3"
-                              style={{ backgroundColor: pipeline.color }}
+                              style={{ backgroundColor: item.color }}
                             />
                             <div>
                               <div className="text-sm font-medium text-gray-900 dark:text-white">
-                                {pipeline.name}
+                                {item.name}
                               </div>
                               <div className="text-sm text-gray-500 dark:text-gray-400">
-                                {pipeline.description}
+                                {item.description}
+                              </div>
+                              <div className="text-xs text-gray-400 mt-1">
+                                Dynamic Permission ID: {item.id}
                               </div>
                             </div>
                           </div>
                         </td>
                         {userTypes.map((userType) => {
-                          const hasAccess = hasPipelineAccess(userType.id, pipeline.id)
+                          // Get permission state using the new dependency checking
+                          const permissionState = getPermissionState(
+                            userType, 
+                            resourceType, 
+                            item.id || 0, 
+                            pipelinePermissions
+                          )
+                          
+                          const isChanging = ongoingPermissionChanges.has(`dynamic-${resourceType}-${userType.id}-${item.id || 'unknown'}`)
+                          
                           return (
-                            <td key={userType.id} className="px-6 py-4 text-center">
-                              <button
-                                type="button"
-                                onClick={() => togglePipelineAccess(userType.id, pipeline.id, !hasAccess)}
-                                className={`w-6 h-6 rounded border-2 transition-all duration-200 ${
-                                  hasAccess
-                                    ? 'bg-primary border-primary'
-                                    : 'bg-transparent border-gray-300 dark:border-gray-600 hover:border-primary/50'
-                                }`}
-                                title={`${hasAccess ? 'Revoke' : 'Grant'} ${userType.name} access to ${pipeline.name}`}
-                              >
-                                {hasAccess && (
-                                  <svg className="w-3 h-3 text-white mx-auto" fill="currentColor" viewBox="0 0 20 20">
-                                    <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                                  </svg>
-                                )}
-                              </button>
+                            <td key={userType.id} className="px-6 py-4">
+                              <div className="flex justify-center">
+                                <PermissionCheckbox
+                                userType={userType}
+                                resourceType={resourceType}
+                                resourceName={item.name}
+                                resourceId={item.id || 0}
+                                state={permissionState}
+                                isChanging={isChanging}
+                                onChange={async (granted: boolean) => {
+                                  if (resourceType === 'pipelines' && item.id) {
+                                    const pipelineId = typeof item.id === 'string' ? parseInt(item.id) : item.id
+                                    await togglePipelineAccess(userType.id, pipelineId, granted)
+                                  }
+                                  // Future: Add workflow toggle when implemented
+                                  // else if (resourceType === 'workflows' && item.id) {
+                                  //   const workflowId = typeof item.id === 'string' ? parseInt(item.id) : item.id
+                                  //   await toggleWorkflowAccess(userType.id, workflowId, granted)
+                                  // }
+                                }}
+                              />
+                              </div>
                             </td>
                           )
                         })}
@@ -1265,31 +1434,30 @@ export default function PermissionsPage() {
                   </tbody>
                 </table>
               </div>
-            )}
 
-            {/* Pipeline Access Summary */}
-            {pipelines.length > 0 && (
+              {/* Dynamic Resource Access Summary */}
+              {items.length > 0 && (
               <div className="border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-700/30 px-6 py-4">
                 <div className="flex items-center justify-between text-sm">
                   <div className="flex items-center space-x-6">
                     <span className="text-gray-500 dark:text-gray-400">
-                      Total Pipelines: {pipelines.length}
+                      Dynamic {resourceType}: {items.length} resources
                     </span>
-                    {userTypes.map((userType) => {
-                      const accessCount = pipelines.filter(p => hasPipelineAccess(userType.id, p.id)).length
-                      return (
-                        <span key={userType.id} className="text-gray-500 dark:text-gray-400">
-                          {userType.name}: {accessCount}/{pipelines.length}
-                        </span>
-                      )
-                    })}
+                    <span className="text-blue-600 dark:text-blue-400">
+                      Resource Type: {resourceType}
+                    </span>
+                    <span className="text-green-600 dark:text-green-400">
+                      Backend Connected ✓
+                    </span>
                   </div>
                   <div className="flex items-center text-xs text-gray-400">
-                    <span>💡 Pipeline access controls which pipelines appear for each user type</span>
+                    <span>💡 Resource access = Dynamic permissions for specific resources. Users need both static permissions + resource access.</span>
                   </div>
                 </div>
               </div>
-            )}
+              )}
+                </div>
+              )}
           </div>
         </div>
         )
@@ -1389,6 +1557,7 @@ export default function PermissionsPage() {
         onSuccess={handleUserTypeSuccess}
         userType={selectedUserType}
       />
-    </div>
+      </div>
+    </PermissionGuard>
   )
 }

@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 
 class AIPromptProcessor(AsyncNodeProcessor):
-    """Process AI prompt nodes using existing AIFieldProcessor"""
+    """Process AI prompt nodes using ai.integrations.AIIntegrationManager"""
     
     def __init__(self):
         super().__init__()

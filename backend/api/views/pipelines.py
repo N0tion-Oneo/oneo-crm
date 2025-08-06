@@ -59,18 +59,16 @@ class PipelineViewSet(viewsets.ModelViewSet):
         return PipelineSerializer
     
     def _get_accessible_pipeline_ids(self, user, permission_manager):
-        """Get pipeline IDs that user has access to"""
-        accessible_ids = []
+        """Get pipeline IDs that user has access to via dynamic permissions"""
+        from authentication.models import UserTypePipelinePermission
         
-        # Check each pipeline for read access
-        for pipeline in Pipeline.objects.filter(is_active=True):
-            if (permission_manager.has_permission('action', 'pipelines', 'read', str(pipeline.id)) or
-                permission_manager.has_permission('action', 'pipelines', 'read') or
-                pipeline.created_by == user or
-                getattr(pipeline, 'access_level', 'private') in ['public', 'internal']):
-                accessible_ids.append(pipeline.id)
+        # Only check dynamic permissions - ignore static permissions and access levels
+        # This ensures dynamic permissions are properly enforced
+        user_type_permissions = UserTypePipelinePermission.objects.filter(
+            user_type=user.user_type
+        ).values_list('pipeline_id', flat=True)
         
-        return accessible_ids
+        return list(user_type_permissions)
     
     @extend_schema(
         summary="Get pipeline analytics",

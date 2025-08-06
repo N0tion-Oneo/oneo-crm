@@ -10,48 +10,7 @@ import json
 logger = logging.getLogger(__name__)
 
 
-@shared_task(bind=True, name='pipelines.tasks.process_ai_field')
-def process_ai_field(self, record_id, field_id, prompt, context_data=None):
-    """
-    Process AI field calculations asynchronously
-    Used for: AI-powered field processing, content generation, analysis
-    """
-    try:
-        from .models import Record, Field
-        from .ai_processor import AIFieldProcessor
-        
-        record = Record.objects.get(id=record_id)
-        field = Field.objects.get(id=field_id)
-        
-        # Process AI field
-        processor = AIFieldProcessor()
-        result = processor.process_field(
-            field=field,
-            record=record,
-            prompt=prompt,
-            context=context_data or {}
-        )
-        
-        # Update record with AI result
-        if result.get('success'):
-            record_data = record.data.copy()
-            record_data[field.name] = result['value']
-            record.data = record_data
-            record.save()
-        
-        # Cache the result for streaming responses
-        cache_key = f"ai_field_result:{self.request.id}"
-        cache.set(cache_key, result, timeout=3600)
-        
-        logger.info(f"AI field processed for record {record_id}, field {field_id}")
-        return result
-        
-    except Exception as e:
-        error_msg = f"AI field processing error: {e}"
-        logger.error(error_msg)
-        return {'error': error_msg, 'success': False}
-
-
+# OLD AI TASK REMOVED - Now using ai.tasks.process_ai_job
 @shared_task(bind=True, name='pipelines.tasks.process_bulk_operation')
 def process_bulk_operation(self, operation_type, record_ids, operation_data):
     """

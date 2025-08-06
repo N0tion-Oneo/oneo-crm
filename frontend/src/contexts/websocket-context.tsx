@@ -326,8 +326,12 @@ export function WebSocketProvider({ children, autoConnect = true }: WebSocketPro
 
       wsRef.current.onerror = (error) => {
         console.error('❌ Centralized WebSocket error:', {
+          error: error,
+          errorType: error.type,
           readyState: (error.target as any)?.readyState,
-          currentUrl: window.location.href
+          currentUrl: window.location.href,
+          wsUrl: wsUrl,
+          timestamp: new Date().toISOString()
         })
         setConnectionStatus('error')
       }

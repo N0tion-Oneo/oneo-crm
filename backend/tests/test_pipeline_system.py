@@ -27,7 +27,7 @@ from pipelines.models import Pipeline, Field, Record, PipelineTemplate
 from pipelines.field_types import FieldType
 from pipelines.validators import FieldValidator, validate_record_data
 from pipelines.templates import PipelineTemplateFactory
-from pipelines.ai_processor import AIFieldProcessor, AIFieldManager
+# # from pipelines.ai_processor import AIFieldProcessor  # DEPRECATED - use ai.integrations, AIFieldManager  # DEPRECATED - use ai.integrations
 import json
 import asyncio
 import time
@@ -382,7 +382,7 @@ class PipelineSystemTest:
                 
                 # Test AI processor initialization
                 try:
-                    processor = AIFieldProcessor(ai_field, record)
+                    # processor = AIFieldProcessor(ai_field, record)  # DEPRECATED
                     print("  ✅ AI processor initialized")
                     
                     # Test context building

@@ -11,6 +11,7 @@ export interface Field {
   is_readonly?: boolean
   help_text?: string
   placeholder?: string
+  original_slug?: string // Backend slug for API calls
 }
 
 export interface FieldRenderProps {

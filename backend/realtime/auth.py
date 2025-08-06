@@ -377,7 +377,7 @@ async def check_channel_subscription_permission(user, channel: str):
             
             return await check_user_permissions(user, 'forms', form_id, 'read')
         
-        elif channel in ['user_presence', 'pipelines_overview', 'pipeline_updates', 'permission_updates']:
+        elif channel in ['user_presence', 'pipelines_overview', 'pipeline_updates', 'permission_updates', 'ai_jobs', 'ai_templates', 'ai_analytics']:
             # General channels - all authenticated users can subscribe
             return True
         
@@ -419,6 +419,10 @@ async def get_user_accessible_channels(user):
             'user_presence',
             'pipelines_overview',
             'pipeline_updates',
+            'permission_updates',
+            'ai_jobs',
+            'ai_templates', 
+            'ai_analytics',
             f'user_{user.id}',  # User's own channel
             f'tenant_{getattr(user, "tenant_id", "default")}'  # Tenant channel
         ])

@@ -116,6 +116,14 @@ export default function PipelineRecordsPage() {
 
   // Handle record save
   const handleRecordSave = async (recordId: string, data: { [key: string]: any }) => {
+    console.log(`🚨 PARENT PAGE BULK SAVE TRIGGERED:`, {
+      recordId,
+      dataKeys: Object.keys(data),
+      dataSize: Object.keys(data).length,
+      isExistingRecord: !creatingNewRecord,
+      stackTrace: new Error().stack
+    })
+    
     try {
       let savedRecord
       if (creatingNewRecord && recordId === 'new') {

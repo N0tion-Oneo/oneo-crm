@@ -14,7 +14,7 @@ from django_tenants.utils import schema_context
 from .models import (
     Channel, Message, CommunicationAnalytics
 )
-from .unipile_service import unipile_service
+from .unipile_sdk import unipile_service
 
 logger = logging.getLogger(__name__)
 User = get_user_model()

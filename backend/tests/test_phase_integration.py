@@ -101,7 +101,7 @@ def test_phase_3_integration():
             
             # Test AI field processor availability (Phase 3 AI infrastructure)
             try:
-                from pipelines.ai_processor import AIFieldProcessor
+                # from pipelines.ai_processor import AIFieldProcessor  # DEPRECATED - use ai.integrations
                 print("✅ Phase 3 - AI processor available for workflow integration")
             except ImportError:
                 print("⚠️  Phase 3 - AI processor not available (acceptable for testing)")

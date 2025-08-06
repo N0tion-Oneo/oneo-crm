@@ -250,11 +250,8 @@ class FieldTypeViewSet(viewsets.GenericViewSet):
                 'enum': ['small', 'medium', 'large'],
                 'description': 'Button size'
             },
-            # AI field options
-            'model': {
-                'enum': ['gpt-4.1', 'gpt-4.1-mini', 'o3', 'o3-mini', 'gpt-4o', 'gpt-3.5-turbo'],
-                'description': 'AI model to use'
-            },
+            # AI field options - models are dynamically configured per tenant
+            # 'model' enum removed - should be loaded from tenant AI configuration
             'output_type': {
                 'enum': ['text', 'number', 'tags', 'url', 'json'],
                 'description': 'Expected output format'

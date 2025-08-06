@@ -7,7 +7,7 @@ import json
 import logging
 from typing import Dict, Any, Optional, List
 from django.contrib.auth import get_user_model
-from pipelines.ai_processor import AIFieldProcessor
+from ai.integrations import AIIntegrationManager
 from tenants.models import Tenant
 
 User = get_user_model()
@@ -64,7 +64,7 @@ class WorkflowAIProcessor:
         
         try:
             # Use existing AI field processor
-            processor = AIFieldProcessor(mock_field, mock_record)
+            ai_manager = AIIntegrationManager(tenant, user)
             
             # Process the AI request
             result = await processor.process_field_async()

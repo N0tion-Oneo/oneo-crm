@@ -5,6 +5,7 @@ import { pipelinesApi } from '@/lib/api'
 import { usePipelineRecordsSubscription } from '@/hooks/use-websocket-subscription'
 import { type RealtimeMessage } from '@/contexts/websocket-context'
 import { useAuth } from '@/features/auth/context'
+import { RealtimeDiagnostics } from '../realtime-diagnostics'
 import { FieldResolver } from '@/lib/field-system/field-registry'
 import { Field } from '@/lib/field-system/types'
 // Import field system to ensure initialization
@@ -171,7 +172,7 @@ export function RecordListView({ pipeline, onEditRecord, onCreateRecord }: Recor
     
     switch (message.type) {
       case 'record_create':
-        if (message.payload?.pipeline_id === pipeline.id) {
+        if (String(message.payload?.pipeline_id) === String(pipeline.id)) {
           // Construct record object from payload
           const newRecord = {
             id: message.payload.record_id,
@@ -186,7 +187,7 @@ export function RecordListView({ pipeline, onEditRecord, onCreateRecord }: Recor
         break
         
       case 'record_update':
-        if (message.payload?.pipeline_id === pipeline.id) {
+        if (String(message.payload?.pipeline_id) === String(pipeline.id)) {
           // Construct updated record object from payload
           const updatedRecord = {
             id: message.payload.record_id,
@@ -194,18 +195,52 @@ export function RecordListView({ pipeline, onEditRecord, onCreateRecord }: Recor
             updated_at: message.payload.updated_at || new Date().toISOString(),
             created_by: message.payload.updated_by
           }
-          setRecords(prev => prev.map(record => 
-            record.id === updatedRecord.id ? { ...record, ...updatedRecord } : record
-          ))
-          console.log('✅ Updated record in list:', updatedRecord.id)
+          
+          console.log('🔄 RECORD UPDATE DEBUG:', {
+            messageRecordId: message.payload.record_id,
+            messagePipelineId: message.payload.pipeline_id,
+            currentPipelineId: pipeline.id,
+            existingRecordsCount: records.length,
+            recordExists: records.some(r => String(r.id) === String(updatedRecord.id))
+          })
+          
+          setRecords(prev => {
+            const newRecords = prev.map(record => {
+              if (String(record.id) === String(updatedRecord.id)) {
+                // CRITICAL: Merge with existing data to prevent data loss
+                const mergedRecord = {
+                  ...record, // Keep all existing record data
+                  ...updatedRecord, // Apply updates
+                  data: {
+                    ...record.data, // Keep all existing field data
+                    ...updatedRecord.data // Apply only the updated fields
+                  }
+                }
+                console.log('🔄 MERGE DEBUG:', {
+                  originalData: record.data,
+                  updateData: updatedRecord.data,
+                  mergedData: mergedRecord.data
+                })
+                return mergedRecord
+              }
+              return record
+            })
+            console.log('✅ Updated record in list:', updatedRecord.id, 'New count:', newRecords.length)
+            return newRecords
+          })
+        } else {
+          console.log('❌ Pipeline ID mismatch for record_update:', {
+            messagePipelineId: message.payload?.pipeline_id,
+            currentPipelineId: pipeline.id
+          })
         }
         break
         
       case 'record_delete':
-        if (message.payload?.pipeline_id === pipeline.id) {
+        if (String(message.payload?.pipeline_id) === String(pipeline.id)) {
           // Remove record from the list
           const deletedRecordId = message.payload.record_id
-          setRecords(prev => prev.filter(record => record.id !== deletedRecordId))
+          setRecords(prev => prev.filter(record => String(record.id) !== String(deletedRecordId)))
           console.log('✅ Removed record from list:', deletedRecordId)
         } else {
           console.log('❌ Pipeline ID mismatch for record_delete:', {
@@ -223,14 +258,23 @@ export function RecordListView({ pipeline, onEditRecord, onCreateRecord }: Recor
     handleRealtimeMessage
   )
 
-  // Debug log for WebSocket connection
+  // Debug log for WebSocket connection with enhanced status
   useEffect(() => {
-    console.log('🔌 Centralized WebSocket connection for pipeline records:', {
+    console.log('🔌 REALTIME STATUS for Record List:', {
       pipelineId: pipeline.id,
       channel: `pipeline_records_${pipeline.id}`,
-      isConnected
+      isConnected,
+      recordCount: records.length,
+      timestamp: new Date().toISOString()
     })
-  }, [pipeline.id, isConnected])
+    
+    // Test WebSocket connectivity by logging subscription
+    if (isConnected) {
+      console.log('✅ WebSocket CONNECTED - Ready for real-time updates')
+    } else {
+      console.log('❌ WebSocket DISCONNECTED - Real-time updates unavailable')
+    }
+  }, [pipeline.id, isConnected, records.length])
 
   // Initialize visible fields (show all columns, permissions applied per row)
   useEffect(() => {
@@ -703,6 +747,9 @@ export function RecordListView({ pipeline, onEditRecord, onCreateRecord }: Recor
           </div>
         </div>
       )}
+
+      {/* Realtime Diagnostics (development only) */}
+      <RealtimeDiagnostics pipelineId={pipeline.id} />
     </div>
   )
 }

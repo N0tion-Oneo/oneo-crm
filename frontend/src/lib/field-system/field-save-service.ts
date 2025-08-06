@@ -5,7 +5,7 @@ import { api } from '@/lib/api'
 import { toast } from '@/hooks/use-toast'
 
 // Save strategy function moved from deleted field-save-manager.tsx
-export function getSaveStrategy(fieldType: string): 'immediate' | 'on-exit' | 'continuous' {
+export function getSaveStrategy(fieldType: string): 'immediate' | 'on-exit' | 'continuous' | 'on-change' | 'manual' {
   // Immediate save for choices and toggles
   if (['select', 'multiselect', 'radio', 'boolean', 'relation'].includes(fieldType)) {
     return 'immediate'
@@ -43,32 +43,182 @@ export interface FieldSaveParams {
  * - continuous: Save when user signals done (tags)
  * - manual: Save when explicitly called (file uploads)
  */
+export interface SaveValidationResult {
+  isValid: boolean
+  errors: string[]
+  warnings: string[]
+  displayChanges: Array<{field: string, action: 'show' | 'hide', reason: string}>
+}
+
 export class FieldSaveService {
   private pendingChanges = new Map<string, FieldSaveParams>()
   private timers = new Map<string, NodeJS.Timeout>()
   
+  // PHASE 3: REAL-TIME VALIDATION
+  private validationTimers = new Map<string, NodeJS.Timeout>()
+  private lastValidationResults = new Map<string, SaveValidationResult>()
+  private onValidationChange?: (fieldName: string, result: SaveValidationResult) => void
+  
+  /**
+   * Set validation change callback for real-time validation feedback
+   */
+  setValidationCallback(callback: (fieldName: string, result: SaveValidationResult) => void) {
+    this.onValidationChange = callback
+  }
+  
+  /**
+   * PHASE 3: Real-time incremental validation as user types
+   * Debounced validation that doesn't save but provides immediate feedback
+   */
+  private validateIncrementally(params: FieldSaveParams, debounceMs: number = 300) {
+    const fieldName = params.field.name
+    
+    // Clear existing validation timer
+    const existingTimer = this.validationTimers.get(fieldName)
+    if (existingTimer) {
+      clearTimeout(existingTimer)
+    }
+    
+    // Set new debounced validation
+    const timer = setTimeout(async () => {
+      try {
+        console.log(`🔍 PHASE 3: Incremental validation for ${fieldName}`)
+        
+        // Call backend validation API (without saving)
+        const validationResult = await this.validateFieldValue(params)
+        
+        // Store result and notify callback
+        this.lastValidationResults.set(fieldName, validationResult)
+        
+        if (this.onValidationChange) {
+          this.onValidationChange(fieldName, validationResult)
+        }
+        
+        console.log(`✅ Validation complete for ${fieldName}:`, validationResult)
+        
+      } catch (error) {
+        console.error(`❌ Validation error for ${fieldName}:`, error)
+        
+        const errorResult: SaveValidationResult = {
+          isValid: false,
+          errors: ['Validation service unavailable'],
+          warnings: [],
+          displayChanges: []
+        }
+        
+        this.lastValidationResults.set(fieldName, errorResult)
+        
+        if (this.onValidationChange) {
+          this.onValidationChange(fieldName, errorResult)
+        }
+      }
+    }, debounceMs)
+    
+    this.validationTimers.set(fieldName, timer)
+  }
+  
+  /**
+   * Call backend validation API without saving
+   */
+  private async validateFieldValue(params: FieldSaveParams): Promise<SaveValidationResult> {
+    const { field, newValue, apiEndpoint } = params
+    
+    try {
+      // Create validation payload (similar to save payload but with validation flag)
+      const payload = {
+        data: {
+          [field.original_slug || field.name]: newValue
+        },
+        validate_only: true, // Flag to indicate validation-only request
+        field_slug: field.original_slug || field.name
+      }
+      
+      console.log(`🔍 Validation API call for ${field.name}:`, payload)
+      
+      // Call validation endpoint
+      const response = await api.post(`${apiEndpoint}/validate`, payload)
+      
+      // Parse validation response
+      const result: SaveValidationResult = {
+        isValid: response.data.is_valid || false,
+        errors: response.data.errors || [],
+        warnings: response.data.warnings || [],
+        displayChanges: response.data.display_changes || []
+      }
+      
+      return result
+      
+    } catch (error: any) {
+      console.error(`Validation API error:`, error)
+      
+      // Parse error response
+      if (error.response?.data?.errors) {
+        return {
+          isValid: false,
+          errors: Object.values(error.response.data.errors).flat() as string[],
+          warnings: [],
+          displayChanges: []
+        }
+      }
+      
+      return {
+        isValid: false,
+        errors: ['Validation failed'],
+        warnings: [],
+        displayChanges: []
+      }
+    }
+  }
+  
+  /**
+   * Get last validation result for a field
+   */
+  getLastValidationResult(fieldName: string): SaveValidationResult | null {
+    return this.lastValidationResults.get(fieldName) || null
+  }
+  
+  /**
+   * Clear validation results and timers
+   */
+  clearValidationState(fieldName?: string) {
+    if (fieldName) {
+      // Clear specific field
+      const timer = this.validationTimers.get(fieldName)
+      if (timer) {
+        clearTimeout(timer)
+        this.validationTimers.delete(fieldName)
+      }
+      this.lastValidationResults.delete(fieldName)
+    } else {
+      // Clear all
+      this.validationTimers.forEach(timer => clearTimeout(timer))
+      this.validationTimers.clear()
+      this.lastValidationResults.clear()
+    }
+  }
+  
   /**
    * Main entry point - called on every field change
-   * Decides when to save based on field type strategy
+   * Decides when to save based on field type strategy + triggers real-time validation
    */
   async onFieldChange(params: FieldSaveParams): Promise<any> {
     const strategy = getSaveStrategy(params.field.field_type)
     
-    console.log(`🎯 FieldSaveService.onFieldChange: ${params.field.name}`, {
-      strategy,
-      newValue: params.newValue,
-      fieldType: params.field.field_type
-    })
+    // PHASE 3: Trigger incremental validation for text-based fields as user types
+    const textBasedFields = ['text', 'textarea', 'email', 'url', 'phone', 'number', 'decimal', 'float', 'currency', 'percentage']
+    if (textBasedFields.includes(params.field.field_type)) {
+      this.validateIncrementally(params, 300) // 300ms debounce
+    }
     
     switch (strategy) {
       case 'immediate':
         // Save right away (select, boolean, relation)
+        console.log(`💾 Saving ${params.field.name} immediately`)
         return await this.saveNow(params)
         
       case 'on-exit':
         // Store locally, save when user exits field (text, email, etc.)
         this.pendingChanges.set(params.field.name, params)
-        console.log(`📝 Stored pending change for ${params.field.name}`)
         break
         
       case 'on-change':
@@ -79,13 +229,11 @@ export class FieldSaveService {
       case 'continuous':
         // Store locally, save when user signals done (tags)
         this.pendingChanges.set(params.field.name, params)
-        console.log(`🏷️ Stored continuous change for ${params.field.name}`)
         break
         
       case 'manual':
         // Store locally, save when explicitly called (file uploads)
         this.pendingChanges.set(params.field.name, params)
-        console.log(`📁 Stored manual change for ${params.field.name}`)
         break
         
       default:
@@ -178,7 +326,9 @@ export class FieldSaveService {
   cleanup(): void {
     console.log('🧹 Cleaning up FieldSaveService', {
       pendingChanges: this.pendingChanges.size,
-      activeTimers: this.timers.size
+      activeTimers: this.timers.size,
+      validationTimers: this.validationTimers.size,
+      validationResults: this.lastValidationResults.size
     })
     
     // Clear all timers
@@ -187,6 +337,9 @@ export class FieldSaveService {
     
     // Clear pending changes (could save them first if desired)
     this.pendingChanges.clear()
+    
+    // PHASE 3: Clear validation state
+    this.clearValidationState()
   }
   
   /**
@@ -194,16 +347,13 @@ export class FieldSaveService {
    */
   private async saveNow(params: FieldSaveParams): Promise<any> {
     try {
-      const payload = { [params.field.name]: params.newValue }
-      
-      console.log(`💾 Saving ${params.field.name}:`, {
-        fieldType: params.field.field_type,
-        fieldName: params.field.name,
-        value: params.newValue,
-        valueType: typeof params.newValue,
-        endpoint: params.apiEndpoint,
-        payload: payload
-      })
+      // Use backend slug if available, otherwise use field name (same logic as auto-save transform)
+      const fieldKey = params.field.original_slug || params.field.name
+      const payload = { 
+        data: { 
+          [fieldKey]: params.newValue 
+        } 
+      }
       
       // Basic validation before sending
       if (!params.field.name) {
@@ -214,84 +364,45 @@ export class FieldSaveService {
         throw new Error('API endpoint is required')
       }
       
-      // Basic save logging for debugging
-      console.log(`💾 Saving ${params.field.name}:`, {
-        fieldType: params.field.field_type,
-        fieldName: params.field.name,
-        value: params.newValue,
-        valueType: typeof params.newValue,
-        endpoint: params.apiEndpoint,
-        payload: payload
-      })
-      
-      // Send field directly - DynamicRecordSerializer maps it to data.field_name automatically
-      // This avoids overwriting the entire data object and preserves other fields
       const response = await api.patch(params.apiEndpoint, payload)
       
-      // 🎉 Toast notification on success
+      // 🎉 Toast notification on success - special message for immediate save fields
       const fieldLabel = params.field.display_name || params.field.name
-      toast({
-        title: 'Field saved',
-        description: `${fieldLabel} saved successfully`
-      })
+      const strategy = getSaveStrategy(params.field.field_type)
+      
+      if (strategy === 'immediate') {
+        toast({
+          title: `${fieldLabel} saved`,
+          description: `Selection saved automatically`,
+          duration: 2000  // Shorter duration for immediate saves
+        })
+      } else if (strategy === 'continuous') {
+        toast({
+          title: `${fieldLabel} saved`,
+          description: `Changes saved successfully`,
+          duration: 2000  // Shorter duration for interactive saves
+        })
+      } else {
+        toast({
+          title: 'Field saved',
+          description: `${fieldLabel} saved successfully`
+        })
+      }
       
       // Optional callback for UI updates
       params.onSuccess?.(response.data)
       
-      console.log(`✅ Save successful for ${params.field.name}`)
       return response.data
       
     } catch (error: any) {
       console.error(`❌ Save failed for ${params.field.name}:`, error)
-      console.error(`❌ Error response data:`, error.response?.data)
-      console.error(`❌ Error status:`, error.response?.status)
-      console.error(`❌ Request payload was:`, {
-        [params.field.name]: params.newValue
-      })
       
-      // Deep log the error data structure  
-      if (error.response?.data) {
-        console.error(`❌ Full error structure:`, JSON.stringify(error.response.data, null, 2))
-        console.error(`❌ Raw error data:`, error.response.data)
-        
-        // Force display error details if it's an object
-        if (typeof error.response.data === 'object') {
-          console.error(`❌ Error object properties:`, Object.keys(error.response.data))
-          for (const [key, value] of Object.entries(error.response.data)) {
-            console.error(`❌ ${key}:`, value)
-          }
-        }
-      }
-      
-      // 🚨 Toast notification on error  
+      // Show error toast
       const fieldLabel = params.field.display_name || params.field.name
-      let errorMessage = 'Unknown error'
-      
-      if (error.response?.data) {
-        // Try to extract meaningful error message
-        const errorData = error.response.data
-        if (typeof errorData === 'string') {
-          errorMessage = errorData
-        } else if (errorData.detail) {
-          errorMessage = errorData.detail
-        } else if (errorData.message) {
-          errorMessage = errorData.message
-        } else if (errorData.error) {
-          errorMessage = errorData.error
-        } else if (errorData[params.field.name]) {
-          // Field-specific validation error
-          const fieldErrors = errorData[params.field.name]
-          errorMessage = Array.isArray(fieldErrors) ? fieldErrors.join(', ') : fieldErrors
-        } else {
-          errorMessage = JSON.stringify(errorData)
-        }
-      } else {
-        errorMessage = error.message || 'Network error'
-      }
       
       toast({
         title: 'Save failed',
-        description: `Failed to save ${fieldLabel}: ${errorMessage}`,
+        description: `Failed to save ${fieldLabel}: ${error.response?.data?.message || error.message || 'Unknown error'}`,
         variant: 'destructive'
       })
       
@@ -306,17 +417,13 @@ export class FieldSaveService {
   private debouncedSave(params: FieldSaveParams, delay = 1000): void {
     const fieldName = params.field.name
     
-    console.log(`⏱️ Setting up debounced save for ${fieldName} (${delay}ms)`)
-    
     // Clear existing timer for this field
     if (this.timers.has(fieldName)) {
       clearTimeout(this.timers.get(fieldName)!)
-      console.log(`⏱️ Cleared existing timer for ${fieldName}`)
     }
     
     // Set new timer
     const timer = setTimeout(async () => {
-      console.log(`⏰ Debounced save timer fired for ${fieldName}`)
       try {
         await this.saveNow(params)
       } catch (error) {

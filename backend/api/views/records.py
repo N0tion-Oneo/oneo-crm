@@ -45,11 +45,16 @@ class RecordViewSet(viewsets.ModelViewSet):
             user = self.request.user
             permission_manager = PermissionManager(user)
             
-            # Get accessible pipeline IDs
-            accessible_pipelines = []
-            for pipeline in Pipeline.objects.filter(is_active=True):
-                if permission_manager.has_permission('action', 'records', 'read', str(pipeline.id)):
-                    accessible_pipelines.append(pipeline.id)
+            # Check if user has global records access
+            if permission_manager.has_permission('action', 'records', 'read_all'):
+                # Admin users can see all records
+                accessible_pipelines = Pipeline.objects.filter(is_active=True).values_list('id', flat=True)
+            else:
+                # Regular users - filter by dynamic pipeline permissions
+                from authentication.models import UserTypePipelinePermission
+                accessible_pipelines = UserTypePipelinePermission.objects.filter(
+                    user_type=user.user_type
+                ).values_list('pipeline_id', flat=True)
             
             return Record.objects.filter(
                 pipeline_id__in=accessible_pipelines,
@@ -97,6 +102,31 @@ class RecordViewSet(viewsets.ModelViewSet):
                 pass
         
         return None
+    
+    def update(self, request, *args, **kwargs):
+        """Custom update with comprehensive logging"""
+        print(f"🟡 DJANGO STEP 1: View Received PATCH Request")
+        print(f"   🎯 Endpoint: {request.path}")
+        print(f"   📋 Record ID: {kwargs.get('pk')}")
+        print(f"   📦 Request Data: {request.data}")
+        if 'data' in request.data:
+            print(f"   🔑 Request contains {len(request.data['data'])} field(s): [{', '.join(request.data['data'].keys())}]")
+            null_fields = [k for k, v in request.data['data'].items() if v is None]
+            if null_fields:
+                print(f"   ⚠️  Request contains {len(null_fields)} NULL fields: [{', '.join(null_fields)}]")
+        
+        # Call the parent update method
+        response = super().update(request, *args, **kwargs)
+        
+        print(f"🟡 DJANGO STEP 5: View Returning Response")
+        print(f"   ✅ Status: {response.status_code}")
+        print(f"   📊 Response contains {len(response.data or {})} fields")
+        if hasattr(response, 'data') and response.data and 'data' in response.data:
+            null_fields = [k for k, v in response.data['data'].items() if v is None]
+            if null_fields:
+                print(f"   ⚠️  Response contains {len(null_fields)} NULL fields: [{', '.join(null_fields)}]")
+        
+        return response
     
     def perform_create(self, serializer):
         """Set pipeline and user when creating record"""
@@ -159,6 +189,114 @@ class RecordViewSet(viewsets.ModelViewSet):
             }, status=status.HTTP_201_CREATED)
         
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+    @extend_schema(
+        summary="Validate field value",
+        description="PHASE 3: Validate field value without saving for real-time validation feedback",
+        request={
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "object",
+                    "description": "Field data to validate"
+                },
+                "field_slug": {
+                    "type": "string",
+                    "description": "Slug of the field being validated"
+                },
+                "validate_only": {
+                    "type": "boolean",
+                    "description": "Flag indicating this is validation-only (always true)"
+                }
+            },
+            "required": ["data", "field_slug"]
+        }
+    )
+    @action(detail=True, methods=['post'], url_path='validate')
+    def validate_field(self, request, pk=None, pipeline_pk=None):
+        """
+        PHASE 3: Real-time field validation endpoint
+        
+        Validates field value without saving, returning validation results
+        for immediate user feedback during typing
+        """
+        print(f"🔍 PHASE 3 VALIDATION API: Received validation request")
+        print(f"   🎯 Record ID: {pk}")
+        print(f"   📋 Pipeline ID: {pipeline_pk}")
+        print(f"   📦 Request Data: {request.data}")
+        
+        try:
+            # Get the record and pipeline
+            record = self.get_object()
+            pipeline = record.pipeline
+            
+            # Extract validation parameters
+            field_data = request.data.get('data', {})
+            field_slug = request.data.get('field_slug')
+            
+            if not field_slug:
+                return Response({
+                    'is_valid': False,
+                    'errors': ['field_slug is required'],
+                    'warnings': [],
+                    'display_changes': []
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Merge field data with existing record data for context
+            validation_data = record.data.copy()
+            validation_data.update(field_data)
+            
+            print(f"   🔍 Validating field: {field_slug}")
+            print(f"   🎯 New value: {field_data.get(field_slug)}")
+            
+            # Use Phase 3 priority-based validation
+            validation_result = pipeline.validate_record_data_optimized(
+                validation_data, 
+                context='business_rules',  # Full business rules for validation-only
+                changed_field_slug=field_slug
+            )
+            
+            # Extract non-critical validation results if available
+            async_results = None
+            try:
+                import asyncio
+                # Try to get async validation results (warnings, display changes)
+                async_results = asyncio.run(
+                    pipeline.validate_non_critical_rules_async(validation_data, field_slug)
+                )
+                print(f"   🟡 Async validation results: {async_results}")
+            except Exception as e:
+                print(f"   ⚠️  Async validation failed: {e}")
+                async_results = {'warnings': [], 'display_changes': [], 'suggestions': []}
+            
+            # Format response
+            response_data = {
+                'is_valid': validation_result['is_valid'],
+                'errors': [],
+                'warnings': async_results.get('warnings', []) if async_results else [],
+                'display_changes': async_results.get('display_changes', []) if async_results else []
+            }
+            
+            # Extract field-specific errors
+            if not validation_result['is_valid']:
+                field_errors = validation_result['errors'].get(field_slug, [])
+                if isinstance(field_errors, list):
+                    response_data['errors'] = field_errors
+                else:
+                    response_data['errors'] = [str(field_errors)]
+            
+            print(f"   ✅ Validation complete: {response_data}")
+            
+            return Response(response_data, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            print(f"   ❌ Validation error: {e}")
+            return Response({
+                'is_valid': False,
+                'errors': [f'Validation failed: {str(e)}'],
+                'warnings': [],
+                'display_changes': []
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
     @extend_schema(
         summary="Bulk update records",
@@ -661,11 +799,16 @@ class GlobalSearchViewSet(viewsets.ReadOnlyModelViewSet):
         user = self.request.user
         permission_manager = PermissionManager(user)
         
-        # Get accessible pipeline IDs
-        accessible_pipelines = []
-        for pipeline in Pipeline.objects.filter(is_active=True):
-            if permission_manager.has_permission('action', 'records', 'read', str(pipeline.id)):
-                accessible_pipelines.append(pipeline.id)
+        # Check if user has global records access
+        if permission_manager.has_permission('action', 'records', 'read_all'):
+            # Admin users can see all records
+            accessible_pipelines = Pipeline.objects.filter(is_active=True).values_list('id', flat=True)
+        else:
+            # Regular users - filter by dynamic pipeline permissions
+            from authentication.models import UserTypePipelinePermission
+            accessible_pipelines = UserTypePipelinePermission.objects.filter(
+                user_type=user.user_type
+            ).values_list('pipeline_id', flat=True)
         
         return Record.objects.filter(
             pipeline_id__in=accessible_pipelines,

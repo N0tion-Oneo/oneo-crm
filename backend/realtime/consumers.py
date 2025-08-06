@@ -637,6 +637,17 @@ class BaseRealtimeConsumer(AsyncWebsocketConsumer):
             'user_id': event['user_id']
         }))
     
+    async def document_updated(self, event):
+        """Handle document updated event"""
+        data = event.get('data', {})
+        
+        # Send document update to the client
+        await self.send(text_data=json.dumps({
+            'type': 'document_updated',
+            'data': data,
+            'timestamp': data.get('timestamp')
+        }))
+    
     async def send_permission_update(self, event):
         """Handle permission change signals and broadcast to connected clients"""
         message = event.get('message', {})

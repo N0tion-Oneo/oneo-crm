@@ -389,7 +389,7 @@ class DuplicateAnalyticsViewSet(viewsets.ReadOnlyModelViewSet):
     ViewSet for viewing duplicate analytics (read-only)
     """
     serializer_class = DuplicateAnalyticsSerializer
-    permission_classes = [TenantMemberPermission]
+    permission_classes = [DuplicatePermission]
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['rule', 'date']
     ordering_fields = ['date', 'records_processed', 'duplicates_detected']

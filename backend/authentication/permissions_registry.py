@@ -91,20 +91,16 @@ PERMISSION_CATEGORIES = {
         'description': 'API access control and management',
         'category_display': 'API Access'
     },
-    'forms': {
-        'actions': ['create', 'read', 'update', 'delete', 'submit', 'configure'],
-        'description': 'Form management and submission',
-        'category_display': 'Form Management'
-    },
-    'validation_rules': {
-        'actions': ['create', 'read', 'update', 'delete', 'test'],
-        'description': 'Validation rule management and testing',
-        'category_display': 'Validation Rules'
-    },
+
     'duplicates': {
         'actions': ['create', 'read', 'update', 'delete', 'resolve', 'detect'],
         'description': 'Duplicate detection and resolution',
         'category_display': 'Duplicate Management'
+    },
+    'permissions': {
+        'actions': ['read', 'update', 'grant', 'revoke', 'bulk_edit'],
+        'description': 'Permission management and role assignment',
+        'category_display': 'Permission Management'
     }
 }
 
@@ -130,7 +126,9 @@ ACTION_DESCRIPTIONS = {
     'submit': 'Submit forms and data',
     'resolve': 'Resolve conflicts and duplicates',
     'detect': 'Detect patterns and anomalies',
-    'test': 'Test configurations and rules'
+    'test': 'Test configurations and rules',
+    'grant': 'Grant permissions to users and roles',
+    'revoke': 'Remove permissions from users and roles'
 }
 
 
@@ -241,9 +239,8 @@ def get_default_permissions_for_role(role_level: str) -> Dict[str, List[str]]:
             'ai_features': ['create', 'read', 'update', 'configure'],
             'reports': ['create', 'read', 'update', 'export'],
             'api_access': ['read', 'write'],
-            'forms': ['create', 'read', 'update', 'submit', 'configure'],
-            'validation_rules': ['create', 'read', 'update', 'test'],
-            'duplicates': ['create', 'read', 'update', 'resolve', 'detect']
+            'duplicates': ['create', 'read', 'update', 'resolve', 'detect'],
+            'permissions': ['read', 'update', 'grant', 'revoke']
         }
     
     elif role_level == 'user':
@@ -262,9 +259,8 @@ def get_default_permissions_for_role(role_level: str) -> Dict[str, List[str]]:
             'ai_features': ['read', 'update'],
             'reports': ['read', 'export'],
             'api_access': ['read', 'write'],
-            'forms': ['read', 'submit'],
-            'validation_rules': ['read'],
-            'duplicates': ['read', 'detect']
+            'duplicates': ['read', 'detect'],
+            'permissions': ['read']
         }
     
     elif role_level == 'viewer':
@@ -283,9 +279,8 @@ def get_default_permissions_for_role(role_level: str) -> Dict[str, List[str]]:
             'ai_features': ['read'],
             'reports': ['read', 'export'],
             'api_access': ['read'],
-            'forms': ['read'],
-            'validation_rules': ['read'],
-            'duplicates': ['read']
+            'duplicates': ['read'],
+            'permissions': ['read']
         }
     
     else:
@@ -296,8 +291,6 @@ def get_default_permissions_for_role(role_level: str) -> Dict[str, List[str]]:
             'records': ['read'],
             'business_rules': ['read'],
             'api_access': ['read'],
-            'forms': ['read'],
-            'validation_rules': ['read'],
             'duplicates': ['read']
         }
 
@@ -350,7 +343,6 @@ def get_dynamic_tenant_permissions(tenant) -> Dict[str, Any]:
             # Import models within tenant context to avoid import issues
             from pipelines.models import Pipeline
             from workflows.models import Workflow
-            from forms.models import FormTemplate
             
             # Add pipeline-specific permissions
             try:
@@ -404,30 +396,7 @@ def get_dynamic_tenant_permissions(tenant) -> Dict[str, Any]:
                 # Workflow model might not exist in some tenants
                 pass
             
-            # Add form-specific permissions
-            try:
-                forms = FormTemplate.objects.filter(is_active=True).select_related('created_by')
-                for form in forms:
-                    permission_key = f'form_{form.id}'
-                    dynamic_permissions[permission_key] = {
-                        'actions': ['read', 'submit', 'update', 'delete', 'configure'],
-                        'description': f'Permissions for {form.name} form',
-                        'category_display': f'Form: {form.name}',
-                        'resource_type': 'form',
-                        'resource_id': form.id,
-                        'is_dynamic': True,
-                        'parent_category': 'forms',
-                        'metadata': {
-                            'form_name': form.name,
-                            'form_type': getattr(form, 'form_type', 'standard'),
-                            'is_public': getattr(form, 'is_public', False),
-                            'created_by': form.created_by.email if form.created_by else None,
-                            'created_at': form.created_at.isoformat() if form.created_at else None,
-                        }
-                    }
-            except Exception:
-                # Form model might not exist in some tenants
-                pass
+
                 
     except Exception as e:
         # Log error but continue - tenant might not be properly set up
@@ -474,7 +443,7 @@ def get_permission_matrix_configuration(tenant) -> Dict[str, Any]:
     grouped_categories = {}
     
     # Always include potential resource types for auto-generated tabs
-    potential_resource_types = ['pipelines', 'workflows', 'forms', 'reports', 'dashboards']
+    potential_resource_types = ['pipelines', 'workflows', 'reports', 'dashboards']
     for resource_type in potential_resource_types:
         grouped_categories[resource_type] = {
             'items': [],
@@ -537,13 +506,11 @@ def get_permission_matrix_configuration(tenant) -> Dict[str, Any]:
             'category_dependencies': {
                 'records': ['pipelines.access'],
                 'fields': ['pipelines.access'],
-                'workflows': ['pipelines.access'],
-                'forms': ['pipelines.access']
+                'workflows': ['pipelines.access']
             },
             'dynamic_resource_limits': {
                 'max_pipeline_permissions': 50,
-                'max_workflow_permissions': 25,
-                'max_form_permissions': 25
+                'max_workflow_permissions': 25
             }
         }
     }

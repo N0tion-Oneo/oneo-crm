@@ -76,14 +76,31 @@ export const NumberFieldComponent: FieldComponent = {
       } else {
         const numValue = parseFloat(newValue)
         if (!isNaN(numValue)) {
-          // MULTITENANT SAFETY: Always send simple numbers
-          console.log(`🔢 NUMBER FIELD CHANGE:`, {
-            fieldName: field.name,
-            format: format,
-            sendingValue: numValue,
-            sendingType: 'number'
-          })
-          onChange(numValue)
+          // For currency fields with fixed currency code, send currency object
+          if (isCurrency && currencyCode) {
+            const currencyObject = {
+              amount: numValue,
+              currency: currencyCode
+            }
+            console.log(`💰 FIXED CURRENCY FIELD CHANGE:`, {
+              fieldName: field.name,
+              format: format,
+              amount: numValue,
+              currency: currencyCode,
+              sendingValue: currencyObject,
+              sendingType: 'currency_object'
+            })
+            onChange(currencyObject)
+          } else {
+            // For non-currency fields, send simple numbers
+            console.log(`🔢 NUMBER FIELD CHANGE:`, {
+              fieldName: field.name,
+              format: format,
+              sendingValue: numValue,
+              sendingType: 'number'
+            })
+            onChange(numValue)
+          }
         }
       }
     }
@@ -166,23 +183,43 @@ export const NumberFieldComponent: FieldComponent = {
               return 0
             })
             
+            // Sync currency state with external value changes (from backend saves)
+            useEffect(() => {
+              if (!isEditing) {
+                if (value && typeof value === 'object' && value.currency) {
+                  setCurrentCurrency(value.currency)
+                  if (value.amount !== undefined) {
+                    setCurrentAmount(value.amount)
+                  }
+                } else if (typeof value === 'number') {
+                  setCurrentAmount(value)
+                } else if (value === null || value === undefined) {
+                  setCurrentAmount(0)
+                }
+              }
+            }, [value, isEditing])
+            
             const updateCurrencyValue = (newAmount: number | null, newCurrency: string) => {
               if (newAmount === null) {
                 onChange(null)
               } else {
-                // MULTITENANT SAFETY: Always send simple numbers to avoid backend "unhashable dict" errors
-                // Backend validators are designed to handle simple numbers for currency fields
-                // Currency objects should only be used when backend explicitly expects them
-                console.log(`🔍 CURRENCY FIELD DEBUG:`, {
+                // Send currency object with both amount and currency for proper backend validation
+                const currencyObject = {
+                  amount: newAmount,
+                  currency: newCurrency
+                }
+                
+                console.log(`💰 CURRENCY FIELD CHANGE:`, {
                   fieldName: field.name,
                   format: format,
-                  currencyCode: currencyCode,
-                  sendingValue: newAmount,
-                  sendingType: 'number'
+                  amount: newAmount,
+                  currency: newCurrency,
+                  sendingValue: currencyObject,
+                  sendingType: 'currency_object'
                 })
                 
-                // Send simple number - backend can handle currency formatting on its side
-                onChange(newAmount)
+                // Send complete currency object so backend can validate and store both amount and currency
+                onChange(currencyObject)
               }
             }
             

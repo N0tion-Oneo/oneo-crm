@@ -98,10 +98,22 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
                 user_serializer = UserSerializer(self.user)
                 user_data = user_serializer.data
                 
-                # Add permissions and user type name to user data
-                user_permissions = {}
+                # Get user permissions using AsyncPermissionManager
+                try:
+                    from .permissions import SyncPermissionManager
+                    permission_manager = SyncPermissionManager(self.user)
+                    user_permissions = permission_manager.get_user_permissions()
+                    logger.info(f"Successfully retrieved permissions for JWT user {self.user.email}: {len(user_permissions)} categories")
+                except Exception as perm_error:
+                    logger.error(f"Permission retrieval error for JWT user {self.user.email}: {perm_error}")
+                    # Fallback to user type base permissions
+                    if self.user.user_type:
+                        user_permissions = self.user.user_type.base_permissions or {}
+                    else:
+                        user_permissions = {}
+                
+                # Add user type name
                 if self.user.user_type:
-                    user_permissions = self.user.user_type.base_permissions
                     user_data['user_type_name'] = self.user.user_type.name
                 else:
                     user_data['user_type_name'] = 'User'
@@ -174,10 +186,19 @@ def current_user_view(request):
     user_serializer = UserSerializer(request.user)
     user_data = user_serializer.data
     
-    # Get permissions and add them to user data
-    user_permissions = {}
-    if request.user.user_type:
-        user_permissions = request.user.user_type.base_permissions
+    # Get permissions using SyncPermissionManager
+    try:
+        from .permissions import SyncPermissionManager
+        permission_manager = SyncPermissionManager(request.user)
+        user_permissions = permission_manager.get_user_permissions()
+        logger.info(f"Successfully retrieved permissions for current user {request.user.email}: {len(user_permissions)} categories")
+    except Exception as perm_error:
+        logger.error(f"Permission retrieval error for current user {request.user.email}: {perm_error}")
+        # Fallback to user type base permissions
+        if request.user.user_type:
+            user_permissions = request.user.user_type.base_permissions or {}
+        else:
+            user_permissions = {}
     
     # Add permissions and user type name to user data
     user_data['permissions'] = user_permissions

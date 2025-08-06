@@ -38,9 +38,16 @@ api.interceptors.request.use(
     // Set dynamic base URL
     config.baseURL = getApiBaseUrl()
     
-    // Debug: Log the full URL being called
+    // Comprehensive API request logging
     const fullUrl = `${config.baseURL}${config.url}`
-    console.log('🌐 API Request:', config.method?.toUpperCase(), fullUrl)
+    console.log(`🟠 API STEP 1: HTTP Request Outgoing`)
+    console.log(`   🌐 ${config.method?.toUpperCase()} ${fullUrl}`)
+    if (config.data && config.method?.toLowerCase() === 'patch') {
+      console.log(`   📦 Request Body:`, JSON.stringify(config.data, null, 2))
+      if (config.data.data) {
+        console.log(`   🔑 Request contains ${Object.keys(config.data.data).length} field(s): [${Object.keys(config.data.data).join(', ')}]`)
+      }
+    }
     
     // Add JWT token if available
     const accessToken = Cookies.get('oneo_access_token')
@@ -57,7 +64,22 @@ api.interceptors.request.use(
 
 // Response interceptor to handle authentication errors and token refresh
 api.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    // Comprehensive API response logging  
+    console.log(`🟠 API STEP 2: HTTP Response Received`)
+    console.log(`   ✅ ${response.status} ${response.config.method?.toUpperCase()} ${response.config.url}`)
+    if (response.config.method?.toLowerCase() === 'patch' && response.data) {
+      console.log(`   📊 Response contains ${Object.keys(response.data || {}).length} fields`)
+      console.log(`   📋 Response data:`, response.data)
+      if (response.data.data) {
+        const nullFields = Object.entries(response.data.data).filter(([k, v]) => v === null).map(([k]) => k)
+        if (nullFields.length > 0) {
+          console.log(`   ⚠️  Response contains ${nullFields.length} NULL fields: [${nullFields.join(', ')}]`)
+        }
+      }
+    }
+    return response
+  },
   async (error) => {
     const originalRequest = error.config
 
@@ -397,57 +419,6 @@ export const globalOptionsApi = {
   getRecordDataOptions: () => api.get('/api/global-options/record_data_options/'),
 }
 
-// Forms API - New unified endpoints
-export const formsApi = {
-  // Validation rules
-  getValidationRules: () => api.get('/api/v1/validation-rules/'),
-  getValidationRule: (id: string) => api.get(`/api/v1/validation-rules/${id}/`),
-  createValidationRule: (data: any) => api.post('/api/v1/validation-rules/', data),
-  updateValidationRule: (id: string, data: any) => api.patch(`/api/v1/validation-rules/${id}/`, data),
-  deleteValidationRule: (id: string) => api.delete(`/api/v1/validation-rules/${id}/`),
-  testValidationRule: (id: string, data: any) => api.post(`/api/v1/validation-rules/${id}/test_rule/`, data),
-  
-  // Enhanced validation endpoints (using new metadata endpoint)
-  getRuleTypes: () => api.get('/api/v1/validation-metadata/?type=rule_types'),
-  getPatternLibrary: (category?: string) => api.get(`/api/v1/validation-metadata/?type=pattern_library${category ? `&category=${category}` : ''}`),
-  validateCrossField: (data: any) => api.post('/api/v1/validation-rules/validate_cross_field/', data),
-  testBusinessRule: (data: any) => api.post('/api/v1/validation-rules/test_business_rule/', data),
-  testRule: (data: any) => api.post('/api/v1/validation-metadata/', { action: 'test_rule', ...data }),
-  
-  // External API validation services
-  testExternalValidation: (data: any) => api.post('/api/v1/validation-rules/test_external/', data),
-  getValidationServices: () => api.get('/api/v1/validation-rules/external_services/'),
-  testApiConnection: (data: any) => api.post('/api/v1/validation-rules/test_connection/', data),
-  
-  // Form templates
-  getForms: () => api.get('/api/v1/forms/'),
-  getForm: (id: string) => api.get(`/api/v1/forms/${id}/`),
-  createForm: (data: any) => api.post('/api/v1/forms/', data),
-  updateForm: (id: string, data: any) => api.patch(`/api/v1/forms/${id}/`, data),
-  deleteForm: (id: string) => api.delete(`/api/v1/forms/${id}/`),
-  
-  // Form validation and submission
-  validateForm: (id: string, data: any) => api.post(`/api/v1/forms/${id}/validate_form/`, data),
-  submitForm: (id: string, data: any) => api.post(`/api/v1/forms/${id}/submit_form/`, data),
-  getFormAnalytics: (id: string, params?: any) => api.get(`/api/v1/forms/${id}/analytics/`, { params }),
-  
-  // Form field configurations
-  getFormFields: () => api.get('/api/v1/form-fields/'),
-  getFormField: (id: string) => api.get(`/api/v1/form-fields/${id}/`),
-  createFormField: (data: any) => api.post('/api/v1/form-fields/', data),
-  updateFormField: (id: string, data: any) => api.patch(`/api/v1/form-fields/${id}/`, data),
-  deleteFormField: (id: string) => api.delete(`/api/v1/form-fields/${id}/`),
-  
-  // Form submissions
-  getFormSubmissions: () => api.get('/api/v1/form-submissions/'),
-  getFormSubmission: (id: string) => api.get(`/api/v1/form-submissions/${id}/`),
-  
-  // Public forms (no authentication required)
-  getPublicForms: () => api.get('/api/v1/public-forms/'),
-  getPublicForm: (slug: string) => api.get(`/api/v1/public-forms/${slug}/`),
-  submitPublicForm: (slug: string, data: any) => api.post(`/api/v1/public-forms/${slug}/submit/`, data),
-}
-
 // Duplicates API - New unified endpoints
 export const duplicatesApi = {
   // Duplicate rules
@@ -472,6 +443,47 @@ export const duplicatesApi = {
   getDuplicateExclusions: () => api.get('/api/v1/duplicate-exclusions/'),
   createDuplicateExclusion: (data: any) => api.post('/api/v1/duplicate-exclusions/', data),
   deleteDuplicateExclusion: (id: string) => api.delete(`/api/v1/duplicate-exclusions/${id}/`),
+}
+
+// AI API client functions
+export const aiApi = {
+  // Jobs
+  jobs: {
+    list: (params?: any) => api.get('/api/v1/ai-jobs/', { params }),
+    create: (data: any) => api.post('/api/v1/ai-jobs/', data),
+    get: (id: string) => api.get(`/api/v1/ai-jobs/${id}/`),
+    retry: (id: string) => api.post(`/api/v1/ai-jobs/${id}/retry/`),
+    cancel: (id: string) => api.post(`/api/v1/ai-jobs/${id}/cancel/`),
+    analyze: (data: any) => api.post('/api/v1/ai-jobs/analyze/', data),
+    tenantConfig: () => api.get('/api/v1/ai-jobs/tenant_config/'),
+    updateTenantConfig: (data: any) => api.post('/api/v1/ai-jobs/update_tenant_config/', data),
+    deleteApiKey: (provider: string) => api.post('/api/v1/ai-jobs/delete_api_key/', { provider })
+  },
+  
+  // Usage Analytics
+  analytics: {
+    list: (params?: any) => api.get('/api/v1/ai-usage-analytics/', { params }),
+    tenantSummary: (params?: any) => api.get('/api/v1/ai-usage-analytics/tenant_summary/', { params }),
+    export: (params?: any) => api.get('/api/v1/ai-usage-analytics/export/', { params })
+  },
+  
+  // Prompt Templates
+  templates: {
+    list: (params?: any) => api.get('/api/v1/ai-prompt-templates/', { params }),
+    create: (data: any) => api.post('/api/v1/ai-prompt-templates/', data),
+    get: (id: string) => api.get(`/api/v1/ai-prompt-templates/${id}/`),
+    update: (id: string, data: any) => api.put(`/api/v1/ai-prompt-templates/${id}/`, data),
+    delete: (id: string) => api.delete(`/api/v1/ai-prompt-templates/${id}/`),
+    validate: (id: string, variables: any) => api.post(`/api/v1/ai-prompt-templates/${id}/validate_template/`, { variables }),
+    clone: (id: string) => api.post(`/api/v1/ai-prompt-templates/${id}/clone/`)
+  },
+  
+  // Embeddings & Semantic Search
+  embeddings: {
+    list: (params?: any) => api.get('/api/v1/ai-embeddings/', { params }),
+    search: (params: any) => api.get('/api/v1/ai-embeddings/search/', { params }),
+    generate: (data: any) => api.post('/api/v1/ai-embeddings/generate/', data)
+  }
 }
 
 export default api

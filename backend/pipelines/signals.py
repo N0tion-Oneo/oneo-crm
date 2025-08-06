@@ -1,82 +1,38 @@
 """
-Django signals for pipeline system
+Pipeline-related signal handlers
 """
-from django.db import models
+
+import logging
 from django.db.models.signals import post_save, pre_save, post_delete
 from django.dispatch import receiver
 from django.utils import timezone
-from asgiref.sync import sync_to_async
+from django.db import models
 import asyncio
-import logging
 
-from .models import Pipeline, Field, Record
-from .ai_processor import AIFieldManager
-from core.models import AuditLog
+from .models import Record, Pipeline, Field, AuditLog
 
+# AI processing now handled by ai/integrations.py
 logger = logging.getLogger(__name__)
-
-
-@receiver(pre_save, sender=Record)
-def capture_record_changes(sender, instance, **kwargs):
-    """Capture previous record data before saving for audit trail"""
-    if instance.pk:  # Only for updates, not new records
-        try:
-            old_instance = Record.objects.get(pk=instance.pk)
-            instance._old_data = old_instance.data
-            instance._old_status = old_instance.status
-        except Record.DoesNotExist:
-            instance._old_data = {}
-            instance._old_status = None
 
 
 @receiver(post_save, sender=Record)
 def handle_record_save(sender, instance, created, **kwargs):
     """Handle record save events"""
-    # Create audit log entry
-    try:
-        if created:
-            # New record created
-            AuditLog.objects.create(
-                user=instance.created_by,
-                action='created',
-                model_name='Record',
-                object_id=str(instance.id),
-                changes={
-                    'pipeline': instance.pipeline.name,
-                    'title': instance.title,
-                    'data': instance.data,
-                    'status': instance.status
-                }
-            )
-        else:
-            # Record updated - compare with old data
+    
+    # Create audit log for updates (not creates)
+    if not created and hasattr(instance, '_original_data'):
+        try:
+            original_data = getattr(instance, '_original_data', {})
+            current_data = instance.data
+            
             changes = {}
-            old_data = getattr(instance, '_old_data', {})
-            old_status = getattr(instance, '_old_status', None)
-            
-            # Check for data changes
-            if old_data != instance.data:
-                # Find specific field changes
-                field_changes = {}
-                all_fields = set(list(old_data.keys()) + list(instance.data.keys()))
-                for field in all_fields:
-                    old_value = old_data.get(field)
-                    new_value = instance.data.get(field)
-                    if old_value != new_value:
-                        field_changes[field] = {
-                            'old': old_value,
-                            'new': new_value
-                        }
-                
-                if field_changes:
-                    changes['data_changes'] = field_changes
-            
-            # Check for status changes
-            if old_status != instance.status:
-                changes['status'] = {
-                    'old': old_status,
-                    'new': instance.status
-                }
+            for key, new_value in current_data.items():
+                old_value = original_data.get(key)
+                if old_value != new_value:
+                    changes[key] = {
+                        'old': old_value,
+                        'new': new_value
+                    }
             
             # Only create audit log if there are actual changes
             if changes:
@@ -87,9 +43,8 @@ def handle_record_save(sender, instance, created, **kwargs):
                     object_id=str(instance.id),
                     changes=changes
                 )
-    
-    except Exception as e:
-        logger.error(f"Failed to create audit log for record {instance.id}: {e}")
+        except Exception as e:
+            logger.error(f"Failed to create audit log for record {instance.id}: {e}")
     
     # Update pipeline statistics
     if created:
@@ -98,42 +53,27 @@ def handle_record_save(sender, instance, created, **kwargs):
             last_record_created=timezone.now()
         )
     
-    # Trigger AI field processing for updates (async)
-    if not created and hasattr(instance, '_changed_fields'):
-        # This would be set by the model when fields change
-        changed_fields = getattr(instance, '_changed_fields', [])
-        if changed_fields:
-            # Schedule AI field updates asynchronously
-            try:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                loop.run_until_complete(
-                    AIFieldManager.trigger_field_updates(instance, changed_fields)
-                )
-                loop.close()
-            except Exception as e:
-                logger.error(f"Failed to trigger AI field updates: {e}")
+    # AI field updates now handled by Record._trigger_ai_updates()
+    # This is called automatically in the Record.save() method
 
 
 @receiver(post_delete, sender=Record)
 def handle_record_delete(sender, instance, **kwargs):
     """Handle record deletion"""
-    # Create audit log entry for deletion
+    # Create audit log
     try:
         AuditLog.objects.create(
-            user=getattr(instance, 'deleted_by', None),  # This would need to be set by the view
+            user=getattr(instance, 'deleted_by', None),
             action='deleted',
             model_name='Record',
             object_id=str(instance.id),
             changes={
-                'pipeline': instance.pipeline.name,
-                'title': instance.title,
-                'final_data': instance.data,
-                'final_status': instance.status
+                'deleted_data': instance.data,
+                'stage': instance.stage.name if instance.stage else None
             }
         )
     except Exception as e:
-        logger.error(f"Failed to create audit log for deleted record {instance.id}: {e}")
+        logger.error(f"Failed to create audit log for record deletion {instance.id}: {e}")
     
     # Update pipeline statistics
     Pipeline.objects.filter(id=instance.pipeline_id).update(
@@ -148,81 +88,43 @@ def handle_field_save(sender, instance, created, **kwargs):
     instance.pipeline._update_field_schema()
     instance.pipeline.save(update_fields=['field_schema'])
     
-    # If it's a new AI field, process existing records
-    if created and instance.is_ai_field:
-        # Schedule processing of existing records
+    # AI field processing now handled by unified AI system in ai/integrations.py
+
+
+@receiver(pre_save, sender=Record)
+def capture_record_state_before_save(sender, instance, **kwargs):
+    """Capture the record state before save for change tracking"""
+    if instance.pk:
         try:
-            records = instance.pipeline.records.filter(is_deleted=False)[:10]  # Process first 10
+            original = Record.objects.get(pk=instance.pk)
+            instance._original_data = original.data
+        except Record.DoesNotExist:
+            instance._original_data = {}
+    else:
+        instance._original_data = {}
+
+
+@receiver(post_save, sender=Record)
+def handle_stage_transition_trigger(sender, instance, created, **kwargs):
+    """Handle stage transition triggers for workflows"""
+    if not created and hasattr(instance, '_original_stage_id'):
+        original_stage_id = getattr(instance, '_original_stage_id')
+        current_stage_id = instance.stage_id
+        
+        if original_stage_id != current_stage_id:
+            # Stage transition occurred - this could trigger workflows
+            logger.info(f"Record {instance.id} moved from stage {original_stage_id} to {current_stage_id}")
             
-            for record in records:
-                try:
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                    
-                    from .ai_processor import AIFieldProcessor
-                    processor = AIFieldProcessor(instance, record)
-                    result = loop.run_until_complete(processor.process_field())
-                    
-                    if result is not None:
-                        record.data[instance.slug] = result
-                        record.save(update_fields=['data'])
-                    
-                    loop.close()
-                    
-                except Exception as e:
-                    logger.error(f"Failed to process AI field for record {record.id}: {e}")
-                    
-        except Exception as e:
-            logger.error(f"Failed to process existing records for new AI field: {e}")
+            # Workflow triggers would be handled here
+            # This will be implemented when we add workflow integration
 
 
-@receiver(post_delete, sender=Field)
-def handle_field_delete(sender, instance, **kwargs):
-    """Handle field deletion"""
-    # Update pipeline field schema cache
-    instance.pipeline._update_field_schema()
-    instance.pipeline.save(update_fields=['field_schema'])
-    
-    # Remove field data from all records
-    instance.pipeline.records.all().update(
-        data=models.F('data') - instance.slug
-    )
-
-
-@receiver(post_save, sender=Pipeline)
-def handle_pipeline_save(sender, instance, created, **kwargs):
-    """Handle pipeline save events"""
-    if created:
-        logger.info(f"New pipeline created: {instance.name} by {instance.created_by}")
-
-
-# Custom signal for AI field processing
-from django.dispatch import Signal
-
-ai_field_processed = Signal()
-
-@receiver(ai_field_processed)
-def handle_ai_field_processed(sender, field, record, result, **kwargs):
-    """Handle AI field processing completion"""
-    logger.info(f"AI field {field.name} processed for record {record.id}: {type(result)}")
-
-
-# Utility functions for async signal handling
-def run_async_signal(coro):
-    """Run async function in signal context"""
-    try:
-        loop = asyncio.get_event_loop()
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-    
-    try:
-        return loop.run_until_complete(coro)
-    except Exception as e:
-        logger.error(f"Async signal execution failed: {e}")
-        return None
-    finally:
+@receiver(pre_save, sender=Record)
+def capture_stage_before_save(sender, instance, **kwargs):
+    """Capture stage before save for transition detection"""
+    if instance.pk:
         try:
-            loop.close()
-        except:
-            pass
+            original = Record.objects.get(pk=instance.pk)
+            instance._original_stage_id = original.stage_id
+        except Record.DoesNotExist:
+            instance._original_stage_id = None

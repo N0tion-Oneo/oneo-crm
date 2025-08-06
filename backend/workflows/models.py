@@ -46,7 +46,7 @@ class WorkflowTriggerType(models.TextChoices):
 
 class WorkflowNodeType(models.TextChoices):
     """Available workflow node types"""
-    # AI Actions (leverage existing AIFieldProcessor)
+    # AI Actions (use ai.integrations.AIIntegrationManager)
     AI_PROMPT = 'ai_prompt', 'AI Prompt'
     AI_ANALYSIS = 'ai_analysis', 'AI Analysis'
     AI_CLASSIFICATION = 'ai_classification', 'AI Classification'

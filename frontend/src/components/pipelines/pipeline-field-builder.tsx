@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useState, useEffect } from 'react'
-import { fieldTypesApi, permissionsApi } from '@/lib/api'
+import { fieldTypesApi, permissionsApi, aiApi } from '@/lib/api'
 import { FieldConfigurationPanel } from './field-configuration-panel'
 import { ConditionalRulesBuilder } from './conditional-rules-builder'
 import { 
@@ -122,6 +122,7 @@ export function PipelineFieldBuilder({ pipelineId, fields, onFieldsChange, onSav
   const [loading, setLoading] = useState(true)
   const [showAddField, setShowAddField] = useState(false)
   const [editingField, setEditingField] = useState<string | null>(null)
+  const [tenantAiConfig, setTenantAiConfig] = useState<any>(null)
   
   // Load available field types and user types
   useEffect(() => {
@@ -170,6 +171,21 @@ export function PipelineFieldBuilder({ pipelineId, fields, onFieldsChange, onSav
     
     loadData()
   }, [])
+
+  // Load tenant AI configuration for AI field defaults
+  useEffect(() => {
+    const loadAiConfig = async () => {
+      try {
+        const aiConfigResponse = await aiApi.jobs.tenantConfig()
+        setTenantAiConfig(aiConfigResponse.data)
+      } catch (error) {
+        console.error('Failed to load tenant AI config:', error)
+        // Don't set fallback - AI field creation will fail if config is not available
+        setTenantAiConfig(null)
+      }
+    }
+    loadAiConfig()
+  }, [])
   
   // Add new field with new architecture
   const addField = (fieldType: FieldType) => {
@@ -211,7 +227,7 @@ export function PipelineFieldBuilder({ pipelineId, fields, onFieldsChange, onSav
       },
       ai_config: fieldType.key === 'ai_generated' ? {
         prompt: 'Analyze this record: {*}', // Default prompt to prevent validation error
-        model: 'gpt-4.1-mini',
+        model: tenantAiConfig?.default_model || '', // Require explicit model selection if config not loaded
         temperature: 0.3,
         output_type: 'text',
         enable_tools: false,

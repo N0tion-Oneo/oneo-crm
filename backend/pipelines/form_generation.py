@@ -5,7 +5,7 @@ Generates forms based on pipeline fields with different modes
 
 from typing import Dict, List, Any, Optional
 from dataclasses import dataclass
-from pipelines.models import Pipeline, Field
+from .models import Pipeline, Field
 
 
 @dataclass

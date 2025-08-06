@@ -12,15 +12,14 @@ from .views.relationships import RelationshipViewSet, RelationshipTypeViewSet
 from .views.auth import AuthViewSet
 from .views.field_types import FieldTypeViewSet
 from .views.global_options import GlobalOptionsViewSet
-from .views.forms import (
-    ValidationRuleViewSet, FormTemplateViewSet, FormFieldConfigurationViewSet
-)
+
 from .views.duplicates import (
     DuplicateRuleViewSet, DuplicateMatchViewSet, DuplicateAnalyticsViewSet,
     DuplicateExclusionViewSet
 )
 from .views.dynamic_forms import DynamicFormViewSet, PublicFormViewSet, SharedRecordViewSet
 from relationships.views import AssignmentViewSet
+from .views.ai import AIJobViewSet, AIUsageAnalyticsViewSet, AIPromptTemplateViewSet, AIEmbeddingViewSet
 
 # Import new API modules
 from .views.workflows import (
@@ -71,11 +70,6 @@ router.register(r'auth', AuthViewSet, basename='auth')
 router.register(r'field-types', FieldTypeViewSet, basename='field-types')
 router.register(r'global-options', GlobalOptionsViewSet, basename='global-options')
 
-# Forms and validation endpoints (simplified)
-router.register(r'validation-rules', ValidationRuleViewSet, basename='validation-rule')
-router.register(r'forms', FormTemplateViewSet, basename='form')
-router.register(r'form-fields', FormFieldConfigurationViewSet, basename='form-field')
-
 # Duplicates endpoints
 router.register(r'duplicate-rules', DuplicateRuleViewSet, basename='duplicate-rule')
 router.register(r'duplicate-matches', DuplicateMatchViewSet, basename='duplicate-match')
@@ -120,6 +114,12 @@ router.register(r'read-tracking', ReadTrackingViewSet, basename='read-tracking')
 router.register(r'response-tracking', ResponseTrackingViewSet, basename='response-tracking')
 router.register(r'campaign-tracking', CampaignTrackingViewSet, basename='campaign-tracking')
 router.register(r'performance-metrics', PerformanceMetricsViewSet, basename='performance-metrics')
+
+# AI endpoints (tenant-isolated)
+router.register(r'ai-jobs', AIJobViewSet, basename='ai-job')
+router.register(r'ai-usage-analytics', AIUsageAnalyticsViewSet, basename='ai-usage-analytics')
+router.register(r'ai-prompt-templates', AIPromptTemplateViewSet, basename='ai-prompt-template')
+router.register(r'ai-embeddings', AIEmbeddingViewSet, basename='ai-embedding')
 
 # Create nested routers for pipeline-specific endpoints
 pipelines_router = routers.NestedDefaultRouter(router, r'pipelines', lookup='pipeline')

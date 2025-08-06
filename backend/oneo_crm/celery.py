@@ -48,6 +48,7 @@ app.conf.update(
     
     # Message broker (Redis)
     broker_url='redis://localhost:6379/0',
+    broker_connection_retry_on_startup=True,
     
     # Task serialization
     task_serializer='json',
@@ -57,6 +58,12 @@ app.conf.update(
     # Timezone settings
     timezone='UTC',
     enable_utc=True,
+    
+    # Django-tenants compatibility settings
+    worker_hijack_root_logger=False,
+    worker_prefetch_multiplier=1,
+    task_acks_late=True,
+    worker_max_tasks_per_child=50,
     
     # Task routing and limits
     task_routes={
@@ -69,7 +76,10 @@ app.conf.update(
         
         # AI processing tasks
         'authentication.tasks.process_ai_response': {'queue': 'ai_processing'},
-        'pipelines.tasks.process_ai_field': {'queue': 'ai_processing'},
+        # OLD: 'pipelines.tasks.process_ai_field' - replaced by ai.tasks.process_ai_job
+        'ai.tasks.process_ai_job': {'queue': 'ai_processing'},
+        'ai.tasks.cleanup_old_jobs': {'queue': 'maintenance'},
+        'ai.tasks.retry_failed_jobs': {'queue': 'ai_processing'},
         
         # Real-time communication tasks
         'communications.tasks.send_realtime_message': {'queue': 'realtime'},
@@ -81,8 +91,6 @@ app.conf.update(
     },
     
     # Worker configuration
-    worker_max_tasks_per_child=1000,
-    worker_prefetch_multiplier=1,
     
     # Task execution limits
     task_soft_time_limit=300,  # 5 minutes soft limit
@@ -91,9 +99,6 @@ app.conf.update(
     # Result expiration
     result_expires=3600,  # 1 hour
     
-    # Task acknowledgments
-    task_acks_late=True,
-    worker_disable_rate_limits=False,
     
     # Monitoring
     worker_send_task_events=True,

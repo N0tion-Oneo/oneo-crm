@@ -48,11 +48,8 @@ export default function PipelinesPage() {
   const { user, isLoading: authLoading } = useAuth()
   const router = useRouter()
   const [pipelines, setPipelines] = useState<Pipeline[]>([])
-  const [pipelinePermissions, setPipelinePermissions] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
-  const [permissionsLoaded, setPermissionsLoaded] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
-  const [showAllPipelines, setShowAllPipelines] = useState(false) // Debug flag
   
   // New pipeline creation states
   const [showTemplateLoader, setShowTemplateLoader] = useState(false)
@@ -100,58 +97,25 @@ export default function PipelinesPage() {
     true // Always enabled
   )
 
-  // Check if user has access to a pipeline
-  const hasPipelineAccess = (pipelineId: number): boolean => {
-    // If no user, deny access
-    if (!user) return false
-    
-    // If permissions haven't loaded yet, don't show any pipelines (prevents race condition)
-    if (!permissionsLoaded) {
-      return false
-    }
-    
-    // If no pipeline permissions exist after loading, allow access (fallback for development)
-    if (pipelinePermissions.length === 0) {
-      return true
-    }
-    
-    // Get user type ID - handle different possible structures
-    const userTypeId = user.userType?.id || (user as any).user_type?.toString() || (user as any).user_type_id?.toString()
-    
-    if (!userTypeId) {
-      console.warn('No user type ID found for user:', user)
-      return false
-    }
-    
-    // Check if user has explicit permission for this pipeline
-    // If a permission record exists, the user has some level of access
-    // Use == for type coercion (backend sends numbers, frontend has strings)
-    const hasExplicitAccess = pipelinePermissions.some(
-      perm => perm.user_type == userTypeId && perm.pipeline_id == pipelineId
-    )
-    
-    return hasExplicitAccess
-  }
 
 
-  // Load pipelines and permissions
+
+  // Load pipelines
   useEffect(() => {
     const loadData = async () => {
       try {
         setLoading(true)
         
-        // Load pipelines and pipeline permissions in parallel
-        const [pipelinesResponse, permissionsResponse] = await Promise.all([
-          pipelinesApi.list(),
-          api.get('/auth/user-type-pipeline-permissions/').catch(() => ({ data: { results: [] } }))
-        ])
-        
+        // Just load pipelines - backend will filter based on user permissions
+        const pipelinesResponse = await pipelinesApi.list()
         const pipelinesData = pipelinesResponse.data.results || pipelinesResponse.data || []
-        const permissionsData = permissionsResponse.data.results || permissionsResponse.data || []
+        
+        // Debug logging
+        console.log('🔍 Pipelines Data Loaded (Backend Filtered):')
+        console.log(`   Total Pipelines: ${pipelinesData.length}`)
+        console.log('   Pipeline List:', pipelinesData.map((p: any) => ({ id: p.id, name: p.name })))
         
         setPipelines(pipelinesData)
-        setPipelinePermissions(permissionsData)
-        setPermissionsLoaded(true)
         
       } catch (error: any) {
         console.error('Failed to load pipelines data:', error)
@@ -183,7 +147,6 @@ export default function PipelinesPage() {
         }, 5000)
       } finally {
         setLoading(false)
-        setPermissionsLoaded(true) // Always set to true to prevent UI being stuck
       }
     }
 
@@ -256,27 +219,11 @@ export default function PipelinesPage() {
   }
 
 
-  // Filter pipelines based on search and access permissions
+  // Filter pipelines based on search only - backend handles permission filtering
   const filteredPipelines = pipelines.filter(pipeline => {
-    // Debug mode: show all pipelines
-    if (showAllPipelines) {
-      return searchQuery === '' ||
-        pipeline.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        pipeline.description.toLowerCase().includes(searchQuery.toLowerCase())
-    }
-    
-    // First check access permissions
-    const hasAccess = hasPipelineAccess(pipeline.id)
-    if (!hasAccess) {
-      return false
-    }
-    
-    // Then check search criteria
-    const matchesSearch = searchQuery === '' ||
+    return searchQuery === '' ||
       pipeline.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       pipeline.description.toLowerCase().includes(searchQuery.toLowerCase())
-    
-    return matchesSearch
   })
   
   // Pipeline filtering completed
@@ -479,7 +426,7 @@ export default function PipelinesPage() {
               <Database className="w-5 h-5 text-primary mr-2" />
               <div>
                 <div className="text-2xl font-bold text-gray-900 dark:text-white">
-                  {pipelines.filter(p => hasPipelineAccess(p.id)).length}
+                  {pipelines.length}
                 </div>
                 <div className="text-sm text-gray-500 dark:text-gray-400">
                   Accessible Pipelines
@@ -493,7 +440,7 @@ export default function PipelinesPage() {
               <Activity className="w-5 h-5 text-green-500 mr-2" />
               <div>
                 <div className="text-2xl font-bold text-gray-900 dark:text-white">
-                  {pipelines.filter(p => hasPipelineAccess(p.id) && p.visibility === 'public').length}
+                  {pipelines.filter(p => p.visibility === 'public').length}
                 </div>
                 <div className="text-sm text-gray-500 dark:text-gray-400">
                   Public Accessible
@@ -507,7 +454,7 @@ export default function PipelinesPage() {
               <Users className="w-5 h-5 text-blue-500 mr-2" />
               <div>
                 <div className="text-2xl font-bold text-gray-900 dark:text-white">
-                  {pipelines.filter(p => hasPipelineAccess(p.id)).reduce((sum, p) => sum + (p.record_count || 0), 0)}
+                  {pipelines.reduce((sum, p) => sum + (p.record_count || 0), 0)}
                 </div>
                 <div className="text-sm text-gray-500 dark:text-gray-400">
                   Total Records
@@ -523,7 +470,7 @@ export default function PipelinesPage() {
                 <div className="text-2xl font-bold text-gray-900 dark:text-white">
                   {pipelines.filter(p => {
                     const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
-                    return hasPipelineAccess(p.id) && new Date(p.created_at) > weekAgo
+                    return new Date(p.created_at) > weekAgo
                   }).length}
                 </div>
                 <div className="text-sm text-gray-500 dark:text-gray-400">

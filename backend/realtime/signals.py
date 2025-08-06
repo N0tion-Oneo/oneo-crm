@@ -103,13 +103,22 @@ if MODELS_AVAILABLE:
             
             # Handle normal creation/update (not soft deletion)
             if not instance.is_deleted:  # Only broadcast if record is not deleted
+                print(f"🟢 DATABASE STEP 4: WebSocket Broadcasting")
+                print(f"   📡 Broadcasting record {instance.id} update")
+                print(f"   📦 Data being broadcast: {instance.data}")
+                if instance.data:
+                    print(f"   🔑 Broadcast contains {len(instance.data)} field(s): [{', '.join(instance.data.keys())}]")
+                    null_fields = [k for k, v in instance.data.items() if v is None]
+                    if null_fields:
+                        print(f"   ⚠️  Broadcast contains {len(null_fields)} NULL fields: [{', '.join(null_fields)}]")
+                
                 # Create event data
                 event_data = {
                     'type': 'record_created' if created else 'record_updated',
                     'record_id': str(instance.id),
                     'pipeline_id': str(instance.pipeline_id),
                     'title': getattr(instance, 'title', f'Record {instance.id}'),
-                    'data': instance.data,
+                    'data': instance.data,  # Use the actual saved data, not cleaned data
                     'updated_at': instance.updated_at.isoformat() if instance.updated_at else None,
                     'updated_by': {
                         'id': instance.updated_by.id if instance.updated_by else None,
@@ -118,6 +127,10 @@ if MODELS_AVAILABLE:
                     'new_count': new_record_count,  # Add the updated count
                     'timestamp': time.time()
                 }
+                
+                print(f"   🔍 SIGNAL DEBUG: Broadcasting data vs saved data")
+                print(f"   📡 Broadcasting: {instance.data}")
+                print(f"   🎯 Should contain all saved fields including new ones")
                 
                 # Broadcast to pipeline subscribers
                 pipeline_group = f"pipeline_records_{instance.pipeline_id}"

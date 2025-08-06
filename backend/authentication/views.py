@@ -124,13 +124,17 @@ class LoginView(View):
             # Serialize user data
             user_serializer = UserSerializer(user)
             
-            # Get user permissions (temporarily disabled to isolate authentication issue)
-            # TODO: Fix AsyncPermissionManager async context issue
-            permissions = {
-                'pipelines': ['create', 'read', 'update', 'delete'],  # Temporary admin permissions
-                'users': ['create', 'read', 'update', 'delete'],
-                'system': ['full_access']
-            }
+            try:
+                permission_manager = AsyncPermissionManager(user)
+                permissions = await permission_manager.get_user_permissions()
+                logger.info(f"Successfully retrieved permissions for user {user.email}: {len(permissions)} categories")
+            except Exception as perm_error:
+                logger.error(f"Permission retrieval error for user {user.email}: {perm_error}")
+                # Fallback to user type base permissions
+                if user.user_type:
+                    permissions = user.user_type.base_permissions or {}
+                else:
+                    permissions = {'users': ['read']}  # Minimal access
 
             return JsonResponse({
                 'message': 'Login successful',

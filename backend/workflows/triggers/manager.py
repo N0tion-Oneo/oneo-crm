@@ -3,6 +3,8 @@ Trigger Manager - Central coordinator for all trigger processing
 """
 import asyncio
 import logging
+import threading
+import queue
 from typing import Dict, Any, List, Optional, Type
 from datetime import datetime
 from django.utils import timezone
@@ -38,8 +40,71 @@ class TriggerManager:
         # Track original record values for change detection
         self.original_record_values = {}
         
+        # Event queue for signal-triggered events
+        self.signal_event_queue = queue.Queue()
+        self._signal_processor_thread = None
+        self._signal_processor_running = False
+        
         # Initialize signal handlers
         self._setup_signal_handlers()
+        
+        # Start background signal processor
+        self._start_signal_processor()
+    
+    def _start_signal_processor(self):
+        """Start background thread to process signal events"""
+        if not self._signal_processor_running:
+            self._signal_processor_running = True
+            self._signal_processor_thread = threading.Thread(
+                target=self._signal_processor_worker,
+                daemon=True,
+                name="TriggerSignalProcessor"
+            )
+            self._signal_processor_thread.start()
+            logger.info("Started trigger signal processor thread")
+    
+    def _signal_processor_worker(self):
+        """Background worker that processes signal events"""
+        logger.info("Trigger signal processor worker started")
+        
+        while self._signal_processor_running:
+            try:
+                # Get event from queue (blocking with timeout)
+                try:
+                    event = self.signal_event_queue.get(timeout=1.0)
+                except queue.Empty:
+                    continue
+                
+                # Process the event asynchronously
+                try:
+                    # Create new event loop for this thread
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    
+                    # Run the async processing
+                    loop.run_until_complete(self.process_event(event))
+                    
+                    # Clean up the loop
+                    loop.close()
+                    
+                except Exception as e:
+                    logger.error(f"Failed to process event {event.event_type}: {e}")
+                finally:
+                    # Mark task as done
+                    self.signal_event_queue.task_done()
+                    
+            except Exception as e:
+                logger.error(f"Signal processor worker error: {e}")
+        
+        logger.info("Trigger signal processor worker stopped")
+    
+    def stop_signal_processor(self):
+        """Stop the background signal processor"""
+        if self._signal_processor_running:
+            self._signal_processor_running = False
+            if self._signal_processor_thread:
+                self._signal_processor_thread.join(timeout=5.0)
+            logger.info("Stopped trigger signal processor")
     
     def _setup_signal_handlers(self):
         """Setup Django signal handlers for automatic trigger detection"""
@@ -79,8 +144,8 @@ class TriggerManager:
                     timestamp=timezone.now()
                 )
                 
-                # Queue for processing
-                asyncio.create_task(self.process_event(event))
+                # Queue for background processing
+                self.signal_event_queue.put(event)
                 
                 # Clean up original values
                 if not created and instance.pk in self.original_record_values:

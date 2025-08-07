@@ -37,12 +37,12 @@ PERMISSION_CATEGORIES = {
         'category_display': 'Pipeline Management'
     },
     'records': {
-        'actions': ['create', 'read', 'update', 'delete', 'bulk_edit', 'export', 'import'],
+        'actions': ['create', 'read', 'update', 'delete', 'export', 'import'],
         'description': 'Record data management and operations',
         'category_display': 'Record Management'
     },
     'fields': {
-        'actions': ['create', 'read', 'update', 'delete', 'configure'],
+        'actions': ['create', 'read', 'update', 'delete', 'recover', 'migrate'],
         'description': 'Field definition and configuration management',
         'category_display': 'Field Management'
     },
@@ -98,7 +98,7 @@ PERMISSION_CATEGORIES = {
         'category_display': 'Duplicate Management'
     },
     'permissions': {
-        'actions': ['read', 'update', 'grant', 'revoke', 'bulk_edit'],
+        'actions': ['read', 'update'],
         'description': 'Permission management and role assignment',
         'category_display': 'Permission Management'
     }
@@ -117,18 +117,15 @@ ACTION_DESCRIPTIONS = {
     'configure': 'Modify configuration settings',
     'send': 'Send messages and communications',
     'traverse': 'Navigate through relationships',
-    'bulk_edit': 'Perform bulk operations',
     'impersonate': 'Act on behalf of other users',
     'assign_roles': 'Assign roles to users',
     'access': 'Basic access to resources',
     'full_access': 'Complete administrative access',
     'write': 'Create and modify content',
-    'submit': 'Submit forms and data',
+    'recover': 'Restore deleted or archived items',
+    'migrate': 'Migrate data structure and schema',
     'resolve': 'Resolve conflicts and duplicates',
     'detect': 'Detect patterns and anomalies',
-    'test': 'Test configurations and rules',
-    'grant': 'Grant permissions to users and roles',
-    'revoke': 'Remove permissions from users and roles'
 }
 
 
@@ -228,8 +225,8 @@ def get_default_permissions_for_role(role_level: str) -> Dict[str, List[str]]:
             'users': ['create', 'read', 'update', 'assign_roles'],
             'user_types': ['read'],
             'pipelines': ['create', 'read', 'update', 'clone', 'export'],
-            'records': ['create', 'read', 'update', 'bulk_edit', 'export'],
-            'fields': ['create', 'read', 'update', 'configure'],
+            'records': ['create', 'read', 'update', 'export'],
+            'fields': ['create', 'read', 'update', 'recover'],
             'relationships': ['create', 'read', 'update', 'traverse'],
             'workflows': ['create', 'read', 'update', 'execute', 'clone', 'export'],
             'business_rules': ['create', 'read', 'update'],

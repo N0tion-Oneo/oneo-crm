@@ -190,6 +190,12 @@ export function RecordDetailDrawer({
   const { isConnected } = useDocumentSubscription(
     record?.id || '',
     (message: RealtimeMessage) => {
+      console.log('🎯 Record drawer received message:', {
+        type: message.type,
+        recordId: record?.id,
+        messageData: message.data,
+        messagePayload: message.payload
+      })
       if (message.type === 'record_update' && message.payload.record_id === record?.id) {
         // Update form data with real-time changes from other users
         if (message.payload.field_name && message.payload.value !== undefined) {
@@ -204,6 +210,30 @@ export function RecordDetailDrawer({
             hasValue: message.payload.value !== undefined,
             fullPayload: message.payload
           })
+        }
+      } else if (message.type === 'activity_update') {
+        // Handle real-time activity updates
+        console.log('🎯 Processing activity update')
+        const activityData = message.data || message.payload
+        console.log('🎯 Activity data:', activityData)
+        console.log('🎯 Record ID comparison:', {
+          activityRecordId: activityData?.record_id,
+          currentRecordId: record?.id,
+          recordIdType: typeof activityData?.record_id,
+          currentRecordIdType: typeof record?.id,
+          matches: activityData?.record_id === record?.id
+        })
+        if (activityData && String(activityData.record_id) === String(record?.id)) {
+          console.log('✅ Adding activity to list:', activityData)
+          // Add new activity to the beginning of the activities list
+          setActivities(prev => {
+            console.log('🎯 Previous activities count:', prev.length)
+            const newActivities = [activityData, ...prev]
+            console.log('🎯 New activities count:', newActivities.length)
+            return newActivities
+          })
+        } else {
+          console.log('❌ Activity update ignored - record ID mismatch or missing data')
         }
       }
     },

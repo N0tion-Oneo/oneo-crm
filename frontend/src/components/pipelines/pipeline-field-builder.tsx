@@ -4,6 +4,8 @@ import React, { useState, useEffect } from 'react'
 import { fieldTypesApi, permissionsApi, aiApi } from '@/lib/api'
 import { FieldConfigurationPanel } from './field-configuration-panel'
 import { ConditionalRulesBuilder } from './conditional-rules-builder'
+import { FieldManagementPanel } from './field-management-panel'
+import { FieldStatusIndicator } from './field-status-indicator'
 import { 
   Plus, 
   Trash2, 
@@ -57,6 +59,21 @@ interface PipelineField {
   ai_config?: Record<string, any>       // For AI fields only
   form_validation_rules?: Record<string, any> // Form validation rules
   
+  // Field lifecycle management
+  is_deleted?: boolean
+  deleted_at?: string
+  deleted_by?: string
+  scheduled_for_hard_delete?: string
+  hard_delete_reason?: string
+  deletion_status?: {
+    status: 'active' | 'soft_deleted' | 'scheduled_for_hard_delete'
+    deleted_at?: string
+    deleted_by?: string
+    days_remaining?: number
+    hard_delete_date?: string
+    reason?: string
+  }
+  
   // Legacy support (remove these gradually)
   label?: string                  // Maps to display_name
   type?: string                   // Maps to field_type
@@ -96,6 +113,12 @@ const FIELD_ICONS: Record<string, any> = {
   ai_generated: Bot,
 }
 
+// Helper function to get field icon component
+const getFieldIcon = (fieldType: string) => {
+  const IconComponent = FIELD_ICONS[fieldType] || Type
+  return <IconComponent className="w-5 h-5 text-gray-500" />
+}
+
 // Helper function to extract required stages from field business rules
 const getRequiredStages = (field: PipelineField): string[] => {
   const stageReqs = field.business_rules?.stage_requirements || {}
@@ -123,6 +146,7 @@ export function PipelineFieldBuilder({ pipelineId, fields, onFieldsChange, onSav
   const [showAddField, setShowAddField] = useState(false)
   const [editingField, setEditingField] = useState<string | null>(null)
   const [tenantAiConfig, setTenantAiConfig] = useState<any>(null)
+  const [managingField, setManagingField] = useState<PipelineField | null>(null)
   
   // Load available field types and user types
   useEffect(() => {
@@ -479,7 +503,12 @@ export function PipelineFieldBuilder({ pipelineId, fields, onFieldsChange, onSav
                     {/* Field Status Badges */}
                     <div className="flex flex-wrap gap-1 mb-3">
                       
-                      {/* Legacy required field support - REMOVED: Use stage-specific badges only */}
+                      {/* Field Lifecycle Status */}
+                      <FieldStatusIndicator 
+                        status={field.deletion_status?.status || 'active'}
+                        deletionInfo={field.deletion_status}
+                        size="sm"
+                      />
                       
                       {/* Stage-specific required badges */}
                       {getRequiredStages(field).map((stage) => (
@@ -562,6 +591,17 @@ export function PipelineFieldBuilder({ pipelineId, fields, onFieldsChange, onSav
                         <button
                           onClick={(e) => {
                             e.stopPropagation()
+                            setManagingField(field)
+                          }}
+                          className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-md transition-colors"
+                          title="Manage field lifecycle"
+                        >
+                          <Shield className="w-3 h-3" />
+                        </button>
+                        
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation()
                             deleteField(field.id)
                           }}
                           className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-md transition-colors"
@@ -627,6 +667,19 @@ export function PipelineFieldBuilder({ pipelineId, fields, onFieldsChange, onSav
           availableFieldTypes={availableFieldTypes}
           onAddField={addField}
           onClose={() => setShowAddField(false)}
+        />
+      )}
+      
+      {/* Field Management Panel */}
+      {managingField && (
+        <FieldManagementPanel
+          field={managingField}
+          pipelineId={pipelineId}
+          onFieldUpdate={(updatedField) => {
+            onFieldsChange(fields.map(f => f.id === updatedField.id ? updatedField : f))
+            setManagingField(null)
+          }}
+          onClose={() => setManagingField(null)}
         />
       )}
     </div>
@@ -920,27 +973,54 @@ function BasicFieldSettings({
           
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-              Field Type *
+              Field Type {!field.id && '*'}
             </label>
-            <select
-              value={field.field_type || field.type || ''}
-              onChange={(e) => onUpdate({ 
-                field_type: e.target.value,
-                type: e.target.value, // Legacy support
-                is_ai_field: e.target.value === 'ai_generated'
-              })}
-              className="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary dark:bg-gray-700 dark:text-white transition-colors"
-            >
-              {availableFieldTypes.map(type => (
-                <option key={type.key} value={type.key}>
-                  {type.label}
-                </option>
-              ))}
-            </select>
-            {fieldType && (
-              <p className="text-sm text-gray-500 dark:text-gray-400 mt-2 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
-                {fieldType.description}
-              </p>
+            
+            {/* For new fields: show dropdown selector */}
+            {!field.id ? (
+              <>
+                <select
+                  value={field.field_type || field.type || ''}
+                  onChange={(e) => onUpdate({ 
+                    field_type: e.target.value,
+                    type: e.target.value, // Legacy support
+                    is_ai_field: e.target.value === 'ai_generated'
+                  })}
+                  className="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary dark:bg-gray-700 dark:text-white transition-colors"
+                >
+                  <option value="">Select field type...</option>
+                  {availableFieldTypes.map(type => (
+                    <option key={type.key} value={type.key}>
+                      {type.label}
+                    </option>
+                  ))}
+                </select>
+                {fieldType && (
+                  <p className="text-sm text-gray-500 dark:text-gray-400 mt-2 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
+                    {fieldType.description}
+                  </p>
+                )}
+              </>
+            ) : (
+              /* For existing fields: display only with management hint */
+              <>
+                <div className="px-4 py-3 bg-gray-50 dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg flex items-center justify-between">
+                  <div className="flex items-center">
+                    {fieldType && getFieldIcon(field.field_type || field.type || '')}
+                    <span className="ml-2 text-gray-900 dark:text-white font-medium">
+                      {fieldType?.label || field.field_type || field.type}
+                    </span>
+                  </div>
+                  <span className="text-xs text-gray-500 dark:text-gray-400">
+                    Use the shield icon to change type
+                  </span>
+                </div>
+                {fieldType && (
+                  <p className="text-sm text-gray-500 dark:text-gray-400 mt-2 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
+                    {fieldType.description}
+                  </p>
+                )}
+              </>
             )}
           </div>
           

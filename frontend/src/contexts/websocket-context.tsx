@@ -4,8 +4,9 @@ import React, { createContext, useContext, useEffect, useRef, useState, useCallb
 import { useAuth } from '@/features/auth/context'
 
 export interface RealtimeMessage {
-  type: 'record_create' | 'record_update' | 'record_delete' | 'pipeline_update' | 'user_presence' | 'field_lock' | 'field_unlock' | 'permission_update'
+  type: 'record_create' | 'record_update' | 'record_delete' | 'pipeline_update' | 'user_presence' | 'field_lock' | 'field_unlock' | 'permission_update' | 'activity_update'
   payload: any
+  data?: any // Backend sends activity data in 'data' field for activity_update messages
   user?: {
     id: string
     name: string
@@ -228,6 +229,7 @@ export function WebSocketProvider({ children, autoConnect = true }: WebSocketPro
     }
     
     // Broadcast to subscribers
+    
     for (const subscription of subscriptionsRef.current.values()) {
       // Check if message is relevant to this subscription
       const isRelevant = 
@@ -237,7 +239,9 @@ export function WebSocketProvider({ children, autoConnect = true }: WebSocketPro
         message.type === 'pipeline_update' && subscription.channel === 'pipeline_updates' ||
         message.type === 'user_presence' && subscription.channel === 'user_presence' ||
         message.type === 'permission_update' && subscription.channel.startsWith('permission') ||
+        message.type === 'activity_update' && subscription.channel.startsWith('document_') ||
         subscription.channel === 'pipelines_overview' // Special case for overview page
+      
       
       if (isRelevant) {
         try {
@@ -263,7 +267,7 @@ export function WebSocketProvider({ children, autoConnect = true }: WebSocketPro
       wsRef.current = new WebSocket(wsUrl)
 
       wsRef.current.onopen = () => {
-        console.log('✅ Centralized WebSocket connected')
+        console.log('✅ WebSocket connected successfully')
         setIsConnected(true)
         setConnectionStatus('connected')
         reconnectAttempts.current = 0

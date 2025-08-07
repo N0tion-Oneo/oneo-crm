@@ -152,15 +152,7 @@ if MODELS_AVAILABLE:
                     event_data
                 )
                 
-                # Store activity
-                store_activity_event({
-                    'type': 'record_activity',
-                    'action': 'created' if created else 'updated',
-                    'record_id': str(instance.id),
-                    'pipeline_id': str(instance.pipeline_id),
-                    'user_id': instance.updated_by.id if instance.updated_by else None,
-                    'timestamp': time.time()
-                })
+                # Activity logging now handled by AuditLog system in pipelines/signals.py
                 
                 logger.debug(f"Broadcasted record {'created' if created else 'updated'}: {instance.id}")
             
@@ -320,33 +312,19 @@ def store_sse_message(channel: str, event_data: dict):
 
 
 def store_activity_event(activity_data: dict):
-    """Store activity event for activity feeds"""
-    try:
-        # Store global activity
-        global_activity_key = "recent_activity:global"
-        activities = cache.get(global_activity_key, [])
-        
-        activities.append(activity_data)
-        
-        # Keep only recent activities
-        if len(activities) > 50:
-            activities = activities[-50:]
-        
-        cache.set(global_activity_key, activities, 1800)  # 30 minute TTL
-        
-        # Store user-specific activity if user is specified
-        if activity_data.get('user_id'):
-            user_activity_key = f"recent_activity:{activity_data['user_id']}"
-            user_activities = cache.get(user_activity_key, [])
-            user_activities.append(activity_data)
-            
-            if len(user_activities) > 20:
-                user_activities = user_activities[-20:]
-            
-            cache.set(user_activity_key, user_activities, 1800)
-        
-    except Exception as e:
-        logger.error(f"Error storing activity event: {e}")
+    """
+    Deprecated function - now a no-op since activity data comes from AuditLog.
+    
+    This function previously stored activity data in Redis cache, but now that we're using
+    AuditLog as the single source of truth, this function is kept only for backward 
+    compatibility with existing tests and any remaining references.
+    
+    The actual activity data is now:
+    1. Stored in AuditLog database by pipelines/signals.py
+    2. Retrieved by get_recent_activity() from AuditLog  
+    3. Broadcast via WebSocket by broadcast_audit_log_update()
+    """
+    logger.debug("store_activity_event() called - activity data now comes from AuditLog system")
 
 
 # Additional utility functions for real-time features
@@ -401,3 +379,68 @@ def broadcast_system_announcement(announcement_data: dict):
         
     except Exception as e:
         logger.error(f"Error broadcasting system announcement: {e}")
+
+
+def broadcast_audit_log_update(audit_log, record_instance):
+    """
+    Broadcast audit log updates for real-time Activity tab updates
+    Replaces the redundant activity logger functionality
+    """
+    try:
+        channel_layer = get_channel_layer()
+        if not channel_layer:
+            return
+
+        # Format audit log data for real-time consumption (matching Activity tab expectations)
+        activity_data = {
+            'id': audit_log.id,
+            'type': 'field_change' if audit_log.action == 'updated' else 'system',
+            'message': _format_audit_changes_for_realtime(audit_log.changes, audit_log.action),
+            'user': {
+                'first_name': audit_log.user.first_name if audit_log.user else '',
+                'last_name': audit_log.user.last_name if audit_log.user else '',
+                'email': audit_log.user.email if audit_log.user else ''
+            } if audit_log.user else None,
+            'created_at': audit_log.timestamp.isoformat(),
+            'record_id': str(record_instance.id),
+            'pipeline_id': str(record_instance.pipeline_id)
+        }
+
+        # Broadcast to document subscribers (Activity tab listens to this)
+        document_group = f"document_{record_instance.id}"
+        
+        safe_group_send_sync(channel_layer, document_group, {
+            'type': 'activity_update',
+            'data': activity_data
+        })
+
+        # Also store for SSE subscribers
+        store_sse_message(
+            f"record_activity_{record_instance.id}",
+            activity_data
+        )
+
+        logger.debug(f"Broadcasted audit log update for record {record_instance.id}")
+
+    except Exception as e:
+        logger.error(f"Error broadcasting audit log update: {e}")
+
+
+def _format_audit_changes_for_realtime(changes, action):
+    """Format audit log changes for real-time Activity tab consumption"""
+    if action == 'created':
+        return f"Record created in {changes.get('pipeline_name', 'Unknown')} pipeline"
+    
+    elif action == 'updated':
+        # Use pre-formatted change summaries from AuditLog
+        if 'changes_summary' in changes and changes['changes_summary']:
+            return '\n'.join(changes['changes_summary'])
+        
+        # Fallback to basic message
+        total_changes = changes.get('total_changes', 0)
+        return f"Record updated ({total_changes} field{'s' if total_changes != 1 else ''} changed)"
+    
+    elif action == 'deleted':
+        return f"Record deleted from {changes.get('pipeline_name', 'Unknown')} pipeline"
+    
+    return f"Record {action}"

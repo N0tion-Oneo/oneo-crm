@@ -390,43 +390,8 @@ async def destroy_all_sessions_view(request):
         )
 
 
-# TODO: Convert to async class-based view
-# # @api_view(['GET'])
-# # @permission_classes([IsAuthenticated])
-async def user_types_view(request):
-    """
-    Get available user types
-    """
-    try:
-        # Check if user has permission to view user types
-        permission_manager = AsyncPermissionManager(request.user)
-        has_permission = await permission_manager.has_permission(
-            'action', 'system', 'view_user_types'
-        )
-        
-        if not has_permission:
-            return Response(
-                {'error': 'Permission denied'},
-                status=status.HTTP_403_FORBIDDEN
-            )
-
-        user_types = []
-        async for user_type in UserType.objects.all():
-            user_types.append(user_type)
-
-        serializer = UserTypeSerializer(user_types, many=True)
-        
-        return Response({
-            'user_types': serializer.data,
-            'total_count': len(user_types),
-        }, status=status.HTTP_200_OK)
-
-    except Exception as e:
-        logger.error(f"User types error: {e}")
-        return Response(
-            {'error': 'Failed to get user types'},
-            status=status.HTTP_500_INTERNAL_SERVER_ERROR
-        )
+# Removed orphaned user_types_view function - superseded by UserTypeViewSet in viewsets.py
+# The function was not routed and used invalid permissions (system.view_user_types)
 
 
 # TODO: Convert to async class-based view

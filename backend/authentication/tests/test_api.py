@@ -8,6 +8,7 @@ import json
 from django.test import TestCase, TransactionTestCase
 from django.contrib.auth import get_user_model
 from django.urls import reverse
+from django.utils import timezone
 from rest_framework.test import APIClient, APITransactionTestCase
 from rest_framework import status
 from authentication.models import UserType, UserSession
@@ -58,7 +59,7 @@ class AuthenticationAPITest(APITransactionTestCase):
     
     def test_login_success(self):
         """Test successful login"""
-        response = self.client.post('/api/auth/login/', {
+        response = self.client.post('/auth/login/', {
             'username': 'user@example.com',
             'password': 'userpass123'
         })
@@ -74,7 +75,7 @@ class AuthenticationAPITest(APITransactionTestCase):
     
     def test_login_invalid_credentials(self):
         """Test login with invalid credentials"""
-        response = self.client.post('/api/auth/login/', {
+        response = self.client.post('/auth/login/', {
             'username': 'user@example.com',
             'password': 'wrongpassword'
         })
@@ -87,7 +88,7 @@ class AuthenticationAPITest(APITransactionTestCase):
         self.user.is_active = False
         self.user.save()
         
-        response = self.client.post('/api/auth/login/', {
+        response = self.client.post('/auth/login/', {
             'username': 'user@example.com',
             'password': 'userpass123'
         })
@@ -97,7 +98,7 @@ class AuthenticationAPITest(APITransactionTestCase):
     
     def test_login_remember_me(self):
         """Test login with remember me option"""
-        response = self.client.post('/api/auth/login/', {
+        response = self.client.post('/auth/login/', {
             'username': 'user@example.com',
             'password': 'userpass123',
             'remember_me': True
@@ -118,7 +119,7 @@ class AuthenticationAPITest(APITransactionTestCase):
         })
         
         # Then logout
-        response = self.client.post('/api/auth/logout/')
+        response = self.client.post('/auth/logout/')
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn('message', response.data)
@@ -127,7 +128,7 @@ class AuthenticationAPITest(APITransactionTestCase):
         """Test current user endpoint when authenticated"""
         self.client.force_authenticate(user=self.user)
         
-        response = self.client.get('/api/auth/me/')
+        response = self.client.get('/auth/me/')
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn('user', response.data)
@@ -136,7 +137,7 @@ class AuthenticationAPITest(APITransactionTestCase):
     
     def test_current_user_unauthenticated(self):
         """Test current user endpoint when not authenticated"""
-        response = self.client.get('/api/auth/me/')
+        response = self.client.get('/auth/me/')
         
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
     
@@ -144,7 +145,7 @@ class AuthenticationAPITest(APITransactionTestCase):
         """Test successful password change"""
         self.client.force_authenticate(user=self.user)
         
-        response = self.client.post('/api/auth/change-password/', {
+        response = self.client.post('/auth/change-password/', {
             'old_password': 'userpass123',
             'new_password': 'newpassword123',
             'confirm_password': 'newpassword123'
@@ -160,7 +161,7 @@ class AuthenticationAPITest(APITransactionTestCase):
         """Test password change with wrong old password"""
         self.client.force_authenticate(user=self.user)
         
-        response = self.client.post('/api/auth/change-password/', {
+        response = self.client.post('/auth/change-password/', {
             'old_password': 'wrongpassword',
             'new_password': 'newpassword123',
             'confirm_password': 'newpassword123'
@@ -172,7 +173,7 @@ class AuthenticationAPITest(APITransactionTestCase):
         """Test password change with password mismatch"""
         self.client.force_authenticate(user=self.user)
         
-        response = self.client.post('/api/auth/change-password/', {
+        response = self.client.post('/auth/change-password/', {
             'old_password': 'userpass123',
             'new_password': 'newpassword123',
             'confirm_password': 'differentpassword'
@@ -222,7 +223,7 @@ class SessionManagementAPITest(APITransactionTestCase):
         """Test getting user's active sessions"""
         self.client.force_authenticate(user=self.user)
         
-        response = self.client.get('/api/auth/sessions/')
+        response = self.client.get('/auth/sessions/')
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn('sessions', response.data)
@@ -232,7 +233,7 @@ class SessionManagementAPITest(APITransactionTestCase):
         """Test destroying a specific session"""
         self.client.force_authenticate(user=self.user)
         
-        response = self.client.delete(f'/api/auth/sessions/{self.session1.id}/destroy/')
+        response = self.client.delete(f'/auth/sessions/{self.session1.id}/terminate/')
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         
@@ -244,7 +245,7 @@ class SessionManagementAPITest(APITransactionTestCase):
         """Test destroying a session that doesn't exist"""
         self.client.force_authenticate(user=self.user)
         
-        response = self.client.delete('/api/auth/sessions/99999/destroy/')
+        response = self.client.delete('/auth/sessions/99999/terminate/')
         
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
     
@@ -252,7 +253,7 @@ class SessionManagementAPITest(APITransactionTestCase):
         """Test destroying all user sessions"""
         self.client.force_authenticate(user=self.user)
         
-        response = self.client.delete('/api/auth/sessions/destroy-all/')
+        response = self.client.delete('/auth/sessions/destroy_all/')
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn('destroyed_count', response.data)
@@ -269,7 +270,7 @@ class SessionManagementAPITest(APITransactionTestCase):
         request = self.client.request()
         request.user_session = self.session1
         
-        response = self.client.post('/api/auth/sessions/extend/')
+        response = self.client.post('/auth/sessions/extend/')
         
         # Note: This test may need adjustment based on actual implementation
         # since we need to properly mock the current session
@@ -288,7 +289,7 @@ class UserTypeAPITest(APITransactionTestCase):
             name="Admin",
             slug="admin",
             base_permissions={
-                'system': {'actions': ['view_user_types']}
+                'user_types': ['read']  # Updated to use simplified permission schema
             }
         )
         
@@ -317,17 +318,17 @@ class UserTypeAPITest(APITransactionTestCase):
         """Test getting user types with proper permission"""
         self.client.force_authenticate(user=self.admin)
         
-        response = self.client.get('/api/auth/user-types/')
+        response = self.client.get('/auth/user-types/')
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertIn('user_types', response.data)
-        self.assertGreaterEqual(response.data['total_count'], 2)
+        self.assertIn('results', response.data)  # DRF ViewSet uses 'results' not 'user_types'
+        self.assertGreaterEqual(response.data['count'], 2)  # DRF ViewSet uses 'count' not 'total_count'
     
     def test_get_user_types_without_permission(self):
         """Test getting user types without proper permission"""
         self.client.force_authenticate(user=self.user)
         
-        response = self.client.get('/api/auth/user-types/')
+        response = self.client.get('/auth/user-types/')
         
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
@@ -364,7 +365,7 @@ class PermissionsAPITest(APITransactionTestCase):
         """Test getting user's detailed permissions"""
         self.client.force_authenticate(user=self.user)
         
-        response = self.client.get('/api/auth/permissions/')
+        response = self.client.get('/auth/permissions/')
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn('permissions', response.data)
@@ -400,7 +401,7 @@ class HealthCheckAPITest(APITransactionTestCase):
     
     def test_health_check(self):
         """Test health check endpoint"""
-        response = self.client.get('/api/auth/health/')
+        response = self.client.get('/auth/health/')
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn('status', response.data)

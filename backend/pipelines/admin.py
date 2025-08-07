@@ -5,6 +5,7 @@ from django.contrib import admin
 from django.utils.html import format_html
 from django.urls import reverse
 from django.utils.safestring import mark_safe
+from django.utils import timezone
 import json
 
 from .models import Pipeline, Field, Record, PipelineTemplate
@@ -78,14 +79,18 @@ class PipelineAdmin(admin.ModelAdmin):
 
 @admin.register(Field)
 class FieldAdmin(admin.ModelAdmin):
-    """Admin interface for fields"""
+    """Enhanced admin interface for fields with lifecycle management"""
     list_display = [
-        'name', 'pipeline', 'field_type', 'enforce_uniqueness', 'is_ai_field',
-        'display_order', 'created_at'
+        'name', 'pipeline', 'field_type', 'field_status', 'deletion_info',
+        'enforce_uniqueness', 'is_ai_field', 'display_order', 'created_at'
     ]
-    list_filter = ['field_type', 'enforce_uniqueness', 'is_ai_field', 'create_index', 'is_searchable']
+    list_filter = [
+        'field_type', 'is_deleted', 'enforce_uniqueness', 'is_ai_field', 
+        'create_index', 'is_searchable', 'scheduled_for_hard_delete'
+    ]
     search_fields = ['name', 'pipeline__name']
-    readonly_fields = ['slug']
+    readonly_fields = ['slug', 'deleted_at', 'deleted_by']
+    actions = ['soft_delete_fields', 'restore_fields', 'analyze_field_impact']
     
     fieldsets = (
         ('Basic Information', {
@@ -107,12 +112,111 @@ class FieldAdmin(admin.ModelAdmin):
         ('AI Configuration', {
             'fields': ('is_ai_field', 'ai_config'),
             'classes': ['collapse']
+        }),
+        ('Deletion Management', {
+            'fields': (
+                'is_deleted', 'deleted_at', 'deleted_by',
+                'scheduled_for_hard_delete', 'hard_delete_reason'
+            ),
+            'classes': ['collapse']
         })
     )
     
     def get_queryset(self, request):
-        """Optimize queryset"""
-        return super().get_queryset(request).select_related('pipeline', 'created_by')
+        """Include soft deleted fields by default"""
+        return Field.objects.with_deleted().select_related('pipeline', 'created_by', 'deleted_by')
+    
+    def field_status(self, obj):
+        """Display field status with color coding"""
+        if obj.scheduled_for_hard_delete:
+            remaining = obj.scheduled_for_hard_delete - timezone.now()
+            days_remaining = remaining.days if remaining.days > 0 else 0
+            return format_html(
+                '<span style="color: #DC2626; font-weight: bold;">🗑️ Hard Delete in {} days</span>',
+                days_remaining
+            )
+        elif obj.is_deleted:
+            return format_html(
+                '<span style="color: #F59E0B; font-weight: bold;">⚠️ Soft Deleted</span>'
+            )
+        else:
+            return format_html(
+                '<span style="color: #10B981; font-weight: bold;">✅ Active</span>'
+            )
+    field_status.short_description = 'Status'
+    
+    def deletion_info(self, obj):
+        """Show deletion information"""
+        if obj.is_deleted and obj.deleted_by:
+            return format_html(
+                '<small>Deleted by: {}<br>Date: {}</small>',
+                obj.deleted_by.username,
+                obj.deleted_at.strftime('%Y-%m-%d %H:%M') if obj.deleted_at else 'Unknown'
+            )
+        return '-'
+    deletion_info.short_description = 'Deletion Info'
+    
+    def soft_delete_fields(self, request, queryset):
+        """Soft delete selected fields"""
+        active_fields = queryset.filter(is_deleted=False)
+        if not active_fields:
+            self.message_user(request, "No active fields selected", level='warning')
+            return
+        
+        deleted_count = 0
+        for field in active_fields:
+            success, message = field.soft_delete(request.user, "Admin bulk soft delete")
+            if success:
+                deleted_count += 1
+        
+        self.message_user(
+            request,
+            f"Successfully soft deleted {deleted_count} field(s)",
+            level='success' if deleted_count > 0 else 'warning'
+        )
+    soft_delete_fields.short_description = "Soft delete selected fields"
+    
+    def restore_fields(self, request, queryset):
+        """Restore soft deleted fields"""
+        deleted_fields = queryset.filter(is_deleted=True)
+        if not deleted_fields:
+            self.message_user(request, "No deleted fields selected", level='warning')
+            return
+        
+        restored_count = 0
+        for field in deleted_fields:
+            success, message = field.restore(request.user)
+            if success:
+                restored_count += 1
+        
+        self.message_user(
+            request,
+            f"Successfully restored {restored_count} field(s)",
+            level='success' if restored_count > 0 else 'warning'
+        )
+    restore_fields.short_description = "Restore selected soft deleted fields"
+    
+    def analyze_field_impact(self, request, queryset):
+        """Analyze impact of field changes"""
+        from .migrator import FieldSchemaMigrator
+        
+        impact_results = []
+        for field in queryset:
+            migrator = FieldSchemaMigrator(field.pipeline)
+            impact = migrator.analyze_field_change_impact(field)
+            
+            impact_results.append(
+                f"Field: {field.name} | "
+                f"Records with data: {impact['records_with_data']} | "
+                f"Risk level: {impact['risk_level']}"
+            )
+        
+        self.message_user(
+            request,
+            f"Impact Analysis: {'; '.join(impact_results)}",
+            level='info'
+        )
+    analyze_field_impact.short_description = "Analyze impact of selected fields"
 
 
 @admin.register(Record)

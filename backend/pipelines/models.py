@@ -10,12 +10,62 @@ from django.contrib.postgres.search import SearchVectorField
 from django.contrib.postgres.indexes import GinIndex
 import json
 import logging
+import re
 
 from .field_types import FieldType, FIELD_TYPE_CONFIGS, validate_field_config
-from .validators import FieldValidator, validate_record_data
+from .validation.field_validator import FieldValidator
+from .validators import validate_record_data
+
+
+def field_slugify(value):
+    """
+    Custom slugify function for field names that uses underscores instead of hyphens
+    to match data key format in record.data
+    
+    This ensures consistency between field.slug and record.data keys
+    """
+    if not value:
+        return ''
+    
+    # Convert to lowercase and replace spaces/hyphens with underscores
+    slug = str(value).lower().strip()
+    
+    # Replace spaces and hyphens with underscores
+    slug = re.sub(r'[\s\-]+', '_', slug)
+    
+    # Remove characters that aren't alphanumerics or underscores
+    slug = re.sub(r'[^\w_]', '', slug)
+    
+    # Remove leading/trailing underscores
+    slug = slug.strip('_')
+    
+    # Replace multiple consecutive underscores with single underscore
+    slug = re.sub(r'_+', '_', slug)
+    
+    return slug
 
 User = get_user_model()
 logger = logging.getLogger(__name__)
+
+
+class FieldManager(models.Manager):
+    """Manager for Field model with soft delete support"""
+    
+    def get_queryset(self):
+        """Return only non-deleted fields by default"""
+        return super().get_queryset().filter(is_deleted=False)
+    
+    def with_deleted(self):
+        """Include soft-deleted fields in queryset"""
+        return super().get_queryset()
+    
+    def deleted_only(self):
+        """Return only soft-deleted fields"""
+        return super().get_queryset().filter(is_deleted=True)
+    
+    def scheduled_for_hard_delete(self):
+        """Return fields scheduled for hard deletion"""
+        return super().get_queryset().filter(scheduled_for_hard_delete__isnull=False)
 
 
 class PipelineTemplate(models.Model):
@@ -66,7 +116,7 @@ class PipelineTemplate(models.Model):
     
     def save(self, *args, **kwargs):
         if not self.slug:
-            self.slug = slugify(self.name)
+            self.slug = field_slugify(self.name)
         super().save(*args, **kwargs)
     
     def create_pipeline_from_template(self, name: str, created_by: User) -> 'Pipeline':
@@ -181,7 +231,7 @@ class Pipeline(models.Model):
     
     def save(self, *args, **kwargs):
         if not self.slug:
-            self.slug = slugify(self.name)
+            self.slug = field_slugify(self.name)
         
         # Debug: Log the save operation
         logger.info(f"💾 Saving pipeline {self.name} (ID: {self.pk}) with access_level: {self.access_level}")
@@ -211,9 +261,10 @@ class Pipeline(models.Model):
         #     # Don't fail save if broadcast fails
     
     def _update_field_schema(self):
-        """Update cached field schema from related fields"""
+        """Update cached field schema from active (non-deleted) fields only"""
         fields_data = {}
-        for field in self.fields.all():
+        # Only include active fields in schema cache
+        for field in self.fields.filter(is_deleted=False):
             fields_data[field.slug] = {
                 'name': field.name,
                 'type': field.field_type,
@@ -226,6 +277,9 @@ class Pipeline(models.Model):
                 'searchable': field.is_searchable,
                 'ai_field': field.is_ai_field,
                 'visible_in_public_forms': field.is_visible_in_public_forms,
+                'display_order': field.display_order,
+                'display_name': field.display_name,
+                'help_text': field.help_text,
             }
         self.field_schema = fields_data
     
@@ -941,9 +995,21 @@ class Field(models.Model):
     # AI configuration (for AI fields)
     ai_config = models.JSONField(default=dict)
     
+    # Soft delete functionality
+    is_deleted = models.BooleanField(default=False)
+    deleted_at = models.DateTimeField(null=True, blank=True)
+    deleted_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='deleted_fields')
+    
+    # Hard delete scheduling
+    scheduled_for_hard_delete = models.DateTimeField(null=True, blank=True)
+    hard_delete_reason = models.TextField(blank=True)
+    
     created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    
+    # Custom manager
+    objects = FieldManager()
     
     class Meta:
         db_table = 'pipelines_field'
@@ -953,6 +1019,11 @@ class Field(models.Model):
             models.Index(fields=['field_type']),
             models.Index(fields=['display_order']),
             models.Index(fields=['is_ai_field']),
+            models.Index(fields=['is_deleted']),
+            models.Index(fields=['scheduled_for_hard_delete']),
+            # Composite indexes for common queries
+            models.Index(fields=['pipeline', 'is_deleted'], name='idx_field_pipeline_active'),
+            models.Index(fields=['is_deleted', 'deleted_at'], name='idx_field_deletion_status'),
             GinIndex(fields=['field_config']),
             GinIndex(fields=['storage_constraints']),
             GinIndex(fields=['business_rules']),
@@ -964,19 +1035,22 @@ class Field(models.Model):
         return f"{self.pipeline.name} - {self.name}"
     
     def save(self, *args, **kwargs):
-        if not self.slug:
-            self.slug = slugify(self.name)
+        # Basic field setup - use custom field_slugify for consistency with data keys
+        self.slug = field_slugify(self.name)
         if not self.display_name:
             self.display_name = self.name
         
-        # Validate field configuration
+        # Basic validation only - complex logic handled by FieldOperationManager
         self.clean()
         
         super().save(*args, **kwargs)
         
-        # Update pipeline field schema cache
-        self.pipeline._update_field_schema()
-        self.pipeline.save(update_fields=['field_schema'])
+        # Update pipeline schema cache - keep this simple functionality
+        try:
+            self.pipeline._update_field_schema()
+            self.pipeline.save(update_fields=['field_schema'])
+        except Exception as e:
+            logger.error(f"Failed to update pipeline schema cache after field save: {e}")
     
     def clean(self):
         """Validate field configuration"""
@@ -1031,6 +1105,204 @@ class Field(models.Model):
                 errors.append(f"{self.display_name} is required when {condition_field} is {condition_value}")
         
         return len(errors) == 0, errors
+    
+    def soft_delete(self, user, reason=""):
+        """Soft delete the field - SIMPLIFIED to delegate to FieldOperationManager"""
+        try:
+            from .field_operations import get_field_operation_manager
+            
+            manager = get_field_operation_manager(self.pipeline)
+            result = manager.delete_field(self.id, user, hard_delete=False)
+            
+            if result.success:
+                return True, "Field soft deleted successfully"
+            else:
+                return False, '; '.join(result.errors)
+                
+        except Exception as e:
+            logger.error(f"Failed to soft delete field {self.slug}: {e}")
+            return False, f"Field deletion failed: {str(e)}"
+    
+    def restore(self, user):
+        """Restore soft deleted field - SIMPLIFIED to delegate to FieldOperationManager"""
+        try:
+            from .field_operations import get_field_operation_manager
+            
+            manager = get_field_operation_manager(self.pipeline)
+            result = manager.restore_field(self.id, user)
+            
+            if result.success:
+                return True, "Field restored successfully"
+            else:
+                return False, '; '.join(result.errors)
+                
+        except Exception as e:
+            logger.error(f"Failed to restore field {self.slug}: {e}")
+            return False, f"Field restoration failed: {str(e)}"
+    
+    def validate_restore(self, user, dry_run=False):
+        """Validate field restore operation - SIMPLIFIED to delegate to FieldValidator"""
+        try:
+            from .validation.field_validator import FieldValidator
+            
+            validator = FieldValidator()
+            validation_result = validator.validate_field_restoration(self)
+            
+            return {
+                'can_restore': validation_result.valid,
+                'errors': validation_result.errors,
+                'warnings': validation_result.warnings,
+                'records_with_data': validation_result.metadata.get('records_with_data', 0),
+                'field_name': self.name,
+                'field_slug': self.slug
+            }
+        except Exception as e:
+            logger.error(f"Failed to validate field restoration for {self.slug}: {e}")
+            return {
+                'can_restore': False,
+                'errors': [f"Validation failed: {str(e)}"],
+                'warnings': [],
+                'field_name': self.name,
+                'field_slug': self.slug
+            }
+    
+    def restore_with_validation(self, user, force=False, dry_run=False):
+        """Enhanced restore with validation and dry-run support"""
+        validation_result = self.validate_restore(user, dry_run)
+        
+        # If dry run, return validation results
+        if dry_run:
+            return {
+                'success': validation_result['can_restore'],
+                'dry_run': True,
+                'validation_result': validation_result,
+                'message': 'Dry run completed - no changes made'
+            }
+        
+        # Check if restore is allowed
+        if not validation_result['can_restore'] and not force:
+            return {
+                'success': False,
+                'errors': validation_result['errors'],
+                'warnings': validation_result['warnings'],
+                'validation_result': validation_result
+            }
+        
+        # Perform actual restore
+        try:
+            success, message = self.restore(user)
+            if success:
+                return {
+                    'success': True,
+                    'message': message,
+                    'validation_result': validation_result,
+                    'field_status': 'active'
+                }
+            else:
+                return {
+                    'success': False,
+                    'errors': [message],
+                    'validation_result': validation_result
+                }
+        except Exception as e:
+            return {
+                'success': False,
+                'errors': [f'Restore failed: {str(e)}'],
+                'validation_result': validation_result
+            }
+    
+    def schedule_hard_delete(self, user, reason, delete_date=None):
+        """Schedule field for permanent deletion - SIMPLIFIED"""
+        from django.utils import timezone
+        from datetime import timedelta
+        
+        if delete_date is None:
+            delete_date = timezone.now() + timedelta(days=7)
+        
+        # Soft delete first if needed
+        if not self.is_deleted:
+            self.soft_delete(user, f"Scheduled for hard deletion: {reason}")
+        
+        # Simple scheduling
+        self.scheduled_for_hard_delete = delete_date
+        self.hard_delete_reason = reason
+        
+        self.save(update_fields=['scheduled_for_hard_delete', 'hard_delete_reason'])
+        
+        logger.warning(f"Field {self.slug} scheduled for hard deletion on {delete_date} by {user.username}")
+        return True, f"Field scheduled for permanent deletion on {delete_date.strftime('%Y-%m-%d %H:%M')}"
+    
+    def can_hard_delete(self):
+        """Check if field can be hard deleted"""
+        from django.utils import timezone
+        
+        if not self.scheduled_for_hard_delete:
+            return False, "Field is not scheduled for hard deletion"
+        
+        if timezone.now() < self.scheduled_for_hard_delete:
+            remaining = self.scheduled_for_hard_delete - timezone.now()
+            return False, f"Grace period remaining: {remaining.days} days"
+        
+        return True, "Field can be hard deleted"
+    
+    def get_impact_analysis(self):
+        """Get impact analysis for field deletion"""
+        impact = {
+            'record_count': 0,
+            'records_with_data': 0,
+            'dependent_systems': [],
+            'risk_level': 'low'
+        }
+        
+        # Count records in this pipeline
+        total_records = self.pipeline.records.count()
+        impact['record_count'] = total_records
+        
+        # Count records that actually have data for this field
+        records_with_data = self.pipeline.records.filter(
+            data__has_key=self.slug
+        ).exclude(data__isnull=True).count()
+        impact['records_with_data'] = records_with_data
+        
+        # Check dependent systems (simplified for now)
+        dependent_systems = []
+        
+        # Check if field is referenced in business rules of other fields
+        dependent_fields = self.pipeline.fields.filter(
+            business_rules__conditional_requirements__condition_field=self.slug
+        ).exclude(id=self.id)
+        
+        if dependent_fields.exists():
+            dependent_systems.append({
+                'system': 'field_dependencies',
+                'count': dependent_fields.count(),
+                'details': [f.name for f in dependent_fields[:5]]  # Show first 5
+            })
+        
+        # Check AI fields that might reference this field
+        ai_fields_dependent = self.pipeline.fields.filter(
+            is_ai_field=True,
+            ai_config__trigger_fields__contains=[self.slug]
+        ).exclude(id=self.id)
+        
+        if ai_fields_dependent.exists():
+            dependent_systems.append({
+                'system': 'ai_dependencies', 
+                'count': ai_fields_dependent.count(),
+                'details': [f.name for f in ai_fields_dependent[:5]]
+            })
+        
+        impact['dependent_systems'] = dependent_systems
+        
+        # Determine risk level
+        if records_with_data > 1000 or len(dependent_systems) > 2:
+            impact['risk_level'] = 'high'
+        elif records_with_data > 100 or len(dependent_systems) > 0:
+            impact['risk_level'] = 'medium'
+        else:
+            impact['risk_level'] = 'low'
+        
+        return impact
 
 
 class Record(models.Model):

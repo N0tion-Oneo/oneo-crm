@@ -471,7 +471,7 @@ class RecordViewSet(viewsets.ModelViewSet):
         return Response(history)
     
     def _format_audit_changes(self, changes, action):
-        """Format audit log changes for display"""
+        """Format audit log changes for display - supports both enhanced and legacy formats"""
         if action == 'created':
             # Show initial field values when record was created
             initial_values = []
@@ -488,10 +488,37 @@ class RecordViewSet(viewsets.ModelViewSet):
                 return f"Record created in {changes.get('pipeline', 'Unknown')} pipeline"
         
         elif action == 'updated':
-            formatted_changes = []
+            # NEW: Use enhanced audit log format with pre-formatted summaries
+            if 'changes_summary' in changes and changes['changes_summary']:
+                # Use the human-readable summaries already prepared by the backend
+                return '\n'.join(changes['changes_summary'])
             
-            # Format data changes
+            # NEW: Handle enhanced field_changes format
+            if 'field_changes' in changes and isinstance(changes['field_changes'], dict):
+                formatted_changes = []
+                for field_slug, change_data in changes['field_changes'].items():
+                    if isinstance(change_data, dict) and 'change_summary' in change_data:
+                        # Use the pre-formatted change summary from enhanced backend
+                        formatted_changes.append(change_data['change_summary'])
+                    elif isinstance(change_data, dict) and 'old' in change_data and 'new' in change_data:
+                        # Fallback: format manually if change_summary not available
+                        field_name = change_data.get('field_name') or self._get_field_display_name(field_slug)
+                        old_display = self._format_field_value(change_data['old'])
+                        new_display = self._format_field_value(change_data['new'])
+                        
+                        if change_data['old'] is None or change_data['old'] == "":
+                            formatted_changes.append(f"{field_name}: {new_display} (added)")
+                        elif change_data['new'] is None or change_data['new'] == "":
+                            formatted_changes.append(f"{field_name}: {old_display} (removed)")
+                        else:
+                            formatted_changes.append(f"{field_name}: {old_display} → {new_display}")
+                
+                if formatted_changes:
+                    return '\n'.join(formatted_changes)
+            
+            # LEGACY: Format old data_changes format for backward compatibility
             if 'data_changes' in changes:
+                formatted_changes = []
                 for field, change in changes['data_changes'].items():
                     old_val = change.get('old')
                     new_val = change.get('new')
@@ -504,19 +531,19 @@ class RecordViewSet(viewsets.ModelViewSet):
                     new_display = self._format_field_value(new_val)
                     
                     formatted_changes.append(f"{display_name}: {old_display} → {new_display}")
+                
+                if formatted_changes:
+                    return '\n'.join(formatted_changes)
             
-            # Format status changes
+            # LEGACY: Format status changes
             if 'status' in changes:
                 status_change = changes['status']
                 old_status = self._format_field_value(status_change.get('old'))
                 new_status = self._format_field_value(status_change.get('new'))
-                formatted_changes.append(f"Status: {old_status} → {new_status}")
+                return f"Status: {old_status} → {new_status}"
             
-            # Show all changes individually with line breaks for detailed view
-            if formatted_changes:
-                return '\n'.join(formatted_changes)
-            else:
-                return 'Record updated'
+            # Fallback for any unhandled format
+            return 'Record updated'
         
         elif action == 'deleted':
             return f"Record deleted from {changes.get('pipeline', 'Unknown')} pipeline"

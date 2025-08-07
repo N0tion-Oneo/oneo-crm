@@ -3,8 +3,9 @@
 import { useState, useEffect } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { useAuth } from '@/features/auth/context'
-import { ArrowLeft, Save, AlertCircle, ChevronRight, Settings, Database, Sparkles } from 'lucide-react'
+import { ArrowLeft, Save, AlertCircle, ChevronRight, Settings, Database, Sparkles, Archive, RotateCcw } from 'lucide-react'
 import { PipelineFieldBuilder } from '@/components/pipelines/pipeline-field-builder'
+import { DeletedFieldsList } from '@/components/pipelines/deleted-fields-list'
 import { pipelinesApi } from '@/lib/api'
 
 interface PipelineField {
@@ -33,6 +34,21 @@ interface PipelineField {
   business_rules: Record<string, any>
   ai_config?: Record<string, any>       // For AI fields only
   
+  // Field lifecycle management
+  is_deleted?: boolean
+  deleted_at?: string
+  deleted_by?: string
+  scheduled_for_hard_delete?: string
+  hard_delete_reason?: string
+  deletion_status?: {
+    status: 'active' | 'soft_deleted' | 'scheduled_for_hard_delete'
+    deleted_at?: string
+    deleted_by?: string
+    days_remaining?: number
+    hard_delete_date?: string
+    reason?: string
+  }
+  
   // Legacy support (remove these gradually)
   label?: string                  // Maps to display_name
   type?: string                   // Maps to field_type
@@ -57,10 +73,15 @@ export default function PipelineFieldsPage() {
 
   const [pipeline, setPipeline] = useState<Pipeline | null>(null)
   const [fields, setFields] = useState<PipelineField[]>([])
+  const [deletedFields, setDeletedFields] = useState<PipelineField[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [hasChanges, setHasChanges] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  
+  // Tab management
+  const [activeTab, setActiveTab] = useState<'active' | 'deleted'>('active')
+  const [deletedFieldsLoading, setDeletedFieldsLoading] = useState(false)
 
   // Load pipeline data
   useEffect(() => {
@@ -94,6 +115,14 @@ export default function PipelineFieldsPage() {
             storage_constraints: field.storage_constraints || {},
             business_rules: field.business_rules || {},
             ai_config: field.ai_config || {},
+            
+            // Field lifecycle management
+            is_deleted: field.is_deleted || false,
+            deleted_at: field.deleted_at,
+            deleted_by: field.deleted_by,
+            scheduled_for_hard_delete: field.scheduled_for_hard_delete,
+            hard_delete_reason: field.hard_delete_reason,
+            deletion_status: field.deletion_status,
             // Legacy support
             label: field.display_name || field.name || field.slug,
             type: field.field_type || 'text',
@@ -120,10 +149,114 @@ export default function PipelineFieldsPage() {
     }
   }, [pipelineId, isAuthenticated])
 
+  // Load deleted fields
+  const loadDeletedFields = async () => {
+    try {
+      setDeletedFieldsLoading(true)
+      setError(null)
+      
+      const response = await pipelinesApi.getDeletedFields(pipelineId)
+      
+      const deletedFieldsData = (response.data || []).map((field: any, index: number) => ({
+        id: field.id?.toString() || `deleted_field_${index}`,
+        name: field.slug || field.name || `deleted_field_${index}`,
+        display_name: field.display_name || field.name || field.slug,
+        description: field.description || '',
+        field_type: field.field_type || 'text',
+        help_text: field.help_text || '',
+        display_order: field.display_order || index,
+        is_visible_in_list: field.is_visible_in_list !== false,
+        is_visible_in_detail: field.is_visible_in_detail !== false,
+        is_visible_in_public_forms: field.is_visible_in_public_forms || false,
+        is_searchable: field.is_searchable !== false,
+        create_index: field.create_index || false,
+        enforce_uniqueness: field.enforce_uniqueness || false,
+        is_ai_field: field.is_ai_field || false,
+        field_config: field.field_config || {},
+        storage_constraints: field.storage_constraints || {},
+        business_rules: field.business_rules || {},
+        ai_config: field.ai_config || {},
+        
+        // Field lifecycle management
+        is_deleted: field.is_deleted || false,
+        deleted_at: field.deleted_at,
+        deleted_by: field.deleted_by,
+        scheduled_for_hard_delete: field.scheduled_for_hard_delete,
+        hard_delete_reason: field.hard_delete_reason,
+        deletion_status: field.deletion_status,
+        
+        // Legacy support
+        label: field.display_name || field.name || field.slug,
+        type: field.field_type || 'text',
+        required: field.business_rules?.stage_requirements && Object.keys(field.business_rules.stage_requirements).length > 0,
+        visible: field.is_visible_in_list !== false,
+        order: field.display_order || index,
+        config: field.field_config || {}
+      }))
+      
+      setDeletedFields(deletedFieldsData)
+      
+    } catch (error) {
+      console.error('Failed to load deleted fields:', error)
+      setError('Failed to load deleted fields')
+    } finally {
+      setDeletedFieldsLoading(false)
+    }
+  }
+
   // Handle field changes
   const handleFieldsChange = (newFields: PipelineField[]) => {
     setFields(newFields)
     setHasChanges(true)
+  }
+
+  // Handle field restoration - refresh both lists
+  const handleFieldRestored = async () => {
+    // Refresh deleted fields list
+    await loadDeletedFields()
+    
+    // Refresh active fields list
+    if (pipelineId && isAuthenticated) {
+      try {
+        const response = await pipelinesApi.get(pipelineId)
+        const pipelineData = response.data
+        const activeFieldsData = (pipelineData.fields || []).map((field: any, index: number) => ({
+          id: field.id?.toString() || `field_${index}`,
+          name: field.slug || field.name || `field_${index}`,
+          display_name: field.display_name || field.name || field.slug,
+          description: field.description || '',
+          field_type: field.field_type || 'text',
+          help_text: field.help_text || '',
+          display_order: field.display_order || index,
+          is_visible_in_list: field.is_visible_in_list !== false,
+          is_visible_in_detail: field.is_visible_in_detail !== false,
+          is_visible_in_public_forms: field.is_visible_in_public_forms || false,
+          is_searchable: field.is_searchable !== false,
+          create_index: field.create_index || false,
+          enforce_uniqueness: field.enforce_uniqueness || false,
+          is_ai_field: field.is_ai_field || false,
+          field_config: field.field_config || {},
+          storage_constraints: field.storage_constraints || {},
+          business_rules: field.business_rules || {},
+          ai_config: field.ai_config || {},
+          is_deleted: field.is_deleted || false,
+          deleted_at: field.deleted_at,
+          deleted_by: field.deleted_by,
+          scheduled_for_hard_delete: field.scheduled_for_hard_delete,
+          hard_delete_reason: field.hard_delete_reason,
+          deletion_status: field.deletion_status,
+          label: field.display_name || field.name || field.slug,
+          type: field.field_type || 'text',
+          required: field.business_rules?.stage_requirements && Object.keys(field.business_rules.stage_requirements).length > 0,
+          visible: field.is_visible_in_list !== false,
+          order: field.display_order || index,
+          config: field.field_config || {}
+        }))
+        setFields(activeFieldsData)
+      } catch (error) {
+        console.error('Failed to refresh active fields:', error)
+      }
+    }
   }
 
   // Save fields
@@ -368,15 +501,82 @@ export default function PipelineFieldsPage() {
         </div>
       </div>
 
-      {/* Field Builder */}
-      <div className="flex-1 overflow-hidden p-6">
-        <div className="h-full bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700">
-          <PipelineFieldBuilder
-            pipelineId={pipelineId}
-            fields={fields}
-            onFieldsChange={handleFieldsChange}
-            onSave={saveFields}
-          />
+      {/* Tab Navigation */}
+      <div className="px-6 pb-6">
+        <div className="bg-white dark:bg-gray-800 rounded-t-xl shadow-sm border border-gray-200 dark:border-gray-700 border-b-0">
+          <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+            <div className="flex space-x-8">
+              <button
+                onClick={() => setActiveTab('active')}
+                className={`flex items-center space-x-2 pb-2 border-b-2 font-medium text-sm transition-colors ${
+                  activeTab === 'active'
+                    ? 'border-blue-500 text-blue-600 dark:text-blue-400'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'
+                }`}
+              >
+                <Database className="w-4 h-4" />
+                <span>Active Fields</span>
+                <div className="bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 px-2 py-0.5 rounded-full text-xs font-medium">
+                  {fields.length}
+                </div>
+              </button>
+              
+              <button
+                onClick={() => {
+                  setActiveTab('deleted')
+                  if (deletedFields.length === 0) {
+                    loadDeletedFields()
+                  }
+                }}
+                className={`flex items-center space-x-2 pb-2 border-b-2 font-medium text-sm transition-colors ${
+                  activeTab === 'deleted'
+                    ? 'border-orange-500 text-orange-600 dark:text-orange-400'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'
+                }`}
+              >
+                <Archive className="w-4 h-4" />
+                <span>Deleted Fields</span>
+                <div className="bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 px-2 py-0.5 rounded-full text-xs font-medium">
+                  {deletedFields.length}
+                </div>
+              </button>
+            </div>
+
+            {activeTab === 'deleted' && (
+              <button
+                onClick={loadDeletedFields}
+                disabled={deletedFieldsLoading}
+                className="flex items-center space-x-2 px-3 py-1.5 text-sm text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors disabled:opacity-50"
+              >
+                <RotateCcw className={`w-4 h-4 ${deletedFieldsLoading ? 'animate-spin' : ''}`} />
+                <span>Refresh</span>
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Content Area */}
+      <div className="flex-1 overflow-hidden px-6">
+        <div className="h-full bg-white dark:bg-gray-800 rounded-b-xl shadow-sm border border-gray-200 dark:border-gray-700 border-t-0">
+          {activeTab === 'active' ? (
+            <PipelineFieldBuilder
+              pipelineId={pipelineId}
+              fields={fields}
+              onFieldsChange={handleFieldsChange}
+              onSave={saveFields}
+            />
+          ) : (
+            <div className="h-full p-6">
+              <DeletedFieldsList
+                pipelineId={pipelineId}
+                fields={deletedFields}
+                loading={deletedFieldsLoading}
+                onRefresh={loadDeletedFields}
+                onFieldRestored={handleFieldRestored}
+              />
+            </div>
+          )}
         </div>
       </div>
     </div>

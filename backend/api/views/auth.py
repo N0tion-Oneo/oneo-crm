@@ -118,6 +118,14 @@ class AuthViewSet(viewsets.ViewSet):
     @action(detail=False, methods=['get'])
     def user_types(self, request):
         """Get available user types"""
+        # Check permission to view user types
+        permission_manager = PermissionManager(request.user)
+        if not permission_manager.has_permission('action', 'user_types', 'read'):
+            return Response(
+                {'error': 'Permission denied: Requires user_types.read permission'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
         user_types = UserType.objects.all()
         serializer = UserTypeSerializer(user_types, many=True)
         return Response(serializer.data)
@@ -129,6 +137,8 @@ class AuthViewSet(viewsets.ViewSet):
     @action(detail=False, methods=['get'])
     def tenant_info(self, request):
         """Get current tenant info"""
+        # Basic user should be able to see tenant info they're operating in
+        # This is not highly sensitive but let's ensure they have basic access
         from django_tenants.utils import tenant_context
         from tenants.models import Tenant
         
@@ -156,6 +166,14 @@ class AuthViewSet(viewsets.ViewSet):
     def permission_schema(self, request):
         """Get complete dynamic permission schema for the tenant"""
         try:
+            # Check permission to view permission schema
+            permission_manager = PermissionManager(request.user)
+            if not permission_manager.has_permission('action', 'permissions', 'read'):
+                return Response(
+                    {'error': 'Permission denied: Requires permissions.read'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
             tenant = getattr(request, 'tenant', None)
             if not tenant:
                 return Response(
@@ -185,6 +203,14 @@ class AuthViewSet(viewsets.ViewSet):
     def permission_matrix(self, request):
         """Get complete permission matrix configuration for frontend UI"""
         try:
+            # Check permission to view permission matrix
+            permission_manager = PermissionManager(request.user)
+            if not permission_manager.has_permission('action', 'permissions', 'read'):
+                return Response(
+                    {'error': 'Permission denied: Requires permissions.read'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
             tenant = getattr(request, 'tenant', None)
             if not tenant:
                 return Response(
@@ -215,6 +241,14 @@ class AuthViewSet(viewsets.ViewSet):
     def permission_info(self, request):
         """Get permission registry information and statistics"""
         try:
+            # Check permission to view permission info
+            permission_manager = PermissionManager(request.user)
+            if not permission_manager.has_permission('action', 'permissions', 'read'):
+                return Response(
+                    {'error': 'Permission denied: Requires permissions.read'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
             # Get registry info
             registry_info = get_permission_registry_info()
             

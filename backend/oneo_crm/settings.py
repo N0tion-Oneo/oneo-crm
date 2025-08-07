@@ -100,6 +100,7 @@ TENANT_APPS = [
     'django_filters',  # Advanced filtering
     'drf_spectacular',  # OpenAPI documentation
     'channels',  # Real-time support
+    'django_extensions',  # For debugging URLs
     'core',
     'authentication',  # Authentication app in tenant context
     'pipelines',  # Pipeline system app
@@ -118,6 +119,7 @@ INSTALLED_APPS = list(SHARED_APPS) + [app for app in TENANT_APPS if app not in S
 # Middleware configuration
 MIDDLEWARE = [
     'django_tenants.middleware.main.TenantMainMiddleware',  # Must be first
+    'core.middleware.MaintenanceModeMiddleware',  # Block access during maintenance
     'django.middleware.security.SecurityMiddleware',
     'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',

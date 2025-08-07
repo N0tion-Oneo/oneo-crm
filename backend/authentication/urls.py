@@ -26,14 +26,10 @@ session_patterns = [
     path('sessions/destroy-all/', views.destroy_all_sessions_view, name='destroy_all_sessions'),
 ]
 
-# User type endpoints
-user_type_patterns = [
-    path('user-types/', views.user_types_view, name='user_types'),
-]
+# User type endpoints removed - now handled by UserTypeViewSet in urls_drf.py
 
 # Combine all patterns - remove 'auth/' prefix since it's already in tenant URLs
 urlpatterns = [
     path('', include(auth_patterns)),
     path('', include(session_patterns)),
-    path('', include(user_type_patterns)),
 ]

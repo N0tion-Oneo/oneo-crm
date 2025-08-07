@@ -1,9 +1,13 @@
 from django_tenants.models import TenantMixin, DomainMixin
 from django.db import models
+from django.contrib.auth import get_user_model
+from django.utils import timezone
 from cryptography.fernet import Fernet
 from django.conf import settings
 import base64
 import json
+
+User = get_user_model()
 
 
 class Tenant(TenantMixin):
@@ -114,6 +118,129 @@ class Tenant(TenantMixin):
         self.ai_current_usage = 0.00
         self.save(update_fields=['ai_current_usage'])
 
+
+
+class TenantMaintenance(models.Model):
+    """
+    Track tenant maintenance mode status for schema migrations and system updates
+    When active, all tenant access is blocked except for superusers
+    """
+    tenant = models.OneToOneField(
+        Tenant, 
+        on_delete=models.CASCADE, 
+        related_name='maintenance',
+        help_text="Tenant under maintenance"
+    )
+    
+    # Maintenance status
+    is_active = models.BooleanField(
+        default=False,
+        help_text="Whether maintenance mode is currently active"
+    )
+    reason = models.CharField(
+        max_length=200,
+        help_text="Reason for maintenance (e.g., 'Schema Migration', 'System Update')"
+    )
+    
+    # Timing information
+    started_at = models.DateTimeField(
+        default=timezone.now,
+        help_text="When maintenance mode was activated"
+    )
+    estimated_completion = models.DateTimeField(
+        null=True, 
+        blank=True,
+        help_text="Estimated completion time"
+    )
+    completed_at = models.DateTimeField(
+        null=True, 
+        blank=True,
+        help_text="When maintenance mode was deactivated"
+    )
+    
+    # Progress tracking
+    progress_percentage = models.IntegerField(
+        default=0,
+        help_text="Progress percentage (0-100)"
+    )
+    status_message = models.TextField(
+        blank=True,
+        help_text="Current status message to display to users"
+    )
+    
+    # Migration specific data
+    migration_type = models.CharField(
+        max_length=100,
+        blank=True,
+        help_text="Type of migration being performed (field_rename, type_change, etc.)"
+    )
+    migration_data = models.JSONField(
+        default=dict,
+        help_text="Migration-specific data and parameters"
+    )
+    
+    # Tracking
+    created_by = models.ForeignKey(
+        User, 
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        help_text="User who initiated maintenance mode"
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        indexes = [
+            models.Index(fields=['is_active']),
+            models.Index(fields=['started_at']),
+        ]
+        ordering = ['-started_at']
+    
+    def __str__(self):
+        status = "Active" if self.is_active else "Inactive"
+        return f"{self.tenant.name} - {status} - {self.reason}"
+    
+    @property
+    def duration_seconds(self):
+        """Get duration of maintenance in seconds"""
+        end_time = self.completed_at or timezone.now()
+        return (end_time - self.started_at).total_seconds()
+    
+    @property
+    def is_overdue(self):
+        """Check if maintenance is taking longer than estimated"""
+        if not self.estimated_completion or not self.is_active:
+            return False
+        return timezone.now() > self.estimated_completion
+    
+    def activate(self, reason, estimated_minutes=None, created_by=None):
+        """Activate maintenance mode"""
+        self.is_active = True
+        self.reason = reason
+        self.started_at = timezone.now()
+        self.completed_at = None
+        self.progress_percentage = 0
+        self.created_by = created_by
+        
+        if estimated_minutes:
+            self.estimated_completion = timezone.now() + timezone.timedelta(minutes=estimated_minutes)
+        
+        self.save()
+    
+    def deactivate(self, status_message="Maintenance completed"):
+        """Deactivate maintenance mode"""
+        self.is_active = False
+        self.completed_at = timezone.now()
+        self.progress_percentage = 100
+        self.status_message = status_message
+        self.save()
+    
+    def update_progress(self, percentage, message=""):
+        """Update maintenance progress"""
+        self.progress_percentage = max(0, min(100, percentage))
+        if message:
+            self.status_message = message
+        self.save()
 
 
 class Domain(DomainMixin):

@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>System Maintenance - {{ tenant_name }}</title>
+    <meta http-equiv="refresh" content="30">
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            line-height: 1.6;
+        }
+
+        .maintenance-container {
+            text-align: center;
+            padding: 3rem 2rem;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 16px;
+            backdrop-filter: blur(20px);
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+            max-width: 600px;
+            margin: 1rem;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .maintenance-icon {
+            font-size: 4rem;
+            margin-bottom: 1.5rem;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+
+        h1 {
+            font-size: 2.5rem;
+            margin-bottom: 1rem;
+            font-weight: 700;
+        }
+
+        .tenant-name {
+            font-size: 1.2rem;
+            opacity: 0.9;
+            margin-bottom: 2rem;
+        }
+
+        .status-message {
+            font-size: 1.3rem;
+            margin: 1.5rem 0;
+            font-weight: 500;
+            background: rgba(255, 255, 255, 0.1);
+            padding: 1rem;
+            border-radius: 8px;
+            border-left: 4px solid #fff;
+        }
+
+        .progress-section {
+            margin: 2rem 0;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 12px;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 6px;
+            overflow: hidden;
+            margin: 1rem 0;
+            position: relative;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #4CAF50, #8BC34A);
+            width: {{ progress_percentage }}%;
+            transition: width 0.5s ease-in-out;
+            border-radius: 6px;
+            position: relative;
+        }
+
+        .progress-fill::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent);
+            animation: shimmer 2s infinite;
+        }
+
+        @keyframes shimmer {
+            0% { transform: translateX(-100%); }
+            100% { transform: translateX(100%); }
+        }
+
+        .progress-text {
+            font-size: 1.4rem;
+            font-weight: 600;
+            margin: 0.5rem 0;
+        }
+
+        .details-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin: 2rem 0;
+        }
+
+        .detail-item {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 1rem;
+            border-radius: 8px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .detail-label {
+            font-size: 0.9rem;
+            opacity: 0.8;
+            margin-bottom: 0.5rem;
+        }
+
+        .detail-value {
+            font-size: 1.1rem;
+            font-weight: 600;
+        }
+
+        .info-section {
+            margin-top: 2rem;
+            padding: 1.5rem;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 8px;
+        }
+
+        .info-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+        }
+
+        .info-text {
+            font-size: 0.95rem;
+            opacity: 0.9;
+            line-height: 1.5;
+        }
+
+        .auto-refresh {
+            margin-top: 2rem;
+            font-size: 0.9rem;
+            opacity: 0.7;
+            padding: 1rem;
+            background: rgba(0, 0, 0, 0.1);
+            border-radius: 8px;
+        }
+
+        .overdue-warning {
+            background: rgba(255, 193, 7, 0.2);
+            border: 1px solid rgba(255, 193, 7, 0.5);
+            color: #FFF3CD;
+            padding: 1rem;
+            border-radius: 8px;
+            margin: 1rem 0;
+        }
+
+        .spinner {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
+            border-top-color: white;
+            animation: spin 1s ease-in-out infinite;
+            margin-right: 0.5rem;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        @media (max-width: 640px) {
+            .maintenance-container {
+                padding: 2rem 1.5rem;
+            }
+            
+            h1 {
+                font-size: 2rem;
+            }
+            
+            .details-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+    
+    <script>
+        // Auto-refresh functionality
+        let refreshTimer;
+        let countdownTimer;
+        let secondsRemaining = 30;
+        
+        function updateCountdown() {
+            const countdownElement = document.getElementById('countdown');
+            if (countdownElement) {
+                countdownElement.textContent = secondsRemaining;
+                secondsRemaining--;
+                
+                if (secondsRemaining < 0) {
+                    window.location.reload();
+                }
+            }
+        }
+        
+        function startCountdown() {
+            updateCountdown();
+            countdownTimer = setInterval(updateCountdown, 1000);
+        }
+        
+        // Initialize when page loads
+        document.addEventListener('DOMContentLoaded', function() {
+            startCountdown();
+            
+            // Add progress animation on load
+            const progressFill = document.querySelector('.progress-fill');
+            if (progressFill) {
+                progressFill.style.width = '0%';
+                setTimeout(() => {
+                    progressFill.style.width = '{{ progress_percentage }}%';
+                }, 500);
+            }
+        });
+        
+        // Clear timers when page unloads
+        window.addEventListener('beforeunload', function() {
+            if (refreshTimer) clearTimeout(refreshTimer);
+            if (countdownTimer) clearInterval(countdownTimer);
+        });
+    </script>
+</head>
+<body>
+    <div class="maintenance-container">
+        <div class="maintenance-icon">🔧</div>
+        
+        <h1>System Maintenance</h1>
+        <div class="tenant-name">{{ tenant_name }}</div>
+        
+        <div class="status-message">
+            <span class="spinner"></span>
+            {{ status_message|default:"System maintenance in progress..." }}
+        </div>
+        
+        {% if maintenance.is_overdue %}
+        <div class="overdue-warning">
+            ⚠️ <strong>Notice:</strong> This maintenance is taking longer than expected. 
+            We appreciate your patience as we ensure everything is working perfectly.
+        </div>
+        {% endif %}
+        
+        <div class="progress-section">
+            <div class="progress-bar">
+                <div class="progress-fill"></div>
+            </div>
+            <div class="progress-text">{{ progress_percentage }}% Complete</div>
+        </div>
+        
+        <div class="details-grid">
+            <div class="detail-item">
+                <div class="detail-label">Maintenance Type</div>
+                <div class="detail-value">{{ reason|default:"System Update" }}</div>
+            </div>
+            
+            {% if started_at %}
+            <div class="detail-item">
+                <div class="detail-label">Started At</div>
+                <div class="detail-value">{{ started_at|date:"M j, Y g:i A" }}</div>
+            </div>
+            {% endif %}
+            
+            {% if estimated_completion %}
+            <div class="detail-item">
+                <div class="detail-label">Estimated Completion</div>
+                <div class="detail-value">{{ estimated_completion|date:"M j, Y g:i A" }}</div>
+            </div>
+            {% endif %}
+            
+            {% if maintenance.duration_seconds %}
+            <div class="detail-item">
+                <div class="detail-label">Duration</div>
+                <div class="detail-value">
+                    {% if maintenance.duration_seconds < 60 %}
+                        {{ maintenance.duration_seconds|floatformat:0 }} seconds
+                    {% elif maintenance.duration_seconds < 3600 %}
+                        {{ maintenance.duration_seconds|floatformat:0|div:60 }} minutes
+                    {% else %}
+                        {{ maintenance.duration_seconds|floatformat:0|div:3600 }} hours
+                    {% endif %}
+                </div>
+            </div>
+            {% endif %}
+        </div>
+        
+        <div class="info-section">
+            <div class="info-title">What's happening?</div>
+            <div class="info-text">
+                We're currently performing {{ reason|lower|default:"system maintenance" }} to improve your experience. 
+                Your data is safe and secure during this process. The system will be back online automatically once the maintenance is complete.
+            </div>
+        </div>
+        
+        <div class="auto-refresh">
+            🔄 This page automatically refreshes every <span id="countdown">30</span> seconds to show the latest progress.
+            <br><small>No need to manually refresh the page.</small>
+        </div>
+    </div>
+</body>
+</html>

@@ -11,7 +11,9 @@ User = get_user_model()
 
 
 class FieldSerializer(serializers.ModelSerializer):
-    """Serializer for pipeline fields"""
+    """Serializer for pipeline fields with soft delete support"""
+    is_active = serializers.SerializerMethodField()
+    deletion_status = serializers.SerializerMethodField()
     
     class Meta:
         model = Field
@@ -21,9 +23,42 @@ class FieldSerializer(serializers.ModelSerializer):
             'display_name', 'help_text', 'enforce_uniqueness', 'create_index', 
             'is_searchable', 'is_ai_field', 'display_order', 'is_visible_in_list', 
             'is_visible_in_detail', 'is_visible_in_public_forms',
-            'ai_config', 'created_at', 'updated_at'
+            'ai_config', 'is_active', 'deletion_status',
+            'is_deleted', 'deleted_at', 'scheduled_for_hard_delete',
+            'created_at', 'updated_at'
         ]
-        read_only_fields = ['id', 'created_at', 'updated_at']
+        read_only_fields = [
+            'id', 'slug', 'is_active', 'deletion_status', 
+            'is_deleted', 'deleted_at', 'scheduled_for_hard_delete',
+            'created_at', 'updated_at'
+        ]
+    
+    def get_is_active(self, obj):
+        """Check if field is active (not deleted)"""
+        return not obj.is_deleted
+    
+    def get_deletion_status(self, obj):
+        """Get detailed deletion status"""
+        if obj.scheduled_for_hard_delete:
+            from django.utils import timezone
+            remaining = obj.scheduled_for_hard_delete - timezone.now()
+            days_remaining = remaining.days if remaining.days > 0 else 0
+            return {
+                'status': 'scheduled_for_hard_delete',
+                'days_remaining': days_remaining,
+                'hard_delete_date': obj.scheduled_for_hard_delete.isoformat(),
+                'reason': obj.hard_delete_reason
+            }
+        elif obj.is_deleted:
+            return {
+                'status': 'soft_deleted',
+                'deleted_at': obj.deleted_at.isoformat() if obj.deleted_at else None,
+                'deleted_by': obj.deleted_by.username if obj.deleted_by else None
+            }
+        else:
+            return {
+                'status': 'active'
+            }
     
     def validate_field_type(self, value):
         """Validate field type"""
@@ -54,6 +89,132 @@ class FieldSerializer(serializers.ModelSerializer):
                 })
         
         return attrs
+
+
+class FieldManagementActionSerializer(serializers.Serializer):
+    """Serializer for field management actions (soft delete, restore, etc.)"""
+    action = serializers.ChoiceField(
+        choices=['soft_delete', 'restore', 'schedule_hard_delete', 'impact_analysis'],
+        help_text="Action to perform on the field"
+    )
+    reason = serializers.CharField(
+        max_length=500,
+        required=False,
+        help_text="Reason for the action (required for deletions)"
+    )
+    grace_days = serializers.IntegerField(
+        default=7,
+        min_value=1,
+        max_value=30,
+        required=False,
+        help_text="Days before hard deletion (for schedule_hard_delete)"
+    )
+    
+    def validate(self, attrs):
+        action = attrs.get('action')
+        reason = attrs.get('reason')
+        
+        # Require reason for destructive actions
+        if action in ['soft_delete', 'schedule_hard_delete'] and not reason:
+            raise serializers.ValidationError({
+                'reason': 'Reason is required for deletion actions'
+            })
+        
+        return attrs
+
+
+class FieldRestoreSerializer(serializers.Serializer):
+    """Serializer for direct field restore operations"""
+    reason = serializers.CharField(
+        max_length=500,
+        required=False,
+        help_text="Reason for restoring the field"
+    )
+    dry_run = serializers.BooleanField(
+        default=False,
+        help_text="Preview restore impact without performing actual restore"
+    )
+    force = serializers.BooleanField(
+        default=False,
+        help_text="Force restore even if validation warnings exist"
+    )
+
+
+class BulkFieldRestoreSerializer(serializers.Serializer):
+    """Serializer for bulk field restore operations"""
+    field_ids = serializers.ListField(
+        child=serializers.IntegerField(),
+        min_length=1,
+        max_length=20,
+        help_text="List of field IDs to restore (max 20)"
+    )
+    reason = serializers.CharField(
+        max_length=500,
+        required=False,
+        help_text="Reason for bulk restore"
+    )
+    force = serializers.BooleanField(
+        default=False,
+        help_text="Force restore for all fields even with validation warnings"
+    )
+    
+    def validate_field_ids(self, value):
+        """Validate that field IDs exist and are deleted"""
+        from .models import Field
+        
+        # Check that all field IDs exist (including soft-deleted)
+        existing_fields = Field.objects.with_deleted().filter(id__in=value)
+        existing_ids = set(existing_fields.values_list('id', flat=True))
+        missing_ids = set(value) - existing_ids
+        
+        if missing_ids:
+            raise serializers.ValidationError(
+                f"Field IDs not found: {sorted(missing_ids)}"
+            )
+        
+        # Check that fields are actually deleted
+        non_deleted_fields = existing_fields.filter(is_deleted=False)
+        if non_deleted_fields.exists():
+            non_deleted_ids = list(non_deleted_fields.values_list('id', flat=True))
+            raise serializers.ValidationError(
+                f"Fields are not deleted and cannot be restored: {non_deleted_ids}"
+            )
+        
+        return value
+
+
+class FieldMigrationSerializer(serializers.Serializer):
+    """Serializer for field schema migration requests"""
+    new_config = serializers.JSONField(
+        help_text="New field configuration to migrate to"
+    )
+    dry_run = serializers.BooleanField(
+        default=False,
+        help_text="Perform dry run without making actual changes"
+    )
+    batch_size = serializers.IntegerField(
+        default=100,
+        min_value=10,
+        max_value=1000,
+        help_text="Number of records to process per batch"
+    )
+    
+    def validate_new_config(self, value):
+        """Validate the new configuration structure"""
+        required_keys = ['field_type']
+        for key in required_keys:
+            if key not in value:
+                raise serializers.ValidationError(f"Missing required key: {key}")
+        
+        # Validate field type
+        field_type = value.get('field_type')
+        try:
+            from .field_types import FieldType
+            FieldType(field_type)
+        except ValueError:
+            raise serializers.ValidationError(f"Invalid field type: {field_type}")
+        
+        return value
 
 
 class PipelineSerializer(serializers.ModelSerializer):
@@ -390,3 +551,33 @@ class BulkRecordActionSerializer(serializers.Serializer):
             raise serializers.ValidationError({'tags': 'Tags are required for tag actions'})
         
         return attrs
+
+
+class MigrationValidationSerializer(serializers.Serializer):
+    """Serializer for pre-migration validation requests"""
+    new_config = serializers.JSONField(
+        help_text="Proposed new field configuration to validate"
+    )
+    include_impact_preview = serializers.BooleanField(
+        default=False,
+        help_text="Include detailed impact analysis in validation response"
+    )
+    
+    def validate_new_config(self, value):
+        """Validate the new configuration format"""
+        if not isinstance(value, dict):
+            raise serializers.ValidationError("new_config must be a dictionary")
+        
+        # Basic validation - field_type if provided should be valid
+        if 'field_type' in value:
+            from .field_types import FieldType
+            field_type = value['field_type']
+            
+            # Check if field_type is a valid FieldType
+            valid_types = [ft.value for ft in FieldType]
+            if field_type not in valid_types:
+                raise serializers.ValidationError(
+                    f"Invalid field_type '{field_type}'. Valid types: {', '.join(valid_types)}"
+                )
+        
+        return value

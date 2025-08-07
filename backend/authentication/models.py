@@ -60,18 +60,20 @@ class UserType(models.Model):
                     'system': ['full_access'],
                     'users': ['create', 'read', 'update', 'delete', 'impersonate', 'assign_roles'],
                     'user_types': ['create', 'read', 'update', 'delete'],
-                    'pipelines': ['create', 'read', 'update', 'delete', 'clone', 'export', 'import'],
-                    'records': ['create', 'read', 'update', 'delete', 'bulk_edit', 'export', 'import'],
-                    'fields': ['create', 'read', 'update', 'delete', 'configure'],
+                    'pipelines': ['access', 'create', 'read', 'update', 'delete', 'clone', 'export', 'import'],
+                    'records': ['create', 'read', 'update', 'delete', 'export', 'import'],
+                    'fields': ['create', 'read', 'update', 'delete', 'recover', 'migrate'],
                     'relationships': ['create', 'read', 'update', 'delete', 'traverse'],
-                    'workflows': ['create', 'read', 'update', 'delete', 'execute'],
+                    'workflows': ['create', 'read', 'update', 'delete', 'execute', 'clone', 'export'],
                     'business_rules': ['create', 'read', 'update', 'delete'],
                     'communications': ['create', 'read', 'update', 'delete', 'send'],
                     'settings': ['read', 'update'],
                     'monitoring': ['read', 'update'],
                     'ai_features': ['create', 'read', 'update', 'delete', 'configure'],
                     'reports': ['create', 'read', 'update', 'delete', 'export'],
-                    'api_access': ['full_access']
+                    'api_access': ['full_access'],
+                    'duplicates': ['create', 'read', 'update', 'delete', 'resolve', 'detect'],
+                    'permissions': ['read', 'update']
                 }
             },
             {
@@ -83,18 +85,20 @@ class UserType(models.Model):
                 'base_permissions': {
                     'users': ['create', 'read', 'update', 'assign_roles'],
                     'user_types': ['read'],
-                    'pipelines': ['create', 'read', 'update', 'clone', 'export'],
-                    'records': ['create', 'read', 'update', 'bulk_edit', 'export'],
-                    'fields': ['create', 'read', 'update', 'configure'],
+                    'pipelines': ['access', 'create', 'read', 'update', 'clone', 'export'],
+                    'records': ['create', 'read', 'update', 'export'],
+                    'fields': ['create', 'read', 'update', 'recover'],
                     'relationships': ['create', 'read', 'update', 'traverse'],
-                    'workflows': ['create', 'read', 'update', 'execute'],
+                    'workflows': ['create', 'read', 'update', 'execute', 'clone', 'export'],
                     'business_rules': ['create', 'read', 'update'],
                     'communications': ['create', 'read', 'update', 'send'],
                     'settings': ['read'],
                     'monitoring': ['read'],
-                    'ai_features': ['create', 'read', 'update'],
+                    'ai_features': ['create', 'read', 'update', 'configure'],
                     'reports': ['create', 'read', 'update', 'export'],
-                    'api_access': ['read', 'write']
+                    'api_access': ['read', 'write'],
+                    'duplicates': ['create', 'read', 'update', 'resolve', 'detect'],
+                    'permissions': ['read', 'update']
                 }
             },
             {
@@ -106,7 +110,7 @@ class UserType(models.Model):
                 'base_permissions': {
                     'users': ['read'],
                     'user_types': ['read'],
-                    'pipelines': ['read', 'update'],
+                    'pipelines': ['access', 'read', 'update'],
                     'records': ['create', 'read', 'update', 'export'],
                     'fields': ['read', 'update'],
                     'relationships': ['create', 'read', 'update', 'traverse'],
@@ -116,7 +120,9 @@ class UserType(models.Model):
                     'settings': ['read'],
                     'ai_features': ['read', 'update'],
                     'reports': ['read', 'export'],
-                    'api_access': ['read', 'write']
+                    'api_access': ['read', 'write'],
+                    'duplicates': ['read', 'detect'],
+                    'permissions': ['read']
                 }
             },
             {
@@ -128,7 +134,7 @@ class UserType(models.Model):
                 'base_permissions': {
                     'users': ['read'],
                     'user_types': ['read'],
-                    'pipelines': ['read'],
+                    'pipelines': ['access', 'read'],
                     'records': ['read', 'export'],
                     'fields': ['read'],
                     'relationships': ['read'],
@@ -138,7 +144,9 @@ class UserType(models.Model):
                     'settings': ['read'],
                     'ai_features': ['read'],
                     'reports': ['read', 'export'],
-                    'api_access': ['read']
+                    'api_access': ['read'],
+                    'duplicates': ['read'],
+                    'permissions': ['read']
                 }
             }
         ]

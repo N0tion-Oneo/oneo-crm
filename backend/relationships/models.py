@@ -8,7 +8,7 @@ from django.utils.text import slugify
 from django.utils import timezone
 from django.contrib.postgres.fields import ArrayField
 from django.contrib.postgres.indexes import GinIndex
-from pipelines.models import Pipeline, Record
+from pipelines.models import Pipeline, Record, field_slugify
 from authentication.models import UserType
 import logging
 
@@ -85,7 +85,7 @@ class RelationshipType(models.Model):
     
     def save(self, *args, **kwargs):
         if not self.slug:
-            self.slug = slugify(self.name)
+            self.slug = field_slugify(self.name)
         if not self.reverse_label and self.is_bidirectional:
             self.reverse_label = f"reverse_{self.forward_label}"
         super().save(*args, **kwargs)

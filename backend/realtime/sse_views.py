@@ -388,10 +388,63 @@ def get_accessible_pipeline_ids(user: User) -> list:
 
 
 def get_recent_activity(user: User, limit: int = 20) -> list:
-    """Get recent activity for user"""
-    # Integration with activity tracking system
-    activity_key = f"recent_activity:{user.id}"
-    return cache.get(activity_key, [])[:limit]
+    """Get recent activity for user from AuditLog database"""
+    try:
+        from core.models import AuditLog
+        
+        # Get recent audit logs for this user or all logs they can see
+        # Filter to records the user has access to based on permissions
+        recent_logs = AuditLog.objects.filter(
+            model_name='Record'
+        ).select_related('user').order_by('-timestamp')[:limit]
+        
+        # Format audit logs to match expected activity feed format
+        activities = []
+        for log in recent_logs:
+            activity = {
+                'id': log.id,
+                'type': 'field_change' if log.action == 'updated' else 'system',
+                'action': log.action,
+                'message': _format_audit_changes_for_activity_feed(log.changes, log.action),
+                'user': {
+                    'first_name': log.user.first_name if log.user else '',
+                    'last_name': log.user.last_name if log.user else '',
+                    'email': log.user.email if log.user else ''
+                } if log.user else None,
+                'created_at': log.timestamp.isoformat(),
+                'record_id': log.object_id,
+                'pipeline_id': log.changes.get('pipeline_id') if log.changes else None,
+                'timestamp': log.timestamp.timestamp()
+            }
+            activities.append(activity)
+        
+        return activities
+        
+    except Exception as e:
+        logger.error(f"Error getting recent activity from AuditLog: {e}")
+        # Fallback to empty list if database query fails
+        return []
+
+
+def _format_audit_changes_for_activity_feed(changes, action):
+    """Format audit log changes for activity feed consumption"""
+    if action == 'created':
+        return f"Record created in {changes.get('pipeline_name', 'Unknown')} pipeline"
+    
+    elif action == 'updated':
+        # Use pre-formatted change summaries from AuditLog
+        if 'changes_summary' in changes and changes['changes_summary']:
+            # Join multiple changes with line breaks
+            return '\n'.join(changes['changes_summary'])
+        
+        # Fallback to basic message
+        total_changes = changes.get('total_changes', 0)
+        return f"Record updated ({total_changes} field{'s' if total_changes != 1 else ''} changed)"
+    
+    elif action == 'deleted':
+        return f"Record deleted from {changes.get('pipeline_name', 'Unknown')} pipeline"
+    
+    return f"Record {action}"
 
 
 def can_access_dashboard(user: User, dashboard_id: str) -> bool:

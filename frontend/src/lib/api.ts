@@ -326,6 +326,40 @@ export const pipelinesApi = {
   
   deleteField: (pipelineId: string, fieldId: string) =>
     api.delete(`/api/pipelines/${pipelineId}/fields/${fieldId}/`),
+
+  // Advanced field lifecycle management (nested under pipelines)
+  manageField: (pipelineId: string, fieldId: string, action: 'soft_delete' | 'restore' | 'schedule_hard_delete' | 'impact_analysis', data?: any) =>
+    api.post(`/api/pipelines/${pipelineId}/fields/${fieldId}/manage/`, { action, ...data }),
+
+  // Migration validation and execution
+  validateMigration: (pipelineId: string, fieldId: string, data: { new_config: any; include_impact_preview?: boolean }) =>
+    api.post(`/api/pipelines/${pipelineId}/fields/${fieldId}/validate_migration/`, data),
+
+  migrateFieldSchema: (pipelineId: string, fieldId: string, data: { new_config: any; dry_run?: boolean; batch_size?: number; force?: boolean }) =>
+    api.post(`/api/pipelines/${pipelineId}/fields/${fieldId}/migrate_schema/`, data),
+
+  // Enhanced field recovery endpoints (using nested router structure)
+  getDeletedFields: (pipelineId: string) =>
+    api.get(`/api/pipelines/${pipelineId}/fields/deleted/`),
+
+  restoreField: (pipelineId: string, fieldId: string, options: { reason?: string; dry_run?: boolean; force?: boolean } = {}) =>
+    api.post(`/api/pipelines/${pipelineId}/fields/${fieldId}/restore/`, options),
+
+  bulkRestoreFields: (pipelineId: string, data: { field_ids: string[]; reason?: string; force?: boolean }) =>
+    api.post(`/api/pipelines/${pipelineId}/fields/bulk_restore/`, data),
+
+  // Legacy global endpoints (for backward compatibility)
+  getAllDeletedFields: () =>
+    api.get('/api/fields/deleted/'),
+
+  getScheduledFields: () =>
+    api.get('/api/fields/scheduled_for_deletion/'),
+
+  getMigrationStatus: (taskId: string) =>
+    api.get('/api/fields/migration_status/', { params: { task_id: taskId } }),
+
+  validateFieldValue: (pipelineId: string, fieldId: string, value: any, isRequired?: boolean) =>
+    api.post(`/api/pipelines/${pipelineId}/fields/${fieldId}/validate_value/`, { value, is_required: isRequired }),
   
   // Record management
   getRecords: (pipelineId: string, params?: any) =>

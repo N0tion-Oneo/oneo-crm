@@ -2,7 +2,7 @@
 Field type definitions and configurations for dynamic pipelines
 """
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 from pydantic import BaseModel, validator
 from datetime import datetime, date
 import re
@@ -80,7 +80,7 @@ class BaseFieldConfig(BaseModel):
     help_text: Optional[str] = None
     
     class Config:
-        extra = "forbid"  # Don't allow extra fields
+        extra = "ignore"  # Ignore extra fields for backward compatibility
 
 
 class TextFieldConfig(BaseFieldConfig):
@@ -88,6 +88,12 @@ class TextFieldConfig(BaseFieldConfig):
     # No min/max length validation per requirements - hard cap at 160 characters handled at storage level
     case_sensitive: bool = True
     auto_format: bool = False  # Auto-formatting rules
+    
+    # Legacy field support for backward compatibility (ignored)
+    max_length: Optional[int] = None
+    min_length: Optional[int] = None
+    placeholder: Optional[str] = None
+    default_value: Optional[str] = None
 
 
 class TextareaFieldConfig(BaseFieldConfig):
@@ -95,6 +101,13 @@ class TextareaFieldConfig(BaseFieldConfig):
     # No rows/resize options per requirements - should adjust based on content
     # No min/max length validation per requirements
     enable_rich_text: bool = False  # Rich text editor toggle
+    
+    # Legacy field support for backward compatibility (ignored)
+    max_length: Optional[int] = None
+    min_length: Optional[int] = None
+    rows: Optional[int] = None
+    placeholder: Optional[str] = None
+    default_value: Optional[str] = None
 
 
 class EmailFieldConfig(BaseFieldConfig):
@@ -128,6 +141,12 @@ class URLFieldConfig(BaseFieldConfig):
 class NumberFieldConfig(BaseFieldConfig):
     """Configuration for consolidated number fields - display and behavior focused"""
     format: str = 'integer'  # 'integer', 'decimal', 'currency', 'percentage', 'auto_increment'
+    
+    # Legacy field support for backward compatibility (ignored)
+    min_value: Optional[Union[int, float]] = None
+    max_value: Optional[Union[int, float]] = None
+    step: Optional[Union[int, float]] = None
+    default_value: Optional[Union[int, float]] = None
     
     # Auto-increment settings
     auto_increment_prefix: Optional[str] = None    # "INV-", "CUST-", etc.

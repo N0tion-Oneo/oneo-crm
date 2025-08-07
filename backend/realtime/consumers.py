@@ -648,6 +648,19 @@ class BaseRealtimeConsumer(AsyncWebsocketConsumer):
             'timestamp': data.get('timestamp')
         }))
     
+    async def activity_update(self, event):
+        """Handle activity update event from AuditLog system"""
+        data = event.get('data', {})
+        
+        # Send activity update to the client (for Activity tab in Record Drawer)
+        await self.send(text_data=json.dumps({
+            'type': 'activity_update',
+            'data': data,
+            'timestamp': data.get('created_at')
+        }))
+        
+        logger.debug(f"Activity update sent to user {self.user_id}: {data.get('type', 'unknown')}")
+    
     async def send_permission_update(self, event):
         """Handle permission change signals and broadcast to connected clients"""
         message = event.get('message', {})

@@ -78,7 +78,7 @@ export const TextareaFieldComponent: FieldComponent = {
           maxLength={maxLength}
           rows={rows}
           autoFocus={autoFocus}
-          required={field.is_required}
+          // Required attribute handled by FieldWrapper
         />
         {error && (
           <p className="mt-1 text-sm text-red-600 dark:text-red-400">{error}</p>
@@ -125,12 +125,7 @@ export const TextareaFieldComponent: FieldComponent = {
   },
 
   validate: (value: any, field: Field): ValidationResult => {
-    if (field.is_required && (!value || value === '')) {
-      return {
-        isValid: false,
-        error: `${field.display_name || field.name} is required`
-      }
-    }
+    // Note: Required validation handled by permission system
 
     if (value) {
       const stringValue = String(value)

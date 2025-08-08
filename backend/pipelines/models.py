@@ -1467,8 +1467,8 @@ class Record(models.Model):
         if is_new:
             self._update_pipeline_stats()
         
-        # Trigger AI field updates if data changed
-        if not is_new:
+        # Trigger AI field updates if data changed (unless explicitly skipped)
+        if not is_new and not getattr(self, '_skip_ai_processing', False):
             changed_fields = self._get_changed_fields(original_data, self.data)
             if changed_fields:
                 self._trigger_ai_updates(changed_fields)

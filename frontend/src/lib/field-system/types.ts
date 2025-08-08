@@ -7,11 +7,12 @@ export interface Field {
   field_type: string
   field_config?: Record<string, any>
   config?: Record<string, any> // Legacy support
-  is_required?: boolean
+  // is_required removed - now handled by conditional rules in business_rules
   is_readonly?: boolean
   help_text?: string
   placeholder?: string
   original_slug?: string // Backend slug for API calls
+  business_rules?: Record<string, any> // For conditional rules evaluation
 }
 
 export interface FieldRenderProps {

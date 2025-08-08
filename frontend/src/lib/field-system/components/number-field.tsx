@@ -136,7 +136,7 @@ export const NumberFieldComponent: FieldComponent = {
               max={max}
               step={step}
               autoFocus={autoFocus}
-              required={field.is_required}
+              // Required attribute handled by FieldWrapper
             />
           </div>
         ) : isPercentage ? (
@@ -156,7 +156,7 @@ export const NumberFieldComponent: FieldComponent = {
               max={max}
               step="0.1"
               autoFocus={autoFocus}
-              required={field.is_required}
+              // Required attribute handled by FieldWrapper
             />
             <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
               <span className="text-gray-500 dark:text-gray-400 text-sm">%</span>
@@ -288,7 +288,7 @@ export const NumberFieldComponent: FieldComponent = {
                     max={max}
                     step={step}
                     autoFocus={autoFocus}
-                    required={field.is_required}
+                    // Required attribute handled by FieldWrapper
                   />
                 </div>
               </div>
@@ -310,7 +310,7 @@ export const NumberFieldComponent: FieldComponent = {
             max={isAutoIncrement ? undefined : max}
             step={isAutoIncrement ? undefined : step}
             autoFocus={isAutoIncrement ? false : autoFocus}
-            required={field.is_required}
+            // Required attribute handled by FieldWrapper
             readOnly={isAutoIncrement}
           />
         )}
@@ -431,12 +431,7 @@ export const NumberFieldComponent: FieldComponent = {
     
     // Check if field is required and value is empty
     const isEmpty = actualValue === null || actualValue === undefined || actualValue === ''
-    if (field.is_required && isEmpty) {
-      return {
-        isValid: false,
-        error: `${field.display_name || field.name} is required`
-      }
-    }
+    // Note: Required validation handled by permission system
 
     // If not empty, validate the numeric value
     if (!isEmpty) {

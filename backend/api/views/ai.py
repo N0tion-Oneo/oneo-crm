@@ -100,11 +100,11 @@ class AIJobViewSet(viewsets.ModelViewSet):
                 'tenant_name': getattr(tenant, 'name', 'Unknown'),
                 'ai_enabled': ai_config.get('enabled', True),  # Default to enabled
                 'default_provider': ai_config.get('default_provider', 'openai'),
-                'default_model': ai_config.get('default_model', 'gpt-4.1-mini'),
+                'default_model': ai_config.get('default_model', 'gpt-4o-mini'),
                 'usage_limits': ai_config.get('usage_limits', {}),
                 'current_usage': current_usage,
                 'available_models': ai_config.get('available_models', [
-                    'gpt-4.1-mini', 'gpt-4.1', 'o3', 'o3-mini', 'gpt-4o', 'gpt-4o-mini', 'gpt-3.5-turbo'
+                    'gpt-4o-mini', 'gpt-4o', 'gpt-3.5-turbo', 'o3-mini', 'o3', 'gpt-4.1', 'gpt-4.1-mini'
                 ]),
                 'concurrent_jobs': ai_config.get('concurrent_jobs', 5),
                 # Include masked API keys for display

@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { useAuth } from '@/features/auth/context'
-import { ArrowLeft, Edit, Settings, Target } from 'lucide-react'
+import { ArrowLeft, Edit, Settings, Target, Copy } from 'lucide-react'
 import { RecordListView, type Pipeline, type Record } from '@/components/pipelines/record-list-view'
 import { RecordDetailDrawer } from '@/components/pipelines/record-detail-drawer'
 import { pipelinesApi } from '@/lib/api'
@@ -198,7 +198,7 @@ export default function PipelineRecordsPage() {
           name: field.slug || field.name?.toLowerCase().replace(/\s+/g, '_'),
           label: field.name || field.slug || 'Unknown Field',
           field_type: field.field_type || 'text',
-          required: field.is_required || false,
+          required: false, // Requirements handled by conditional rules
           visible: field.is_visible_in_list !== false,
           order: field.display_order || 0,
           config: field.field_config || {}
@@ -281,6 +281,14 @@ export default function PipelineRecordsPage() {
           >
             <Target className="w-4 h-4 mr-1" />
             Business Rules
+          </button>
+          
+          <button
+            onClick={() => router.push(`/pipelines/${pipelineId}/duplicates`)}
+            className="px-3 py-1.5 text-sm bg-orange-500 text-white rounded-md hover:bg-orange-600 flex items-center"
+          >
+            <Copy className="w-4 h-4 mr-1" />
+            Duplicate Management
           </button>
           
           <button

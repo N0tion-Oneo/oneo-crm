@@ -7,7 +7,7 @@ export const SelectFieldComponent: FieldComponent = {
     const { field, value, onChange, onBlur, onKeyDown, disabled, error, className, autoFocus } = props
     
     const options = getFieldOptions(field)
-    const allowEmpty = !field.is_required
+    const allowEmpty = true // Allow empty - requirement handled by permission system
     const allowCustom = getFieldConfig(field, 'allow_custom', false)
     const placeholder = field.placeholder || `Select ${field.display_name || field.name}`
     
@@ -30,7 +30,7 @@ export const SelectFieldComponent: FieldComponent = {
           disabled={disabled}
           className={inputClass}
           autoFocus={autoFocus}
-          required={field.is_required}
+          // Required attribute handled by FieldWrapper
         >
           {allowEmpty && (
             <option value="">{placeholder}</option>
@@ -83,12 +83,7 @@ export const SelectFieldComponent: FieldComponent = {
   },
 
   validate: (value: any, field: Field): ValidationResult => {
-    if (field.is_required && (!value || value === '')) {
-      return {
-        isValid: false,
-        error: `${field.display_name || field.name} is required`
-      }
-    }
+    // Note: Required validation handled by permission system
 
     if (value) {
       const options = getFieldOptions(field)
@@ -115,9 +110,8 @@ export const SelectFieldComponent: FieldComponent = {
     }
     
     // If only one option and field is required, use it as default
-    if (options.length === 1 && field.is_required) {
-      return options[0].value
-    }
+    // Return first option only if explicitly configured as default
+    // (Removed is_required dependency)
     
     return null
   },
@@ -189,12 +183,7 @@ export const MultiselectFieldComponent: FieldComponent = {
   },
 
   validate: (value: any, field: Field): ValidationResult => {
-    if (field.is_required && (!Array.isArray(value) || value.length === 0)) {
-      return {
-        isValid: false,
-        error: `${field.display_name || field.name} is required`
-      }
-    }
+    // Note: Required validation handled by permission system
 
     if (Array.isArray(value) && value.length > 0) {
       const options = getFieldOptions(field)

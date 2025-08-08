@@ -87,7 +87,7 @@ export const PhoneFieldComponent: FieldComponent = {
             className={inputClass}
             placeholder={defaultCountry ? `e.g. ${getCountryCode(defaultCountry)} 555-123-4567` : `Enter ${field.display_name || field.name}`}
             autoFocus={autoFocus}
-            required={field.is_required}
+            // Required attribute handled by FieldWrapper
           />
         ) : (
           (() => {
@@ -246,7 +246,7 @@ export const PhoneFieldComponent: FieldComponent = {
                   className={`${inputClass} flex-1`}
                   placeholder="Enter phone number"
                   autoFocus={autoFocus}
-                  required={field.is_required}
+                  // Required attribute handled by FieldWrapper
                 />
               </div>
             )
@@ -341,12 +341,7 @@ export const PhoneFieldComponent: FieldComponent = {
     
     // Check if field is required and value is empty
     const isEmpty = actualPhone === null || actualPhone === undefined || actualPhone === ''
-    if (field.is_required && isEmpty) {
-      return {
-        isValid: false,
-        error: `${field.display_name || field.name} is required`
-      }
-    }
+    // Note: Required validation handled by permission system
 
     // If not empty, validate the phone value
     if (!isEmpty) {

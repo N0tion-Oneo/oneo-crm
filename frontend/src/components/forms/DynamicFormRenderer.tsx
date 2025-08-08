@@ -22,6 +22,14 @@ interface DynamicFieldConfig {
   field_config: Record<string, any>
   ai_config?: Record<string, any> // Add AI config support
   form_validation_rules: Record<string, any>
+  business_rules?: {
+    conditional_rules?: {
+      show_when?: any
+      hide_when?: any
+      require_when?: any
+    }
+    user_visibility?: Record<string, any>
+  }
   default_value: any
   current_value: any
 }
@@ -72,6 +80,7 @@ export function DynamicFormRenderer({
   const { user } = useAuth()
   const [formSchema, setFormSchema] = useState<DynamicFormSchema | null>(null)
   const [formData, setFormData] = useState<Record<string, any>>({})
+  const [fieldStates, setFieldStates] = useState<Record<string, { visible: boolean; required: boolean }>>({})
   const [validationErrors, setValidationErrors] = useState<ValidationError[]>([])
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
@@ -105,6 +114,67 @@ export function DynamicFormRenderer({
     }
   }, [formSchema, recordData])
 
+  // Evaluate field states when form data changes
+  useEffect(() => {
+    if (!formSchema || !formSchema.fields || !Array.isArray(formSchema.fields)) return
+
+    const newFieldStates: Record<string, { visible: boolean; required: boolean }> = {}
+    
+    try {
+      formSchema.fields.forEach(field => {
+        if (field && field.slug) {
+          if (field.business_rules?.conditional_rules) {
+            // Add stage to form data for evaluation if provided
+            const evaluationData = { ...formData }
+            if (stage) {
+              evaluationData.stage = stage
+            }
+            
+            const conditionalResult = evaluateConditionalRules(
+              field.business_rules.conditional_rules,
+              evaluationData,
+              user?.userType?.slug
+            )
+            
+            // Debug: Log conditional rules evaluation
+            if (field.slug && conditionalResult.required) {
+              console.log('📋 Field Required by Conditional Rules:', {
+                fieldSlug: field.slug,
+                evaluationData,
+                conditionalRules: field.business_rules.conditional_rules,
+                result: conditionalResult
+              })
+            }
+            
+            newFieldStates[field.slug] = {
+              visible: conditionalResult.visible,
+              required: conditionalResult.required // Only use conditional rules for requirements
+            }
+          } else {
+            // No conditional rules - field is never required unless business rules specify
+            newFieldStates[field.slug] = {
+              visible: field.is_visible !== false,
+              required: false // Only conditional rules determine requirements
+            }
+          }
+        }
+      })
+    } catch (error) {
+      console.error('Error evaluating field states:', error)
+      // Fallback to basic field states (no requirements without conditional rules)
+      formSchema.fields.forEach(field => {
+        if (field && field.slug) {
+          newFieldStates[field.slug] = {
+            visible: field.is_visible !== false,
+            required: false // Only conditional rules should determine requirements
+          }
+        }
+      })
+    }
+    
+    setFieldStates(newFieldStates)
+  }, [formSchema, formData, stage, user])
+
   const loadFormSchema = async () => {
     try {
       setLoading(true)
@@ -132,6 +202,15 @@ export function DynamicFormRenderer({
       }
       
       const response = await api.get(endpoint)
+      
+      // Debug: Log form schema to understand what backend is returning
+      console.log('🔍 Dynamic Form Schema Loaded:', {
+        endpoint,
+        fieldCount: response.data?.fields?.length || 0,
+        sampleField: response.data?.fields?.[0] || null,
+        fieldsWithLegacyRequired: response.data?.fields?.filter(f => f.is_required === true) || []
+      })
+      
       setFormSchema(response.data)
       
     } catch (err: any) {
@@ -163,6 +242,13 @@ export function DynamicFormRenderer({
 
     formSchema.fields.forEach(field => {
       const value = formData[field.slug]
+      const fieldState = fieldStates[field.slug]
+      
+      // Skip validation for hidden fields
+      if (!fieldState?.visible) return
+      
+      // Use dynamic required state
+      const isDynamicallyRequired = fieldState?.required || false
       
       // Convert DynamicFieldConfig to Field format expected by field system
       const fieldSystemField = {
@@ -172,10 +258,12 @@ export function DynamicFormRenderer({
         field_type: field.type,
         field_config: field.field_config,
         ai_config: field.ai_config,
-        is_required: field.is_required,
+        // Use dynamic required state from fieldStates for validation
+        is_required: isDynamicallyRequired,
         is_readonly: field.is_readonly,
         help_text: field.help_text,
-        placeholder: field.placeholder
+        placeholder: field.placeholder,
+        business_rules: field.business_rules
       }
       
       // Use the field system's validation
@@ -284,6 +372,10 @@ export function DynamicFormRenderer({
     const value = formData[field.slug]
     const hasError = validationErrors.some(error => error.field === field.slug)
     const error = validationErrors.find(error => error.field === field.slug)
+    const fieldState = fieldStates[field.slug]
+    
+    // Use dynamic required state
+    const isDynamicallyRequired = fieldState?.required || false
     
     // Convert DynamicFieldConfig to Field format expected by field system
     const fieldSystemField = {
@@ -293,10 +385,11 @@ export function DynamicFormRenderer({
       field_type: field.type,
       field_config: field.field_config,
       ai_config: field.ai_config,
-      is_required: field.is_required,
+      // Removed is_required - FieldWrapper now evaluates requirements dynamically via business_rules
       is_readonly: field.is_readonly,
       help_text: field.help_text,
-      placeholder: field.placeholder
+      placeholder: field.placeholder,
+      business_rules: field.business_rules // Include business_rules for permission evaluation
     }
     
     return (
@@ -311,6 +404,8 @@ export function DynamicFormRenderer({
         context="form"
         showLabel={false} // We handle labels in the outer form
         showHelp={false}  // We handle help text in the outer form
+        user={user} // Pass user context for permission evaluation
+        formData={formData} // Pass form data for conditional rule evaluation
       />
     )
   }
@@ -378,7 +473,14 @@ export function DynamicFormRenderer({
       <form onSubmit={handleSubmit} className="p-6 space-y-6">
         {formSchema.fields
           .filter(field => {
-            // Basic visibility check
+            const fieldState = fieldStates[field.slug]
+            
+            // Use dynamic visibility from field states if available
+            if (fieldState !== undefined) {
+              return fieldState.visible
+            }
+            
+            // Fallback to basic visibility check
             if (!field.is_visible) return false
             
             // For public forms, no user permission checks needed
@@ -392,13 +494,10 @@ export function DynamicFormRenderer({
                 name: field.slug,
                 display_name: field.display_name,
                 field_type: field.type,
-                is_required: field.is_required,
+                is_required: false, // Only conditional rules determine requirements
                 is_visible_in_detail: field.is_visible,
                 display_order: field.display_order,
-                business_rules: {
-                  // Note: Form fields may not have full business rules yet
-                  // This is where we could extend to support conditional rules in forms
-                }
+                business_rules: field.business_rules || {}
               }
               
               const permissions = evaluateFieldPermissions(permissionField, user, formData, 'form')
@@ -409,18 +508,23 @@ export function DynamicFormRenderer({
             return true
           })
           .sort((a, b) => a.display_order - b.display_order)
-          .map((field) => (
-            <div key={field.slug}>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                {field.display_name}
-                {field.is_required && <span className="text-red-500 ml-1">*</span>}
-              </label>
-              {field.help_text && (
-                <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">{field.help_text}</p>
-              )}
-              {renderFieldInput(field)}
-            </div>
-          ))}
+          .map((field) => {
+            const fieldState = fieldStates[field.slug]
+            const isDynamicallyRequired = fieldState?.required || false // Only use dynamic state
+            
+            return (
+              <div key={field.slug}>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  {field.display_name}
+                  {isDynamicallyRequired && <span className="text-red-500 ml-1">*</span>}
+                </label>
+                {field.help_text && (
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">{field.help_text}</p>
+                )}
+                {renderFieldInput(field)}
+              </div>
+            )
+          })}
 
         <div className="pt-6 border-t border-gray-200 dark:border-gray-700">
           <button

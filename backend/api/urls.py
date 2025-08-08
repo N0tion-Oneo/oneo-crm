@@ -14,8 +14,8 @@ from .views.field_types import FieldTypeViewSet
 from .views.global_options import GlobalOptionsViewSet
 
 from .views.duplicates import (
-    DuplicateRuleViewSet, DuplicateMatchViewSet, DuplicateAnalyticsViewSet,
-    DuplicateExclusionViewSet
+    DuplicateRuleViewSet, URLExtractionRuleViewSet, DuplicateRuleTestViewSet,
+    DuplicateMatchViewSet, DuplicateAnalyticsViewSet, DuplicateExclusionViewSet
 )
 from .views.dynamic_forms import DynamicFormViewSet, PublicFormViewSet, SharedRecordViewSet
 from relationships.views import AssignmentViewSet
@@ -70,8 +70,10 @@ router.register(r'auth', AuthViewSet, basename='auth')
 router.register(r'field-types', FieldTypeViewSet, basename='field-types')
 router.register(r'global-options', GlobalOptionsViewSet, basename='global-options')
 
-# Duplicates endpoints
+# Duplicates endpoints (simplified system)
 router.register(r'duplicate-rules', DuplicateRuleViewSet, basename='duplicate-rule')
+router.register(r'url-extraction-rules', URLExtractionRuleViewSet, basename='url-extraction-rule')
+router.register(r'rule-tests', DuplicateRuleTestViewSet, basename='rule-test')
 router.register(r'duplicate-matches', DuplicateMatchViewSet, basename='duplicate-match')
 router.register(r'duplicate-analytics', DuplicateAnalyticsViewSet, basename='duplicate-analytics')
 router.register(r'duplicate-exclusions', DuplicateExclusionViewSet, basename='duplicate-exclusion')

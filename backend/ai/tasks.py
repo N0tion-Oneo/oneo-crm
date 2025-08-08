@@ -82,9 +82,20 @@ def process_ai_job(self, job_id: int, tenant_schema: str) -> Dict[str, Any]:
                 'model': job.model_name,
                 'temperature': job.ai_config.get('temperature', 0.3),
                 'max_tokens': job.ai_config.get('max_tokens', 1000),
-                'tools': job.ai_config.get('tools', []),
-                'output_type': job.ai_config.get('output_type', 'text')
+                'tools': job.ai_config.get('allowed_tools', []),  # Map allowed_tools to tools
+                'enable_tools': job.ai_config.get('enable_tools', False),
+                'system_message': job.ai_config.get('system_message'),
+                'output_type': job.ai_config.get('output_type', 'text'),
+                'cache_ttl': job.ai_config.get('cache_duration', 3600)  # Map cache_duration to cache_ttl
             }
+            
+            # Debug: log the tools configuration
+            logger.info(f"🔧 Job {job_id} tools mapping:")
+            logger.info(f"  - ai_config.allowed_tools: {job.ai_config.get('allowed_tools', [])}")
+            logger.info(f"  - ai_config.tools: {job.ai_config.get('tools', [])}")
+            logger.info(f"  - enable_tools: {job.ai_config.get('enable_tools', False)}")
+            logger.info(f"  - field_config.tools: {field_config.get('tools', [])}")
+            logger.info(f"  - field_config.enable_tools: {field_config.get('enable_tools', False)}")
             
             # Prepare context from input data (optional additional context)
             context_data = job.input_data.get('additional_context', {})
@@ -136,6 +147,11 @@ def process_ai_job(self, job_id: int, tenant_schema: str) -> Dict[str, Any]:
                         try:
                             # Update the record's field data
                             record.data[target_field_name] = generated_content
+                            
+                            # CRITICAL FIX: Prevent recursive AI processing during AI result save
+                            record._skip_ai_processing = True
+                            record._skip_broadcast = True  # Also skip WebSocket broadcasts to avoid conflicts
+                            
                             record.save(update_fields=['data'])
                             field_saved = True
                             logger.info(f"Saved AI result to record {record.id} field '{target_field_name}' (job field: '{job.field_name}'): {len(generated_content)} chars")

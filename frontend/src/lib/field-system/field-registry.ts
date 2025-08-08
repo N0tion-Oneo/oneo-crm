@@ -120,12 +120,7 @@ export class FieldResolver {
         return String(value)
       },
       validate: (value: any, field: Field): ValidationResult => {
-        if (field.is_required && (!value || value === '')) {
-          return {
-            isValid: false,
-            error: `${field.display_name || field.name} is required`
-          }
-        }
+        // Note: Required field validation handled by permission system
         return { isValid: true }
       },
       getDefaultValue: () => '',
@@ -158,13 +153,8 @@ export class FieldResolver {
       return component.validate(value, field)
     }
     
-    // Default validation
-    if (field.is_required && (!value || value === '')) {
-      return {
-        isValid: false,
-        error: `${field.display_name || field.name} is required`
-      }
-    }
+    // Note: Default validation no longer checks is_required 
+    // Requirements are handled by the permission system
     
     return { isValid: true }
   }

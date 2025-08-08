@@ -142,7 +142,7 @@ export const FileFieldComponent: FieldComponent = {
           disabled={disabled || isProcessing}
           className={inputClass}
           autoFocus={autoFocus}
-          required={field.is_required}
+          // Required attribute handled by FieldWrapper
         />
         
         {/* Processing state */}
@@ -236,12 +236,7 @@ export const FileFieldComponent: FieldComponent = {
   },
 
   validate: (value: any, field: Field): ValidationResult => {
-    if (field.is_required && !value) {
-      return {
-        isValid: false,
-        error: `${field.display_name || field.name} is required`
-      }
-    }
+    // Note: Required validation handled by permission system
 
     if (value) {
       const allowedTypes = getFieldConfig(field, 'allowed_types', [])

@@ -314,7 +314,15 @@ def trigger_field_ai_processing(record, changed_fields: List[str], user: User) -
     """
     
     from django.db import connection
-    tenant = connection.tenant
+    from tenants.models import Tenant
+    
+    # Get actual tenant object (not FakeTenant from connection)
+    try:
+        tenant_schema = connection.tenant.schema_name
+        tenant = Tenant.objects.get(schema_name=tenant_schema)
+    except Tenant.DoesNotExist:
+        logger.error(f"Tenant with schema {tenant_schema} not found")
+        return {'triggered_jobs': [], 'error': 'Tenant not found'}
     
     # Initialize AI manager
     ai_manager = AIIntegrationManager(tenant, user)
@@ -329,6 +337,12 @@ def trigger_field_ai_processing(record, changed_fields: List[str], user: User) -
     for field in ai_fields:
         try:
             field_config = field.ai_config or {}
+            
+            # Check if auto-regeneration is enabled for this field
+            auto_regenerate = field_config.get('auto_regenerate', True)
+            if not auto_regenerate:
+                logger.debug(f"Auto-regeneration disabled for AI field {field.name}, skipping")
+                continue
             
             # Check if this field should be triggered by the changed fields
             trigger_fields = field_config.get('trigger_fields', [])
@@ -346,6 +360,15 @@ def trigger_field_ai_processing(record, changed_fields: List[str], user: User) -
                     from ai.tasks import process_ai_job
                     from ai.models import AIJob
                     
+                    # Debug: Check for FakeTenant contamination  
+                    logger.info(f"🔍 DEBUG AI Job Creation:")
+                    logger.info(f"   Record ID: {record.id} (type: {type(record.id)})")
+                    logger.info(f"   Pipeline: {record.pipeline} (type: {type(record.pipeline)})")
+                    logger.info(f"   Pipeline ID: {record.pipeline.id if record.pipeline else 'None'} (type: {type(record.pipeline.id) if record.pipeline else 'None'})")
+                    logger.info(f"   Field name: {field.name} (type: {type(field.name)})")
+                    logger.info(f"   User: {user} (type: {type(user)})")
+                    logger.info(f"   Tenant: {tenant} (type: {type(tenant)})")
+                    
                     # Create AI job for this field
                     ai_job = AIJob.objects.create(
                         job_type='field_generation',
@@ -353,7 +376,7 @@ def trigger_field_ai_processing(record, changed_fields: List[str], user: User) -
                         record_id=record.id,
                         field_name=field.name,
                         ai_provider='openai',  # Default provider
-                        model_name=field_config.get('model', 'gpt-4o-mini'),
+                        model_name=field_config.get('model') or tenant.get_ai_config().get('default_model', 'gpt-4o-mini'),
                         prompt_template=field_config.get('prompt', ''),
                         ai_config=field_config,
                         input_data={'record_data': record.data},
@@ -400,7 +423,15 @@ async def process_workflow_ai_node(workflow_context: Dict[str, Any], ai_node_con
     """
     
     from django.db import connection
-    tenant = connection.tenant
+    from tenants.models import Tenant
+    
+    # Get actual tenant object (not FakeTenant from connection)
+    try:
+        tenant_schema = connection.tenant.schema_name
+        tenant = Tenant.objects.get(schema_name=tenant_schema)
+    except Tenant.DoesNotExist:
+        logger.error(f"Tenant with schema {tenant_schema} not found for workflow AI processing")
+        return {'success': False, 'error': 'Tenant not found'}
     
     ai_manager = AIIntegrationManager(tenant, user)
     

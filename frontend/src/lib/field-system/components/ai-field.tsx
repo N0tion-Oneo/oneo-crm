@@ -400,13 +400,8 @@ export const AIFieldComponent: FieldComponent = {
   },
 
   validate: (value: any, field: Field): ValidationResult => {
-    // AI fields are optional by nature
-    if (field.is_required && (!value || String(value).trim() === '')) {
-      return {
-        isValid: false,
-        error: 'AI-generated value is required'
-      }
-    }
+    // Note: Required validation handled by permission system
+    // AI fields generally should not be required due to their nature
 
     return { isValid: true }
   },

@@ -5,10 +5,11 @@ export interface DynamicFormField {
   name: string
   label: string
   field_type: string
-  is_required: boolean
+  // is_required removed - now handled by conditional rules
   is_visible_in_detail: boolean
   configuration: any
   help_text?: string
+  business_rules?: any // For conditional rules evaluation
 }
 
 export interface DynamicFormSchema {

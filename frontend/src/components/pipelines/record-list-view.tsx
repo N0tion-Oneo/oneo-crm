@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useMemo } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import { pipelinesApi } from '@/lib/api'
 import { usePipelineRecordsSubscription } from '@/hooks/use-websocket-subscription'
 import { type RealtimeMessage } from '@/contexts/websocket-context'
@@ -8,6 +8,8 @@ import { useAuth } from '@/features/auth/context'
 import { RealtimeDiagnostics } from '../realtime-diagnostics'
 import { FieldResolver } from '@/lib/field-system/field-registry'
 import { Field } from '@/lib/field-system/types'
+import { KanbanView } from './kanban-view'
+import { CalendarView } from './calendar-view'
 // Import field system to ensure initialization
 import '@/lib/field-system'
 import { 
@@ -40,7 +42,10 @@ import {
   Database,
   Users,
   Bot,
-  AlertCircle
+  AlertCircle,
+  Table,
+  Columns,
+  CalendarDays
 } from 'lucide-react'
 
 // Field type icons
@@ -49,6 +54,10 @@ const FIELD_ICONS = {
   textarea: FileText,
   number: Hash,
   decimal: Hash,
+  integer: Hash,
+  float: Hash,
+  currency: Hash,
+  percentage: Hash,
   boolean: CheckSquare,
   date: Calendar,
   datetime: Calendar,
@@ -60,11 +69,15 @@ const FIELD_ICONS = {
   email: Mail,
   phone: Phone,
   url: Link,
+  address: Hash,
   file: FileText,
   image: Image,
   relation: Link,
   user: Users,
-  ai_field: Bot
+  ai: Bot,
+  ai_field: Bot,
+  button: Bot,
+  tags: Tag
 }
 
 export interface RecordField {
@@ -90,7 +103,7 @@ export interface RecordField {
 }
 
 // Convert RecordField to Field type for field registry
-const convertToFieldType = (recordField: RecordField): Field => ({
+export const convertToFieldType = (recordField: RecordField): Field => ({
   id: recordField.id,
   name: recordField.name,
   display_name: recordField.display_name,
@@ -133,6 +146,7 @@ export interface RecordListViewProps {
   onCreateRecord: () => void
 }
 
+type ViewMode = 'table' | 'kanban' | 'calendar'
 type SortDirection = 'asc' | 'desc' | null
 type FilterOperator = 'equals' | 'contains' | 'starts_with' | 'ends_with' | 'greater_than' | 'less_than' | 'is_empty' | 'is_not_empty'
 
@@ -160,6 +174,9 @@ export function RecordListView({ pipeline, onEditRecord, onCreateRecord }: Recor
   const [visibleFields, setVisibleFields] = useState<Set<string>>(new Set())
   const [currentPage, setCurrentPage] = useState(1)
   const [recordsPerPage] = useState(50)
+  const [viewMode, setViewMode] = useState<ViewMode>('table')
+  const [kanbanField, setKanbanField] = useState<string>('')
+  const [calendarField, setCalendarField] = useState<string>('')
 
   // WebSocket integration for real-time updates
   const handleRealtimeMessage = (message: RealtimeMessage) => {
@@ -283,6 +300,46 @@ export function RecordListView({ pipeline, onEditRecord, onCreateRecord }: Recor
       .map(field => field.name)
     setVisibleFields(new Set(defaultVisible))
   }, [pipeline.fields])
+
+  // Field analysis for view capabilities
+  const getSelectFields = useMemo(() => {
+    return pipeline.fields.filter(field => 
+      field.field_type === 'select' || field.field_type === 'multiselect'
+    ).map(field => ({
+      value: field.name,
+      label: field.display_name || field.name,
+      options: field.field_config?.options || []
+    }))
+  }, [pipeline.fields])
+
+  const getDateFields = useMemo(() => {
+    return pipeline.fields.filter(field => 
+      field.field_type === 'date' || field.field_type === 'datetime'
+    ).map(field => ({
+      value: field.name,
+      label: field.display_name || field.name,
+      type: field.field_type
+    }))
+  }, [pipeline.fields])
+
+  // Auto-select default fields for views
+  useEffect(() => {
+    if (!kanbanField && getSelectFields.length > 0) {
+      // Look for common status/stage field names first
+      const statusField = getSelectFields.find(f => 
+        ['status', 'stage', 'phase', 'state', 'pipeline_stage'].includes(f.value.toLowerCase())
+      )
+      setKanbanField(statusField?.value || getSelectFields[0].value)
+    }
+
+    if (!calendarField && getDateFields.length > 0) {
+      // Look for common date field names first
+      const dateField = getDateFields.find(f => 
+        ['due_date', 'start_date', 'end_date', 'created_at', 'updated_at'].includes(f.value.toLowerCase())
+      )
+      setCalendarField(dateField?.value || getDateFields[0].value)
+    }
+  }, [getSelectFields, getDateFields, kanbanField, calendarField])
 
   // Load records
   useEffect(() => {
@@ -428,7 +485,214 @@ export function RecordListView({ pipeline, onEditRecord, onCreateRecord }: Recor
   // Format field value for display using field registry
   const formatFieldValue = (field: RecordField, value: any) => {
     const fieldType = convertToFieldType(field)
-    return FieldResolver.formatValue(fieldType, value, 'table')
+    const formattedValue = FieldResolver.formatValue(fieldType, value, 'table')
+    
+    // Ensure JSX elements are properly rendered
+    if (React.isValidElement(formattedValue)) {
+      return formattedValue
+    }
+    
+    // Handle null/undefined values
+    if (value === null || value === undefined || value === '') {
+      return (
+        <span className="text-gray-400 dark:text-gray-500 italic text-xs">
+          Empty
+        </span>
+      )
+    }
+    
+    return formattedValue
+  }
+  
+  // Render interactive field in table context
+  const renderInteractiveField = (field: RecordField, record: Record) => {
+    const fieldType = convertToFieldType(field)
+    const value = record.data[field.name]
+    
+    if (field.field_type === 'button') {
+      // Extract button configuration
+      const buttonConfig = field.field_config || {}
+      const buttonText = buttonConfig.button_text || 'Click Me'
+      const buttonStyle = buttonConfig.button_style || 'primary'
+      const buttonSize = 'small' // Always use small size in tables
+      const requireConfirmation = buttonConfig.require_confirmation || false
+      const confirmationMessage = buttonConfig.confirmation_message || 'Are you sure?'
+      const disableAfterClick = buttonConfig.disable_after_click || false
+      const workflowId = buttonConfig.workflow_id
+      
+      // Check if button has been clicked
+      const hasBeenClicked = value === true
+      const isDisabled = disableAfterClick && hasBeenClicked
+      
+      const buttonStyles = {
+        primary: 'bg-blue-600 hover:bg-blue-700 text-white',
+        secondary: 'bg-gray-600 hover:bg-gray-700 text-white',
+        success: 'bg-green-600 hover:bg-green-700 text-white',
+        warning: 'bg-yellow-600 hover:bg-yellow-700 text-white',
+        danger: 'bg-red-600 hover:bg-red-700 text-white'
+      }
+      
+      const handleButtonClick = async (e: React.MouseEvent) => {
+        e.stopPropagation() // Prevent row click
+        
+        if (requireConfirmation) {
+          if (!window.confirm(confirmationMessage)) {
+            return
+          }
+        }
+        
+        // For existing records, save the button click state
+        if (record && record.id) {
+          try {
+            // Update the button field value to mark as clicked
+            const newValue = disableAfterClick ? true : !value
+            
+            // Call the API to update the record
+            await pipelinesApi.updateRecord(pipeline.id, record.id, {
+              data: {
+                [field.name]: newValue
+              }
+            })
+            
+            // The real-time system will update the UI automatically
+            console.log(`Button "${buttonText}" clicked for record ${record.id}`)
+            
+            // If there's a workflow, trigger it
+            if (workflowId) {
+              console.log(`Triggering workflow: ${workflowId}`)
+              // TODO: Implement workflow trigger API call
+            }
+            
+          } catch (error) {
+            console.error('Failed to update button field:', error)
+          }
+        } else {
+          // For new records (shouldn't happen in list view), just log
+          console.log(`Button "${buttonText}" clicked`)
+        }
+      }
+      
+      return (
+        <button
+          type="button"
+          onClick={handleButtonClick}
+          disabled={isDisabled}
+          className={`
+            px-3 py-1.5 text-xs rounded-md transition-all duration-200 font-medium focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-blue-500
+            ${buttonStyles[buttonStyle as keyof typeof buttonStyles] || buttonStyles.primary}
+            ${isDisabled 
+              ? 'opacity-50 cursor-not-allowed' 
+              : 'hover:shadow-sm transform hover:scale-105'
+            }
+          `}
+          title={disableAfterClick && hasBeenClicked ? 'Button has been clicked' : undefined}
+        >
+          {buttonText}
+          {disableAfterClick && hasBeenClicked && ' ✓'}
+        </button>
+      )
+    }
+    
+    if (field.field_type === 'boolean') {
+      const handleToggle = async (e: React.MouseEvent) => {
+        e.stopPropagation() // Prevent row click
+        
+        if (record && record.id) {
+          try {
+            const newValue = !value
+            
+            // Call the API to update the record
+            await pipelinesApi.updateRecord(pipeline.id, record.id, {
+              data: {
+                [field.name]: newValue
+              }
+            })
+            
+            console.log(`Boolean field "${field.name}" toggled for record ${record.id}`)
+            
+          } catch (error) {
+            console.error('Failed to update boolean field:', error)
+          }
+        }
+      }
+      
+      return (
+        <button
+          type="button"
+          onClick={handleToggle}
+          className="text-gray-600 hover:text-blue-600 dark:text-gray-400 dark:hover:text-blue-400 transition-colors"
+        >
+          {value ? (
+            <CheckSquare className="w-4 h-4 text-green-600" />
+          ) : (
+            <Square className="w-4 h-4" />
+          )}
+        </button>
+      )
+    }
+    
+    // For other interactive fields, fall back to formatted value
+    return formatFieldValue(field, value)
+  }
+  
+  // Get column width based on field type
+  const getColumnWidth = (field: RecordField): string => {
+    switch (field.field_type) {
+      case 'boolean':
+        return 'w-16' // Narrow for checkboxes
+      case 'date':
+      case 'datetime':
+        return 'w-32' // Medium for dates
+      case 'time':
+        return 'w-24' // Small for time
+      case 'number':
+      case 'decimal':
+        return 'w-24' // Small for numbers
+      case 'email':
+      case 'phone':
+        return 'w-48' // Medium for contact info
+      case 'url':
+        return 'w-40' // Medium for URLs
+      case 'tags':
+        return 'w-56' // Larger for tag arrays
+      case 'textarea':
+        return 'w-64' // Larger for long text
+      case 'ai_field':
+        return 'w-64' // Larger for AI-generated content
+      case 'button':
+        return 'w-32' // Medium for buttons
+      case 'file':
+      case 'image':
+        return 'w-40' // Medium for file names
+      case 'relation':
+        return 'w-48' // Medium for related records
+      case 'select':
+      case 'multiselect':
+        return 'w-40' // Medium for selections
+      default:
+        return 'w-48' // Default medium width for text fields
+    }
+  }
+  
+  // Check if field should be interactive in table context
+  const isInteractiveField = (field: RecordField): boolean => {
+    return ['button', 'boolean'].includes(field.field_type)
+  }
+
+  // Handle record field update (for Kanban drag & drop)
+  const handleUpdateRecord = async (recordId: string, fieldName: string, value: any) => {
+    try {
+      await pipelinesApi.updateRecord(pipeline.id, recordId, {
+        data: {
+          [fieldName]: value
+        }
+      })
+      console.log(`Updated record ${recordId} field ${fieldName} to:`, value)
+      // Real-time system will update the UI automatically
+    } catch (error) {
+      console.error('Failed to update record:', error)
+      throw error
+    }
   }
 
   // Get visible fields for table
@@ -504,6 +768,53 @@ export function RecordListView({ pipeline, onEditRecord, onCreateRecord }: Recor
         {/* Search and Filters */}
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-4">
+            {/* View Mode Selector */}
+            <div className="flex items-center border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700">
+              <button
+                onClick={() => setViewMode('table')}
+                className={`px-3 py-2 flex items-center text-sm transition-colors ${
+                  viewMode === 'table'
+                    ? 'bg-primary text-white'
+                    : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
+                }`}
+              >
+                <Table className="w-4 h-4 mr-2" />
+                Table
+              </button>
+              
+              <button
+                onClick={() => setViewMode('kanban')}
+                disabled={getSelectFields.length === 0}
+                className={`px-3 py-2 flex items-center text-sm transition-colors border-l border-gray-300 dark:border-gray-600 ${
+                  viewMode === 'kanban'
+                    ? 'bg-primary text-white'
+                    : getSelectFields.length === 0
+                    ? 'text-gray-400 dark:text-gray-500 cursor-not-allowed'
+                    : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
+                }`}
+                title={getSelectFields.length === 0 ? 'No select fields available for Kanban view' : ''}
+              >
+                <Columns className="w-4 h-4 mr-2" />
+                Kanban
+              </button>
+              
+              <button
+                onClick={() => setViewMode('calendar')}
+                disabled={getDateFields.length === 0}
+                className={`px-3 py-2 flex items-center text-sm transition-colors border-l border-gray-300 dark:border-gray-600 ${
+                  viewMode === 'calendar'
+                    ? 'bg-primary text-white'
+                    : getDateFields.length === 0
+                    ? 'text-gray-400 dark:text-gray-500 cursor-not-allowed'
+                    : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
+                }`}
+                title={getDateFields.length === 0 ? 'No date fields available for Calendar view' : ''}
+              >
+                <CalendarDays className="w-4 h-4 mr-2" />
+                Calendar
+              </button>
+            </div>
+
             <div className="relative">
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
               <input
@@ -559,6 +870,51 @@ export function RecordListView({ pipeline, onEditRecord, onCreateRecord }: Recor
         </div>
       </div>
 
+      {/* View Configuration Panel */}
+      {(viewMode === 'kanban' || viewMode === 'calendar') && (
+        <div className="p-4 bg-blue-50 dark:bg-blue-900/20 border-b border-gray-200 dark:border-gray-700">
+          <div className="flex items-center space-x-6">
+            {viewMode === 'kanban' && getSelectFields.length > 0 && (
+              <div className="flex items-center space-x-2">
+                <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                  Group by:
+                </label>
+                <select
+                  value={kanbanField}
+                  onChange={(e) => setKanbanField(e.target.value)}
+                  className="px-3 py-1 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-sm"
+                >
+                  {getSelectFields.map(field => (
+                    <option key={field.value} value={field.value}>
+                      {field.label} ({field.options.length} options)
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+            
+            {viewMode === 'calendar' && getDateFields.length > 0 && (
+              <div className="flex items-center space-x-2">
+                <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                  Date field:
+                </label>
+                <select
+                  value={calendarField}
+                  onChange={(e) => setCalendarField(e.target.value)}
+                  className="px-3 py-1 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-sm"
+                >
+                  {getDateFields.map(field => (
+                    <option key={field.value} value={field.value}>
+                      {field.label} ({field.type})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Filters Panel */}
       {showFilters && (
         <div className="p-4 bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
@@ -579,9 +935,10 @@ export function RecordListView({ pipeline, onEditRecord, onCreateRecord }: Recor
         </div>
       )}
 
-      {/* Table */}
+      {/* Main Content Area */}
       <div className="flex-1 overflow-auto">
-        <table className="w-full">
+        {viewMode === 'table' && (
+          <table className="w-full">
           <thead className="bg-gray-50 dark:bg-gray-800 sticky top-0 z-10">
             <tr>
               <th className="w-12 px-4 py-3">
@@ -600,18 +957,19 @@ export function RecordListView({ pipeline, onEditRecord, onCreateRecord }: Recor
               {visibleFieldsList.map((field) => {
                 const Icon = FIELD_ICONS[field.field_type] || Type
                 const isSorted = sort.field === field.name
+                const columnWidth = getColumnWidth(field)
                 
                 return (
                   <th
                     key={field.name}
-                    className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider"
+                    className={`${columnWidth} px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider`}
                   >
                     <button
                       onClick={() => handleSort(field.name)}
                       className="flex items-center space-x-2 hover:text-gray-700 dark:hover:text-gray-200"
                     >
                       <Icon className="w-4 h-4" />
-                      <span>{field.display_name || field.name}</span>
+                      <span className="truncate">{field.display_name || field.name}</span>
                       {isSorted && (
                         sort.direction === 'asc' ? (
                           <ArrowUp className="w-3 h-3" />
@@ -653,11 +1011,37 @@ export function RecordListView({ pipeline, onEditRecord, onCreateRecord }: Recor
                   </button>
                 </td>
                 
-                {visibleFieldsList.map((field) => (
-                  <td key={field.name} className="px-4 py-3 text-sm text-gray-900 dark:text-white">
-                    {formatFieldValue(field, record.data[field.name])}
-                  </td>
-                ))}
+                {visibleFieldsList.map((field) => {
+                  const columnWidth = getColumnWidth(field)
+                  const isInteractive = isInteractiveField(field)
+                  
+                  return (
+                    <td 
+                      key={field.name} 
+                      className={`${columnWidth} px-4 py-3 text-sm text-gray-900 dark:text-white`}
+                      onClick={(e) => {
+                        // Prevent row click for interactive fields
+                        if (isInteractive) {
+                          e.stopPropagation()
+                        }
+                      }}
+                    >
+                      <div className={`${field.field_type === 'textarea' || field.field_type === 'ai_field' ? 'max-h-20 overflow-hidden' : ''}`}>
+                        {isInteractive ? (
+                          // For interactive fields, render actual interactive components
+                          <div className="inline-block">
+                            {renderInteractiveField(field, record)}
+                          </div>
+                        ) : (
+                          // For display-only fields, show formatted value with truncation
+                          <div className="truncate" title={String(record.data[field.name] || '')}>
+                            {formatFieldValue(field, record.data[field.name])}
+                          </div>
+                        )}
+                      </div>
+                    </td>
+                  )
+                })}
                 
                 <td className="px-4 py-3">
                   <div className="flex items-center space-x-2">
@@ -678,9 +1062,55 @@ export function RecordListView({ pipeline, onEditRecord, onCreateRecord }: Recor
               </tr>
             ))}
           </tbody>
-        </table>
+          </table>
+        )}
+
+        {viewMode === 'kanban' && (
+          getSelectFields.length === 0 ? (
+            <div className="text-center py-12">
+              <Columns className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+              <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">
+                No Select Fields Available
+              </h3>
+              <p className="text-gray-500 dark:text-gray-400">
+                Add select or multiselect fields to your pipeline to use Kanban view.
+              </p>
+            </div>
+          ) : (
+            <KanbanView
+              pipeline={pipeline}
+              records={filteredAndSortedRecords}
+              kanbanField={kanbanField}
+              onEditRecord={onEditRecord}
+              onCreateRecord={onCreateRecord}
+              onUpdateRecord={handleUpdateRecord}
+            />
+          )
+        )}
+
+        {viewMode === 'calendar' && (
+          getDateFields.length === 0 ? (
+            <div className="text-center py-12">
+              <CalendarDays className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+              <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">
+                No Date Fields Available
+              </h3>
+              <p className="text-gray-500 dark:text-gray-400">
+                Add date or datetime fields to your pipeline to use Calendar view.
+              </p>
+            </div>
+          ) : (
+            <CalendarView
+              pipeline={pipeline}
+              records={filteredAndSortedRecords}
+              calendarField={calendarField}
+              onEditRecord={onEditRecord}
+              onCreateRecord={onCreateRecord}
+            />
+          )
+        )}
         
-        {paginatedRecords.length === 0 && (
+        {viewMode === 'table' && paginatedRecords.length === 0 && (
           <div className="text-center py-12">
             <Database className="w-12 h-12 text-gray-400 mx-auto mb-4" />
             <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">
@@ -704,8 +1134,8 @@ export function RecordListView({ pipeline, onEditRecord, onCreateRecord }: Recor
         )}
       </div>
 
-      {/* Pagination */}
-      {totalPages > 1 && (
+      {/* Pagination (Table view only) */}
+      {viewMode === 'table' && totalPages > 1 && (
         <div className="p-4 border-t border-gray-200 dark:border-gray-700 flex items-center justify-between">
           <div className="text-sm text-gray-500 dark:text-gray-400">
             Showing {((currentPage - 1) * recordsPerPage) + 1} to {Math.min(currentPage * recordsPerPage, filteredAndSortedRecords.length)} of {filteredAndSortedRecords.length} records

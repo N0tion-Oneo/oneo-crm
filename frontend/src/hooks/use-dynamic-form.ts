@@ -21,12 +21,13 @@ interface DynamicFormSchema {
     display_name: string
     help_text: string
     placeholder: string
-    is_required: boolean
+    // is_required removed - handled by conditional rules
     is_visible: boolean
     is_readonly: boolean
     display_order: number
     field_config: Record<string, any>
     form_validation_rules: Record<string, any>
+    business_rules?: Record<string, any>
     default_value: any
     current_value: any
   }>

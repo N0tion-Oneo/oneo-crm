@@ -29,6 +29,7 @@ import {
   Copy,
   CheckCircle,
   AlertCircle,
+  Info,
 } from 'lucide-react'
 
 // Complete field interface matching new architecture
@@ -1170,11 +1171,44 @@ function DisplaySettings({
           }))}
           userTypes={userTypes}
           onChange={(conditionalRules) => {
-            onUpdate({
-              business_rules: {
-                ...field.business_rules,
-                conditional_rules: conditionalRules
+            // Sync conditional rules back to stage_requirements for 2-way connection
+            const updatedBusinessRules = {
+              ...field.business_rules,
+              conditional_rules: conditionalRules
+            }
+            
+            // Extract stage requirements from require_when rules
+            const requireWhen = conditionalRules?.require_when
+            if (requireWhen && requireWhen.rules) {
+              const stageRequirements: Record<string, any> = {}
+              
+              // Find select fields that could be stage fields
+              const selectFields = fields.filter(f => f.field_type === 'select')
+              
+              for (const rule of requireWhen.rules) {
+                if (rule.field && rule.condition === 'equals' && rule.value) {
+                  // Check if this rule references a select field (likely a stage field)
+                  const referencedField = selectFields.find(f => f.name === rule.field)
+                  if (referencedField) {
+                    stageRequirements[rule.value] = {
+                      required: true,
+                      ...(rule.description && rule.description.includes('blocks transitions') ? { block_transitions: true } : {}),
+                      ...(rule.description && rule.description.includes('Warning:') ? {
+                        warning_message: rule.description.split('Warning:')[1]?.split(' - ')[0]?.trim()
+                      } : {})
+                    }
+                  }
+                }
               }
+              
+              // Only update stage_requirements if we found stage-related rules
+              if (Object.keys(stageRequirements).length > 0) {
+                updatedBusinessRules.stage_requirements = stageRequirements
+              }
+            }
+            
+            onUpdate({
+              business_rules: updatedBusinessRules
             })
           }}
         />
@@ -1288,21 +1322,31 @@ function ValidationSettings({
         </div>
 
         <div className="space-y-6">
-          {/* Basic Required Field */}
-          <div className="flex items-center justify-between p-4 bg-red-50 dark:bg-red-900/20 rounded-lg border border-red-200 dark:border-red-800">
-            <div className="flex items-center space-x-3">
-              <AlertCircle className="w-5 h-5 text-red-600 dark:text-red-400" />
+          {/* Required Field Settings Information */}
+          <div className="p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
+            <div className="flex items-start space-x-3">
+              <Info className="w-5 h-5 text-blue-600 dark:text-blue-400 mt-0.5 flex-shrink-0" />
               <div>
-                <div className="font-medium text-gray-900 dark:text-white">Required Field</div>
-                <div className="text-sm text-gray-500 dark:text-gray-400">User must fill this field in forms</div>
+                <h5 className="font-medium text-blue-800 dark:text-blue-200 mb-2">
+                  Field Requirements Setup
+                </h5>
+                <p className="text-sm text-blue-700 dark:text-blue-300 mb-3">
+                  Field requirements are now configured through the <strong>Business Rules</strong> system, which provides advanced conditional logic based on stage, user type, and other field values.
+                </p>
+                <button
+                  onClick={() => {
+                    // Navigate to business rules tab if it exists, or show info
+                    const businessRulesTab = document.querySelector('[data-tab="business-rules"]') as HTMLButtonElement
+                    if (businessRulesTab) {
+                      businessRulesTab.click()
+                    }
+                  }}
+                  className="inline-flex items-center text-sm font-medium text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-200 transition-colors"
+                >
+                  → Configure in Business Rules tab
+                </button>
               </div>
             </div>
-            <input
-              type="checkbox"
-              checked={validationRules.required || false}
-              onChange={(e) => updateValidationRule('required', e.target.checked)}
-              className="w-4 h-4 text-red-600 bg-white border-gray-300 rounded focus:ring-red-500 focus:ring-2"
-            />
           </div>
 
           {/* Text Length Validation (for text fields) */}

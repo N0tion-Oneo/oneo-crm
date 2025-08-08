@@ -29,7 +29,7 @@ class PipelineTemplateFactory:
                     'name': 'Company Name',
                     'slug': 'company_name',
                     'field_type': 'text',
-                    'is_required': True,
+                    # is_required removed - now handled by conditional rules
                     'display_order': 1,
                     'field_config': {
                         'max_length': 255,
@@ -40,7 +40,7 @@ class PipelineTemplateFactory:
                     'name': 'Contact Person',
                     'slug': 'contact_person',
                     'field_type': 'text',
-                    'is_required': True,
+                    # is_required removed - now handled by conditional rules
                     'display_order': 2,
                     'field_config': {
                         'max_length': 255
@@ -50,7 +50,7 @@ class PipelineTemplateFactory:
                     'name': 'Email',
                     'slug': 'email',
                     'field_type': 'email',
-                    'is_required': True,
+                    # is_required removed - now handled by conditional rules
                     'display_order': 3,
                     'is_unique': True
                 },
@@ -99,7 +99,7 @@ class PipelineTemplateFactory:
                     'name': 'Stage',
                     'slug': 'stage',
                     'field_type': 'select',
-                    'is_required': True,
+                    # is_required removed - now handled by conditional rules
                     'display_order': 8,
                     'field_config': {
                         'options': [
@@ -189,7 +189,7 @@ class PipelineTemplateFactory:
                     'name': 'Full Name',
                     'slug': 'full_name',
                     'field_type': 'text',
-                    'is_required': True,
+                    # is_required removed - now handled by conditional rules
                     'display_order': 1,
                     'field_config': {
                         'max_length': 255
@@ -199,7 +199,7 @@ class PipelineTemplateFactory:
                     'name': 'Email',
                     'slug': 'email',
                     'field_type': 'email',
-                    'is_required': True,
+                    # is_required removed - now handled by conditional rules
                     'is_unique': True,
                     'display_order': 2
                 },
@@ -213,7 +213,7 @@ class PipelineTemplateFactory:
                     'name': 'Position Applied',
                     'slug': 'position',
                     'field_type': 'text',
-                    'is_required': True,
+                    # is_required removed - now handled by conditional rules
                     'display_order': 4
                 },
                 {
@@ -272,7 +272,7 @@ class PipelineTemplateFactory:
                     'name': 'Application Stage',
                     'slug': 'stage',
                     'field_type': 'select',
-                    'is_required': True,
+                    # is_required removed - now handled by conditional rules
                     'display_order': 9,
                     'field_config': {
                         'options': [
@@ -373,7 +373,7 @@ class PipelineTemplateFactory:
                     'name': 'Title',
                     'slug': 'title',
                     'field_type': 'text',
-                    'is_required': True,
+                    # is_required removed - now handled by conditional rules
                     'display_order': 1,
                     'field_config': {
                         'max_length': 255
@@ -383,7 +383,7 @@ class PipelineTemplateFactory:
                     'name': 'Slug',
                     'slug': 'slug',
                     'field_type': 'text',
-                    'is_required': True,
+                    # is_required removed - now handled by conditional rules
                     'is_unique': True,
                     'display_order': 2,
                     'field_config': {
@@ -396,7 +396,7 @@ class PipelineTemplateFactory:
                     'name': 'Content',
                     'slug': 'content',
                     'field_type': 'textarea',
-                    'is_required': True,
+                    # is_required removed - now handled by conditional rules
                     'display_order': 3,
                     'field_config': {
                         'multiline': True
@@ -452,7 +452,7 @@ class PipelineTemplateFactory:
                     'name': 'Status',
                     'slug': 'status',
                     'field_type': 'select',
-                    'is_required': True,
+                    # is_required removed - now handled by conditional rules
                     'display_order': 8,
                     'field_config': {
                         'options': [
@@ -532,7 +532,7 @@ class PipelineTemplateFactory:
                     'name': 'Project Name',
                     'slug': 'project_name',
                     'field_type': 'text',
-                    'is_required': True,
+                    # is_required removed - now handled by conditional rules
                     'display_order': 1,
                     'field_config': {'max_length': 255}
                 },
@@ -547,7 +547,7 @@ class PipelineTemplateFactory:
                     'name': 'Project Manager',
                     'slug': 'project_manager',
                     'field_type': 'user',
-                    'is_required': True,
+                    # is_required removed - now handled by conditional rules
                     'display_order': 3
                 },
                 {
@@ -587,7 +587,7 @@ class PipelineTemplateFactory:
                     'name': 'Status',
                     'slug': 'status',
                     'field_type': 'select',
-                    'is_required': True,
+                    # is_required removed - now handled by conditional rules
                     'display_order': 8,
                     'field_config': {
                         'options': [

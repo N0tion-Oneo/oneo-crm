@@ -1,3 +1,6 @@
+"""
+Unified duplicate detection models with standardized naming
+"""
 from django.db import models
 from django.contrib.auth import get_user_model
 from pipelines.models import Pipeline, Field, Record
@@ -6,18 +9,60 @@ from tenants.models import Tenant
 User = get_user_model()
 
 
+class URLExtractionRule(models.Model):
+    """Configurable URL extraction patterns for duplicate detection"""
+    
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name='duplicate_url_extraction_rules')
+    name = models.CharField(max_length=255, help_text="Human-readable name (e.g., 'LinkedIn Profile')")
+    description = models.TextField(blank=True, help_text="Description of what this rule extracts")
+    
+    # URL pattern configuration
+    domain_patterns = models.JSONField(
+        default=list,
+        help_text="List of domain patterns to match (e.g., ['linkedin.com', '*.linkedin.com'])"
+    )
+    extraction_pattern = models.CharField(
+        max_length=500,
+        help_text="Regex pattern to extract identifier from URL"
+    )
+    extraction_format = models.CharField(
+        max_length=100,
+        help_text="Format template for extracted value (e.g., 'linkedin:{}')"
+    )
+    
+    # Normalization options
+    case_sensitive = models.BooleanField(default=False)
+    remove_protocol = models.BooleanField(default=True)
+    remove_www = models.BooleanField(default=True)
+    remove_query_params = models.BooleanField(default=True)
+    remove_fragments = models.BooleanField(default=True)
+    
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
+    
+    class Meta:
+        unique_together = ['tenant', 'name']
+        ordering = ['name']
+        indexes = [
+            models.Index(fields=['tenant', 'is_active']),
+        ]
+    
+    def __str__(self):
+        return f"{self.tenant.name} - {self.name}"
+
+
 class DuplicateRule(models.Model):
-    """Tenant-configurable duplicate detection rules with comprehensive matching"""
+    """Duplicate detection rule with AND/OR logic"""
     
     ACTION_CHOICES = [
-        ('block', 'Block Creation'),
         ('warn', 'Show Warning'),
+        ('block', 'Block Creation'),
         ('merge_prompt', 'Prompt to Merge'),
-        ('auto_merge', 'Auto-Merge'),
-        ('allow', 'Allow with Flag'),
     ]
     
-    # Multi-tenant isolation - CRITICAL for tenant data separation
+    # Multi-tenant isolation
     tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name='duplicate_rules')
     name = models.CharField(max_length=255, help_text="Human-readable name for this duplicate rule")
     description = models.TextField(blank=True, help_text="Description of what this rule detects")
@@ -27,43 +72,27 @@ class DuplicateRule(models.Model):
         related_name='duplicate_rules',
         help_text="Pipeline this rule applies to"
     )
-    is_active = models.BooleanField(default=True)
+    
+    # Boolean logic stored as JSON
+    logic = models.JSONField(
+        help_text="AND/OR logic for field matching in JSON format",
+        default=dict
+    )
+    
+    # Simple action configuration
     action_on_duplicate = models.CharField(
         max_length=50, 
         choices=ACTION_CHOICES,
         default='warn',
         help_text="Action to take when duplicates are detected"
     )
-    confidence_threshold = models.FloatField(
-        default=0.8,
-        help_text="Minimum confidence score (0.0-1.0) to consider records as duplicates"
-    )
-    auto_merge_threshold = models.FloatField(
-        default=0.95,
-        help_text="Confidence threshold for automatic merging (if enabled)"
-    )
-    enable_fuzzy_matching = models.BooleanField(
-        default=True,
-        help_text="Enable fuzzy text matching algorithms"
-    )
-    enable_phonetic_matching = models.BooleanField(
-        default=True,
-        help_text="Enable phonetic matching for names (Soundex, Metaphone)"
-    )
-    ignore_case = models.BooleanField(
-        default=True,
-        help_text="Ignore case when comparing text fields"
-    )
-    normalize_whitespace = models.BooleanField(
-        default=True,
-        help_text="Normalize whitespace and trim fields before comparison"
-    )
+    
+    is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
     
     class Meta:
-        # Ensure tenant isolation at database level
         unique_together = ['tenant', 'name']
         ordering = ['name']
         indexes = [
@@ -75,69 +104,68 @@ class DuplicateRule(models.Model):
         return f"{self.tenant.name} - {self.name} ({self.pipeline.name})"
 
 
-class DuplicateFieldRule(models.Model):
-    """Individual field matching rules within a duplicate detection rule"""
+class DuplicateRuleTest(models.Model):
+    """Test cases for duplicate rules"""
     
-    MATCH_TYPE_CHOICES = [
-        ('exact', 'Exact Match'),
-        ('case_insensitive', 'Case Insensitive'),
-        ('fuzzy', 'Fuzzy Match'),
-        ('soundex', 'Soundex Match'),
-        ('metaphone', 'Metaphone Match'),
-        ('levenshtein', 'Levenshtein Distance'),
-        ('jaro_winkler', 'Jaro-Winkler Similarity'),
-        ('email_domain', 'Email Domain Match'),
-        ('phone_normalized', 'Normalized Phone Match'),
-        ('partial', 'Partial Match'),
-        ('regex', 'Regular Expression Match'),
-        ('cosine', 'Cosine Similarity'),
-        ('jaccard', 'Jaccard Similarity'),
-    ]
+    rule = models.ForeignKey(DuplicateRule, on_delete=models.CASCADE, related_name='duplicate_test_cases')
+    name = models.CharField(max_length=255, help_text="Test case name")
     
-    duplicate_rule = models.ForeignKey(
-        DuplicateRule, 
-        related_name='field_rules', 
-        on_delete=models.CASCADE
-    )
-    field = models.ForeignKey(
-        Field, 
-        on_delete=models.CASCADE,
-        help_text="Pipeline field to use for duplicate detection"
-    )
-    match_type = models.CharField(max_length=50, choices=MATCH_TYPE_CHOICES)
-    match_threshold = models.FloatField(
-        default=0.8,
-        help_text="Threshold for fuzzy matching (0.0-1.0, higher = more strict)"
-    )
-    weight = models.FloatField(
-        default=1.0,
-        help_text="Weight of this field in overall duplicate score calculation"
-    )
-    is_required = models.BooleanField(
-        default=False,
-        help_text="Whether this field must match for records to be considered duplicates"
-    )
-    preprocessing_rules = models.JSONField(
-        default=dict,
-        help_text="Field-specific preprocessing rules (normalization, cleanup, etc.)"
-    )
-    custom_regex = models.TextField(
-        blank=True,
-        help_text="Custom regex pattern for regex match type"
-    )
-    is_active = models.BooleanField(default=True)
+    # Test data
+    record1_data = models.JSONField(help_text="First record data for testing")
+    record2_data = models.JSONField(help_text="Second record data for testing")
+    expected_result = models.BooleanField(help_text="Expected duplicate detection result")
+    
+    # Test results
+    last_test_result = models.BooleanField(null=True, blank=True)
+    last_test_at = models.DateTimeField(null=True, blank=True)
+    test_details = models.JSONField(default=dict, help_text="Detailed test execution results")
+    
     created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
     
     class Meta:
-        ordering = ['-weight', 'field__name']
-        unique_together = ['duplicate_rule', 'field']
+        unique_together = ['rule', 'name']
+        ordering = ['name']
+    
+    def __str__(self):
+        return f"{self.rule.name} - {self.name}"
+
+
+class DuplicateDetectionResult(models.Model):
+    """Results of duplicate detection process"""
+    
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name='duplicate_detection_results')
+    pipeline = models.ForeignKey(Pipeline, on_delete=models.CASCADE, related_name='duplicate_detection_results')
+    record = models.ForeignKey(Record, on_delete=models.CASCADE, related_name='duplicate_detection_results')
+    
+    # Detection summary
+    total_duplicates_found = models.IntegerField(default=0)
+    detection_summary = models.JSONField(
+        default=dict,
+        help_text="Summary of detection results including rules triggered and matched records"
+    )
+    duplicate_match_ids = models.JSONField(
+        default=list,
+        help_text="List of DuplicateMatch IDs created from this detection"
+    )
+    
+    # Status flags
+    requires_review = models.BooleanField(default=False)
+    is_processed = models.BooleanField(default=False)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        ordering = ['-created_at']
         indexes = [
-            models.Index(fields=['duplicate_rule', 'is_active']),
-            models.Index(fields=['field', 'match_type']),
+            models.Index(fields=['tenant', 'pipeline']),
+            models.Index(fields=['tenant', 'requires_review']),
+            models.Index(fields=['created_at']),
         ]
     
     def __str__(self):
-        return f"{self.duplicate_rule.name} - {self.field.name} ({self.match_type})"
+        return f"{self.record} - {self.total_duplicates_found} duplicates found"
 
 
 class DuplicateMatch(models.Model):
@@ -150,11 +178,12 @@ class DuplicateMatch(models.Model):
         ('merged', 'Records Merged'),
         ('ignored', 'Ignored'),
         ('auto_resolved', 'Auto-Resolved'),
+        ('resolved', 'Resolved'),
     ]
     
     # Multi-tenant isolation - CRITICAL for tenant data separation
     tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name='duplicate_matches')
-    rule = models.ForeignKey(DuplicateRule, on_delete=models.CASCADE, related_name='matches')
+    rule = models.ForeignKey(DuplicateRule, on_delete=models.CASCADE, related_name='duplicate_matches')
     record1 = models.ForeignKey(
         Record, 
         related_name='duplicate_matches_1', 
@@ -190,42 +219,33 @@ class DuplicateMatch(models.Model):
     )
     reviewed_at = models.DateTimeField(null=True, blank=True)
     status = models.CharField(max_length=50, choices=STATUS_CHOICES, default='pending')
-    resolution_notes = models.TextField(
-        blank=True,
-        help_text="Notes about how this duplicate was resolved"
-    )
-    auto_resolution_reason = models.TextField(
-        blank=True,
-        help_text="Reason for automatic resolution (if applicable)"
-    )
+    resolution_notes = models.TextField(blank=True)
+    auto_resolution_reason = models.TextField(blank=True)
     
     class Meta:
+        unique_together = ['tenant', 'record1', 'record2']
         ordering = ['-detected_at']
-        unique_together = ['tenant', 'record1', 'record2', 'rule']
         indexes = [
             models.Index(fields=['tenant', 'status']),
             models.Index(fields=['tenant', 'detected_at']),
-            models.Index(fields=['rule', 'confidence_score']),
-            models.Index(fields=['record1', 'record2']),
+            models.Index(fields=['confidence_score']),
         ]
     
     def __str__(self):
-        return f"{self.tenant.name} - Duplicate: {self.record1.id} & {self.record2.id} ({self.confidence_score:.2f})"
+        return f"Duplicate: {self.record1.id} <-> {self.record2.id} ({self.confidence_score:.2f})"
 
 
 class DuplicateResolution(models.Model):
-    """Track resolution actions taken for duplicate matches"""
+    """Track resolutions applied to duplicate matches"""
     
     ACTION_CHOICES = [
-        ('merge', 'Merged Records'),
+        ('merge', 'Merge Records'),
         ('keep_both', 'Keep Both Records'),
-        ('delete_duplicate', 'Deleted Duplicate'),
-        ('mark_false_positive', 'Marked as False Positive'),
-        ('update_primary', 'Updated Primary Record'),
-        ('create_relationship', 'Created Relationship'),
+        ('ignore', 'Mark as False Positive'),
+        ('manual_review', 'Requires Manual Review'),
     ]
     
-    # Multi-tenant isolation - CRITICAL for tenant data separation
+    # Multi-tenant isolation
     tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name='duplicate_resolutions')
     duplicate_match = models.ForeignKey(
         DuplicateMatch, 
@@ -233,37 +253,39 @@ class DuplicateResolution(models.Model):
         related_name='resolutions'
     )
     action_taken = models.CharField(max_length=50, choices=ACTION_CHOICES)
-    primary_record = models.ForeignKey(
-        Record,
-        on_delete=models.CASCADE,
-        related_name='primary_resolutions',
-        help_text="The record chosen as primary in merge operations"
-    )
-    merged_record = models.ForeignKey(
-        Record,
-        on_delete=models.CASCADE,
-        null=True,
-        blank=True,
-        related_name='merged_resolutions',
-        help_text="The record that was merged/deleted"
-    )
-    data_changes = models.JSONField(
-        default=dict,
-        help_text="Details of data changes made during resolution"
-    )
     resolved_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
     resolved_at = models.DateTimeField(auto_now_add=True)
     notes = models.TextField(blank=True)
     
+    # Resolution details
+    primary_record = models.ForeignKey(
+        Record, 
+        related_name='primary_resolutions', 
+        on_delete=models.CASCADE,
+        null=True, 
+        blank=True
+    )
+    merged_record = models.ForeignKey(
+        Record, 
+        related_name='merged_resolutions', 
+        on_delete=models.CASCADE,
+        null=True, 
+        blank=True
+    )
+    data_changes = models.JSONField(
+        default=dict,
+        help_text="Record of data changes made during resolution"
+    )
+    
     class Meta:
         ordering = ['-resolved_at']
         indexes = [
-            models.Index(fields=['tenant', 'resolved_at']),
-            models.Index(fields=['duplicate_match', 'action_taken']),
+            models.Index(fields=['tenant', 'action_taken']),
+            models.Index(fields=['resolved_at']),
         ]
     
     def __str__(self):
-        return f"{self.tenant.name} - {self.action_taken} - {self.resolved_at.strftime('%Y-%m-%d')}"
+        return f"Resolution: {self.action_taken} for {self.duplicate_match}"
 
 
 class DuplicateAnalytics(models.Model):
@@ -271,7 +293,7 @@ class DuplicateAnalytics(models.Model):
     
     # Multi-tenant isolation - CRITICAL for tenant data separation
     tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name='duplicate_analytics')
-    rule = models.ForeignKey(DuplicateRule, on_delete=models.CASCADE, related_name='analytics')
+    rule = models.ForeignKey(DuplicateRule, on_delete=models.CASCADE, related_name='duplicate_analytics')
     date = models.DateField()
     records_processed = models.IntegerField(default=0)
     duplicates_detected = models.IntegerField(default=0)
@@ -279,13 +301,15 @@ class DuplicateAnalytics(models.Model):
     true_positives = models.IntegerField(default=0)
     avg_confidence_score = models.FloatField(default=0.0)
     processing_time_ms = models.IntegerField(default=0)
+    
+    # Performance breakdowns
     field_performance = models.JSONField(
         default=dict,
         help_text="Performance metrics by field"
     )
     algorithm_performance = models.JSONField(
         default=dict,
-        help_text="Performance metrics by algorithm"
+        help_text="Performance metrics by matching algorithm"
     )
     
     class Meta:
@@ -297,33 +321,27 @@ class DuplicateAnalytics(models.Model):
         ]
     
     def __str__(self):
-        return f"{self.tenant.name} - {self.rule.name} - {self.date}"
+        return f"{self.rule.name} - {self.date} ({self.duplicates_detected} duplicates)"
 
 
 class DuplicateExclusion(models.Model):
-    """Explicitly exclude certain record pairs from duplicate detection"""
+    """Track manually excluded record pairs that should never be considered duplicates"""
     
-    # Multi-tenant isolation - CRITICAL for tenant data separation
+    # Multi-tenant isolation
     tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name='duplicate_exclusions')
     record1 = models.ForeignKey(Record, related_name='exclusions_1', on_delete=models.CASCADE)
     record2 = models.ForeignKey(Record, related_name='exclusions_2', on_delete=models.CASCADE)
-    rule = models.ForeignKey(
-        DuplicateRule, 
-        on_delete=models.CASCADE, 
-        null=True, 
-        blank=True,
-        help_text="Specific rule to exclude, or null for all rules"
-    )
-    reason = models.TextField(help_text="Reason for excluding this pair")
+    reason = models.TextField(help_text="Reason for excluding this pair from duplicate detection")
     created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     
     class Meta:
-        unique_together = ['tenant', 'record1', 'record2', 'rule']
+        unique_together = ['tenant', 'record1', 'record2']
+        ordering = ['-created_at']
         indexes = [
             models.Index(fields=['tenant', 'record1']),
             models.Index(fields=['tenant', 'record2']),
         ]
     
     def __str__(self):
-        return f"{self.tenant.name} - Excluded: {self.record1.id} & {self.record2.id}"
+        return f"Exclusion: {self.record1.id} <-> {self.record2.id}"

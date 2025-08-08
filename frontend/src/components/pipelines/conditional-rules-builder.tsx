@@ -1,18 +1,24 @@
 'use client'
 
 import React, { useState } from 'react'
-import { Plus, X, Eye, EyeOff, AlertCircle } from 'lucide-react'
+import { Plus, X, Eye, EyeOff, AlertCircle, Layers, ChevronDown, ChevronRight } from 'lucide-react'
 
 interface ConditionalRule {
   field: string
   condition: string
   value: any
+  description?: string
+}
+
+interface ConditionalRuleGroup {
+  logic: 'AND' | 'OR'
+  rules: (ConditionalRule | ConditionalRuleGroup)[]
 }
 
 interface ConditionalRules {
-  show_when?: ConditionalRule[]
-  hide_when?: ConditionalRule[]
-  require_when?: ConditionalRule[]
+  show_when?: ConditionalRuleGroup
+  hide_when?: ConditionalRuleGroup
+  require_when?: ConditionalRuleGroup
 }
 
 interface AvailableField {
@@ -48,6 +54,22 @@ const CONDITION_OPERATORS = [
   { value: 'starts_with', label: 'starts with', icon: 'A*' },
   { value: 'ends_with', label: 'ends with', icon: '*Z' }
 ]
+
+// Helper functions for working with conditional rule configs
+const isRuleGroup = (item: ConditionalRule | ConditionalRuleGroup): item is ConditionalRuleGroup => {
+  return 'logic' in item && 'rules' in item
+}
+
+const createEmptyRuleGroup = (): ConditionalRuleGroup => ({
+  logic: 'AND',
+  rules: []
+})
+
+const createEmptyRule = (): ConditionalRule => ({
+  field: '',
+  condition: 'equals',
+  value: ''
+})
 
 const RuleRow: React.FC<{
   rule: ConditionalRule
@@ -147,6 +169,173 @@ const RuleRow: React.FC<{
   )
 }
 
+const RuleGroupBuilder: React.FC<{
+  group: ConditionalRuleGroup
+  availableFields: AvailableField[]
+  userTypes: UserType[]
+  onGroupChange: (group: ConditionalRuleGroup) => void
+  onRemove?: () => void
+  depth?: number
+  ruleType: 'show_when' | 'hide_when' | 'require_when'
+}> = ({ group, availableFields, userTypes, onGroupChange, onRemove, depth = 0, ruleType }) => {
+  const [isCollapsed, setIsCollapsed] = useState(false)
+
+  const updateLogic = (logic: 'AND' | 'OR') => {
+    onGroupChange({ ...group, logic })
+  }
+
+  const addRule = () => {
+    const newRule = createEmptyRule()
+    onGroupChange({
+      ...group,
+      rules: [...group.rules, newRule]
+    })
+  }
+
+  const addGroup = () => {
+    const newGroup = createEmptyRuleGroup()
+    onGroupChange({
+      ...group,
+      rules: [...group.rules, newGroup]
+    })
+  }
+
+  const updateRule = (index: number, updatedItem: ConditionalRule | ConditionalRuleGroup) => {
+    const newRules = [...group.rules]
+    newRules[index] = updatedItem
+    onGroupChange({ ...group, rules: newRules })
+  }
+
+  const removeRule = (index: number) => {
+    const newRules = group.rules.filter((_, i) => i !== index)
+    onGroupChange({ ...group, rules: newRules })
+  }
+
+  const getLogicColor = (logic: string) => {
+    return logic === 'OR' ? 'text-orange-600 bg-orange-50 border-orange-200 dark:bg-orange-900/20 dark:text-orange-400 dark:border-orange-800' 
+                          : 'text-blue-600 bg-blue-50 border-blue-200 dark:bg-blue-900/20 dark:text-blue-400 dark:border-blue-800'
+  }
+
+  return (
+    <div className={`border rounded-lg transition-all duration-200 ${
+      depth > 0 ? 'ml-4 bg-gray-50/50 dark:bg-gray-800/50' : 'bg-white dark:bg-gray-800'
+    } ${depth > 0 ? 'border-gray-200 dark:border-gray-700' : 'border-gray-300 dark:border-gray-600'}`}>
+      {/* Group Header */}
+      <div className="flex items-center justify-between p-3 border-b border-gray-200 dark:border-gray-700">
+        <div className="flex items-center space-x-3">
+          {/* Collapse Toggle */}
+          <button
+            onClick={() => setIsCollapsed(!isCollapsed)}
+            className="p-1 hover:bg-gray-200 dark:hover:bg-gray-600 rounded"
+          >
+            {isCollapsed ? (
+              <ChevronRight className="w-4 h-4 text-gray-500" />
+            ) : (
+              <ChevronDown className="w-4 h-4 text-gray-500" />
+            )}
+          </button>
+
+          {/* Logic Selector */}
+          <div className="flex items-center space-x-2">
+            <Layers className="w-4 h-4 text-gray-500" />
+            <select
+              value={group.logic}
+              onChange={(e) => updateLogic(e.target.value as 'AND' | 'OR')}
+              className={`text-sm font-medium border rounded px-3 py-1 transition-colors ${getLogicColor(group.logic)}`}
+            >
+              <option value="AND">All conditions must be true (AND)</option>
+              <option value="OR">Any condition can be true (OR)</option>
+            </select>
+          </div>
+
+          {/* Rule Count */}
+          <span className="text-xs text-gray-500 dark:text-gray-400">
+            {group.rules.length} rule{group.rules.length !== 1 ? 's' : ''}
+          </span>
+        </div>
+
+        {/* Remove Group Button */}
+        {onRemove && depth > 0 && (
+          <button
+            onClick={onRemove}
+            className="p-1 text-red-500 hover:bg-red-100 dark:hover:bg-red-900/20 rounded transition-colors"
+            title="Remove group"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        )}
+      </div>
+
+      {/* Group Content */}
+      {!isCollapsed && (
+        <div className="p-3 space-y-3">
+          {/* Rules */}
+          {group.rules.map((rule, index) => (
+            <div key={index} className="space-y-2">
+              {index > 0 && (
+                <div className="flex justify-center">
+                  <span className={`text-xs font-medium px-2 py-1 rounded ${getLogicColor(group.logic)}`}>
+                    {group.logic}
+                  </span>
+                </div>
+              )}
+              
+              {isRuleGroup(rule) ? (
+                <RuleGroupBuilder
+                  group={rule}
+                  availableFields={availableFields}
+                  userTypes={userTypes}
+                  onGroupChange={(updatedGroup) => updateRule(index, updatedGroup)}
+                  onRemove={() => removeRule(index)}
+                  depth={depth + 1}
+                  ruleType={ruleType}
+                />
+              ) : (
+                <RuleRow
+                  rule={rule}
+                  availableFields={availableFields}
+                  userTypes={userTypes}
+                  onRuleChange={(updatedRule) => updateRule(index, updatedRule)}
+                  onRemove={() => removeRule(index)}
+                  ruleType={ruleType}
+                />
+              )}
+            </div>
+          ))}
+
+          {/* Empty State */}
+          {group.rules.length === 0 && (
+            <div className="text-center py-6 text-gray-500 dark:text-gray-400">
+              <Layers className="w-8 h-8 mx-auto mb-2 opacity-50" />
+              <p className="text-sm">No conditions added yet</p>
+              <p className="text-xs mt-1">Add conditions or nested groups below</p>
+            </div>
+          )}
+
+          {/* Add Buttons */}
+          <div className="flex items-center space-x-2 pt-2 border-t border-gray-200 dark:border-gray-700">
+            <button
+              onClick={addRule}
+              className="inline-flex items-center px-3 py-1.5 text-sm font-medium text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-200 hover:bg-blue-50 dark:hover:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-md transition-colors"
+            >
+              <Plus className="w-3 h-3 mr-1" />
+              Add Condition
+            </button>
+            
+            <button
+              onClick={addGroup}
+              className="inline-flex items-center px-3 py-1.5 text-sm font-medium text-green-600 hover:text-green-800 dark:text-green-400 dark:hover:text-green-200 hover:bg-green-50 dark:hover:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-md transition-colors"
+            >
+              <Layers className="w-3 h-3 mr-1" />
+              Add Group
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export const ConditionalRulesBuilder: React.FC<ConditionalRulesBuilderProps> = ({
   field,
   availableFields,
@@ -154,12 +343,20 @@ export const ConditionalRulesBuilder: React.FC<ConditionalRulesBuilderProps> = (
   onChange
 }) => {
   const currentRules = field?.business_rules?.conditional_rules || {}
-  const [showWhenRules, setShowWhenRules] = useState<ConditionalRule[]>(currentRules.show_when || [])
-  const [hideWhenRules, setHideWhenRules] = useState<ConditionalRule[]>(currentRules.hide_when || [])
-  const [requireWhenRules, setRequireWhenRules] = useState<ConditionalRule[]>(currentRules.require_when || [])
+  
+  // Initialize rule groups from current state
+  const [showWhenGroup, setShowWhenGroup] = useState<ConditionalRuleGroup>(() => 
+    currentRules.show_when || createEmptyRuleGroup()
+  )
+  const [hideWhenGroup, setHideWhenGroup] = useState<ConditionalRuleGroup>(() => 
+    currentRules.hide_when || createEmptyRuleGroup()
+  )
+  const [requireWhenGroup, setRequireWhenGroup] = useState<ConditionalRuleGroup>(() => 
+    currentRules.require_when || createEmptyRuleGroup()
+  )
 
-  // Filter out self-references and add user_type as a virtual field
-  const filteredFields = [
+  // Create enhanced field list with stage funnel indicators
+  const enhancedFields = [
     // Add user_type as a virtual field if userTypes are available
     ...(userTypes.length > 0 ? [{
       id: 'user_type',
@@ -168,81 +365,56 @@ export const ConditionalRulesBuilder: React.FC<ConditionalRulesBuilderProps> = (
       field_type: 'select'
     }] : []),
     // Add regular fields (excluding self-reference)
-    ...availableFields.filter(f => f.name !== field?.name)
+    ...availableFields.filter(f => f.name !== field?.name).map(f => {
+      if (f.field_type === 'select') {
+        return {
+          ...f,
+          display_name: `📊 ${f.display_name} (Stage Funnel)`,
+          isStageField: true
+        }
+      }
+      return f
+    })
   ]
 
   const updateRules = (
-    newShowWhen: ConditionalRule[], 
-    newHideWhen: ConditionalRule[], 
-    newRequireWhen: ConditionalRule[]
+    newShowWhenGroup: ConditionalRuleGroup, 
+    newHideWhenGroup: ConditionalRuleGroup, 
+    newRequireWhenGroup: ConditionalRuleGroup
   ) => {
     const rules: ConditionalRules = {}
     
-    if (newShowWhen.length > 0) rules.show_when = newShowWhen
-    if (newHideWhen.length > 0) rules.hide_when = newHideWhen
-    if (newRequireWhen.length > 0) rules.require_when = newRequireWhen
+    // Only include groups that have rules
+    if (newShowWhenGroup.rules.length > 0) {
+      rules.show_when = newShowWhenGroup
+    }
+    if (newHideWhenGroup.rules.length > 0) {
+      rules.hide_when = newHideWhenGroup  
+    }
+    if (newRequireWhenGroup.rules.length > 0) {
+      rules.require_when = newRequireWhenGroup
+    }
     
     onChange(rules)
   }
 
-  const addShowWhenRule = () => {
-    const newRules = [...showWhenRules, { field: '', condition: '', value: '' }]
-    setShowWhenRules(newRules)
-    updateRules(newRules, hideWhenRules, requireWhenRules)
+  const handleShowWhenChange = (group: ConditionalRuleGroup) => {
+    setShowWhenGroup(group)
+    updateRules(group, hideWhenGroup, requireWhenGroup)
   }
 
-  const addHideWhenRule = () => {
-    const newRules = [...hideWhenRules, { field: '', condition: '', value: '' }]
-    setHideWhenRules(newRules)
-    updateRules(showWhenRules, newRules, requireWhenRules)
+  const handleHideWhenChange = (group: ConditionalRuleGroup) => {
+    setHideWhenGroup(group)
+    updateRules(showWhenGroup, group, requireWhenGroup)
   }
 
-  const addRequireWhenRule = () => {
-    const newRules = [...requireWhenRules, { field: '', condition: '', value: '' }]
-    setRequireWhenRules(newRules)
-    updateRules(showWhenRules, hideWhenRules, newRules)
+  const handleRequireWhenChange = (group: ConditionalRuleGroup) => {
+    setRequireWhenGroup(group)
+    updateRules(showWhenGroup, hideWhenGroup, group)
   }
 
-  const updateShowWhenRule = (index: number, rule: ConditionalRule) => {
-    const newRules = [...showWhenRules]
-    newRules[index] = rule
-    setShowWhenRules(newRules)
-    updateRules(newRules, hideWhenRules, requireWhenRules)
-  }
 
-  const updateHideWhenRule = (index: number, rule: ConditionalRule) => {
-    const newRules = [...hideWhenRules]
-    newRules[index] = rule
-    setHideWhenRules(newRules)
-    updateRules(showWhenRules, newRules, requireWhenRules)
-  }
-
-  const updateRequireWhenRule = (index: number, rule: ConditionalRule) => {
-    const newRules = [...requireWhenRules]
-    newRules[index] = rule
-    setRequireWhenRules(newRules)
-    updateRules(showWhenRules, hideWhenRules, newRules)
-  }
-
-  const removeShowWhenRule = (index: number) => {
-    const newRules = showWhenRules.filter((_, i) => i !== index)
-    setShowWhenRules(newRules)
-    updateRules(newRules, hideWhenRules, requireWhenRules)
-  }
-
-  const removeHideWhenRule = (index: number) => {
-    const newRules = hideWhenRules.filter((_, i) => i !== index)
-    setHideWhenRules(newRules)
-    updateRules(showWhenRules, newRules, requireWhenRules)
-  }
-
-  const removeRequireWhenRule = (index: number) => {
-    const newRules = requireWhenRules.filter((_, i) => i !== index)
-    setRequireWhenRules(newRules)  
-    updateRules(showWhenRules, hideWhenRules, newRules)
-  }
-
-  if (filteredFields.length === 0) {
+  if (enhancedFields.length === 0) {
     return (
       <div className="p-4 bg-gray-50 dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
         <div className="flex items-center space-x-2 text-gray-500 dark:text-gray-400">
@@ -257,6 +429,7 @@ export const ConditionalRulesBuilder: React.FC<ConditionalRulesBuilderProps> = (
     <div className="space-y-6">
       <div className="text-sm text-gray-600 dark:text-gray-400">
         Configure when this field should be shown, hidden, or required based on other field values.
+        Use AND/OR logic to create complex conditional rules.
       </div>
 
       {/* Show When Rules */}
@@ -266,30 +439,16 @@ export const ConditionalRulesBuilder: React.FC<ConditionalRulesBuilderProps> = (
           <h5 className="font-medium text-gray-900 dark:text-white">Show this field when:</h5>
         </div>
         <div className="text-xs text-gray-500 dark:text-gray-400 mb-3">
-          Field will only be visible when ALL conditions are true
+          Field will only be visible when conditions are met
         </div>
         
-        <div className="space-y-2">
-          {showWhenRules.map((rule, index) => (
-            <RuleRow
-              key={index}
-              rule={rule}
-              availableFields={filteredFields}
-              userTypes={userTypes}
-              onRuleChange={(rule) => updateShowWhenRule(index, rule)}
-              onRemove={() => removeShowWhenRule(index)}
-              ruleType="show_when"
-            />
-          ))}
-        </div>
-        
-        <button
-          onClick={addShowWhenRule}
-          className="mt-3 inline-flex items-center px-3 py-1.5 text-sm text-green-600 hover:bg-green-50 dark:hover:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-md transition-colors"
-        >
-          <Plus className="w-3 h-3 mr-1" />
-          Add Show Condition
-        </button>
+        <RuleGroupBuilder
+          group={showWhenGroup}
+          availableFields={enhancedFields}
+          userTypes={userTypes}
+          onGroupChange={handleShowWhenChange}
+          ruleType="show_when"
+        />
       </div>
 
       {/* Hide When Rules */}
@@ -299,30 +458,16 @@ export const ConditionalRulesBuilder: React.FC<ConditionalRulesBuilderProps> = (
           <h5 className="font-medium text-gray-900 dark:text-white">Hide this field when:</h5>
         </div>
         <div className="text-xs text-gray-500 dark:text-gray-400 mb-3">
-          Field will be hidden when ANY condition is true
+          Field will be hidden when conditions are met
         </div>
         
-        <div className="space-y-2">
-          {hideWhenRules.map((rule, index) => (
-            <RuleRow
-              key={index}
-              rule={rule}
-              availableFields={filteredFields}
-              userTypes={userTypes}
-              onRuleChange={(rule) => updateHideWhenRule(index, rule)}
-              onRemove={() => removeHideWhenRule(index)}
-              ruleType="hide_when"
-            />
-          ))}
-        </div>
-        
-        <button
-          onClick={addHideWhenRule}
-          className="mt-3 inline-flex items-center px-3 py-1.5 text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-md transition-colors"
-        >
-          <Plus className="w-3 h-3 mr-1" />
-          Add Hide Condition
-        </button>
+        <RuleGroupBuilder
+          group={hideWhenGroup}
+          availableFields={enhancedFields}
+          userTypes={userTypes}
+          onGroupChange={handleHideWhenChange}
+          ruleType="hide_when"
+        />
       </div>
 
       {/* Require When Rules */}
@@ -332,47 +477,33 @@ export const ConditionalRulesBuilder: React.FC<ConditionalRulesBuilderProps> = (
           <h5 className="font-medium text-gray-900 dark:text-white">Make this field required when:</h5>
         </div>
         <div className="text-xs text-gray-500 dark:text-gray-400 mb-3">
-          Field will be required when ANY condition is true
+          Field will be required when conditions are met
         </div>
         
-        <div className="space-y-2">
-          {requireWhenRules.map((rule, index) => (
-            <RuleRow
-              key={index}
-              rule={rule}
-              availableFields={filteredFields}
-              userTypes={userTypes}
-              onRuleChange={(rule) => updateRequireWhenRule(index, rule)}
-              onRemove={() => removeRequireWhenRule(index)}
-              ruleType="require_when"
-            />
-          ))}
-        </div>
-        
-        <button
-          onClick={addRequireWhenRule}
-          className="mt-3 inline-flex items-center px-3 py-1.5 text-sm text-orange-600 hover:bg-orange-50 dark:hover:bg-orange-900/20 border border-orange-200 dark:border-orange-800 rounded-md transition-colors"
-        >
-          <Plus className="w-3 h-3 mr-1" />
-          Add Required Condition
-        </button>
+        <RuleGroupBuilder
+          group={requireWhenGroup}
+          availableFields={enhancedFields}
+          userTypes={userTypes}
+          onGroupChange={handleRequireWhenChange}
+          ruleType="require_when"
+        />
       </div>
 
       {/* Summary */}
-      {(showWhenRules.length > 0 || hideWhenRules.length > 0 || requireWhenRules.length > 0) && (
+      {(showWhenGroup.rules.length > 0 || hideWhenGroup.rules.length > 0 || requireWhenGroup.rules.length > 0) && (
         <div className="bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800 rounded-lg p-3">
           <div className="text-sm font-medium text-blue-900 dark:text-blue-100 mb-2">
             Conditional Rules Summary:
           </div>
           <div className="text-xs text-blue-700 dark:text-blue-300 space-y-1">
-            {showWhenRules.length > 0 && (
-              <div>• {showWhenRules.length} show condition(s)</div>
+            {showWhenGroup.rules.length > 0 && (
+              <div>• {showWhenGroup.rules.length} show condition(s) with {showWhenGroup.logic} logic</div>
             )}
-            {hideWhenRules.length > 0 && (
-              <div>• {hideWhenRules.length} hide condition(s)</div>
+            {hideWhenGroup.rules.length > 0 && (
+              <div>• {hideWhenGroup.rules.length} hide condition(s) with {hideWhenGroup.logic} logic</div>
             )}
-            {requireWhenRules.length > 0 && (
-              <div>• {requireWhenRules.length} required condition(s)</div>
+            {requireWhenGroup.rules.length > 0 && (
+              <div>• {requireWhenGroup.rules.length} required condition(s) with {requireWhenGroup.logic} logic</div>
             )}
           </div>
         </div>

@@ -119,14 +119,8 @@ export const BooleanFieldComponent: FieldComponent = {
   },
 
   validate: (value: any, field: Field): ValidationResult => {
-    // Boolean fields typically don't require validation beyond required check
-    if (field.is_required && value !== true) {
-      return {
-        isValid: false,
-        error: `${field.display_name || field.name} must be checked`
-      }
-    }
-
+    // Note: Required validation handled by permission system
+    // Boolean fields generally don't require additional validation
     return { isValid: true }
   },
 

@@ -55,7 +55,7 @@ export const DateFieldComponent: FieldComponent = {
           disabled={disabled}
           className={inputClass}
           autoFocus={autoFocus}
-          required={field.is_required}
+          // Required attribute handled by FieldWrapper
         />
         {error && (
           <p className="mt-1 text-sm text-red-600 dark:text-red-400">{error}</p>
@@ -129,12 +129,7 @@ export const DateFieldComponent: FieldComponent = {
   },
 
   validate: (value: any, field: Field): ValidationResult => {
-    if (field.is_required && (!value || value === '')) {
-      return {
-        isValid: false,
-        error: `${field.display_name || field.name} is required`
-      }
-    }
+    // Note: Required validation handled by permission system
 
     if (value) {
       const date = new Date(value)
@@ -230,7 +225,7 @@ export const DateTimeFieldComponent: FieldComponent = {
           disabled={disabled}
           className={inputClass}
           autoFocus={autoFocus}
-          required={field.is_required}
+          // Required attribute handled by FieldWrapper
         />
         {error && (
           <p className="mt-1 text-sm text-red-600 dark:text-red-400">{error}</p>
@@ -265,12 +260,7 @@ export const DateTimeFieldComponent: FieldComponent = {
   },
 
   validate: (value: any, field: Field): ValidationResult => {
-    if (field.is_required && (!value || value === '')) {
-      return {
-        isValid: false,
-        error: `${field.display_name || field.name} is required`
-      }
-    }
+    // Note: Required validation handled by permission system
 
     if (value) {
       const date = new Date(value)
@@ -331,7 +321,7 @@ export const TimeFieldComponent: FieldComponent = {
           disabled={disabled}
           className={inputClass}
           autoFocus={autoFocus}
-          required={field.is_required}
+          // Required attribute handled by FieldWrapper
         />
         {error && (
           <p className="mt-1 text-sm text-red-600 dark:text-red-400">{error}</p>
@@ -353,12 +343,7 @@ export const TimeFieldComponent: FieldComponent = {
   },
 
   validate: (value: any, field: Field): ValidationResult => {
-    if (field.is_required && (!value || value === '')) {
-      return {
-        isValid: false,
-        error: `${field.display_name || field.name} is required`
-      }
-    }
+    // Note: Required validation handled by permission system
 
     if (value) {
       // Basic time format validation (HH:MM)

@@ -24,6 +24,7 @@ class DynamicFieldConfig:
     field_config: Dict[str, Any]
     storage_constraints: Dict[str, Any]
     form_validation_rules: Dict[str, Any] = None
+    business_rules: Dict[str, Any] = None  # Include business_rules for frontend conditional evaluation
     default_value: Any = None
     placeholder: str = ""
     current_value: Any = None  # For shared record forms
@@ -102,12 +103,10 @@ class DynamicFormGenerator:
         visible_count = 0
         
         for field in filtered_fields:
-            # Determine if field is required based on stage and business rules
-            is_required = self._is_field_required(field, stage)
+            # NOTE: is_required is now computed dynamically on the frontend using conditional rules
+            # Backend no longer pre-computes requirements to allow real-time conditional evaluation
+            is_required = False  # Always False - frontend handles via business_rules.conditional_rules
             is_visible = field.is_visible_in_detail
-            
-            if is_required:
-                required_count += 1
             if is_visible:
                 visible_count += 1
             
@@ -130,6 +129,7 @@ class DynamicFormGenerator:
                 field_config=field.field_config,
                 storage_constraints=field.storage_constraints,
                 form_validation_rules=field.form_validation_rules,
+                business_rules=field.business_rules or {},  # Include business_rules for frontend evaluation
                 placeholder=self._generate_placeholder(field),
                 current_value=current_value
             )
@@ -143,43 +143,75 @@ class DynamicFormGenerator:
             target_stage=stage,
             fields=dynamic_fields,
             total_fields=len(dynamic_fields),
-            required_fields=required_count,
+            required_fields=0,  # Frontend calculates dynamically via conditional rules
             visible_fields=visible_count
         )
     
     def _filter_fields_by_stage(self, fields, stage: str) -> List[Field]:
-        """Filter fields based on stage-specific business rules"""
+        """Filter fields based on conditional rules and stage context"""
         filtered_fields = []
         
-        for field in fields:
-            # Check if field has stage-specific requirements
-            business_rules = field.business_rules or {}
-            stage_requirements = business_rules.get('stage_requirements', {})
+        # Create a comprehensive stage context for conditional evaluation
+        stage_context = {"stage": stage} if stage else {}
+        
+        # Find all select fields and add their potential stage values to context
+        for field in self.pipeline.fields.filter(field_type='select'):
+            field_config = field.field_config or {}
+            options = field_config.get('options', [])
             
-            # Include field if:
-            # 1. It has requirements for this stage
-            # 2. It has no stage requirements (always visible)
-            # 3. It's marked as visible
-            if (stage in stage_requirements or 
-                not stage_requirements or 
-                field.is_visible_in_detail):
-                filtered_fields.append(field)
+            # If this could be the stage field, add it to context
+            for option in options:
+                option_value = None
+                if isinstance(option, dict):
+                    option_value = option.get('value') or option.get('label')
+                elif isinstance(option, str):
+                    option_value = option
+                
+                if option_value == stage:
+                    stage_context[field.slug] = stage
+                    break
+        
+        for field in fields:
+            # Include fields that are visible in detail and either:
+            # 1. Required by conditional rules for this stage, or
+            # 2. Not stage-specific (always visible)
+            if field.is_visible_in_detail:
+                is_stage_required = self._is_field_required(field, stage_context)
+                has_stage_rules = self._field_has_stage_rules(field)
+                
+                # Only include fields that are required for this specific stage
+                if is_stage_required:
+                    filtered_fields.append(field)
         
         return filtered_fields
     
-    def _is_field_required(self, field: Field, stage: Optional[str] = None) -> bool:
-        """Determine if a field is required based on business rules and stage"""
+    def _field_has_stage_rules(self, field: Field) -> bool:
+        """Check if a field has any stage-related conditional rules"""
         business_rules = field.business_rules or {}
         
-        # Check stage-specific requirements
-        if stage:
-            stage_requirements = business_rules.get('stage_requirements', {})
-            if stage in stage_requirements:
-                return stage_requirements[stage].get('required', False)
+        # Check conditional rules format
+        conditional_rules = business_rules.get('conditional_rules', {})
+        require_when_config = conditional_rules.get('require_when')
+        return bool(require_when_config)
+    
+    def _is_field_required(self, field: Field, stage_context: Optional[Dict[str, Any]] = None) -> bool:
+        """Determine if a field is required using enhanced conditional system"""
+        if not stage_context:
+            return False
+            
+        business_rules = field.business_rules or {}
+        conditional_rules = business_rules.get('conditional_rules', {})
+        require_when_config = conditional_rules.get('require_when')
         
-        # Check general business rules for required fields
-        # For now, we don't have a general 'required' flag in pipeline fields
-        # This would be handled by form-level validation rules instead
+        if require_when_config:
+            try:
+                # Import here to avoid circular imports
+                from .validators import _evaluate_conditional_rules
+                return _evaluate_conditional_rules(require_when_config, stage_context)
+            except Exception as e:
+                print(f"Error evaluating conditional rules for {field.slug}: {e}")
+                return False
+        
         return False
     
     def _generate_placeholder(self, field: Field) -> str:
@@ -208,13 +240,21 @@ class DynamicFormGenerator:
         return placeholder_map.get(field_type, f'Enter {field_name.lower()}')
     
     def get_available_stages(self) -> List[str]:
-        """Get all stages that have business rules defined in pipeline fields"""
+        """Get all stages from select fields that can be used as stage funnels"""
         stages = set()
         
-        for field in self.pipeline.fields.all():
-            business_rules = field.business_rules or {}
-            stage_requirements = business_rules.get('stage_requirements', {})
-            stages.update(stage_requirements.keys())
+        # Get stages from all select fields in the pipeline (multi-stage funnel support)
+        for field in self.pipeline.fields.filter(field_type='select'):
+            field_config = field.field_config or {}
+            options = field_config.get('options', [])
+            
+            for option in options:
+                if isinstance(option, dict):
+                    stage_value = option.get('value') or option.get('label')
+                    if stage_value:
+                        stages.add(str(stage_value))
+                elif isinstance(option, str):
+                    stages.add(option)
         
         return sorted(list(stages))
     
@@ -242,13 +282,14 @@ class DynamicFormGenerator:
                 'display_name': field.display_name,
                 'help_text': field.help_text,
                 'placeholder': field.placeholder,
-                'is_required': field.is_required,
+                'is_required': field.is_required,  # Always False - frontend evaluates via business_rules
                 'is_visible': field.is_visible,
                 'is_readonly': field.is_readonly,
                 'display_order': field.display_order,
                 'field_config': field.field_config,
                 'storage_constraints': field.storage_constraints,
                 'form_validation_rules': field.form_validation_rules,
+                'business_rules': field.business_rules,  # Include business_rules for frontend conditional evaluation
                 'default_value': field.default_value,
                 'current_value': field.current_value,
             }

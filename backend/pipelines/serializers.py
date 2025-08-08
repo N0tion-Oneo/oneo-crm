@@ -463,8 +463,7 @@ class FieldValidationSerializer(serializers.Serializer):
             raise serializers.ValidationError("Field context is required")
         
         result = field.validate_value(
-            attrs['value'],
-            attrs.get('is_required', field.is_required)
+            attrs['value']
         )
         
         if not result.is_valid:

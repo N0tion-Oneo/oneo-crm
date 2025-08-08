@@ -1,5 +1,5 @@
 """
-Duplicates API views with unified architecture
+Unified duplicate detection API views with simplified AND/OR logic system
 """
 from rest_framework import viewsets, status, permissions
 from rest_framework.decorators import action
@@ -11,45 +11,46 @@ from django.db.models import Count, Avg, Q
 from django.db import transaction
 import logging
 
+# Import unified models
 from duplicates.models import (
-    DuplicateRule, DuplicateFieldRule, DuplicateMatch,
-    DuplicateResolution, DuplicateAnalytics, DuplicateExclusion
+    DuplicateRule, URLExtractionRule, DuplicateRuleTest, DuplicateDetectionResult,
+    DuplicateMatch, DuplicateResolution, DuplicateAnalytics, DuplicateExclusion
+)
+from duplicates.logic_engine import DuplicateLogicEngine
+
+# Import unified serializers from api/serializers.py
+from api.serializers import (
+    URLExtractionRuleSerializer, DuplicateRuleSerializer, DuplicateRuleTestSerializer,
+    RuleBuilderConfigSerializer, RuleTestRequestSerializer, URLExtractionTestSerializer
 )
 from duplicates.serializers import (
-    DuplicateRuleSerializer, DuplicateFieldRuleSerializer, DuplicateMatchSerializer,
-    DuplicateResolutionSerializer, DuplicateAnalyticsSerializer, DuplicateExclusionSerializer,
-    DuplicateDetectionRequestSerializer, DuplicateComparisonSerializer,
-    DuplicateBulkResolutionSerializer, DuplicateRuleBuilderSerializer,
-    DuplicateMatchResultSerializer, DuplicateStatisticsSerializer
+    DuplicateMatchSerializer, DuplicateResolutionSerializer, DuplicateAnalyticsSerializer,
+    DuplicateExclusionSerializer, DuplicateBulkResolutionSerializer
 )
+
 from api.permissions import DuplicatePermission, TenantMemberPermission
 from authentication.permissions import SyncPermissionManager
+from pipelines.models import Pipeline
 
 logger = logging.getLogger(__name__)
 
 
 class DuplicateRuleViewSet(viewsets.ModelViewSet):
     """
-    ViewSet for managing duplicate detection rules
+    ViewSet for managing duplicate rules with AND/OR logic
     """
     serializer_class = DuplicateRuleSerializer
     permission_classes = [DuplicatePermission]
     filter_backends = [DjangoFilterBackend]
-    filterset_fields = ['pipeline', 'action_on_duplicate', 'is_active', 'enable_fuzzy_matching']
+    filterset_fields = ['pipeline', 'action_on_duplicate', 'is_active']
     search_fields = ['name', 'description']
-    ordering_fields = ['name', 'created_at', 'confidence_threshold']
     ordering = ['-created_at']
     
     def get_queryset(self):
         """Get duplicate rules filtered by tenant"""
         return DuplicateRule.objects.filter(
             tenant=self.request.tenant
-        ).select_related('pipeline', 'created_by').prefetch_related(
-            'field_rules__field'
-        ).annotate(
-            field_rule_count=Count('field_rules'),
-            avg_match_confidence=Avg('matches__confidence_score')
-        ).order_by('-created_at')
+        ).select_related('pipeline', 'created_by').prefetch_related('duplicate_test_cases').order_by('-created_at')
     
     def perform_create(self, serializer):
         """Set tenant and user when creating duplicate rule"""
@@ -59,87 +60,132 @@ class DuplicateRuleViewSet(viewsets.ModelViewSet):
         )
     
     @extend_schema(
-        summary="Detect duplicates",
-        description="Run duplicate detection against provided data",
-        request=DuplicateDetectionRequestSerializer,
-        responses={200: DuplicateMatchResultSerializer(many=True)}
+        summary="Get rule builder configuration",
+        description="Get configuration data needed for rule builder UI",
+        parameters=[
+            OpenApiParameter('pipeline_id', int, description='Pipeline ID to get configuration for')
+        ]
+    )
+    @action(detail=False, methods=['GET'])
+    def builder_config(self, request):
+        """Get rule builder configuration data"""
+        pipeline_id = request.query_params.get('pipeline_id')
+        
+        if not pipeline_id:
+            return Response(
+                {'error': 'pipeline_id is required'}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        serializer = RuleBuilderConfigSerializer(
+            data={'pipeline_id': pipeline_id},
+            context={'request': request}
+        )
+        
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        return Response(serializer.to_representation(None))
+    
+    @extend_schema(
+        summary="Test duplicate rule",
+        description="Test duplicate rule logic against sample record data",
+        request=RuleTestRequestSerializer
     )
     @action(detail=True, methods=['POST'])
-    def detect_duplicates(self, request, pk=None):
-        """Detect duplicates using this rule"""
+    def test_rule(self, request, pk=None):
+        """Test duplicate rule against sample data"""
         rule = self.get_object()
-        serializer = DuplicateDetectionRequestSerializer(data=request.data)
+        serializer = RuleTestRequestSerializer(data=request.data)
         
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         
         try:
-            # Simplified synchronous duplicate detection
-            # TODO: Implement full duplicate detection engine integration
+            record1_data = serializer.validated_data['record1_data']
+            record2_data = serializer.validated_data['record2_data']
             
-            data = serializer.validated_data['record_data']
-            pipeline_id = serializer.validated_data['pipeline_id']
-            exclude_record_id = serializer.validated_data.get('exclude_record_id')
-            confidence_threshold = serializer.validated_data.get('confidence_threshold', rule.confidence_threshold)
+            # Initialize logic engine
+            engine = DuplicateLogicEngine(request.tenant.id)
             
-            # Basic duplicate detection logic
+            # Get detailed evaluation
+            detailed_result = engine._detailed_evaluate_rule(rule, record1_data, record2_data)
+            
+            return Response({
+                'rule_name': rule.name,
+                'test_data': {
+                    'record1': record1_data,
+                    'record2': record2_data
+                },
+                'result': detailed_result,
+                'timestamp': timezone.now().isoformat()
+            })
+            
+        except Exception as e:
+            logger.error(f"Rule test error: {e}", exc_info=True)
+            return Response(
+                {'error': f'Test failed: {str(e)}'}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @extend_schema(
+        summary="Detect duplicates",
+        description="Run duplicate detection against provided data",
+        request=RuleTestRequestSerializer
+    )
+    @action(detail=True, methods=['POST'])
+    def detect_duplicates(self, request, pk=None):
+        """Detect duplicates using this rule against all records in pipeline"""
+        rule = self.get_object()
+        serializer = RuleTestRequestSerializer(data=request.data)
+        
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            input_data = serializer.validated_data['record1_data']
+            exclude_record_id = serializer.validated_data.get('record2_data', {}).get('exclude_record_id')
+            
+            # Get all records from the pipeline
             from pipelines.models import Record
-            
-            potential_duplicates = []
             records = Record.objects.filter(
-                pipeline_id=pipeline_id,
-                is_deleted=False
+                pipeline=rule.pipeline
             )
             
             if exclude_record_id:
                 records = records.exclude(id=exclude_record_id)
             
-            # Simple field matching based on rule configuration
-            for record in records[:10]:  # Limit for performance
-                score = 0.0
-                field_matches = []
-                
-                # Check each field rule
-                for field_rule in rule.field_rules.filter(is_active=True):
-                    field_name = field_rule.field.name
-                    record_value = record.data.get(field_name, '')
-                    input_value = data.get(field_name, '')
+            # Initialize logic engine
+            engine = DuplicateLogicEngine(request.tenant.id)
+            
+            potential_duplicates = []
+            
+            # Check against each record
+            for record in records[:50]:  # Limit for performance
+                try:
+                    is_duplicate = engine.evaluate_rule(rule, input_data, record.data)
                     
-                    if record_value and input_value:
-                        # Simple exact match for now
-                        if str(record_value).lower().strip() == str(input_value).lower().strip():
-                            field_score = 1.0
-                        else:
-                            field_score = 0.0
-                        
-                        field_matches.append({
-                            'field': field_name,
-                            'score': field_score,
-                            'record_value': record_value,
-                            'input_value': input_value
+                    if is_duplicate:
+                        matched_fields = engine.get_matched_fields(rule, input_data, record.data)
+                        potential_duplicates.append({
+                            'record_id': str(record.id),
+                            'record_data': record.data,
+                            'matched_fields': matched_fields,
+                            'confidence_score': 0.95  # High confidence for boolean match
                         })
                         
-                        score += field_score * field_rule.weight
-                
-                # Normalize score
-                total_weight = sum(fr.weight for fr in rule.field_rules.filter(is_active=True))
-                if total_weight > 0:
-                    score = score / total_weight
-                
-                if score >= confidence_threshold:
-                    potential_duplicates.append({
-                        'record_id': str(record.id),
-                        'record_data': record.data,
-                        'overall_score': score,
-                        'field_matches': field_matches,
-                        'confidence_breakdown': {
-                            'field_scores': {fm['field']: fm['score'] for fm in field_matches},
-                            'weighted_score': score,
-                            'match_type': 'exact'
-                        }
-                    })
+                except Exception as e:
+                    logger.error(f"Error checking record {record.id}: {e}")
+                    continue
             
-            return Response(potential_duplicates)
+            return Response({
+                'rule_name': rule.name,
+                'input_data': input_data,
+                'duplicates_found': len(potential_duplicates),
+                'potential_duplicates': potential_duplicates,
+                'checked_records': min(records.count(), 50),
+                'timestamp': timezone.now().isoformat()
+            })
             
         except Exception as e:
             logger.error(f"Duplicate detection error: {e}", exc_info=True)
@@ -149,124 +195,270 @@ class DuplicateRuleViewSet(viewsets.ModelViewSet):
             )
     
     @extend_schema(
-        summary="Compare two records",
-        description="Compare two specific records for duplicates",
-        request=DuplicateComparisonSerializer
+        summary="Clone duplicate rule",
+        description="Clone an existing duplicate rule to a new pipeline"
     )
     @action(detail=True, methods=['POST'])
-    def compare_records(self, request, pk=None):
-        """Compare two specific records for duplicates"""
-        rule = self.get_object()
-        serializer = DuplicateComparisonSerializer(data=request.data)
+    def clone(self, request, pk=None):
+        """Clone duplicate rule to another pipeline"""
+        source_rule = self.get_object()
         
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        target_pipeline_id = request.data.get('target_pipeline_id')
+        new_name = request.data.get('name')
+        
+        if not target_pipeline_id:
+            return Response(
+                {'error': 'target_pipeline_id is required'}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        if not new_name:
+            return Response(
+                {'error': 'name is required'}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
         
         try:
-            record1_id = serializer.validated_data['record1_id']
-            record2_id = serializer.validated_data['record2_id']
+            # Validate target pipeline
+            target_pipeline = Pipeline.objects.get(
+                id=target_pipeline_id
+            )
             
-            # Get records
-            from pipelines.models import Record
-            record1 = Record.objects.get(id=record1_id, is_deleted=False)
-            record2 = Record.objects.get(id=record2_id, is_deleted=False)
-            
-            # Compare records
-            field_comparisons = []
-            overall_score = 0.0
-            
-            for field_rule in rule.field_rules.filter(is_active=True):
-                field_name = field_rule.field.name
-                value1 = record1.data.get(field_name, '')
-                value2 = record2.data.get(field_name, '')
+            with transaction.atomic():
+                # Clone the rule
+                cloned_rule = DuplicateRule.objects.create(
+                    tenant=request.tenant,
+                    name=new_name,
+                    description=f"Cloned from: {source_rule.name}",
+                    pipeline=target_pipeline,
+                    logic=source_rule.logic,
+                    action_on_duplicate=source_rule.action_on_duplicate,
+                    created_by=request.user
+                )
                 
-                # Simple comparison
-                if value1 and value2:
-                    if str(value1).lower().strip() == str(value2).lower().strip():
-                        field_score = 1.0
-                    else:
-                        field_score = 0.0
-                else:
-                    field_score = 0.0
+                serializer = self.get_serializer(cloned_rule)
+                return Response(serializer.data, status=status.HTTP_201_CREATED)
                 
-                field_comparisons.append({
-                    'field': field_name,
-                    'value1': value1,
-                    'value2': value2,
-                    'score': field_score,
-                    'weight': field_rule.weight,
-                    'match_type': field_rule.match_type
-                })
-                
-                overall_score += field_score * field_rule.weight
-            
-            # Normalize score
-            total_weight = sum(fr.weight for fr in rule.field_rules.filter(is_active=True))
-            if total_weight > 0:
-                overall_score = overall_score / total_weight
-            
-            comparison_result = {
-                'record1_id': record1_id,
-                'record2_id': record2_id,
-                'overall_score': overall_score,
-                'is_duplicate': overall_score >= rule.confidence_threshold,
-                'field_comparisons': field_comparisons,
-                'rule_name': rule.name,
-                'confidence_threshold': rule.confidence_threshold
-            }
-            
-            return Response(comparison_result)
-            
-        except Record.DoesNotExist:
+        except Pipeline.DoesNotExist:
             return Response(
-                {'error': 'One or both records not found'}, 
+                {'error': 'Target pipeline not found'}, 
                 status=status.HTTP_404_NOT_FOUND
             )
         except Exception as e:
-            logger.error(f"Record comparison error: {e}", exc_info=True)
+            logger.error(f"Rule clone error: {e}", exc_info=True)
             return Response(
-                {'error': f'Comparison failed: {str(e)}'}, 
+                {'error': f'Clone failed: {str(e)}'}, 
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
     @extend_schema(
-        summary="Build duplicate rule",
-        description="Create a complete duplicate rule with field rules",
-        request=DuplicateRuleBuilderSerializer
+        summary="Validate rule logic",
+        description="Validate rule logic structure without saving"
     )
     @action(detail=False, methods=['POST'])
-    def build_rule(self, request):
-        """Build a complete duplicate rule with field rules"""
-        serializer = DuplicateRuleBuilderSerializer(
-            data=request.data, 
-            context={'request': request}
+    def validate_logic(self, request):
+        """Validate rule logic structure"""
+        logic = request.data.get('logic')
+        pipeline_id = request.data.get('pipeline_id')
+        
+        if not logic:
+            return Response(
+                {'error': 'logic is required'}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        if not pipeline_id:
+            return Response(
+                {'error': 'pipeline_id is required'}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            # Validate pipeline exists
+            pipeline = Pipeline.objects.get(id=pipeline_id)
+            
+            # Create temporary rule for validation
+            temp_data = {
+                'name': 'temp_validation',
+                'pipeline': pipeline_id,
+                'logic': logic,
+                'action_on_duplicate': 'warn'
+            }
+            
+            serializer = self.get_serializer(data=temp_data, context={'request': request})
+            
+            if serializer.is_valid():
+                return Response({
+                    'valid': True,
+                    'message': 'Rule logic is valid'
+                })
+            else:
+                return Response({
+                    'valid': False,
+                    'errors': serializer.errors
+                }, status=status.HTTP_400_BAD_REQUEST)
+                
+        except Pipeline.DoesNotExist:
+            return Response(
+                {'error': 'Pipeline not found'}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            logger.error(f"Logic validation error: {e}", exc_info=True)
+            return Response(
+                {'error': f'Validation failed: {str(e)}'}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class URLExtractionRuleViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet for managing URL extraction rules
+    """
+    serializer_class = URLExtractionRuleSerializer
+    permission_classes = [DuplicatePermission]
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = ['is_active']
+    search_fields = ['name', 'description']
+    ordering = ['-created_at']
+    
+    def get_queryset(self):
+        """Get URL extraction rules filtered by tenant"""
+        return URLExtractionRule.objects.filter(
+            tenant=self.request.tenant
+        ).order_by('-created_at')
+    
+    def perform_create(self, serializer):
+        """Set tenant and user when creating URL extraction rule"""
+        serializer.save(
+            tenant=self.request.tenant,
+            created_by=self.request.user
         )
+    
+    @extend_schema(
+        summary="Test URL extraction rule",
+        description="Test URL extraction rule against sample URLs",
+        request=URLExtractionTestSerializer,
+        responses={200: {"description": "Test results"}}
+    )
+    @action(detail=True, methods=['POST'])
+    def test_extraction(self, request, pk=None):
+        """Test URL extraction rule against sample URLs"""
+        rule = self.get_object()
+        serializer = URLExtractionTestSerializer(data=request.data)
         
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         
+        test_urls = serializer.validated_data['test_urls']
+        
         try:
-            with transaction.atomic():
-                duplicate_rule = serializer.save()
-                response_serializer = DuplicateRuleSerializer(duplicate_rule)
-                return Response(response_serializer.data, status=status.HTTP_201_CREATED)
-                
+            from duplicates.logic_engine import FieldMatcher
+            field_matcher = FieldMatcher(request.tenant.id)
+            
+            results = []
+            for url in test_urls:
+                try:
+                    extracted = field_matcher._apply_url_extraction_rule(url, rule)
+                    results.append({
+                        'original_url': url,
+                        'extracted_value': extracted,
+                        'success': extracted is not None
+                    })
+                except Exception as e:
+                    results.append({
+                        'original_url': url,
+                        'error': str(e),
+                        'success': False
+                    })
+            
+            success_rate = sum(1 for r in results if r['success']) / len(results)
+            
+            return Response({
+                'rule_name': rule.name,
+                'test_results': results,
+                'success_rate': success_rate,
+                'total_tested': len(results)
+            })
+            
         except Exception as e:
-            logger.error(f"Rule building error: {e}", exc_info=True)
+            logger.error(f"URL extraction test error: {e}", exc_info=True)
             return Response(
-                {'error': f'Rule building failed: {str(e)}'}, 
+                {'error': f'Test failed: {str(e)}'}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class DuplicateRuleTestViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet for managing duplicate rule test cases
+    """
+    serializer_class = DuplicateRuleTestSerializer
+    permission_classes = [DuplicatePermission]
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = ['rule']
+    ordering = ['-created_at']
+    
+    def get_queryset(self):
+        """Get test cases filtered by tenant (through rule)"""
+        return DuplicateRuleTest.objects.filter(
+            rule__tenant=self.request.tenant
+        ).select_related('rule').order_by('-created_at')
+    
+    @extend_schema(
+        summary="Run test case",
+        description="Execute a test case against its associated rule"
+    )
+    @action(detail=True, methods=['POST'])
+    def run_test(self, request, pk=None):
+        """Run a specific test case"""
+        test_case = self.get_object()
+        
+        try:
+            # Initialize logic engine
+            engine = DuplicateLogicEngine(request.tenant.id)
+            
+            # Run the test - get detailed results
+            detailed_result = engine._detailed_evaluate_rule(
+                test_case.rule,
+                test_case.record1_data,
+                test_case.record2_data
+            )
+            
+            # Update test case with results
+            test_case.last_test_result = detailed_result['is_duplicate']
+            test_case.last_test_at = timezone.now()
+            test_case.test_details = detailed_result
+            test_case.save()
+            
+            # Check if result matches expectation
+            passed = test_case.last_test_result == test_case.expected_result
+            
+            return Response({
+                'test_name': test_case.name,
+                'expected_result': test_case.expected_result,
+                'actual_result': test_case.last_test_result,
+                'passed': passed,
+                'execution_details': detailed_result,
+                'tested_at': test_case.last_test_at.isoformat()
+            })
+            
+        except Exception as e:
+            logger.error(f"Test execution error: {e}", exc_info=True)
+            return Response(
+                {'error': f'Test execution failed: {str(e)}'}, 
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
 
 class DuplicateMatchViewSet(viewsets.ModelViewSet):
     """
-    ViewSet for managing duplicate matches
+    ViewSet for managing duplicate matches (updated for simplified system)
     """
     serializer_class = DuplicateMatchSerializer
     permission_classes = [DuplicatePermission]
     filter_backends = [DjangoFilterBackend]
-    filterset_fields = ['rule', 'status', 'detection_method']
+    filterset_fields = ['status', 'detection_method']
     search_fields = ['record1__id', 'record2__id']
     ordering_fields = ['detected_at', 'confidence_score']
     ordering = ['-detected_at']
@@ -275,8 +467,6 @@ class DuplicateMatchViewSet(viewsets.ModelViewSet):
         """Get duplicate matches filtered by tenant"""
         return DuplicateMatch.objects.filter(
             tenant=self.request.tenant
-        ).select_related(
-            'rule', 'record1', 'record2', 'reviewed_by'
         ).order_by('-detected_at')
     
     @extend_schema(
@@ -337,7 +527,6 @@ class DuplicateMatchViewSet(viewsets.ModelViewSet):
                         match.record2.is_deleted = True
                         match.record2.save()
                         
-                        # TODO: Implement actual data merging logic
                         resolution.data_changes = {
                             'action': 'merged',
                             'primary_record_id': str(match.record1.id),
@@ -357,7 +546,6 @@ class DuplicateMatchViewSet(viewsets.ModelViewSet):
                             tenant=request.tenant,
                             record1=match.record1,
                             record2=match.record2,
-                            rule=match.rule,
                             defaults={
                                 'reason': notes or 'Manually excluded',
                                 'created_by': request.user
@@ -386,12 +574,12 @@ class DuplicateMatchViewSet(viewsets.ModelViewSet):
 
 class DuplicateAnalyticsViewSet(viewsets.ReadOnlyModelViewSet):
     """
-    ViewSet for viewing duplicate analytics (read-only)
+    ViewSet for viewing duplicate analytics (read-only, updated for simplified system)
     """
     serializer_class = DuplicateAnalyticsSerializer
     permission_classes = [DuplicatePermission]
     filter_backends = [DjangoFilterBackend]
-    filterset_fields = ['rule', 'date']
+    filterset_fields = ['date']
     ordering_fields = ['date', 'records_processed', 'duplicates_detected']
     ordering = ['-date']
     
@@ -399,7 +587,7 @@ class DuplicateAnalyticsViewSet(viewsets.ReadOnlyModelViewSet):
         """Get duplicate analytics filtered by tenant"""
         return DuplicateAnalytics.objects.filter(
             tenant=self.request.tenant
-        ).select_related('rule').order_by('-date')
+        ).order_by('-date')
     
     @extend_schema(
         summary="Get duplicate statistics",
@@ -427,9 +615,9 @@ class DuplicateAnalyticsViewSet(viewsets.ReadOnlyModelViewSet):
             # Rule filtering
             rule_filter = Q()
             if 'rule_id' in request.query_params:
-                rule_filter = Q(rule_id=request.query_params['rule_id'])
+                rule_filter = Q(detection_rule__id=request.query_params['rule_id'])
             
-            # Basic statistics
+            # Basic statistics - updated for simplified system
             total_rules = DuplicateRule.objects.filter(
                 tenant=request.tenant
             ).count()
@@ -454,14 +642,7 @@ class DuplicateAnalyticsViewSet(viewsets.ReadOnlyModelViewSet):
                 avg_confidence=Avg('confidence_score')
             )['avg_confidence'] or 0.0
             
-            # Processing time statistics
-            processing_time_stats = {
-                'avg_processing_time_ms': 150.0,  # Placeholder
-                'min_processing_time_ms': 50.0,
-                'max_processing_time_ms': 500.0
-            }
-            
-            # Top performing rules
+            # Top performing rules - now using correct relationship
             top_rules = DuplicateRule.objects.filter(
                 tenant=request.tenant,
                 is_active=True
@@ -475,17 +656,11 @@ class DuplicateAnalyticsViewSet(viewsets.ReadOnlyModelViewSet):
                     'rule_id': rule.id,
                     'rule_name': rule.name,
                     'match_count': rule.match_count,
-                    'avg_confidence': rule.avg_confidence or 0.0
+                    'avg_confidence': rule.avg_confidence or 0.0,
+                    'action_on_duplicate': rule.action_on_duplicate
                 }
                 for rule in top_rules
             ]
-            
-            # Field performance (simplified)
-            field_performance = {
-                'email': {'matches': 45, 'accuracy': 0.92},
-                'phone': {'matches': 32, 'accuracy': 0.88},
-                'name': {'matches': 67, 'accuracy': 0.75}
-            }
             
             statistics = {
                 'total_rules': total_rules,
@@ -495,9 +670,15 @@ class DuplicateAnalyticsViewSet(viewsets.ReadOnlyModelViewSet):
                 'resolved_matches': resolved_matches,
                 'false_positives': false_positives,
                 'avg_confidence_score': round(avg_confidence, 3),
-                'processing_time_stats': processing_time_stats,
                 'top_performing_rules': top_performing_rules,
-                'field_performance': field_performance,
+                'detection_results_count': DuplicateDetectionResult.objects.filter(
+                    tenant=request.tenant,
+                    created_at__date__range=[start_date, end_date]
+                ).count(),
+                'url_extraction_rules': URLExtractionRule.objects.filter(
+                    tenant=request.tenant,
+                    is_active=True
+                ).count(),
                 'date_range': {
                     'start_date': start_date.isoformat(),
                     'end_date': end_date.isoformat()
@@ -516,12 +697,12 @@ class DuplicateAnalyticsViewSet(viewsets.ReadOnlyModelViewSet):
 
 class DuplicateExclusionViewSet(viewsets.ModelViewSet):
     """
-    ViewSet for managing duplicate exclusions
+    ViewSet for managing duplicate exclusions (unchanged from original)
     """
     serializer_class = DuplicateExclusionSerializer
     permission_classes = [DuplicatePermission]
     filter_backends = [DjangoFilterBackend]
-    filterset_fields = ['rule', 'created_by']
+    filterset_fields = ['created_by']
     search_fields = ['reason', 'record1__id', 'record2__id']
     ordering_fields = ['created_at']
     ordering = ['-created_at']
@@ -530,9 +711,7 @@ class DuplicateExclusionViewSet(viewsets.ModelViewSet):
         """Get duplicate exclusions filtered by tenant"""
         return DuplicateExclusion.objects.filter(
             tenant=self.request.tenant
-        ).select_related(
-            'rule', 'record1', 'record2', 'created_by'
-        ).order_by('-created_at')
+        ).select_related('record1', 'record2', 'created_by').order_by('-created_at')
     
     def perform_create(self, serializer):
         """Set tenant and user when creating exclusion"""

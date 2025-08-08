@@ -376,9 +376,10 @@ class RecordDataFieldConfig(BaseFieldConfig):
 
 class AIGeneratedFieldConfig(BaseFieldConfig):
     """Configuration for AI-powered fields with latest OpenAI models and tools"""
-    # Core AI Settings - Latest Models (2025)
-    model: str = 'gpt-4.1-mini'              # Cost-effective default
+    # Core AI Settings - Model pulled from tenant AI configuration
+    model: Optional[str] = None              # Model name (uses tenant default if not specified)
     prompt: str                              # The prompt template
+    system_message: Optional[str] = None     # System message for AI context (optional)
     temperature: float = 0.3                 # AI creativity level
     
     # OpenAI Tools Integration

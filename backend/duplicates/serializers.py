@@ -1,59 +1,17 @@
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from .models import (
-    DuplicateRule, DuplicateFieldRule, DuplicateMatch,
-    DuplicateResolution, DuplicateAnalytics, DuplicateExclusion
+    DuplicateRule, URLExtractionRule, DuplicateRuleTest, DuplicateDetectionResult,
+    DuplicateMatch, DuplicateResolution, DuplicateAnalytics, DuplicateExclusion
 )
 from pipelines.models import Pipeline, Field, Record
 
 User = get_user_model()
 
 
-class DuplicateFieldRuleSerializer(serializers.ModelSerializer):
-    """Serializer for duplicate field rules"""
-    field = serializers.SlugRelatedField(
-        slug_field='slug',
-        queryset=Field.objects.all()
-    )
-    
-    class Meta:
-        model = DuplicateFieldRule
-        fields = [
-            'id', 'field', 'match_type', 'match_threshold', 'weight',
-            'is_required', 'preprocessing_rules', 'custom_regex',
-            'is_active', 'created_at'
-        ]
-        read_only_fields = ['id', 'created_at']
-
-
-class DuplicateRuleSerializer(serializers.ModelSerializer):
-    """Serializer for duplicate rules with field rules"""
-    pipeline = serializers.SlugRelatedField(
-        slug_field='slug',
-        queryset=Pipeline.objects.all()
-    )
-    field_rules = DuplicateFieldRuleSerializer(many=True, read_only=True)
-    
-    class Meta:
-        model = DuplicateRule
-        fields = [
-            'id', 'name', 'description', 'pipeline', 'is_active',
-            'action_on_duplicate', 'confidence_threshold', 'auto_merge_threshold',
-            'enable_fuzzy_matching', 'enable_phonetic_matching',
-            'ignore_case', 'normalize_whitespace', 'field_rules',
-            'created_at', 'updated_at'
-        ]
-        read_only_fields = ['id', 'created_at', 'updated_at']
-    
-    def create(self, validated_data):
-        validated_data['tenant'] = self.context['request'].tenant
-        validated_data['created_by'] = self.context['request'].user
-        return super().create(validated_data)
-
-
 class DuplicateMatchSerializer(serializers.ModelSerializer):
     """Serializer for duplicate matches"""
-    rule = DuplicateRuleSerializer(read_only=True)
+    rule = serializers.StringRelatedField(read_only=True)
     record1 = serializers.StringRelatedField(read_only=True)
     record2 = serializers.StringRelatedField(read_only=True)
     reviewed_by = serializers.StringRelatedField(read_only=True)
@@ -91,7 +49,7 @@ class DuplicateResolutionSerializer(serializers.ModelSerializer):
 
 class DuplicateAnalyticsSerializer(serializers.ModelSerializer):
     """Serializer for duplicate analytics"""
-    rule = DuplicateRuleSerializer(read_only=True)
+    rule = serializers.StringRelatedField(read_only=True)
     detection_rate = serializers.SerializerMethodField()
     precision = serializers.SerializerMethodField()
     
@@ -103,17 +61,17 @@ class DuplicateAnalyticsSerializer(serializers.ModelSerializer):
             'processing_time_ms', 'detection_rate', 'precision',
             'field_performance', 'algorithm_performance'
         ]
-        read_only_fields = ['id']
+        read_only_fields = ['id', 'detection_rate', 'precision']
     
     def get_detection_rate(self, obj):
         if obj.records_processed > 0:
-            return (obj.duplicates_detected / obj.records_processed) * 100
+            return obj.duplicates_detected / obj.records_processed
         return 0.0
     
     def get_precision(self, obj):
-        total_positives = obj.true_positives + obj.false_positives
-        if total_positives > 0:
-            return (obj.true_positives / total_positives) * 100
+        total_detected = obj.true_positives + obj.false_positives
+        if total_detected > 0:
+            return obj.true_positives / total_detected
         return 0.0
 
 
@@ -121,14 +79,12 @@ class DuplicateExclusionSerializer(serializers.ModelSerializer):
     """Serializer for duplicate exclusions"""
     record1 = serializers.StringRelatedField(read_only=True)
     record2 = serializers.StringRelatedField(read_only=True)
-    rule = DuplicateRuleSerializer(read_only=True)
     created_by = serializers.StringRelatedField(read_only=True)
     
     class Meta:
         model = DuplicateExclusion
         fields = [
-            'id', 'record1', 'record2', 'rule', 'reason',
-            'created_by', 'created_at'
+            'id', 'record1', 'record2', 'reason', 'created_by', 'created_at'
         ]
         read_only_fields = ['id', 'created_at', 'created_by']
 
@@ -137,92 +93,50 @@ class DuplicateDetectionRequestSerializer(serializers.Serializer):
     """Serializer for duplicate detection requests"""
     record_data = serializers.DictField()
     pipeline_id = serializers.IntegerField()
-    exclude_record_id = serializers.CharField(required=False, allow_null=True)
-    rule_id = serializers.IntegerField(required=False, allow_null=True)
-    confidence_threshold = serializers.FloatField(required=False, min_value=0.0, max_value=1.0)
+    rule_ids = serializers.ListField(child=serializers.IntegerField(), required=False)
 
 
 class DuplicateComparisonSerializer(serializers.Serializer):
-    """Serializer for comparing two records"""
-    record1_id = serializers.CharField()
-    record2_id = serializers.CharField()
-    rule_id = serializers.IntegerField(required=False, allow_null=True)
+    """Serializer for comparing two records for duplicates"""
+    record1_data = serializers.DictField()
+    record2_data = serializers.DictField()
 
 
 class DuplicateBulkResolutionSerializer(serializers.Serializer):
     """Serializer for bulk duplicate resolution"""
     match_ids = serializers.ListField(
         child=serializers.IntegerField(),
-        min_length=1
+        help_text="List of duplicate match IDs to resolve"
     )
     action = serializers.ChoiceField(
-        choices=DuplicateResolution.ACTION_CHOICES
+        choices=['merge', 'keep_both', 'ignore'],
+        help_text="Action to take for all selected matches"
     )
-    notes = serializers.CharField(required=False, allow_blank=True)
+    notes = serializers.CharField(
+        max_length=1000,
+        required=False,
+        allow_blank=True,
+        help_text="Optional notes for the resolution"
+    )
     
     def validate_match_ids(self, value):
-        """Validate that all match IDs exist and belong to tenant"""
-        tenant = self.context['request'].tenant
-        existing_matches = DuplicateMatch.objects.filter(
-            id__in=value,
-            tenant=tenant
-        ).count()
-        
-        if existing_matches != len(value):
-            raise serializers.ValidationError(
-                "One or more duplicate matches not found or not accessible"
-            )
-        
+        if not value:
+            raise serializers.ValidationError("At least one match ID is required")
         return value
-
-
-class DuplicateRuleBuilderSerializer(serializers.Serializer):
-    """Serializer for building duplicate rules with field rules"""
-    name = serializers.CharField(max_length=255)
-    description = serializers.CharField(required=False, allow_blank=True)
-    pipeline_id = serializers.IntegerField()
-    confidence_threshold = serializers.FloatField(min_value=0.0, max_value=1.0, default=0.8)
-    action_on_duplicate = serializers.ChoiceField(
-        choices=DuplicateRule.ACTION_CHOICES,
-        default='warn'
-    )
-    enable_fuzzy_matching = serializers.BooleanField(default=True)
-    enable_phonetic_matching = serializers.BooleanField(default=True)
-    field_rules = DuplicateFieldRuleSerializer(many=True)
     
-    def validate_pipeline_id(self, value):
-        """Validate pipeline exists and is accessible"""
-        try:
-            pipeline = Pipeline.objects.get(
-                id=value,
-                tenant=self.context['request'].tenant
+    def validate(self, data):
+        # Validate that matches exist and belong to current tenant
+        request = self.context.get('request')
+        if request and hasattr(request, 'tenant'):
+            matches = DuplicateMatch.objects.filter(
+                id__in=data['match_ids'],
+                tenant=request.tenant
             )
-            self.context['pipeline'] = pipeline
-            return value
-        except Pipeline.DoesNotExist:
-            raise serializers.ValidationError("Pipeline not found")
-    
-    def create(self, validated_data):
-        """Create duplicate rule with field rules"""
-        field_rules_data = validated_data.pop('field_rules')
-        pipeline = self.context['pipeline']
-        
-        # Create duplicate rule
-        duplicate_rule = DuplicateRule.objects.create(
-            tenant=self.context['request'].tenant,
-            created_by=self.context['request'].user,
-            pipeline=pipeline,
-            **validated_data
-        )
-        
-        # Create field rules
-        for field_rule_data in field_rules_data:
-            DuplicateFieldRule.objects.create(
-                duplicate_rule=duplicate_rule,
-                **field_rule_data
-            )
-        
-        return duplicate_rule
+            if matches.count() != len(data['match_ids']):
+                raise serializers.ValidationError(
+                    "Some matches not found or don't belong to current tenant"
+                )
+        return data
 
 
 class DuplicateMatchResultSerializer(serializers.Serializer):

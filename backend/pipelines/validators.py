@@ -968,6 +968,65 @@ def _evaluate_condition(field_value: Any, operator: str, expected_value: Any) ->
     return field_value == expected_value
 
 
+def _evaluate_conditional_rules(rules_config: Any, record_data: dict) -> bool:
+    """
+    Unified conditional rule evaluation with AND/OR logic support
+    
+    Format:
+    {
+        "logic": "OR",
+        "rules": [
+            {
+                "logic": "AND", 
+                "rules": [
+                    {"field": "sales_stage", "condition": "equals", "value": "proposal"},
+                    {"field": "deal_size", "condition": "greater_than", "value": 10000}
+                ]
+            },
+            {"field": "legal_stage", "condition": "equals", "value": "contract_review"}
+        ]
+    }
+    """
+    # Handle empty or invalid input
+    if not rules_config:
+        return False
+    
+    # Unified conditional rule format - object with logic and rules
+    if not isinstance(rules_config, dict) or 'logic' not in rules_config:
+        return False
+        
+    logic = rules_config.get('logic', 'AND').upper()
+    rules = rules_config.get('rules', [])
+    
+    if not rules:
+        return False
+    
+    results = []
+    for rule in rules:
+        if isinstance(rule, dict) and 'logic' in rule:
+            # Nested group - recursive evaluation
+            result = _evaluate_conditional_rules(rule, record_data)
+        elif isinstance(rule, dict) and 'field' in rule:
+            # Simple rule - evaluate using existing function
+            field_name = rule.get('field')
+            field_value = record_data.get(field_name)
+            condition = rule.get('condition', 'equals')
+            expected_value = rule.get('value')
+            
+            result = _evaluate_condition(field_value, condition, expected_value)
+        else:
+            # Invalid rule format
+            result = False
+            
+        results.append(result)
+    
+    # Apply logic operator
+    if logic == 'OR':
+        return any(results)
+    else:  # Default to AND
+        return all(results)
+
+
 def validate_record_data(field_definitions: List[Dict[str, Any]], record_data: Dict[str, Any], context: str = 'storage') -> Dict[str, Any]:
     """
     Validate complete record data against field definitions
@@ -987,20 +1046,21 @@ def validate_record_data(field_definitions: List[Dict[str, Any]], record_data: D
     current_stage = None
     stage_field_slug = None
     
-    # Find stage field (look for fields that might represent pipeline stages)
+    # Find stage field (look for select fields that might represent pipeline stages)
+    # With the new conditional system, any select field can be a stage funnel
     for field_def in field_definitions:
         field_slug = field_def['slug']
-        business_rules = field_def.get('business_rules', {})
-        stage_requirements = business_rules.get('stage_requirements', {})
+        field_type = field_def.get('field_type', '')
         
-        # If this field has stage requirements, it might be used to determine current stage
-        # Or if it's in the data, use it as potential stage value
-        if field_slug in record_data and stage_requirements:
-            current_stage = record_data[field_slug]
-            stage_field_slug = field_slug
-            break
+        # If this is a select field in the data, it could be a stage field
+        if field_slug in record_data and field_type == 'select':
+            # We'll use the first select field we find as potential stage context
+            # The conditional system will handle multiple stage funnels properly
+            if current_stage is None:
+                current_stage = record_data[field_slug]
+                stage_field_slug = field_slug
     
-    # If no stage field found, check for common stage field names
+    # If no select field found, check for common stage field names
     if current_stage is None:
         common_stage_fields = ['stage', 'pipeline_stage', 'pipeline_stages', 'status']
         for stage_field in common_stage_fields:
@@ -1051,56 +1111,28 @@ def validate_record_data(field_definitions: List[Dict[str, Any]], record_data: D
             cleaned_data[field_slug] = result.cleaned_value
         
         # Check business rules ONLY if context allows it
-        if context == 'business_rules' and current_stage and business_rules:
-            print(f"🔒 BUSINESS RULES: Checking {field_slug} for stage '{current_stage}'")
+        if context == 'business_rules' and business_rules:
+            print(f"🔒 BUSINESS RULES: Checking {field_slug} with enhanced conditional system")
             
-            # Check stage requirements
-            stage_requirements = business_rules.get('stage_requirements', {})
-            if current_stage in stage_requirements:
-                requirements = stage_requirements[current_stage]
-                if requirements.get('required') and not value:
-                    display_name = field_def.get('display_name') or field_def.get('name') or field_slug
-                    if field_slug not in errors:
-                        errors[field_slug] = []
-                    errors[field_slug].append(f"[BUSINESS_RULES] This field is required.")
-                    print(f"   ❌ {field_slug} required for stage {current_stage}")
-            
-            # Check conditional rules (new format: show_when, hide_when, require_when)
+            # Use enhanced conditional system for all requirements
             conditional_rules = business_rules.get('conditional_rules', {})
-            require_when_rules = conditional_rules.get('require_when', [])
+            require_when_config = conditional_rules.get('require_when')
             
-            for rule in require_when_rules:
-                condition_field = rule.get('field')
-                condition_value = rule.get('value')
-                condition_operator = rule.get('condition', 'equals')
-                
-                if condition_field in record_data:
-                    field_value = record_data[condition_field]
-                    condition_met = _evaluate_condition(field_value, condition_operator, condition_value)
+            if require_when_config:
+                try:
+                    condition_met = _evaluate_conditional_rules(require_when_config, record_data)
                     
                     if condition_met and not value:
                         display_name = field_def.get('display_name') or field_def.get('name') or field_slug
                         if field_slug not in errors:
                             errors[field_slug] = []
-                        errors[field_slug].append(f"[BUSINESS_RULES] Required when {condition_field} {condition_operator} {condition_value}")
-                        print(f"   ❌ {field_slug} required due to conditional rule")
+                        errors[field_slug].append(f"[BUSINESS_RULES] This field is required by conditional rules.")
+                        print(f"   ❌ {field_slug} required due to conditional rules")
+                except Exception as e:
+                    print(f"   ⚠️ Error evaluating conditional rules for {field_slug}: {e}")
             
-            # Support legacy conditional_requirements format
-            legacy_conditional_rules = business_rules.get('conditional_requirements', [])
-            for rule in legacy_conditional_rules:
-                condition_field = rule.get('condition_field')
-                condition_value = rule.get('condition_value')
-                requires_field = rule.get('requires_field') == field_slug
-                
-                if (requires_field and 
-                    condition_field in record_data and 
-                    record_data[condition_field] == condition_value and 
-                    not value):
-                    display_name = field_def.get('display_name') or field_def.get('name') or field_slug
-                    if field_slug not in errors:
-                        errors[field_slug] = []
-                    errors[field_slug].append(f"[BUSINESS_RULES] Required when {condition_field} is {condition_value}")
-                    print(f"   ❌ {field_slug} required due to legacy conditional rule")
+            # Note: stage_requirements are now maintained for UI compatibility only
+            # All validation is handled through the unified conditional_rules system above
         elif context != 'business_rules' and business_rules:
             print(f"🔓 BUSINESS RULES: Skipping {field_slug} validation (context: {context})")
     

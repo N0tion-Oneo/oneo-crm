@@ -90,7 +90,7 @@ export const TextFieldComponent: FieldComponent = {
           placeholder={placeholder}
           maxLength={maxLength}
           autoFocus={autoFocus}
-          required={field.is_required}
+          // Required attribute handled by FieldWrapper with permission evaluation
         />
         {error && (
           <p className="mt-1 text-sm text-red-600 dark:text-red-400">{error}</p>
@@ -126,12 +126,8 @@ export const TextFieldComponent: FieldComponent = {
   },
 
   validate: (value: any, field: Field): ValidationResult => {
-    if (field.is_required && (!value || value === '')) {
-      return {
-        isValid: false,
-        error: `${field.display_name || field.name} is required`
-      }
-    }
+    // Note: Required field validation is now handled by the permission system
+    // and form-level validation. Individual field components only validate format/constraints.
 
     if (value) {
       const stringValue = String(value)

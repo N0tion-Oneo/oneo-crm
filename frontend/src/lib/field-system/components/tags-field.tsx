@@ -270,12 +270,7 @@ export const TagsFieldComponent: FieldComponent = {
   },
 
   validate: (value: any, field: Field): ValidationResult => {
-    if (field.is_required && (!Array.isArray(value) || value.length === 0)) {
-      return {
-        isValid: false,
-        error: `${field.display_name || field.name} is required`
-      }
-    }
+    // Note: Required validation handled by permission system
 
     if (Array.isArray(value) && value.length > 0) {
       const maxTags = getFieldConfig(field, 'max_tags')

@@ -8,6 +8,7 @@ from pipelines.models import Pipeline, Field, Record
 from relationships.models import RelationshipType, Relationship
 from authentication.models import UserType
 from ai.models import AIJob, AIUsageAnalytics, AIPromptTemplate, AIEmbedding
+from duplicates.models import URLExtractionRule, DuplicateRule, DuplicateRuleTest
 
 User = get_user_model()
 
@@ -688,3 +689,239 @@ class AIUsageSummarySerializer(serializers.Serializer):
     job_type_breakdown = serializers.JSONField()
     model_usage_breakdown = serializers.JSONField()
     daily_usage = serializers.JSONField()
+
+
+# =============================================================================
+# DUPLICATE DETECTION SERIALIZERS (Simplified AND/OR Logic System)
+# =============================================================================
+
+class URLExtractionRuleSerializer(serializers.ModelSerializer):
+    """Serializer for URL extraction rules"""
+    
+    class Meta:
+        model = URLExtractionRule
+        fields = [
+            'id', 'name', 'description', 'domain_patterns', 'extraction_pattern',
+            'extraction_format', 'case_sensitive', 'remove_protocol', 'remove_www',
+            'remove_query_params', 'remove_fragments', 'is_active', 'created_at',
+            'updated_at'
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at']
+    
+    def create(self, validated_data):
+        validated_data['tenant'] = self.context['request'].tenant
+        validated_data['created_by'] = self.context['request'].user
+        return super().create(validated_data)
+
+
+class DuplicateRuleSerializer(serializers.ModelSerializer):
+    """Serializer for duplicate rules"""
+    pipeline_name = serializers.CharField(source='pipeline.name', read_only=True)
+    created_by_name = serializers.CharField(source='created_by.get_full_name', read_only=True)
+    
+    class Meta:
+        model = DuplicateRule
+        fields = [
+            'id', 'name', 'description', 'pipeline', 'pipeline_name', 'logic',
+            'action_on_duplicate', 'is_active', 'created_at', 'updated_at',
+            'created_by_name'
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at', 'pipeline_name', 'created_by_name']
+    
+    def create(self, validated_data):
+        validated_data['tenant'] = self.context['request'].tenant
+        validated_data['created_by'] = self.context['request'].user
+        return super().create(validated_data)
+    
+    def validate_logic(self, value):
+        """Validate the logic structure"""
+        if not isinstance(value, dict):
+            raise serializers.ValidationError("Logic must be a JSON object")
+        
+        if not value.get('operator'):
+            raise serializers.ValidationError("Logic must have an 'operator' field")
+        
+        if value['operator'] not in ['AND', 'OR']:
+            raise serializers.ValidationError("Operator must be 'AND' or 'OR'")
+        
+        # Validate structure based on operator
+        if value['operator'] == 'AND':
+            if 'fields' not in value:
+                raise serializers.ValidationError("AND operator requires 'fields' array")
+            if not isinstance(value['fields'], list) or not value['fields']:
+                raise serializers.ValidationError("AND fields must be a non-empty array")
+            
+            # Validate each field in AND condition
+            for field_config in value['fields']:
+                self._validate_field_config(field_config)
+        
+        elif value['operator'] == 'OR':
+            if 'conditions' not in value:
+                raise serializers.ValidationError("OR operator requires 'conditions' array")
+            if not isinstance(value['conditions'], list) or not value['conditions']:
+                raise serializers.ValidationError("OR conditions must be a non-empty array")
+            
+            # Recursively validate each condition
+            for condition in value['conditions']:
+                self.validate_logic(condition)
+        
+        return value
+    
+    def _validate_field_config(self, field_config):
+        """Validate individual field configuration"""
+        if not isinstance(field_config, dict):
+            raise serializers.ValidationError("Field config must be an object")
+        
+        if 'field' not in field_config:
+            raise serializers.ValidationError("Field config must have 'field' name")
+        
+        if 'match_type' not in field_config:
+            raise serializers.ValidationError("Field config must have 'match_type'")
+        
+        valid_match_types = [
+            'exact', 'case_insensitive', 'email_normalized', 'phone_normalized',
+            'url_normalized', 'fuzzy', 'numeric'
+        ]
+        
+        if field_config['match_type'] not in valid_match_types:
+            raise serializers.ValidationError(
+                f"Invalid match_type. Must be one of: {valid_match_types}"
+            )
+    
+    def validate_pipeline(self, value):
+        """Validate pipeline belongs to tenant"""
+        request = self.context.get('request')
+        if hasattr(request, 'tenant') and value.tenant != request.tenant:
+            raise serializers.ValidationError("Pipeline not found")
+        return value
+
+
+class DuplicateRuleTestSerializer(serializers.ModelSerializer):
+    """Serializer for duplicate rule test cases"""
+    
+    class Meta:
+        model = DuplicateRuleTest
+        fields = [
+            'id', 'name', 'record1_data', 'record2_data', 'expected_result',
+            'last_test_result', 'last_test_at', 'test_details', 'created_at'
+        ]
+        read_only_fields = [
+            'id', 'last_test_result', 'last_test_at', 'test_details', 'created_at'
+        ]
+
+
+class RuleBuilderConfigSerializer(serializers.Serializer):
+    """Serializer for rule builder configuration data"""
+    pipeline_id = serializers.IntegerField()
+    
+    def validate_pipeline_id(self, value):
+        """Validate pipeline exists and is accessible"""
+        try:
+            pipeline = Pipeline.objects.get(id=value)
+            self.context['pipeline'] = pipeline
+            return value
+        except Pipeline.DoesNotExist:
+            raise serializers.ValidationError("Pipeline not found")
+    
+    def to_representation(self, instance):
+        """Return rule builder configuration data"""
+        pipeline = self.context['pipeline']
+        
+        # Get fields suitable for duplicate detection
+        suitable_fields = pipeline.fields.filter(
+            is_deleted=False,
+            field_type__in=[
+                'text', 'email', 'phone', 'url', 'number', 'select', 'textarea'
+            ]
+        ).values(
+            'id', 'name', 'display_name', 'field_type', 'field_config'
+        )
+        
+        # Get available match types per field type
+        match_types_by_field_type = {
+            'text': ['exact', 'case_insensitive', 'fuzzy'],
+            'textarea': ['exact', 'case_insensitive', 'fuzzy'],
+            'email': ['exact', 'case_insensitive', 'email_normalized'],
+            'phone': ['exact', 'phone_normalized'],
+            'url': ['exact', 'case_insensitive', 'url_normalized'],
+            'number': ['exact', 'numeric'],
+            'select': ['exact'],
+        }
+        
+        # Get available URL extraction rules
+        request = self.context.get('request')
+        url_extraction_rules = []
+        if hasattr(request, 'tenant'):
+            url_extraction_rules = list(URLExtractionRule.objects.filter(
+                tenant=request.tenant,
+                is_active=True
+            ).values('id', 'name', 'description', 'extraction_format'))
+        
+        return {
+            'pipeline_id': pipeline.id,
+            'pipeline_name': pipeline.name,
+            'available_fields': list(suitable_fields),
+            'match_types_by_field_type': match_types_by_field_type,
+            'url_extraction_rules': url_extraction_rules,
+            'supported_operators': ['AND', 'OR'],
+            'example_logic_structures': {
+                'simple_and': {
+                    'operator': 'AND',
+                    'fields': [
+                        {'field': 'email', 'match_type': 'email_normalized'},
+                        {'field': 'phone', 'match_type': 'phone_normalized'}
+                    ]
+                },
+                'complex_or': {
+                    'operator': 'OR',
+                    'conditions': [
+                        {
+                            'operator': 'AND',
+                            'fields': [
+                                {'field': 'email', 'match_type': 'email_normalized'},
+                                {'field': 'phone', 'match_type': 'phone_normalized'}
+                            ]
+                        },
+                        {
+                            'operator': 'AND',
+                            'fields': [
+                                {'field': 'linkedin_url', 'match_type': 'url_normalized'},
+                                {'field': 'full_name', 'match_type': 'fuzzy'}
+                            ]
+                        }
+                    ]
+                }
+            }
+        }
+
+
+class RuleTestRequestSerializer(serializers.Serializer):
+    """Serializer for testing duplicate rules"""
+    record1_data = serializers.DictField(help_text="First record data")
+    record2_data = serializers.DictField(help_text="Second record data")
+    
+    def validate(self, attrs):
+        """Validate test data has required fields"""
+        record1 = attrs['record1_data']
+        record2 = attrs['record2_data']
+        
+        if not record1:
+            raise serializers.ValidationError("record1_data cannot be empty")
+        
+        if not record2:
+            raise serializers.ValidationError("record2_data cannot be empty")
+        
+        return attrs
+
+
+class URLExtractionTestSerializer(serializers.Serializer):
+    """Serializer for testing URL extraction rules"""
+    test_urls = serializers.ListField(
+        child=serializers.URLField(),
+        help_text="List of URLs to test extraction against"
+    )
+    
+    def validate_test_urls(self, value):
+        if not value:
+            raise serializers.ValidationError("At least one test URL is required")
+        return value

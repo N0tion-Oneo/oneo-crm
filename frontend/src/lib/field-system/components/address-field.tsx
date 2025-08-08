@@ -38,7 +38,7 @@ export const AddressFieldComponent: FieldComponent = {
             className={inputClass}
             placeholder={field.placeholder || 'Enter full address'}
             autoFocus={autoFocus}
-            required={field.is_required}
+            // Required attribute handled by FieldWrapper
           />
           {error && (
             <p className="mt-1 text-sm text-red-600 dark:text-red-400">{error}</p>
@@ -210,24 +210,14 @@ export const AddressFieldComponent: FieldComponent = {
   },
 
   validate: (value: any, field: Field): ValidationResult => {
-    if (field.is_required && !value) {
-      return {
-        isValid: false,
-        error: `${field.display_name || field.name} is required`
-      }
-    }
+    // Note: Required validation handled by permission system
 
     if (value) {
       const addressFormat = getFieldConfig(field, 'address_format', 'structured')
       
       if (addressFormat === 'single_line') {
         const address = typeof value === 'string' ? value : value.full_address || ''
-        if (field.is_required && !address.trim()) {
-          return {
-            isValid: false,
-            error: 'Address cannot be empty'
-          }
-        }
+        // Note: Required validation handled by permission system
       } else {
         // Validate structured address
         const components = getFieldConfig(field, 'components', {})

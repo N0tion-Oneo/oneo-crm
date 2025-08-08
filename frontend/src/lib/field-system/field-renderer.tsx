@@ -3,6 +3,8 @@
 import React from 'react'
 import { Field, FieldRenderProps, FieldDisplayProps } from './types'
 import { FieldResolver } from './field-registry'
+import { evaluateFieldPermissions, type FieldWithPermissions } from '@/utils/field-permissions'
+import { User } from '@/types/auth'
 
 /**
  * Universal field input renderer - Pure UI component
@@ -84,6 +86,9 @@ export interface FieldWrapperProps {
   showHelp?: boolean
   labelClassName?: string
   helpClassName?: string
+  // New props for permission-based requirements
+  user?: User | null
+  formData?: Record<string, any>
 }
 
 export function FieldWrapper({
@@ -100,12 +105,23 @@ export function FieldWrapper({
   showLabel = true,
   showHelp = true,
   labelClassName = '',
-  helpClassName = ''
+  helpClassName = '',
+  user,
+  formData = {}
 }: FieldWrapperProps) {
   
   const fieldLabel = field.display_name || field.name
-  const isRequired = field.is_required || false
   const helpText = field.help_text
+  
+  // Use permission-based requirement evaluation instead of static is_required
+  const permissions = user ? evaluateFieldPermissions(
+    field as FieldWithPermissions, 
+    user, 
+    formData, 
+    context
+  ) : { required: false, visible: true, editable: true, readonly: false, conditionallyHidden: false }
+  
+  const isRequired = permissions.required
   
   return (
     <div className={`field-wrapper ${className}`}>

@@ -14,12 +14,11 @@ interface PipelineField {
   field_config?: Record<string, any>
   config?: Record<string, any> // Legacy support
   business_rules?: {
-    stage_requirements?: Record<string, { 
-      required: boolean
-      block_transitions?: boolean
-      show_warnings?: boolean
-      warning_message?: string
-    }>
+    conditional_rules?: {
+      show_when?: { logic: 'AND' | 'OR'; rules: any[] }
+      hide_when?: { logic: 'AND' | 'OR'; rules: any[] }
+      require_when?: { logic: 'AND' | 'OR'; rules: any[] }
+    }
     user_visibility?: Record<string, {
       visible: boolean
       editable: boolean
@@ -92,6 +91,7 @@ export function BusinessRulesBuilder({
   const [hasChanges, setHasChanges] = useState(false)
   const [selectedStageField, setSelectedStageField] = useState<string>('')
   const [stageOptions, setStageOptions] = useState<string[]>([])
+  const [stageFormData, setStageFormData] = useState<Record<string, Record<string, boolean>>>({}) // Multi-stage persistence
   const [expandedFieldStages, setExpandedFieldStages] = useState<Set<string>>(new Set())
   const [showFormSettings, setShowFormSettings] = useState(false)
   const [showFullFormSettings, setShowFullFormSettings] = useState(false)
@@ -189,7 +189,7 @@ export function BusinessRulesBuilder({
             field_config: field.field_config || {},
             config: field.config || {}, // Legacy support
             business_rules: field.business_rules || {
-              stage_requirements: {},
+              conditional_rules: {},
               user_visibility: {}
             }
           }))
@@ -212,6 +212,34 @@ export function BusinessRulesBuilder({
     }
   }, [pipelineId, initialPipeline, onPipelineChange])
 
+  // Load stage form data from conditional rules
+  const loadStageFormData = (pipelineFields: PipelineField[], stageField: string) => {
+    const formData: Record<string, Record<string, boolean>> = {}
+    
+    if (!pipelineFields || !Array.isArray(pipelineFields)) {
+      console.warn('loadStageFormData: Invalid pipelineFields provided')
+      return formData
+    }
+    
+    pipelineFields.forEach(field => {
+      if (field && field.name && field.name !== stageField) {
+        const requireWhen = field.business_rules?.conditional_rules?.require_when
+        if (requireWhen?.rules && Array.isArray(requireWhen.rules)) {
+          requireWhen.rules.forEach(rule => {
+            if (rule && rule.field === stageField && rule.condition === 'equals' && rule.value) {
+              if (!formData[field.id]) {
+                formData[field.id] = {}
+              }
+              formData[field.id][rule.value] = true
+            }
+          })
+        }
+      }
+    })
+    
+    return formData
+  }
+
   // Handle stage field selection
   const handleStageFieldChange = (fieldName: string) => {
     setSelectedStageField(fieldName)
@@ -231,11 +259,19 @@ export function BusinessRulesBuilder({
         }).filter(Boolean) // Remove any empty/null values
         
         setStageOptions(extractedOptions)
+        
+        // Load existing stage form data from conditional rules
+        if (pipeline?.fields) {
+          const loadedData = loadStageFormData(pipeline.fields, fieldName)
+          setStageFormData(loadedData)
+        }
       } else {
         setStageOptions([])
+        setStageFormData({})
       }
     } else {
       setStageOptions([])
+      setStageFormData({})
     }
   }
 
@@ -247,20 +283,78 @@ export function BusinessRulesBuilder({
     )
   }
 
-  // Handle stage requirement change
+  // Handle stage requirement change - unified conditional system only
   const handleStageRequirementChange = (fieldId: string, stage: string, required: boolean) => {
-    if (!pipeline) return
+    if (!pipeline || !selectedStageField) return
+
+    // Update local form data for immediate UI feedback
+    setStageFormData(prevData => ({
+      ...prevData,
+      [fieldId]: {
+        ...prevData[fieldId],
+        [stage]: required
+      }
+    }))
 
     const updatedFields = pipeline.fields.map(field => {
       if (field.id === fieldId) {
+        // Get current conditional rules
+        const currentConditionalRules = field.business_rules?.conditional_rules || {}
+        const currentRequireWhen = currentConditionalRules.require_when || { logic: 'OR', rules: [] }
+        
+        // Find existing rule for this stage field and stage value
+        const currentRules = currentRequireWhen.rules || []
+        const existingRuleIndex = currentRules.findIndex(rule => 
+          rule.field === selectedStageField && rule.condition === 'equals' && rule.value === stage
+        )
+
+        let updatedRules = [...currentRules]
+        
+        if (required) {
+          // Add or update the rule
+          const newRule = {
+            field: selectedStageField,
+            condition: 'equals',
+            value: stage,
+            description: `Required in ${stage} stage`
+          }
+          
+          if (existingRuleIndex >= 0) {
+            updatedRules[existingRuleIndex] = newRule
+          } else {
+            updatedRules.push(newRule)
+          }
+        } else {
+          // Remove the rule
+          if (existingRuleIndex >= 0) {
+            updatedRules.splice(existingRuleIndex, 1)
+          }
+        }
+
+        // Update conditional rules
+        const updatedConditionalRules = {
+          ...currentConditionalRules,
+          require_when: updatedRules.length > 0 ? {
+            logic: 'OR',
+            rules: updatedRules
+          } : undefined
+        }
+
+        // Clean up empty conditional rules
+        if (!updatedConditionalRules.require_when && !updatedConditionalRules.show_when && !updatedConditionalRules.hide_when) {
+          // If no conditional rules exist, remove the object entirely
+          const { conditional_rules, ...otherBusinessRules } = field.business_rules || {}
+          return {
+            ...field,
+            business_rules: Object.keys(otherBusinessRules).length > 0 ? otherBusinessRules : undefined
+          }
+        }
+
         return {
           ...field,
           business_rules: {
             ...field.business_rules,
-            stage_requirements: {
-              ...field.business_rules?.stage_requirements,
-              [stage]: { required }
-            }
+            conditional_rules: updatedConditionalRules
           }
         }
       }
@@ -324,45 +418,70 @@ export function BusinessRulesBuilder({
     setExpandedFieldStages(newExpanded)
   }
 
-  // Check if field-stage has advanced rules configured
+  // Check if field-stage has conditional rules configured
   const hasAdvancedRulesForStage = (field: PipelineField, stage: string) => {
-    const stageReq = field.business_rules?.stage_requirements?.[stage]
-    return stageReq?.warning_message || 
-           stageReq?.block_transitions === false || 
-           stageReq?.show_warnings === false
+    // Check conditional rules for this stage
+    const requireWhen = field.business_rules?.conditional_rules?.require_when
+    return requireWhen?.rules?.some(rule => 
+      rule.field === selectedStageField && 
+      rule.condition === 'equals' && 
+      rule.value === stage
+    ) || false
   }
 
-  // Handle stage-specific business rule change
-  const handleStageBusinessRuleChange = (fieldId: string, stage: string, property: 'block_transitions' | 'show_warnings' | 'warning_message', value: boolean | string) => {
-    if (!pipeline) return
-
-    const updatedFields = pipeline.fields.map(field => {
-      if (field.id === fieldId) {
-        const currentStageReq = field.business_rules?.stage_requirements?.[stage] || { required: false }
-        
-        return {
-          ...field,
-          business_rules: {
-            ...field.business_rules,
-            stage_requirements: {
-              ...field.business_rules?.stage_requirements,
-              [stage]: {
-                ...currentStageReq,
-                [property]: value
+  // Legacy stage business rule handling removed in Phase 3 - now handled through conditional rules system
+  
+  // Unified system validation helper
+  const validateUnifiedSystem = () => {
+    if (!pipeline || !pipeline.fields || !Array.isArray(pipeline.fields) || !selectedStageField) {
+      return { 
+        isValid: true, 
+        issues: [], 
+        totalConditionalRules: 0,
+        selectedStageField: selectedStageField || '',
+        totalFields: 0
+      }
+    }
+    
+    const issues: string[] = []
+    let totalConditionalRules = 0
+    
+    try {
+      pipeline.fields.forEach(field => {
+        if (field && field.name && field.name !== selectedStageField) {
+          const requireWhen = field.business_rules?.conditional_rules?.require_when
+          if (requireWhen?.rules && Array.isArray(requireWhen.rules)) {
+            totalConditionalRules += requireWhen.rules.length
+            
+            // Validate each rule points to the selected stage field
+            requireWhen.rules.forEach((rule: any) => {
+              if (rule && rule.field && rule.field !== selectedStageField) {
+                issues.push(`Field ${field.display_name} has rule pointing to wrong stage field: ${rule.field}`)
               }
-            }
+              if (rule && rule.condition && rule.condition !== 'equals') {
+                issues.push(`Field ${field.display_name} has non-equals condition: ${rule.condition}`)
+              }
+            })
           }
         }
+      })
+    } catch (error) {
+      console.error('Error in validateUnifiedSystem:', error)
+      return { 
+        isValid: false, 
+        issues: ['System validation error'], 
+        totalConditionalRules: 0,
+        selectedStageField,
+        totalFields: 0
       }
-      return field
-    })
-
-    const updatedPipeline = { ...pipeline, fields: updatedFields }
-    setPipeline(updatedPipeline)
-    setHasChanges(true)
+    }
     
-    if (onPipelineChange) {
-      onPipelineChange(updatedPipeline)
+    return { 
+      isValid: issues.length === 0, 
+      issues, 
+      totalConditionalRules,
+      selectedStageField,
+      totalFields: pipeline.fields.filter(f => f && f.name && f.name !== selectedStageField).length
     }
   }
 
@@ -502,6 +621,22 @@ export function BusinessRulesBuilder({
         </div>
 
         <div className="flex items-center space-x-4">
+          {/* System Status Indicator */}
+          {(() => {
+            const systemStatus = validateUnifiedSystem()
+            return systemStatus.selectedStageField ? (
+              <div className="flex items-center space-x-2 px-3 py-1.5 bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 rounded-full text-sm font-medium border border-blue-200 dark:border-blue-800">
+                <CheckCircle className="w-3 h-3 text-blue-500" />
+                <span>Unified System: {systemStatus.totalConditionalRules} rules active</span>
+              </div>
+            ) : (
+              <div className="flex items-center space-x-2 px-3 py-1.5 bg-gray-50 dark:bg-gray-900/20 text-gray-700 dark:text-gray-300 rounded-full text-sm font-medium border border-gray-200 dark:border-gray-800">
+                <Settings className="w-3 h-3 text-gray-500" />
+                <span>Select stage field to activate</span>
+              </div>
+            )
+          })()}
+
           {/* Save Status Indicator */}
           <div className="flex items-center space-x-2">
             {hasChanges ? (
@@ -624,7 +759,7 @@ export function BusinessRulesBuilder({
                               <div className="flex items-center space-x-2">
                                 <input
                                   type="checkbox"
-                                  checked={field.business_rules?.stage_requirements?.[stage]?.required || false}
+                                  checked={stageFormData[field.id]?.[stage] || false}
                                   onChange={(e) => handleStageRequirementChange(field.id, stage, e.target.checked)}
                                   disabled={!canUpdateBusinessRules}
                                   className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
@@ -634,84 +769,12 @@ export function BusinessRulesBuilder({
                                 )}
                               </div>
                               
-                              {field.business_rules?.stage_requirements?.[stage]?.required && (
-                                <button
-                                  onClick={() => toggleFieldStageExpansion(field.id, stage)}
-                                  className={`inline-flex items-center px-1 py-0.5 text-xs font-medium rounded transition-colors ${
-                                    expandedFieldStages.has(`${field.id}-${stage}`)
-                                      ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/20 dark:text-blue-300'
-                                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-400 dark:hover:bg-gray-600'
-                                  }`}
-                                >
-                                  {expandedFieldStages.has(`${field.id}-${stage}`) ? (
-                                    <ChevronDown className="w-3 h-3" />
-                                  ) : (
-                                    <Settings className="w-3 h-3" />
-                                  )}
-                                </button>
-                              )}
+                              {/* Advanced stage settings removed in Phase 3 - functionality moved to conditional rules */}
                             </div>
                           </td>
                         ))}
                       </tr>
-                      
-                      {/* Expandable advanced settings rows for each stage */}
-                      {stageOptions.map(stage => (
-                        expandedFieldStages.has(`${field.id}-${stage}`) && field.business_rules?.stage_requirements?.[stage]?.required && (
-                          <tr key={`${field.id}-${stage}-advanced`} className="bg-blue-50 dark:bg-blue-900/10">
-                            <td className="py-3 px-4">
-                              <div className="text-sm text-gray-600 dark:text-gray-400 pl-4">
-                                └ {field.display_name} in {stage.charAt(0).toUpperCase() + stage.slice(1)}
-                              </div>
-                            </td>
-                            <td colSpan={stageOptions.length} className="py-3 px-4">
-                              <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-3">
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                  <div className="flex items-center justify-between">
-                                    <div>
-                                      <div className="text-sm font-medium text-gray-900 dark:text-white">Block Stage Transitions</div>
-                                      <div className="text-xs text-gray-500 dark:text-gray-400">Prevent moving from {stage} if field is empty</div>
-                                    </div>
-                                    <input
-                                      type="checkbox"
-                                      checked={field.business_rules?.stage_requirements?.[stage]?.block_transitions !== false}
-                                      onChange={(e) => handleStageBusinessRuleChange(field.id, stage, 'block_transitions', e.target.checked)}
-                                      className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
-                                    />
-                                  </div>
-
-                                  <div className="flex items-center justify-between">
-                                    <div>
-                                      <div className="text-sm font-medium text-gray-900 dark:text-white">Show Warnings</div>
-                                      <div className="text-xs text-gray-500 dark:text-gray-400">Display warning messages</div>
-                                    </div>
-                                    <input
-                                      type="checkbox"
-                                      checked={field.business_rules?.stage_requirements?.[stage]?.show_warnings !== false}
-                                      onChange={(e) => handleStageBusinessRuleChange(field.id, stage, 'show_warnings', e.target.checked)}
-                                      className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600"
-                                    />
-                                  </div>
-                                </div>
-
-                                <div className="mt-3">
-                                  <label className="flex items-center space-x-2 text-sm font-medium text-gray-900 dark:text-white mb-2">
-                                    <MessageSquare className="w-4 h-4" />
-                                    <span>Custom Warning Message for {stage.charAt(0).toUpperCase() + stage.slice(1)}</span>
-                                  </label>
-                                  <input
-                                    type="text"
-                                    value={field.business_rules?.stage_requirements?.[stage]?.warning_message || ''}
-                                    onChange={(e) => handleStageBusinessRuleChange(field.id, stage, 'warning_message', e.target.value)}
-                                    placeholder={`This field is required to progress from ${stage}`}
-                                    className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-white"
-                                  />
-                                </div>
-                              </div>
-                            </td>
-                          </tr>
-                        )
-                      ))}
+                      {/* Legacy expandable advanced settings removed in Phase 3 - replaced with unified conditional rules system */}
                     </React.Fragment>
                   ))}
               </tbody>

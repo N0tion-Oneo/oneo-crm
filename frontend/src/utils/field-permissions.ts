@@ -6,10 +6,15 @@ export interface ConditionalRule {
   value: any
 }
 
+export interface ConditionalRuleGroup {
+  logic: 'AND' | 'OR'
+  rules: ConditionalRule[]
+}
+
 export interface ConditionalRules {
-  show_when?: ConditionalRule[]
-  hide_when?: ConditionalRule[]
-  require_when?: ConditionalRule[]
+  show_when?: ConditionalRuleGroup
+  hide_when?: ConditionalRuleGroup
+  require_when?: ConditionalRuleGroup
 }
 
 export interface UserVisibility {
@@ -22,14 +27,8 @@ export interface UserVisibility {
 }
 
 export interface BusinessRules {
-  stage_requirements?: Record<string, { 
-    required: boolean
-    block_transitions?: boolean
-    show_warnings?: boolean
-    warning_message?: string
-  }>
-  user_visibility?: Record<string, UserVisibility>
   conditional_rules?: ConditionalRules
+  user_visibility?: Record<string, UserVisibility>
 }
 
 export interface FieldWithPermissions {
@@ -61,13 +60,18 @@ export const evaluateCondition = (
   recordData: Record<string, any>, 
   userTypeSlug?: string
 ): boolean => {
+  if (!rule || !rule.field || !rule.condition) {
+    console.warn('Invalid rule provided to evaluateCondition:', rule)
+    return false
+  }
+
   let fieldValue: any
   
   // Special handling for user_type field
   if (rule.field === 'user_type') {
     fieldValue = userTypeSlug
   } else {
-    fieldValue = recordData[rule.field]
+    fieldValue = recordData?.[rule.field]
   }
   
   switch (rule.condition) {
@@ -98,7 +102,26 @@ export const evaluateCondition = (
 }
 
 /**
- * Evaluate conditional rules for field visibility
+ * Evaluate a rule group with AND/OR logic
+ */
+const evaluateRuleGroup = (
+  ruleGroup: ConditionalRuleGroup | undefined,
+  recordData: Record<string, any>,
+  userTypeSlug?: string
+): boolean => {
+  if (!ruleGroup || !ruleGroup.rules || !Array.isArray(ruleGroup.rules) || ruleGroup.rules.length === 0) {
+    return true // Empty rule group is considered true
+  }
+
+  if (ruleGroup.logic === 'AND') {
+    return ruleGroup.rules.every(rule => rule && evaluateCondition(rule, recordData, userTypeSlug))
+  } else {
+    return ruleGroup.rules.some(rule => rule && evaluateCondition(rule, recordData, userTypeSlug))
+  }
+}
+
+/**
+ * Evaluate conditional rules for field visibility - unified system only
  */
 export const evaluateConditionalRules = (
   conditionalRules: ConditionalRules | undefined,
@@ -109,35 +132,47 @@ export const evaluateConditionalRules = (
     return { visible: true, required: false }
   }
 
-  // Evaluate show_when conditions (ALL must be true)
-  const showWhen = conditionalRules.show_when || []
-  const shouldShow = showWhen.length === 0 || showWhen.every(rule => 
-    evaluateCondition(rule, recordData, userTypeSlug)
-  )
+  try {
+    // Evaluate show_when conditions
+    const showWhenGroup = conditionalRules.show_when
+    const shouldShow = !showWhenGroup || 
+                      !showWhenGroup.rules || 
+                      !Array.isArray(showWhenGroup.rules) || 
+                      showWhenGroup.rules.length === 0 || 
+                      evaluateRuleGroup(showWhenGroup, recordData, userTypeSlug)
 
-  // Evaluate hide_when conditions (ANY being true hides the field)
-  const hideWhen = conditionalRules.hide_when || []
-  const shouldHide = hideWhen.some(rule => 
-    evaluateCondition(rule, recordData, userTypeSlug)
-  )
+    // Evaluate hide_when conditions
+    const hideWhenGroup = conditionalRules.hide_when
+    const shouldHide = hideWhenGroup && 
+                      hideWhenGroup.rules && 
+                      Array.isArray(hideWhenGroup.rules) && 
+                      hideWhenGroup.rules.length > 0 && 
+                      evaluateRuleGroup(hideWhenGroup, recordData, userTypeSlug)
 
-  // Evaluate require_when conditions (ANY being true makes field required)
-  const requireWhen = conditionalRules.require_when || []
-  const shouldRequire = requireWhen.some(rule => 
-    evaluateCondition(rule, recordData, userTypeSlug)
-  )
+    // Evaluate require_when conditions
+    const requireWhenGroup = conditionalRules.require_when
+    const shouldRequire = requireWhenGroup && 
+                         requireWhenGroup.rules && 
+                         Array.isArray(requireWhenGroup.rules) && 
+                         requireWhenGroup.rules.length > 0 && 
+                         evaluateRuleGroup(requireWhenGroup, recordData, userTypeSlug)
 
-  let reasonHidden: string | undefined
-  if (!shouldShow && showWhen.length > 0) {
-    reasonHidden = 'Show conditions not met'
-  } else if (shouldHide) {
-    reasonHidden = 'Hide condition triggered'
-  }
+    let reasonHidden: string | undefined
+    if (!shouldShow && showWhenGroup && showWhenGroup.rules && Array.isArray(showWhenGroup.rules) && showWhenGroup.rules.length > 0) {
+      reasonHidden = 'Show conditions not met'
+    } else if (shouldHide) {
+      reasonHidden = 'Hide condition triggered'
+    }
 
-  return {
-    visible: shouldShow && !shouldHide,
-    required: shouldRequire,
-    reasonHidden
+    return {
+      visible: shouldShow && !shouldHide,
+      required: shouldRequire || false,
+      reasonHidden
+    }
+  } catch (error) {
+    console.error('Error evaluating conditional rules:', error, { conditionalRules, recordData, userTypeSlug })
+    // Return safe defaults on error
+    return { visible: true, required: false, reasonHidden: 'Evaluation error' }
   }
 }
 
@@ -248,10 +283,10 @@ export const evaluateFieldPermissions = (
   // Determine if field is readonly
   const readonly = !baseEditable || userVisibility?.visibility_level === 'readonly'
 
-  // Determine if field is required
-  const baseRequired = field.is_required || false
+  // Determine if field is required - only use conditional rules and user-specific requirements
+  // Removed field.is_required dependency - requirements are now purely conditional
   const userRequired = userVisibility?.required || false
-  const finalRequired = baseRequired || userRequired || conditionalRequired
+  const finalRequired = userRequired || conditionalRequired
 
   return {
     visible: finalVisible,

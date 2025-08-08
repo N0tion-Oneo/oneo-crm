@@ -603,6 +603,84 @@ export function RecordDetailDrawer({
 
   // Tags are now handled by the field system instead of hardcoded logic
 
+  // Helper functions for field-type aware display
+  const getDisplayStyling = (fieldType: string, isLocked: boolean) => {
+    const baseClasses = 'min-h-[42px] rounded-md flex items-center justify-between group transition-colors'
+    
+    if (isLocked) {
+      return `${baseClasses} bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800`
+    }
+    
+    switch (fieldType) {
+      case 'button':
+        return `${baseClasses} bg-blue-100 dark:bg-blue-900/30 border border-blue-300 dark:border-blue-700 text-blue-700 dark:text-blue-300 cursor-pointer hover:bg-blue-200 dark:hover:bg-blue-900/50 px-4 py-2`
+      
+      case 'boolean':
+        return `${baseClasses} bg-transparent cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 px-1 py-2`
+      
+      case 'select':
+      case 'multiselect':
+        return `${baseClasses} bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 cursor-pointer hover:border-gray-400 dark:hover:border-gray-500 px-3 py-2`
+      
+      case 'tags':
+        return `${baseClasses} bg-gray-25 dark:bg-gray-800/50 border border-gray-200 dark:border-gray-700 cursor-pointer hover:border-gray-300 dark:hover:border-gray-600 px-3 py-2`
+      
+      case 'date':
+      case 'datetime':
+      case 'time':
+        return `${baseClasses} bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 cursor-pointer hover:border-gray-400 dark:hover:border-gray-500 px-3 py-2`
+      
+      case 'file':
+      case 'image':
+        return `${baseClasses} bg-gray-25 dark:bg-gray-800/50 border border-dashed border-gray-300 dark:border-gray-600 cursor-pointer hover:border-gray-400 dark:hover:border-gray-500 px-3 py-2`
+      
+      case 'relation':
+        return `${baseClasses} bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 cursor-pointer hover:border-gray-400 dark:hover:border-gray-500 px-3 py-2`
+      
+      case 'ai':
+        return `${baseClasses} bg-purple-25 dark:bg-purple-900/10 border border-purple-200 dark:border-purple-800 cursor-pointer hover:border-purple-300 dark:hover:border-purple-700 px-3 py-2`
+      
+      default:
+        // Text-based fields (text, textarea, email, phone, number, etc.)
+        return `${baseClasses} bg-gray-50 dark:bg-gray-800 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 px-3 py-2`
+    }
+  }
+  
+  const shouldBypassEnterExit = (fieldType: string) => {
+    // These field types should be immediately interactive without enter/exit pattern
+    return ['button', 'boolean'].includes(fieldType)
+  }
+  
+  const getEmptyStateText = (fieldType: string) => {
+    switch (fieldType) {
+      case 'button':
+        return 'Click to configure button'
+      case 'boolean':
+        return 'Click to toggle'
+      case 'select':
+        return 'Click to select option'
+      case 'multiselect':
+        return 'Click to select options'
+      case 'tags':
+        return 'Click to add tags'
+      case 'date':
+        return 'Click to select date'
+      case 'datetime':
+        return 'Click to select date and time'
+      case 'time':
+        return 'Click to select time'
+      case 'file':
+      case 'image':
+        return 'Click to upload file'
+      case 'relation':
+        return 'Click to select record'
+      case 'ai':
+        return 'Click to generate content'
+      default:
+        return 'Click to edit'
+    }
+  }
+
   // Render field input with enter/exit pattern using field registry
   const renderFieldInput = (field: RecordField) => {
     const isEditing = editingField === field.name
@@ -611,7 +689,55 @@ export function RecordDetailDrawer({
     const fieldLock = record ? getFieldLock(record.id, field.name) : null
     const isLocked = record ? isFieldLocked(record.id, field.name) : false
 
-    // Display mode (not editing)
+    // For fields that should bypass enter/exit pattern, render them directly in interactive mode
+    if (shouldBypassEnterExit(field.field_type) && !isLocked) {
+      const fieldType = convertToFieldType(field)
+      
+      const handleDirectChange = (newValue: any) => {
+        // Handle immediate interaction for button and boolean fields
+        if (!record || !record.id) {
+          setFormData(prev => ({ ...prev, [field.name]: newValue }))
+          return
+        }
+        
+        // For existing records, use FieldSaveService for immediate save
+        isSavingRef.current = true
+        fieldSaveService.onFieldChange({
+          field: fieldType,
+          newValue,
+          apiEndpoint: `/api/pipelines/${pipeline.id}/records/${record.id}/`,
+          onSuccess: (result) => {
+            setFormData(prev => ({ ...prev, [field.name]: newValue }))
+            setFieldErrors(prev => ({ ...prev, [field.name]: '' }))
+            isSavingRef.current = false
+          },
+          onError: (error) => {
+            setFieldErrors(prev => ({ 
+              ...prev, 
+              [field.name]: error.response?.data?.message || error.message || 'Save failed'
+            }))
+            isSavingRef.current = false
+          }
+        })
+      }
+      
+      return (
+        <div>
+          <FieldRenderer
+            field={fieldType}
+            value={value}
+            onChange={handleDirectChange}
+            onBlur={() => {}}
+            disabled={false}
+            error={fieldError}
+            autoFocus={false}
+            context="drawer"
+          />
+        </div>
+      )
+    }
+
+    // Display mode (not editing) with field-type aware styling
     if (!isEditing) {
       const canEdit = !isLocked
       const fieldType = convertToFieldType(field)
@@ -619,14 +745,10 @@ export function RecordDetailDrawer({
       return (
         <div>
           <div 
-            className={`min-h-[42px] px-3 py-2 rounded-md flex items-center justify-between group transition-colors ${
-              isLocked 
-                ? 'bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800' 
-                : 'bg-gray-50 dark:bg-gray-800 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700'
-            }`}
+            className={getDisplayStyling(field.field_type, isLocked)}
             onClick={() => canEdit && handleFieldEnter(field.name, value)}
           >
-            {value ? (
+            {value !== null && value !== undefined && value !== '' ? (
               <FieldDisplay 
                 field={fieldType}
                 value={value}
@@ -634,7 +756,7 @@ export function RecordDetailDrawer({
                 className="text-gray-900 dark:text-white"
               />
             ) : (
-              <span className="text-gray-500 italic">Click to edit</span>
+              <span className="text-gray-500 italic">{getEmptyStateText(field.field_type)}</span>
             )}
             
             <div className="flex items-center space-x-2">
@@ -644,7 +766,7 @@ export function RecordDetailDrawer({
                   <span className="text-xs">{fieldLock.user_name}</span>
                 </div>
               )}
-              {canEdit && (
+              {canEdit && !shouldBypassEnterExit(field.field_type) && (
                 <Edit className="w-4 h-4 text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity" />
               )}
             </div>

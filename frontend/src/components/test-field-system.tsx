@@ -244,7 +244,7 @@ export function TestFieldSystem() {
               <div>
                 <label className="block text-sm font-medium mb-1">
                   {field.display_name}
-                  {field.is_required && <span className="text-red-500 ml-1">*</span>}
+                  {/* Required indicator handled by FieldWrapper with permission evaluation */}
                 </label>
                 <p className="text-xs text-gray-500 dark:text-gray-400">
                   Type: {field.field_type} | Config: {JSON.stringify(field.field_config || {})}

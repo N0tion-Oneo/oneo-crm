@@ -21,7 +21,7 @@ from .serializers import (
     RecordSearchSerializer, BulkRecordActionSerializer,
     FieldManagementActionSerializer, FieldMigrationSerializer
 )
-from .ai_processor import AIFieldManager, process_ai_fields_sync
+# Legacy AI processor removed - using new ai/integrations.py system
 from api.permissions import PipelinePermission, RecordPermission
 from authentication.permissions import SyncPermissionManager
 
@@ -180,15 +180,16 @@ class PipelineViewSet(viewsets.ModelViewSet):
             record = serializer.save()
             
             # Process AI fields asynchronously if present
-            if pipeline.get_ai_fields().exists():
-                try:
-                    ai_results = process_ai_fields_sync(record)
-                    if ai_results:
-                        record.data.update(ai_results)
-                        record.save(update_fields=['data'])
-                except Exception as e:
-                    # AI processing failed, but record was created successfully
-                    pass
+            # COMMENTED OUT: Legacy AI processing - now handled automatically via Record.save()
+            # if pipeline.get_ai_fields().exists():
+            #     try:
+            #         ai_results = process_ai_fields_sync(record)
+            #         if ai_results:
+            #             record.data.update(ai_results)
+            #             record.save(update_fields=['data'])
+            #     except Exception as e:
+            #         # AI processing failed, but record was created successfully
+            #         pass
             
             response_serializer = RecordSerializer(record, context={'request': request})
             return Response(response_serializer.data, status=status.HTTP_201_CREATED)
@@ -937,15 +938,19 @@ class RecordViewSet(viewsets.ModelViewSet):
         record = self.get_object()
         
         try:
-            ai_results = process_ai_fields_sync(record, force_update=True)
-            if ai_results:
-                record.data.update(ai_results)
-                record.save(update_fields=['data'])
+            # COMMENTED OUT: Legacy manual AI processing - replace with new system
+            # ai_results = process_ai_fields_sync(record, force_update=True)
+            # if ai_results:
+            #     record.data.update(ai_results)
+            #     record.save(update_fields=['data'])
+            
+            # For now, trigger AI processing via the automatic system
+            # by simulating a record save (which triggers _trigger_ai_updates)
+            record.save()  # This triggers the modern AI system automatically
             
             serializer = self.get_serializer(record)
             return Response({
-                'message': 'AI fields processed successfully',
-                'ai_results': ai_results,
+                'message': 'AI fields processing triggered via modern system',
                 'record': serializer.data
             })
         

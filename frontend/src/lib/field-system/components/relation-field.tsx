@@ -218,7 +218,7 @@ export const RelationFieldComponent: FieldComponent = {
           disabled={disabled || loading}
           className={inputClass}
           autoFocus={autoFocus}
-          required={field.is_required}
+          // Required attribute handled by FieldWrapper
         >
           <option value="">
             {loading ? 'Loading...' : placeholder}
@@ -272,12 +272,7 @@ export const RelationFieldComponent: FieldComponent = {
   },
 
   validate: (value: any, field: Field): ValidationResult => {
-    if (field.is_required && (!value || value === '')) {
-      return {
-        isValid: false,
-        error: `${field.display_name || field.name} is required`
-      }
-    }
+    // Note: Required validation handled by permission system
 
     const targetPipelineId = getFieldConfig(field, 'target_pipeline_id')
     if (!targetPipelineId) {

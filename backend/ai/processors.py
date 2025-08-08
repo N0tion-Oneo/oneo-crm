@@ -163,100 +163,145 @@ class AIFieldProcessor:
         logger.info(f"Preprocessed template: replaced {{*}} with {included_count} fields, excluded {excluded_count} fields")
         return processed_template
     
-    async def _process_with_tools(self, field_config, context):
-        """Process with OpenAI tools: web_search, code_interpreter, dall_e"""
+    def _process_with_openai(self, field_config, context):
+        """Unified OpenAI processing (works in both sync and async contexts)"""
         tools = field_config.get('tools', [])
         model = field_config.get('model', 'gpt-4o-mini')
         temperature = field_config.get('temperature', 0.7)
         max_tokens = field_config.get('max_tokens', 2000)
         
-        # Build OpenAI messages
-        messages = [
-            {
-                "role": "system",
-                "content": field_config.get('system_message', 'You are a helpful AI assistant.')
-            },
-            {
-                "role": "user", 
-                "content": field_config['prompt_template'].format(**context)
-            }
-        ]
+        # Prepare input text and system instructions
+        system_message = field_config.get('system_message')
+        input_text = field_config['prompt_template'].format(**context)
         
-        # Tool configuration
+        # Tool configuration - only if tools are enabled
         tools_config = []
-        if 'web_search' in tools:
+        enable_tools = field_config.get('enable_tools', False)
+        
+        if enable_tools and 'web_search' in tools:
+            # Web search (working correctly)
+            tools_config.append({"type": "web_search_preview"})
+        
+        if enable_tools and 'code_interpreter' in tools:
+            # Code interpreter for data analysis and Python execution
             tools_config.append({
-                "type": "function",
-                "function": {
-                    "name": "web_search",
-                    "description": "Search the web for current information"
-                }
+                "type": "code_interpreter",
+                "container": {"type": "auto"}
             })
         
-        if 'code_interpreter' in tools:
-            tools_config.append({"type": "code_interpreter"})
+        if enable_tools and 'dall_e' in tools:
+            # DALL-E for image generation
+            tools_config.append({"type": "image_generation"})
         
-        if 'dall_e' in tools:
+        if enable_tools and 'file_search' in tools:
+            # File search for document analysis (requires vector store IDs)
             tools_config.append({
-                "type": "function",
-                "function": {
-                    "name": "dall_e_generate",
-                    "description": "Generate images using DALL-E"
-                }
+                "type": "file_search",
+                "vector_store_ids": []  # Empty array for now - would need actual vector store IDs
             })
         
         # Make actual OpenAI API call
         try:
             import openai
             
-            # Try modern client approach with error handling
-            try:
-                # Create client with minimal configuration to avoid proxy issues
-                client = openai.OpenAI(
-                    api_key=self.api_key,
-                    timeout=30.0
-                )
-                use_client = True
-            except Exception as client_error:
-                logger.warning(f"OpenAI client creation failed, using legacy approach: {client_error}")
-                # Fallback to legacy global API key method
-                openai.api_key = self.api_key
-                use_client = False
+            # Create client with API key
+            client = openai.OpenAI(
+                api_key=self.api_key,
+                timeout=30.0
+            )
             
-            # Prepare API call parameters
+            # Prepare API call parameters for new responses API
             api_params = {
                 "model": model,
-                "messages": messages,
-                "temperature": temperature,
-                "max_tokens": max_tokens
+                "input": input_text
             }
+            
+            # Add system instructions if specified
+            if system_message:
+                api_params["instructions"] = system_message
             
             # Add tools if specified
             if tools_config:
                 api_params["tools"] = tools_config
-                
-            # Make the API call using appropriate method
-            if use_client:
-                response = client.chat.completions.create(**api_params)
+                logger.info(f"🔧 Sending tools to OpenAI: {tools_config}")
             else:
-                response = openai.chat.completions.create(**api_params)
+                logger.info(f"🔧 No tools configured")
+                
+            logger.info(f"🚀 API params: {api_params}")
             
-            # Extract result
-            content = response.choices[0].message.content
-            usage = response.usage
+            # Make the API call using new responses.create method
+            response = client.responses.create(**api_params)
+            
+            # Extract result from new API format
+            # The response.output_text contains the complete formatted response including tool results
+            content = response.output_text if hasattr(response, 'output_text') else ""
+            
+            # For debugging: log tool usage details
+            if hasattr(response, 'output') and response.output:
+                tool_calls = [
+                    output.type for output in response.output 
+                    if hasattr(output, 'type') and 'call' in output.type
+                ]
+                if tool_calls:
+                    logger.info(f"🛠️ Tool calls executed: {tool_calls}")
+                    
+                # Count actual code executions
+                code_calls = [
+                    output for output in response.output 
+                    if hasattr(output, 'type') and output.type == 'code_interpreter_call'
+                ]
+                if code_calls:
+                    logger.info(f"🐍 Code interpreter executed {len(code_calls)} code block(s)")
+            
+            # Handle usage data with fallback for new API
+            total_tokens = 0
+            prompt_tokens = 0
+            completion_tokens = 0
+            
+            try:
+                usage = getattr(response, 'usage', None)
+                if usage:
+                    if hasattr(usage, 'total_tokens'):
+                        total_tokens = usage.total_tokens or 0
+                        prompt_tokens = getattr(usage, 'prompt_tokens', 0) or 0
+                        completion_tokens = getattr(usage, 'completion_tokens', 0) or 0
+                    elif isinstance(usage, dict):
+                        total_tokens = usage.get('total_tokens', 0)
+                        prompt_tokens = usage.get('prompt_tokens', 0)
+                        completion_tokens = usage.get('completion_tokens', 0)
+                else:
+                    # Fallback calculation for new API
+                    prompt_tokens = len(input_text) // 4
+                    completion_tokens = len(content) // 4
+                    total_tokens = prompt_tokens + completion_tokens
+            except Exception as usage_error:
+                logger.warning(f"Usage parsing failed: {usage_error}, using fallback calculation")
+                prompt_tokens = len(input_text) // 4
+                completion_tokens = len(content) // 4
+                total_tokens = prompt_tokens + completion_tokens
+            
+            # Create usage object for cost calculation
+            usage_obj = type('Usage', (), {
+                'prompt_tokens': prompt_tokens,
+                'completion_tokens': completion_tokens,
+                'total_tokens': total_tokens
+            })()
             
             result = {
                 'content': content,
                 'tool_calls': len(tools_config),
                 'usage': {
-                    'prompt_tokens': usage.prompt_tokens,
-                    'completion_tokens': usage.completion_tokens,
-                    'total_tokens': usage.total_tokens,
+                    'prompt_tokens': prompt_tokens,
+                    'completion_tokens': completion_tokens,
+                    'total_tokens': total_tokens,
                 },
                 'model': model,
                 'temperature': temperature,
-                'cost_cents': self._calculate_cost(usage, model)
+                'cost_cents': self._calculate_cost(usage_obj, model)
             }
+            
+            logger.info(f"OpenAI API call successful - Content: {len(content)} chars, Tokens: {total_tokens}, Cost: {result['cost_cents']} cents")
+            return result
             
         except Exception as e:
             logger.error(f"OpenAI API call failed: {e}")
@@ -265,17 +310,21 @@ class AIFieldProcessor:
                 'content': f"AI processing unavailable (using {model}): {str(e)[:100]}",
                 'tool_calls': len(tools_config),
                 'usage': {
-                    'prompt_tokens': len(str(messages)) // 4,
+                    'prompt_tokens': len(input_text) // 4 if 'input_text' in locals() else 100,
                     'completion_tokens': 100,
-                    'total_tokens': (len(str(messages)) // 4) + 100
+                    'total_tokens': (len(input_text) // 4 if 'input_text' in locals() else 100) + 100
                 },
                 'model': model,
                 'temperature': temperature,
                 'cost_cents': 5,
                 'error': str(e)
             }
-        
-        return result
+            return result
+    
+    # Async wrapper for the unified method
+    async def _process_with_tools(self, field_config, context):
+        """Async wrapper for unified OpenAI processing"""
+        return self._process_with_openai(field_config, context)
     
     def _calculate_cost(self, usage, model):
         """Calculate cost in cents based on token usage and model"""
@@ -391,88 +440,8 @@ class AIFieldProcessor:
         return result
     
     def _process_with_openai_sync(self, field_config, context):
-        """Synchronous OpenAI processing"""
-        model = field_config.get('model', 'gpt-4o-mini')
-        temperature = field_config.get('temperature', 0.7)
-        max_tokens = field_config.get('max_tokens', 2000)
-        
-        # Build OpenAI messages
-        messages = [
-            {
-                "role": "system",
-                "content": field_config.get('system_message', 'You are a helpful AI assistant.')
-            },
-            {
-                "role": "user", 
-                "content": field_config['prompt_template'].format(**context)
-            }
-        ]
-        
-        # Make OpenAI API call
-        try:
-            import openai
-            
-            # Create client
-            client = openai.OpenAI(api_key=self.api_key, timeout=30.0)
-            
-            # API call parameters
-            api_params = {
-                "model": model,
-                "messages": messages,
-                "temperature": temperature,
-                "max_tokens": max_tokens
-            }
-            
-            # Make the API call
-            response = client.chat.completions.create(**api_params)
-            
-            # Extract content (main result)
-            content = response.choices[0].message.content
-            
-            # Handle usage data with fallback
-            total_tokens = 0
-            prompt_tokens = 0
-            completion_tokens = 0
-            
-            try:
-                usage = response.usage
-                if usage:
-                    if hasattr(usage, 'total_tokens'):
-                        total_tokens = usage.total_tokens or 0
-                        prompt_tokens = getattr(usage, 'prompt_tokens', 0) or 0
-                        completion_tokens = getattr(usage, 'completion_tokens', 0) or 0
-                    elif isinstance(usage, dict):
-                        total_tokens = usage.get('total_tokens', 0)
-                        prompt_tokens = usage.get('prompt_tokens', 0)
-                        completion_tokens = usage.get('completion_tokens', 0)
-            except Exception as usage_error:
-                logger.warning(f"Usage parsing failed: {usage_error}, proceeding without token count")
-            
-            # Calculate cost (simplified - 1 cent per 1000 tokens)
-            cost_cents = int((total_tokens / 1000) * 1) if total_tokens > 0 else 0
-            
-            result = {
-                'content': content,
-                'usage': {
-                    'prompt_tokens': prompt_tokens,
-                    'completion_tokens': completion_tokens,
-                    'total_tokens': total_tokens
-                },
-                'model': model,
-                'cost_cents': cost_cents
-            }
-            
-            logger.info(f"OpenAI API call successful - Content: {len(content)} chars, Tokens: {total_tokens}, Cost: {cost_cents} cents")
-            return result
-            
-        except Exception as e:
-            logger.error(f"OpenAI API call failed: {e}")
-            return {
-                'content': field_config.get('fallback_value', 'AI processing unavailable'),
-                'error': str(e),
-                'usage': {'total_tokens': 0},
-                'cost_cents': 0
-            }
+        """Synchronous wrapper for unified OpenAI processing"""
+        return self._process_with_openai(field_config, context)
 
 
 class AIJobManager:

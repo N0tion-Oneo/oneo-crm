@@ -94,9 +94,14 @@ if MODELS_AVAILABLE:
     @receiver(post_save, sender=Record)
     def handle_record_saved(sender, instance, created, **kwargs):
         """Handle record creation/update/soft deletion for real-time broadcasting"""
+        logger.info(f"📡 REALTIME SIGNAL: post_save triggered for record {instance.id}")
+        logger.info(f"   🆕 Created: {created}")
+        logger.info(f"   🗑️  Is Deleted: {instance.is_deleted}")
+        
         try:
             channel_layer = get_channel_layer()
             if not channel_layer:
+                logger.info(f"   ⏸️  No channel layer available, exiting")
                 return
             
             # Get updated record count for the pipeline (exclude soft deleted)

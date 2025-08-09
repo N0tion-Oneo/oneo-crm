@@ -13,6 +13,7 @@ export const ButtonFieldComponent: FieldComponent = {
     const confirmationMessage = getFieldConfig(field, 'confirmation_message', 'Are you sure?')
     const disableAfterClick = getFieldConfig(field, 'disable_after_click', false)
     const workflowId = getFieldConfig(field, 'workflow_id')
+    const helpText = getFieldConfig(field, 'help_text', null)
     
     // Track if button has been clicked (for disable_after_click)
     const hasBeenClicked = value === true
@@ -40,17 +41,45 @@ export const ButtonFieldComponent: FieldComponent = {
         }
       }
       
-      // Mark as clicked if disable_after_click is enabled
-      if (disableAfterClick) {
-        onChange(true)
+      // ✅ CRITICAL FIX: Always create a detectable change for button clicks  
+      // Each click must create a unique change to trigger AI processing
+      // The 'immediate' save strategy will automatically save the record
+      const currentValue = value || {}
+      const clickTimestamp = new Date().toISOString()
+      
+      const newButtonState = {
+        type: 'button',
+        triggered: true,
+        last_triggered: clickTimestamp,
+        click_count: (currentValue.click_count || 0) + 1, // Always increment for unique change
+        config: {
+          help_text,
+          button_text: buttonText,
+          button_style: buttonStyle,
+          button_size: buttonSize,
+          workflow_id: workflowId,
+          workflow_params: {},
+          require_confirmation: requireConfirmation,
+          confirmation_message: confirmationMessage,
+          disable_after_click: disableAfterClick,
+          visible_to_roles: [],
+          clickable_by_roles: []
+        }
       }
       
-      // In a real implementation, this would trigger the workflow
+      // Trigger field change - this will use FieldSaveService with 'immediate' strategy
+      onChange(newButtonState)
+      console.log(`✅ Button "${buttonText}" clicked - triggering save via FieldSaveService`)
+      
+      // Mark as clicked for UI state if disable_after_click is enabled
+      if (disableAfterClick) {
+        // Button state already updated above
+      }
+      
+      // Workflow integration (future enhancement)
       if (workflowId) {
-        console.log(`Triggering workflow: ${workflowId}`)
-        // TODO: Implement workflow trigger
-      } else {
-        console.log(`Button clicked: ${buttonText}`)
+        console.log(`🔄 Workflow integration: ${workflowId}`)
+        // TODO: Implement workflow trigger integration
       }
     }
 

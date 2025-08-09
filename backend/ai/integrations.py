@@ -316,12 +316,19 @@ def trigger_field_ai_processing(record, changed_fields: List[str], user: User) -
     from django.db import connection
     from tenants.models import Tenant
     
+    logger.info(f"🎯 TRIGGER STEP 1: AI Processing Request Received")
+    logger.info(f"   📋 Record ID: {record.id}")
+    logger.info(f"   📊 Pipeline: {record.pipeline.name} (ID: {record.pipeline.id})")
+    logger.info(f"   🔄 Changed Fields: {changed_fields}")
+    logger.info(f"   👤 User: {user.email} (ID: {user.id})")
+    
     # Get actual tenant object (not FakeTenant from connection)
     try:
         tenant_schema = connection.tenant.schema_name
         tenant = Tenant.objects.get(schema_name=tenant_schema)
+        logger.info(f"   🏢 Tenant: {tenant.name} (Schema: {tenant_schema})")
     except Tenant.DoesNotExist:
-        logger.error(f"Tenant with schema {tenant_schema} not found")
+        logger.error(f"❌ TRIGGER FAILED: Tenant with schema {tenant_schema} not found")
         return {'triggered_jobs': [], 'error': 'Tenant not found'}
     
     # Initialize AI manager
@@ -334,25 +341,42 @@ def trigger_field_ai_processing(record, changed_fields: List[str], user: User) -
     
     triggered_jobs = []
     
+    logger.info(f"🎯 TRIGGER STEP 2: Analyzing AI Fields")
+    logger.info(f"   📊 AI Fields Found: {ai_fields.count()}")
+    
     for field in ai_fields:
         try:
             field_config = field.ai_config or {}
             
+            logger.info(f"🎯 TRIGGER STEP 3: Processing Field '{field.name}'")
+            logger.info(f"   🔧 Field Config: {field_config}")
+            
             # Check if auto-regeneration is enabled for this field
             auto_regenerate = field_config.get('auto_regenerate', True)
             if not auto_regenerate:
-                logger.debug(f"Auto-regeneration disabled for AI field {field.name}, skipping")
+                logger.info(f"   ⏸️  Auto-regeneration disabled for AI field {field.name}, skipping")
                 continue
             
             # Check if this field should be triggered by the changed fields
             trigger_fields = field_config.get('trigger_fields', [])
             
+            logger.info(f"   🎯 Field Trigger Analysis:")
+            logger.info(f"      Configured Triggers: {trigger_fields if trigger_fields else 'ANY FIELD CHANGE'}")
+            logger.info(f"      Changed Fields: {changed_fields}")
+            
             should_trigger = False
             if not trigger_fields:  # No specific triggers = trigger on any change
                 should_trigger = True
+                logger.info(f"      ✅ Will Trigger: No specific triggers configured, any change triggers AI")
             else:
                 # Check if any trigger fields were changed
-                should_trigger = any(trigger in changed_fields for trigger in trigger_fields)
+                matching_triggers = [trigger for trigger in trigger_fields if trigger in changed_fields]
+                should_trigger = len(matching_triggers) > 0
+                
+                if should_trigger:
+                    logger.info(f"      ✅ Will Trigger: Matching triggers found: {matching_triggers}")
+                else:
+                    logger.info(f"      ❌ Will NOT Trigger: No matching triggers (need: {trigger_fields}, got: {changed_fields})")
             
             if should_trigger:
                 # Queue AI field processing via Celery (async)
@@ -360,14 +384,16 @@ def trigger_field_ai_processing(record, changed_fields: List[str], user: User) -
                     from ai.tasks import process_ai_job
                     from ai.models import AIJob
                     
-                    # Debug: Check for FakeTenant contamination  
-                    logger.info(f"🔍 DEBUG AI Job Creation:")
-                    logger.info(f"   Record ID: {record.id} (type: {type(record.id)})")
-                    logger.info(f"   Pipeline: {record.pipeline} (type: {type(record.pipeline)})")
-                    logger.info(f"   Pipeline ID: {record.pipeline.id if record.pipeline else 'None'} (type: {type(record.pipeline.id) if record.pipeline else 'None'})")
-                    logger.info(f"   Field name: {field.name} (type: {type(field.name)})")
-                    logger.info(f"   User: {user} (type: {type(user)})")
-                    logger.info(f"   Tenant: {tenant} (type: {type(tenant)})")
+                    # Enhanced AI Job Creation Logging
+                    logger.info(f"🔥 AI JOB STEP 1: Creating AI Job")
+                    logger.info(f"   📋 Record ID: {record.id} (type: {type(record.id)})")
+                    logger.info(f"   📊 Pipeline: {record.pipeline} (type: {type(record.pipeline)})")
+                    logger.info(f"   🆔 Pipeline ID: {record.pipeline.id if record.pipeline else 'None'}")
+                    logger.info(f"   🏷️  Field Name: {field.name} (slug: {getattr(field, 'slug', 'N/A')})")
+                    logger.info(f"   👤 User: {user.email} ({user.id})")
+                    logger.info(f"   🏢 Tenant: {tenant.name} ({tenant.schema_name})")
+                    logger.info(f"   🤖 AI Config: {field_config}")
+                    logger.info(f"   🎯 Trigger Fields: {field_config.get('trigger_fields', 'any change')}")
                     
                     # Create AI job for this field
                     ai_job = AIJob.objects.create(
@@ -384,16 +410,27 @@ def trigger_field_ai_processing(record, changed_fields: List[str], user: User) -
                         created_by=user
                     )
                     
+                    logger.info(f"🔥 AI JOB STEP 2: AI Job Created Successfully")
+                    logger.info(f"   🆔 Job ID: {ai_job.id}")
+                    logger.info(f"   📋 Job Type: {ai_job.job_type}")
+                    logger.info(f"   🤖 Model: {ai_job.model_name}")
+                    logger.info(f"   📝 Prompt Template: {ai_job.prompt_template[:100]}...")
+                    
                     # Queue the job for processing
-                    process_ai_job.delay(ai_job.id, tenant.schema_name)
+                    logger.info(f"🔥 AI JOB STEP 3: Queueing Celery Task")
+                    task_result = process_ai_job.delay(ai_job.id, tenant.schema_name)
+                    logger.info(f"   🔄 Celery Task ID: {task_result.id}")
                     
                     triggered_jobs.append({
                         'field': field.name,
                         'job_id': str(ai_job.id),
-                        'status': 'queued'
+                        'status': 'queued',
+                        'celery_task_id': str(task_result.id)
                     })
                     
-                    logger.info(f"AI job {ai_job.id} queued for field {field.name}")
+                    logger.info(f"🔥 AI JOB STEP 4: Job Queued Successfully")
+                    logger.info(f"   ✅ AI job {ai_job.id} queued for field {field.name}")
+                    logger.info(f"   🔄 Celery task: {task_result.id}")
                     
                 except Exception as e:
                     logger.error(f"Failed to queue AI job for field {field.name}: {e}")

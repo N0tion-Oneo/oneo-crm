@@ -270,6 +270,9 @@ class RecordSerializer(serializers.ModelSerializer):
         # ✅ Log for debugging user context issues
         logger.info(f"SERIALIZER_UPDATE: Record {instance.id if instance else 'NEW'} being updated by user {request.user.id} ({request.user.email})")
         
+        # ✅ CRITICAL FIX: Set _current_user for AI trigger processing
+        instance._current_user = request.user
+        
         validated_data['updated_by'] = request.user
         return super().update(instance, validated_data)
 
@@ -524,6 +527,8 @@ class DynamicRecordSerializer(serializers.ModelSerializer):
         request = self.context.get('request')
         if request and request.user and request.user.is_authenticated:
             validated_data['updated_by'] = request.user
+            # ✅ CRITICAL FIX: Set _current_user for AI trigger processing
+            instance._current_user = request.user
         
         # Extract data updates from validated_data
         data_updates = validated_data.pop('data', {})

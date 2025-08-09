@@ -6,8 +6,8 @@ import { toast } from '@/hooks/use-toast'
 
 // Save strategy function moved from deleted field-save-manager.tsx
 export function getSaveStrategy(fieldType: string): 'immediate' | 'on-exit' | 'continuous' | 'on-change' | 'manual' {
-  // Immediate save for choices and toggles
-  if (['select', 'multiselect', 'radio', 'boolean', 'relation', 'user'].includes(fieldType)) {
+  // Immediate save for choices, toggles, and action buttons
+  if (['select', 'multiselect', 'radio', 'boolean', 'relation', 'user', 'button'].includes(fieldType)) {
     return 'immediate'
   }
   
@@ -135,8 +135,9 @@ export class FieldSaveService {
       
       console.log(`🔍 Validation API call for ${field.name}:`, payload)
       
-      // Call validation endpoint
-      const response = await api.post(`${apiEndpoint}/validate`, payload)
+      // Call validation endpoint (handle trailing slash in apiEndpoint)
+      const cleanEndpoint = apiEndpoint.replace(/\/$/, '')
+      const response = await api.post(`${cleanEndpoint}/validate`, payload)
       
       // Parse validation response
       const result: SaveValidationResult = {
@@ -204,11 +205,11 @@ export class FieldSaveService {
   async onFieldChange(params: FieldSaveParams): Promise<any> {
     const strategy = getSaveStrategy(params.field.field_type)
     
-    // PHASE 3: Trigger incremental validation for text-based fields as user types
-    const textBasedFields = ['text', 'textarea', 'email', 'url', 'phone', 'number', 'decimal', 'float', 'currency', 'percentage']
-    if (textBasedFields.includes(params.field.field_type)) {
-      this.validateIncrementally(params, 300) // 300ms debounce
-    }
+    // PHASE 3: Disable incremental validation temporarily due to backend endpoint issues
+    // const textBasedFields = ['text', 'textarea', 'email', 'url', 'phone', 'number', 'decimal', 'float', 'currency', 'percentage']
+    // if (textBasedFields.includes(params.field.field_type)) {
+    //   this.validateIncrementally(params, 300) // 300ms debounce
+    // }
     
     switch (strategy) {
       case 'immediate':
@@ -355,6 +356,36 @@ export class FieldSaveService {
         } 
       }
       
+      // Debug logging for relationship fields and button fields
+      if (params.field.field_type === 'relation') {
+        console.log('🔍 RELATION FIELD SAVE DEBUG:', {
+          fieldName: params.field.name,
+          fieldKey: fieldKey,
+          newValue: params.newValue,
+          valueType: typeof params.newValue,
+          isArray: Array.isArray(params.newValue),
+          arrayLength: Array.isArray(params.newValue) ? params.newValue.length : 'N/A',
+          firstElement: Array.isArray(params.newValue) ? params.newValue[0] : params.newValue,
+          apiEndpoint: params.apiEndpoint,
+          payload: payload
+        })
+      }
+      
+      // 🔍 DEBUG: Button field save debugging
+      if (params.field.field_type === 'button') {
+        console.log('🔍 BUTTON FIELD SAVE DEBUG:', {
+          fieldName: params.field.name,
+          fieldKey: fieldKey,
+          newValue: params.newValue,
+          valueType: typeof params.newValue,
+          isObject: typeof params.newValue === 'object',
+          hasLastTriggered: params.newValue && typeof params.newValue === 'object' && 'last_triggered' in params.newValue,
+          hasClickCount: params.newValue && typeof params.newValue === 'object' && 'click_count' in params.newValue,
+          apiEndpoint: params.apiEndpoint,
+          payload: JSON.stringify(payload, null, 2)
+        })
+      }
+      
       // Basic validation before sending
       if (!params.field.name) {
         throw new Error('Field name is required')
@@ -396,6 +427,28 @@ export class FieldSaveService {
       
     } catch (error: any) {
       console.error(`❌ Save failed for ${params.field.name}:`, error)
+      
+      // Enhanced error logging for relationship fields
+      if (params.field.field_type === 'relation') {
+        console.error('🔍 RELATION FIELD SAVE ERROR DETAILS:', {
+          errorMessage: error.message,
+          errorName: error.name,
+          errorCode: error.code,
+          status: error.response?.status,
+          statusText: error.response?.statusText,
+          responseData: error.response?.data,
+          responseHeaders: error.response?.headers,
+          requestData: { 
+            data: { 
+              [params.field.original_slug || params.field.name]: params.newValue 
+            } 
+          },
+          requestUrl: error.config?.url,
+          requestMethod: error.config?.method,
+          requestHeaders: error.config?.headers,
+          fullError: error
+        })
+      }
       
       // Show error toast
       const fieldLabel = params.field.display_name || params.field.name

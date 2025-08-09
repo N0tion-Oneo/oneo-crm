@@ -199,16 +199,53 @@ class SelectFieldConfig(BaseFieldConfig):
 
 
 class RelationFieldConfig(BaseFieldConfig):
-    """Configuration for relation fields - Tier 1 (single selection only)"""
+    """Configuration for relation fields - Enhanced with full relationship system integration"""
+    
+    # Core Configuration
     target_pipeline_id: int
     display_field: str = 'title'
-    # allow_multiple removed per requirements - single selection only 
     reverse_field_name: Optional[str] = None
+    
+    # Enhanced: Multiple Relationship Support
+    allow_multiple: bool = False                       # Enable multiple relationships per field
+    max_relationships: Optional[int] = None            # Limit number of relationships (None = unlimited)
+    
+    # Enhanced: Relationship Type Integration  
+    relationship_type_id: Optional[int] = None         # Use specific RelationshipType from relationships.models
+    default_relationship_type: str = 'related_to'     # Default RelationshipType slug when none specified
+    allow_relationship_type_selection: bool = False   # Show relationship type selector in UI
+    
+    # Enhanced: Cardinality & Behavior (leverages RelationshipType settings)
+    enforce_cardinality: bool = True                   # Respect RelationshipType cardinality constraints
+    create_reverse_relationships: bool = True          # Auto-create bidirectional relationships
+    allow_self_reference: bool = False                 # Allow relationships to records in same pipeline
+    
+    # Enhanced: Metadata & Advanced Features
+    allow_metadata: bool = False                       # Enable relationship metadata (JSON field)
+    show_relationship_strength: bool = False           # Show/edit relationship strength (0.0-1.0)
+    require_relationship_verification: bool = False    # Require manual verification of relationships
+    
+    # Enhanced: Permission Integration
+    restrict_relationship_types_by_user: bool = False # Filter available relationship types by user permissions
     
     @validator('target_pipeline_id')
     def validate_target_pipeline_id(cls, v):
         if v <= 0:
             raise ValueError('Target pipeline ID must be positive')
+        return v
+    
+    @validator('max_relationships')
+    def validate_max_relationships(cls, v):
+        if v is not None and v <= 0:
+            raise ValueError('Max relationships must be positive')
+        return v
+    
+    @validator('default_relationship_type')
+    def validate_default_relationship_type(cls, v):
+        # This would validate against actual RelationshipType slugs in a full implementation
+        # For now, just ensure it's a non-empty string
+        if not v or not isinstance(v, str):
+            raise ValueError('Default relationship type must be a non-empty string')
         return v
 
 

@@ -29,8 +29,12 @@ def check_duplicates_on_record_save(sender, instance, **kwargs):
     Check for duplicates before saving a record.
     This runs on both create and update operations.
     """
+    logger.info(f"🔍 DUPLICATE SIGNAL: pre_save triggered for record {instance.id}")
+    logger.info(f"   📊 Has _skip_duplicate_check: {hasattr(instance, '_skip_duplicate_check')}")
+    
     # Skip duplicate checking if explicitly disabled
     if hasattr(instance, '_skip_duplicate_check') and instance._skip_duplicate_check:
+        logger.info(f"   ⏸️  Skipping duplicate check: _skip_duplicate_check is True")
         return
     
     # Get the pipeline
@@ -70,8 +74,10 @@ def check_duplicates_on_record_save(sender, instance, **kwargs):
         is_active=True
     ).prefetch_related('test_cases')
     
+    logger.info(f"🔍 DUPLICATE SIGNAL: Found {rules.count()} active rules for pipeline {pipeline.name}")
+    
     if not rules:
-        logger.debug(f"No duplicate rules found for pipeline {pipeline.name} in tenant {tenant.name}")
+        logger.info(f"   ⏸️  No duplicate rules found for pipeline {pipeline.name} in tenant {tenant.name}, exiting early")
         return
     
     # Initialize the logic engine
@@ -137,8 +143,12 @@ def handle_duplicates_after_record_save(sender, instance, created, **kwargs):
     Handle duplicate detection results after a record is saved.
     This creates DuplicateMatch entries and DuplicateDetectionResult entries.
     """
+    logger.info(f"🔍 DUPLICATE SIGNAL: post_save triggered for record {instance.id}")
+    logger.info(f"   📊 Has _detected_duplicates: {hasattr(instance, '_detected_duplicates')}")
+    
     # Skip if no duplicates detected
     if not hasattr(instance, '_detected_duplicates'):
+        logger.info(f"   ⏸️  No duplicates detected, exiting")
         return
     
     detected_duplicates = instance._detected_duplicates

@@ -1394,6 +1394,21 @@ class Record(models.Model):
                 original_record = Record.objects.get(pk=self.pk)
                 original_data = original_record.data.copy()
                 print(f"   📊 Original data had {len(original_data)} fields")
+                
+                # 🔍 DEBUG: Enhanced button field debugging
+                button_field_name = 'ai_summary_trigger'
+                if button_field_name in original_data:
+                    original_button = original_data[button_field_name]
+                    current_button = self.data.get(button_field_name) if self.data else None
+                    print(f"   🔍 BUTTON DEBUG - Original: {original_button}")
+                    print(f"   🔍 BUTTON DEBUG - Current:  {current_button}")
+                    print(f"   🔍 BUTTON DEBUG - Same?     {original_button == current_button}")
+                    
+                    if original_button and current_button:
+                        print(f"   🔍 BUTTON DETAILS - Original triggered: {original_button.get('triggered')}")
+                        print(f"   🔍 BUTTON DETAILS - Current triggered:  {current_button.get('triggered')}")
+                        print(f"   🔍 BUTTON DETAILS - Click count change: {original_button.get('click_count')} -> {current_button.get('click_count')}")
+                        
             except Record.DoesNotExist:
                 pass
         
@@ -1477,8 +1492,40 @@ class Record(models.Model):
         if not is_new and original_data != self.data:
             self.version += 1
         
+        # ✅ CRITICAL FIX: Trigger AI field updates BEFORE database save to avoid race condition
+        # This ensures AI processing happens before Django signals fire
+        print(f"🔍 AI TRIGGER CHECK: Record {self.id or 'NEW'}")
+        print(f"   📊 is_new: {is_new}")
+        print(f"   🚫 _skip_ai_processing: {getattr(self, '_skip_ai_processing', False)}")
+        
+        if not is_new and not getattr(self, '_skip_ai_processing', False):
+            # Debug: Compare original vs current data for the button field specifically
+            button_field = 'ai_summary_trigger'
+            if button_field in original_data and button_field in self.data:
+                print(f"   🔍 BUTTON FIELD DEBUG:")
+                print(f"      📜 Original: {original_data[button_field]}")
+                print(f"      📄 Current:  {self.data[button_field]}")
+                print(f"      ⚖️  Equal: {original_data[button_field] == self.data[button_field]}")
+            
+            # ✅ CRITICAL FIX: Use pre-calculated changed_fields to avoid validation normalization issues
+            # The changed_fields set was calculated before validation normalized key orders
+            changed_fields_list = list(changed_fields)
+            print(f"   🔄 Changed fields detected: {changed_fields_list}")
+            
+            if changed_fields_list:
+                print(f"   ✅ Calling _trigger_ai_updates with fields: {changed_fields_list}")
+                self._trigger_ai_updates(changed_fields_list)
+            else:
+                print(f"   ❌ No changed fields detected, skipping AI processing")
+        else:
+            if is_new:
+                print(f"   ⏸️  Skipping AI processing: Record is new")
+            else:
+                print(f"   ⏸️  Skipping AI processing: _skip_ai_processing is True")
+        
         print(f"🟢 DATABASE STEP 3: Saving to Database")
         super().save(*args, **kwargs)
+        print(f"🟢 DATABASE STEP 3.1: super().save() completed successfully")
         print(f"   ✅ Database save complete for record {self.pk}")
         
         # Update search vector
@@ -1487,12 +1534,6 @@ class Record(models.Model):
         # Update pipeline statistics
         if is_new:
             self._update_pipeline_stats()
-        
-        # Trigger AI field updates if data changed (unless explicitly skipped)
-        if not is_new and not getattr(self, '_skip_ai_processing', False):
-            changed_fields = self._get_changed_fields(original_data, self.data)
-            if changed_fields:
-                self._trigger_ai_updates(changed_fields)
         
         # Broadcast record update
         from api.events import broadcaster
@@ -1579,33 +1620,74 @@ class Record(models.Model):
         """Get list of fields that changed"""
         changed_fields = []
         
+        logger.info(f"🔍 CHANGE DETECTION: Comparing field data")
+        logger.info(f"   📊 Old data keys: {list(old_data.keys())}")
+        logger.info(f"   📊 New data keys: {list(new_data.keys())}")
+        
         # Check for changed values
         for field_slug in set(old_data.keys()) | set(new_data.keys()):
             old_value = old_data.get(field_slug)
             new_value = new_data.get(field_slug)
             
+            logger.info(f"   🔍 Field '{field_slug}':")
+            logger.info(f"      📜 Old: {old_value}")
+            logger.info(f"      📄 New: {new_value}")
+            logger.info(f"      ⚖️  Equal: {old_value == new_value}")
+            logger.info(f"      🔢 Types: {type(old_value)} vs {type(new_value)}")
+            
             if old_value != new_value:
+                logger.info(f"      ✅ CHANGED: Adding '{field_slug}' to changed fields")
                 changed_fields.append(field_slug)
+            else:
+                logger.info(f"      ❌ NO CHANGE: Field '{field_slug}' unchanged")
         
+        logger.info(f"🔍 CHANGE DETECTION RESULT: {len(changed_fields)} changed field(s): {changed_fields}")
         return changed_fields
     
     def _trigger_ai_updates(self, changed_fields: list):
         """Trigger AI field updates using the unified AI system"""
+        print(f"🤖 AI STEP 1: Starting AI Processing Chain")
+        print(f"   📋 Record ID: {self.id}")
+        print(f"   🔄 Changed Fields: {changed_fields}")
+        print(f"   📊 Total Fields in Record: {len(self.data)}")
+        
         try:
             from ai.integrations import trigger_field_ai_processing
+            
+            print(f"🤖 AI STEP 2: AI Integration Module Loaded")
+            logger.info(f"🤖 AI STEP 1: Starting AI Processing Chain")
+            logger.info(f"   📋 Record ID: {self.id}")
+            logger.info(f"   🔄 Changed Fields: {changed_fields}")
+            logger.info(f"   📊 Total Fields in Record: {len(self.data)}")
             
             # Get the user who made the change (if available)
             user = getattr(self, '_current_user', None) or self.updated_by
             if not user:
-                logger.warning(f"No user context for AI processing on record {self.id}")
+                logger.warning(f"❌ AI STEP 1 FAILED: No user context for AI processing on record {self.id}")
+                logger.warning(f"   _current_user: {getattr(self, '_current_user', 'NOT_SET')}")
+                logger.warning(f"   updated_by: {self.updated_by}")
                 return
             
+            logger.info(f"🤖 AI STEP 2: User Context Validated")
+            logger.info(f"   👤 User: {user.email} (ID: {user.id})")
+            logger.info(f"   🔑 User Type: {user.user_type.name if hasattr(user, 'user_type') and user.user_type else 'Unknown'}")
+            
             # Trigger AI processing using the new unified system
+            logger.info(f"🤖 AI STEP 3: Calling trigger_field_ai_processing")
             result = trigger_field_ai_processing(self, changed_fields, user)
-            logger.info(f"AI processing triggered for record {self.id}: {len(result.get('triggered_jobs', []))} fields processed")
+            
+            logger.info(f"🤖 AI STEP 4: Processing Complete")
+            logger.info(f"   ✅ Triggered Jobs: {len(result.get('triggered_jobs', []))}")
+            logger.info(f"   📋 Job Details: {result.get('triggered_jobs', [])}")
+            
+            if result.get('triggered_jobs'):
+                for job in result.get('triggered_jobs', []):
+                    logger.info(f"   🔧 AI Job Created: Field '{job.get('field')}', Job ID: {job.get('job_id', 'Unknown')}")
             
         except Exception as e:
-            logger.error(f"Failed to trigger AI processing for record {self.id}: {e}")
+            logger.error(f"❌ AI PROCESSING FAILED for record {self.id}: {e}")
+            import traceback
+            logger.error(f"   📋 Full traceback: {traceback.format_exc()}")
     
     def soft_delete(self, deleted_by: User):
         """Soft delete the record"""

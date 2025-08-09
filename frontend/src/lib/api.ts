@@ -454,6 +454,29 @@ export const globalOptionsApi = {
   getUserTypes: () => api.get('/api/global-options/user_types/'),
 }
 
+// Relationships API - For relationship types and management
+export const relationshipsApi = {
+  // Relationship Types
+  getRelationshipTypes: () =>
+    api.get('/api/relationship-types/'),
+    
+  getRelationshipType: (id: string) =>
+    api.get(`/api/relationship-types/${id}/`),
+    
+  // Relationships
+  getRelationships: (params?: any) =>
+    api.get('/api/relationships/', { params }),
+    
+  createRelationship: (data: any) =>
+    api.post('/api/relationships/', data),
+    
+  updateRelationship: (id: string, data: any) =>
+    api.patch(`/api/relationships/${id}/`, data),
+    
+  deleteRelationship: (id: string) =>
+    api.delete(`/api/relationships/${id}/`),
+}
+
 // Duplicates API - New unified endpoints
 export const duplicatesApi = {
   // Duplicate rules

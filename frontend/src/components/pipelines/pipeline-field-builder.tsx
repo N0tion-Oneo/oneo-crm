@@ -6,6 +6,7 @@ import { FieldConfigurationPanel } from './field-configuration-panel'
 import { ConditionalRulesBuilder } from './conditional-rules-builder'
 import { FieldManagementPanel } from './field-management-panel'
 import { FieldStatusIndicator } from './field-status-indicator'
+import { RelationshipFieldIndicator, hasEnhancedRelationshipFeatures } from './relationship-field-indicator'
 import { 
   Plus, 
   Trash2, 
@@ -111,6 +112,7 @@ const FIELD_ICONS: Record<string, any> = {
   multiselect: CheckSquare,
   url: Link,
   file: FileText,
+  relation: Link,
   ai_generated: Bot,
 }
 
@@ -365,7 +367,7 @@ export function PipelineFieldBuilder({ pipelineId, fields, onFieldsChange, onSav
           {/* Quick Add Toolbar */}
           <div className="mb-3">
             <p className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">Quick Add</p>
-            <div className="grid grid-cols-3 gap-1">
+            <div className="grid grid-cols-3 gap-1 auto-rows-fr">
               <button
                 onClick={() => addQuickField('text')}
                 className="p-2 text-xs bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-600 transition-colors flex items-center justify-center space-x-1"
@@ -407,8 +409,16 @@ export function PipelineFieldBuilder({ pipelineId, fields, onFieldsChange, onSav
                 <span>Date</span>
               </button>
               <button
+                onClick={() => addQuickField('relation')}
+                className="p-2 text-xs bg-gradient-to-r from-purple-50 to-indigo-50 dark:from-purple-900/20 dark:to-indigo-900/20 border border-purple-200 dark:border-purple-800 rounded-lg hover:from-purple-100 hover:to-indigo-100 dark:hover:from-purple-900/30 dark:hover:to-indigo-900/30 transition-colors flex items-center justify-center space-x-1"
+                title="Add Relationship Field"
+              >
+                <Link className="w-3 h-3 text-purple-600" />
+                <span className="text-purple-600 dark:text-purple-400">Relation</span>
+              </button>
+              <button
                 onClick={() => addQuickField('ai_generated')}
-                className="p-2 text-xs bg-gradient-to-r from-blue-50 to-purple-50 dark:from-blue-900/20 dark:to-purple-900/20 border border-blue-200 dark:border-blue-800 rounded-lg hover:from-blue-100 hover:to-purple-100 dark:hover:from-blue-900/30 dark:hover:to-purple-900/30 transition-colors flex items-center justify-center space-x-1"
+                className="p-2 text-xs bg-gradient-to-r from-blue-50 to-cyan-50 dark:from-blue-900/20 dark:to-cyan-900/20 border border-blue-200 dark:border-blue-800 rounded-lg hover:from-blue-100 hover:to-cyan-100 dark:hover:from-blue-900/30 dark:hover:to-cyan-900/30 transition-colors flex items-center justify-center space-x-1"
                 title="Add AI Field"
               >
                 <Bot className="w-3 h-3 text-blue-600" />
@@ -528,7 +538,19 @@ export function PipelineFieldBuilder({ pipelineId, fields, onFieldsChange, onSav
                           AI
                         </span>
                       )}
+                      
                     </div>
+
+                    {/* Relationship Field Configuration Display */}
+                    {(field.field_type === 'relation' || field.type === 'relation') && field.field_config && hasEnhancedRelationshipFeatures(field.field_config) && (
+                      <div className="mb-3 p-2 bg-gray-50 dark:bg-gray-800 rounded-lg">
+                        <RelationshipFieldIndicator 
+                          fieldConfig={field.field_config} 
+                          size="sm"
+                          showDetails={true}
+                        />
+                      </div>
+                    )}
 
                     {/* Field Actions */}
                     <div className="flex items-center justify-between">

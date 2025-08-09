@@ -751,12 +751,34 @@ class FieldValidator:
         
         return file_info
     
-    def _validate_relation(self, value: Any) -> Union[int, str]:
+    def _validate_relation(self, value: Any) -> Union[int, List[int]]:
         """Validate relation field using RelationFieldConfig"""
         if value is None:
             return None
         
-        # Convert to integer ID if it's a string
+        # Handle array values for multiple relationships (allowMultiple: true)
+        if isinstance(value, list):
+            if len(value) == 0:
+                return []
+            
+            # Validate each record ID in the array
+            validated_ids = []
+            for item in value:
+                try:
+                    record_id = int(item)
+                    validated_ids.append(record_id)
+                except (TypeError, ValueError):
+                    raise ValueError(f'Relation value must be a record ID (integer), got: {item}')
+            
+            # Use RelationFieldConfig for validation
+            if self.config and hasattr(self.config, 'target_pipeline_id'):
+                # Could validate that the records exist in the target pipeline
+                # This would require database access, so might be done at a higher level
+                pass
+            
+            return validated_ids
+        
+        # Handle single value for single relationships
         try:
             record_id = int(value)
         except (TypeError, ValueError):
@@ -831,7 +853,24 @@ class FieldValidator:
             if not hasattr(self.config, 'button_text') or not self.config.button_text:
                 raise ValueError('Button must have text')
         
-        # Return button configuration for rendering
+        # Handle complex button state objects from frontend
+        if isinstance(value, dict):
+            # Frontend sent full button state - preserve unique fields for change detection
+            button_state = {
+                'type': 'button',
+                'triggered': value.get('triggered', False),
+                'config': self.config.model_dump() if self.config else {}
+            }
+            
+            # Preserve unique state fields that enable change detection
+            if 'last_triggered' in value:
+                button_state['last_triggered'] = value['last_triggered']
+            if 'click_count' in value:
+                button_state['click_count'] = value['click_count']
+                
+            return button_state
+        
+        # Fallback for simple boolean values
         return {
             'type': 'button',
             'triggered': bool(value),

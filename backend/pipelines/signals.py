@@ -69,6 +69,10 @@ def _format_field_value_for_display(value, field_type):
 def handle_record_save(sender, instance, created, **kwargs):
     """Handle record save events"""
     
+    logger.info(f"📋 PIPELINE SIGNAL: post_save triggered for record {instance.id}")
+    logger.info(f"   🆕 Created: {created}")
+    logger.info(f"   📊 Has _original_data: {hasattr(instance, '_original_data')}")
+    
     # Create audit log for updates (not creates)
     if not created and hasattr(instance, '_original_data'):
         try:
@@ -333,6 +337,10 @@ def capture_record_state_before_save(sender, instance, **kwargs):
 @receiver(post_save, sender=Record)
 def handle_stage_transition_trigger(sender, instance, created, **kwargs):
     """Handle status transition triggers for workflows"""
+    logger.info(f"🚀 WORKFLOW SIGNAL: post_save triggered for record {instance.id}")
+    logger.info(f"   🆕 Created: {created}")
+    logger.info(f"   📊 Has _original_status: {hasattr(instance, '_original_status')}")
+    
     if not created and hasattr(instance, '_original_status'):
         original_status = getattr(instance, '_original_status')
         current_status = instance.status

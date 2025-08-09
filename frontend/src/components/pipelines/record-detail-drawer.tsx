@@ -6,7 +6,7 @@ import { useDocumentSubscription } from '@/hooks/use-websocket-subscription'
 import { type RealtimeMessage, type UserPresence, type FieldLock } from '@/contexts/websocket-context'
 import { useAuth } from '@/features/auth/context'
 import { evaluateFieldPermissions, evaluateConditionalRules, type FieldWithPermissions, type FieldPermissionResult } from '@/utils/field-permissions'
-import { FieldRenderer, FieldDisplay, validateFieldValue, getFieldDefaultValue, normalizeRecordData } from '@/lib/field-system/field-renderer'
+import { FieldRenderer, FieldDisplay, validateFieldValue, getFieldDefaultValue, normalizeRecordData, normalizeFieldValue } from '@/lib/field-system/field-renderer'
 import { Field } from '@/lib/field-system/types'
 import { FieldResolver } from '@/lib/field-system/field-registry'
 import { FieldSaveService, getSaveStrategy } from '@/lib/field-system/field-save-service'
@@ -441,7 +441,10 @@ export function RecordDetailDrawer({
     console.log(`🔵 Field enter: ${fieldName}`, currentValue)
     console.log(`🔍 Current formData for ${fieldName}:`, formData[fieldName])
     setEditingField(fieldName)
-    setLocalFieldValues(prev => ({ ...prev, [fieldName]: currentValue || '' }))
+    
+    // Preserve the actual value instead of converting falsy values to empty strings
+    // Field components handle their own empty state formatting (0, false, null, [], etc.)
+    setLocalFieldValues(prev => ({ ...prev, [fieldName]: currentValue }))
     setFieldErrors(prev => ({ ...prev, [fieldName]: '' })) // Clear any errors
     
     // Lock field for collaboration if we have a record
@@ -648,7 +651,7 @@ export function RecordDetailDrawer({
   
   const shouldBypassEnterExit = (fieldType: string) => {
     // These field types should be immediately interactive without enter/exit pattern
-    return ['button', 'boolean', 'user'].includes(fieldType)
+    return ['button', 'boolean', 'user', 'relation'].includes(fieldType)
   }
   
   const getEmptyStateText = (fieldType: string) => {
@@ -792,7 +795,7 @@ export function RecordDetailDrawer({
     const fieldType = convertToFieldType(field)
     
     // Special handling for fields that should exit immediately after change
-    const shouldExitImmediately = ['select', 'boolean', 'radio', 'relation'].includes(field.field_type)
+    const shouldExitImmediately = ['select', 'boolean', 'radio'].includes(field.field_type)
     
     const handleFieldRegistryChange = (newValue: any) => {
       // For NEW records, don't use field-level saving - just update local formData
@@ -803,7 +806,7 @@ export function RecordDetailDrawer({
       }
       
       // For EXISTING records, use FieldSaveService for field-level saving
-      const shouldUpdateFormDataImmediately = ['select', 'boolean', 'radio', 'relation'].includes(field.field_type)
+      const shouldUpdateFormDataImmediately = ['select', 'boolean', 'radio'].includes(field.field_type)
       
       // Track saving state for immediate-save field types
       if (shouldUpdateFormDataImmediately) {
@@ -854,8 +857,13 @@ export function RecordDetailDrawer({
       isSavingRef.current = true  // Track that we're saving
       fieldSaveService.onFieldExit(field.name).then((result) => {
         if (result && result.savedValue !== undefined) {
-          // Update formData with the actual saved value so UI shows the change
-          setFormData(prev => ({ ...prev, [field.name]: result.savedValue }))
+          // Apply the same normalization that server data goes through
+          // This ensures consistent data format between server and local updates
+          const fieldType = convertToFieldType(field)
+          const normalizedValue = normalizeFieldValue(fieldType, result.savedValue)
+          
+          // Update formData with the normalized saved value so UI shows the change
+          setFormData(prev => ({ ...prev, [field.name]: normalizedValue }))
           
           // Exit editing mode for continuous save fields (tags, file uploads)
           // This ensures fields show the saved value from formData instead of old local state

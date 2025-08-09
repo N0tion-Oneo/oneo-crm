@@ -16,8 +16,10 @@ import {
   FileText,
   Database,
   Zap,
-  RefreshCw
+  RefreshCw,
+  Link
 } from 'lucide-react'
+import { RelationshipFieldIndicator } from './relationship-field-indicator'
 import { pipelinesApi } from '@/lib/api'
 import { MigrationWizard } from './migration-wizard'
 
@@ -287,6 +289,21 @@ export function FieldManagementPanel({ field, pipelineId, onFieldUpdate, onClose
                 <div className="font-mono text-xs text-gray-700 dark:text-gray-300">{field.id}</div>
               </div>
             </div>
+
+            {/* Enhanced Field Information for Relationship Fields */}
+            {field.field_type === 'relation' && field.field_config && (
+              <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-600">
+                <h4 className="text-sm font-medium text-gray-900 dark:text-white mb-3 flex items-center">
+                  <Link className="w-4 h-4 mr-2 text-purple-500" />
+                  Relationship Configuration
+                </h4>
+                <RelationshipFieldIndicator 
+                  fieldConfig={field.field_config} 
+                  size="md"
+                  showDetails={true}
+                />
+              </div>
+            )}
 
             {field.deletion_status && fieldStatus !== 'active' && (
               <div className="mt-4 pt-3 border-t border-gray-200 dark:border-gray-600">

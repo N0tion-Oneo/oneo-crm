@@ -520,8 +520,8 @@ export function RecordListView({ pipeline, onEditRecord, onCreateRecord }: Recor
       const disableAfterClick = buttonConfig.disable_after_click || false
       const workflowId = buttonConfig.workflow_id
       
-      // Check if button has been clicked
-      const hasBeenClicked = value === true
+      // Check if button has been clicked (complex object check)
+      const hasBeenClicked = value && typeof value === 'object' && value.triggered === true
       const isDisabled = disableAfterClick && hasBeenClicked
       
       const buttonStyles = {
@@ -544,18 +544,54 @@ export function RecordListView({ pipeline, onEditRecord, onCreateRecord }: Recor
         // For existing records, save the button click state
         if (record && record.id) {
           try {
-            // Update the button field value to mark as clicked
-            const newValue = disableAfterClick ? true : !value
+            console.log(`🔘 BUTTON STEP 1: Button Click Handler Started`)
+            console.log(`   🎯 Button: "${buttonText}" (${field.name})`)
+            console.log(`   📋 Record ID: ${record.id}`)
+            console.log(`   📊 Pipeline ID: ${pipeline.id}`)
+            console.log(`   🔄 Current Value: ${value}`)
+            console.log(`   ⚙️  Disable After Click: ${disableAfterClick}`)
+            
+            // ✅ CRITICAL FIX: Always create a detectable change for button clicks  
+            // Each click must create a unique change to trigger AI processing
+            // This matches the button-field.tsx implementation exactly
+            const currentValue = value || {}
+            const clickTimestamp = new Date().toISOString()
+            
+            const newValue = {
+              type: 'button',
+              triggered: true,
+              last_triggered: clickTimestamp,
+              click_count: (currentValue.click_count || 0) + 1, // Always increment for unique change
+              config: {
+                help_text: field.field_config?.help_text,
+                button_text: buttonText,
+                button_style: buttonStyle,
+                button_size: 'small',
+                workflow_id: workflowId,
+                workflow_params: {},
+                require_confirmation: requireConfirmation,
+                confirmation_message: confirmationMessage,
+                disable_after_click: disableAfterClick,
+                visible_to_roles: [],
+                clickable_by_roles: []
+              }
+            }
+            
+            console.log(`🔘 BUTTON STEP 2: Preparing API Update`)
+            console.log(`   🎯 New Value: ${JSON.stringify(newValue)} (${typeof newValue})`)
+            console.log(`   🔍 Has Last Triggered: ${!!newValue.last_triggered}`)
+            console.log(`   🔍 Has Click Count: ${!!newValue.click_count}`)
             
             // Call the API to update the record
+            console.log(`🔘 BUTTON STEP 3: Making API Call`)
             await pipelinesApi.updateRecord(pipeline.id, record.id, {
               data: {
                 [field.name]: newValue
               }
             })
             
-            // The real-time system will update the UI automatically
-            console.log(`Button "${buttonText}" clicked for record ${record.id}`)
+            console.log(`🔘 BUTTON STEP 4: API Call Completed Successfully`)
+            console.log(`   ✅ Button "${buttonText}" processed for record ${record.id}`)
             
             // If there's a workflow, trigger it
             if (workflowId) {

@@ -202,6 +202,44 @@ export function normalizeFieldValue(field: Field, rawValue: any): any {
     }
   }
   
+  // Enhanced relationship field normalization
+  if (field.field_type === 'relation') {
+    if (rawValue === '' || rawValue === null || rawValue === undefined) {
+      return null
+    }
+    
+    // Check if field supports enhanced relationships
+    const fieldConfig = field.field_config || {}
+    const allowMultiple = fieldConfig.allow_multiple || false
+    const allowRelationshipTypeSelection = fieldConfig.allow_relationship_type_selection || false
+    
+    // If enhanced features are enabled, ensure proper data structure
+    if (allowMultiple || allowRelationshipTypeSelection) {
+      if (Array.isArray(rawValue)) {
+        return rawValue.map(rel => {
+          if (typeof rel === 'object' && rel.record_id) {
+            return rel // Already in enhanced format
+          }
+          return { 
+            record_id: rel, 
+            relationship_type: fieldConfig.default_relationship_type || 'related_to'
+          }
+        })
+      } else if (typeof rawValue === 'object' && rawValue.record_id) {
+        return allowMultiple ? [rawValue] : rawValue
+      } else {
+        const enhancedRel = {
+          record_id: rawValue,
+          relationship_type: fieldConfig.default_relationship_type || 'related_to'
+        }
+        return allowMultiple ? [enhancedRel] : enhancedRel
+      }
+    }
+    
+    // For simple relationships, return as-is
+    return rawValue
+  }
+  
   // Boolean fields - ensure proper boolean type
   if (field.field_type === 'boolean') {
     if (rawValue === 'true' || rawValue === '1' || rawValue === 1) return true

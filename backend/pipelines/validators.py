@@ -107,6 +107,11 @@ class FieldValidator:
                 result.cleaned_value = self._validate_button(value)
             elif self.field_type == FieldType.RELATION:
                 result.cleaned_value = self._validate_relation(value)
+            elif self.field_type == FieldType.USER:
+                # For USER fields, we need pipeline context for permission validation
+                # This will be passed from the pipeline validation context
+                pipeline_id = getattr(self, '_pipeline_id', None)
+                result.cleaned_value = self._validate_user_assignment(value, pipeline_id)
             elif self.field_type == FieldType.RECORD_DATA:
                 result.cleaned_value = self._validate_record_data(value)
             elif self.field_type == FieldType.AI_GENERATED:
@@ -766,6 +771,7 @@ class FieldValidator:
         return record_id
     
     
+    
     def _validate_address(self, value: Any) -> Union[str, Dict[str, Any]]:
         """Validate address field using AddressFieldConfig"""
         if isinstance(value, str):
@@ -915,6 +921,117 @@ class FieldValidator:
                     return str(value) if value is not None else ''
         
         return value
+    
+    def _validate_user_assignment(self, value: Any, pipeline_id: str = None) -> Union[List[Dict[str, Any]], Dict[str, Any], None]:
+        """Validate user assignment field using UserFieldConfig with pipeline permission checking"""
+        if value is None:
+            return None
+        
+        config = self.config
+        
+        # Handle single user assignment (convert to list format for consistency)
+        if isinstance(value, dict) and 'user_id' in value:
+            assignments = [value]
+        elif isinstance(value, int):
+            # Simple user ID - convert to standard format
+            assignments = [{'user_id': value, 'role': config.default_role if config else 'assigned'}]
+        elif isinstance(value, list):
+            assignments = value
+        else:
+            raise ValueError('User assignment must be a user object, user ID, or list of user assignments')
+        
+        # Validate each assignment
+        validated_assignments = []
+        for assignment in assignments:
+            if isinstance(assignment, int):
+                # Convert user ID to standard format
+                validated_assignment = {
+                    'user_id': assignment,
+                    'role': config.default_role if config else 'assigned'
+                }
+            elif isinstance(assignment, dict):
+                validated_assignment = assignment.copy()
+                
+                # Validate required fields
+                if 'user_id' not in validated_assignment:
+                    raise ValueError('User assignment must include user_id')
+                
+                # Validate user_id is integer
+                try:
+                    validated_assignment['user_id'] = int(validated_assignment['user_id'])
+                except (TypeError, ValueError):
+                    raise ValueError('user_id must be a valid integer')
+                
+                # CRITICAL: Validate user exists and has pipeline access
+                if pipeline_id:
+                    user_id = validated_assignment['user_id']
+                    if not self._validate_user_has_pipeline_access(user_id, pipeline_id):
+                        raise ValueError(f'User {user_id} does not have access to this pipeline')
+                
+                # Set default role if not provided
+                if 'role' not in validated_assignment:
+                    validated_assignment['role'] = config.default_role if config else 'assigned'
+                
+                # Validate role against allowed roles
+                if config and hasattr(config, 'allowed_roles') and config.allowed_roles:
+                    if validated_assignment['role'] not in config.allowed_roles:
+                        raise ValueError(f"Role '{validated_assignment['role']}' is not in allowed roles: {config.allowed_roles}")
+                
+                # Add metadata if not present
+                if 'assigned_at' not in validated_assignment:
+                    validated_assignment['assigned_at'] = datetime.now().isoformat()
+            else:
+                raise ValueError('Each user assignment must be a user ID or user assignment object')
+            
+            validated_assignments.append(validated_assignment)
+        
+        # Validate assignment count constraints
+        if config:
+            # Check maximum users
+            if hasattr(config, 'max_users') and config.max_users:
+                if len(validated_assignments) > config.max_users:
+                    raise ValueError(f'Maximum {config.max_users} user(s) allowed')
+            
+            # Check for required role selection
+            if hasattr(config, 'require_role_selection') and config.require_role_selection:
+                for assignment in validated_assignments:
+                    if not assignment.get('role') or assignment.get('role', '').strip() == '':
+                        raise ValueError('Role selection is required for all user assignments')
+        
+        # Return single assignment as object or list based on configuration
+        if config and hasattr(config, 'allow_multiple') and not config.allow_multiple:
+            # Single user assignment - return first assignment
+            return validated_assignments[0] if validated_assignments else None
+        else:
+            # Multiple user assignments - return list
+            return validated_assignments
+    
+    def _validate_user_has_pipeline_access(self, user_id: int, pipeline_id: str) -> bool:
+        """
+        Validate that a user has permission to access a specific pipeline
+        This should be called during validation to ensure only authorized users can be assigned
+        """
+        try:
+            from django.contrib.auth import get_user_model
+            from authentication.permissions import SyncPermissionManager
+            
+            User = get_user_model()
+            user = User.objects.get(id=user_id, is_active=True)
+            
+            # Check user pipeline permissions
+            permission_manager = SyncPermissionManager(user)
+            
+            # User must have at least read access to records in the pipeline to be assignable
+            has_read_access = permission_manager.has_permission('action', 'records', 'read', str(pipeline_id))
+            has_create_access = permission_manager.has_permission('action', 'records', 'create', str(pipeline_id))
+            has_update_access = permission_manager.has_permission('action', 'records', 'update', str(pipeline_id))
+            
+            return has_read_access or has_create_access or has_update_access
+            
+        except Exception as e:
+            print(f"⚠️ USER VALIDATION: Failed to validate user {user_id} pipeline access: {e}")
+            # In case of validation errors, be restrictive and deny access
+            return False
 
 
 def _evaluate_condition(field_value: Any, operator: str, expected_value: Any) -> bool:
@@ -1083,11 +1200,25 @@ def validate_record_data(field_definitions: List[Dict[str, Any]], record_data: D
         ai_config = field_def.get('ai_config', {}) if field_type == FieldType.AI_GENERATED else None
         validator = FieldValidator(field_type, field_config, ai_config)
         
+        # For USER fields, set pipeline context for permission validation
+        if field_type == FieldType.USER:
+            # Extract pipeline_id from field definitions context
+            pipeline_id = None
+            for field_definition in field_definitions:
+                if 'pipeline_id' in field_definition:
+                    pipeline_id = str(field_definition['pipeline_id'])
+                    break
+            validator._pipeline_id = pipeline_id
+        
         # Validate based on context
         if context == 'storage':
             # Storage context: ONLY validate storage constraints (for partial updates)
             result = validator.validate_storage(value, storage_constraints)
             print(f"🔓 STORAGE VALIDATION: {field_slug} - no field config validation")
+        elif context == 'migration':
+            # Migration context: MINIMAL validation - only critical storage constraints (no business rules)
+            result = validator.validate_storage(value, storage_constraints)
+            print(f"🔧 MIGRATION VALIDATION: {field_slug} - minimal validation only")
         elif context == 'business_rules':
             # Business rules context: Full validation (storage + field config + business rules)
             result = validator.validate_storage(value, storage_constraints)
@@ -1110,7 +1241,7 @@ def validate_record_data(field_definitions: List[Dict[str, Any]], record_data: D
         else:
             cleaned_data[field_slug] = result.cleaned_value
         
-        # Check business rules ONLY if context allows it
+        # Check business rules ONLY if context allows it (skip for migrations)
         if context == 'business_rules' and business_rules:
             print(f"🔒 BUSINESS RULES: Checking {field_slug} with enhanced conditional system")
             

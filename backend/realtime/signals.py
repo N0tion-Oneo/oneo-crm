@@ -20,19 +20,55 @@ def safe_group_send_sync(channel_layer, group_name, message):
     Safely send message to channel group from sync context.
     Handles event loop issues properly.
     """
+    import asyncio
+    import threading
+    
     try:
-        # Simple approach: use async_to_sync directly with the coroutine
+        # First approach: use async_to_sync directly (works when no active event loop)
         async_to_sync(channel_layer.group_send)(group_name, message)
         logger.debug(f"Sent message to group {group_name}: {message.get('type', 'unknown')}")
+        return
+    except RuntimeError as e:
+        if "async event loop" in str(e).lower():
+            # There's an active event loop - try alternative approaches
+            logger.debug(f"Active event loop detected, trying alternative approaches for {group_name}")
+        else:
+            logger.error(f"Failed to send message to group {group_name}: {e}")
+            return
     except Exception as e:
         logger.error(f"Failed to send message to group {group_name}: {e}")
-        # Try alternative approach if the first fails
-        try:
-            import asyncio
+        return
+    
+    # Second approach: try asyncio.run (works when no event loop at all)
+    try:
+        asyncio.run(channel_layer.group_send(group_name, message))
+        logger.debug(f"Sent message to group {group_name} (asyncio.run): {message.get('type', 'unknown')}")
+        return
+    except RuntimeError as e:
+        if "running event loop" in str(e).lower():
+            logger.debug(f"Event loop already running, trying thread-based approach for {group_name}")
+        else:
+            logger.error(f"asyncio.run failed for group {group_name}: {e}")
+            return
+    except Exception as e:
+        logger.error(f"asyncio.run failed for group {group_name}: {e}")
+        return
+    
+    # Third approach: run in a separate thread (works when there's an active event loop)
+    try:
+        def run_in_thread():
             asyncio.run(channel_layer.group_send(group_name, message))
-            logger.debug(f"Sent message to group {group_name} (fallback): {message.get('type', 'unknown')}")
-        except Exception as e2:
-            logger.error(f"Fallback also failed for group {group_name}: {e2}")
+        
+        thread = threading.Thread(target=run_in_thread)
+        thread.start()
+        thread.join(timeout=5)  # 5 second timeout
+        
+        if thread.is_alive():
+            logger.error(f"Thread timeout for group {group_name}")
+        else:
+            logger.debug(f"Sent message to group {group_name} (thread): {message.get('type', 'unknown')}")
+    except Exception as e:
+        logger.error(f"Thread approach failed for group {group_name}: {e}")
 
 
 async def safe_group_send(channel_layer, group_name, message):

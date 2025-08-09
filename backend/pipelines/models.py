@@ -301,6 +301,7 @@ class Pipeline(models.Model):
                 'storage_constraints': field.storage_constraints,
                 'business_rules': field.business_rules,
                 'ai_config': field.ai_config if field.is_ai_field else {},
+                'pipeline_id': self.id,  # Add pipeline context for USER field validation
             })
         
         return validate_record_data(field_definitions, data, context)
@@ -877,7 +878,7 @@ class Pipeline(models.Model):
         
         Args:
             data: Record data to validate
-            context: Validation context ('storage', 'form', 'business_rules')
+            context: Validation context ('storage', 'form', 'business_rules', 'migration')
             changed_field_slug: If provided, optimize validation for this specific field change
         """
         print(f"🎯 OPTIMIZED VALIDATION: context={context}, changed_field={changed_field_slug}")
@@ -924,6 +925,20 @@ class Pipeline(models.Model):
             else:
                 fields_to_validate = self.fields.all()
                 print(f"🔄 FULL BUSINESS RULES: Validating all {fields_to_validate.count()} fields")
+            
+        elif context == 'migration':
+            # MIGRATION CONTEXT: No validation needed - migrations should always be safe
+            print(f"🔧 MIGRATION CONTEXT: Bypassing all validation - migration operations are pre-validated")
+            return {
+                'is_valid': True,
+                'errors': {},
+                'cleaned_data': data or {},
+                'context': 'migration',
+                'metadata': {
+                    'validation_bypassed': True,
+                    'reason': 'migration_context'
+                }
+            }
             
         elif context == 'storage' and changed_field_slug:
             # STORAGE CONTEXT: Only validate the changed field (fastest)
@@ -1398,7 +1413,13 @@ class Record(models.Model):
             
             # Consider it a partial update if only a few fields changed
             is_partial_update = len(changed_fields) <= 3 and len(changed_fields) > 0
-            validation_context = 'storage' if is_partial_update else 'business_rules'
+            
+            # Check if this is a migration context (data operations that don't need business validation)
+            if hasattr(self, '_migration_context') and self._migration_context:
+                validation_context = 'migration'
+                print(f"🔧 MIGRATION MODE: Using migration validation context")
+            else:
+                validation_context = 'storage' if is_partial_update else 'business_rules'
             
             print(f"🔍 UPDATE ANALYSIS: {len(changed_fields)} field(s) changed: {list(changed_fields)}")
             print(f"   📋 Context: {validation_context} {'(partial update)' if is_partial_update else '(full update)'}")

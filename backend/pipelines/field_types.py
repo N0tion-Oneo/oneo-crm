@@ -64,11 +64,12 @@ class FieldType(str, Enum):
     MULTISELECT = "multiselect"      # Multiple choice selection
     TAGS = "tags"                    # Tag input with autocomplete
     
-    # Advanced Types (4)
+    # Advanced Types (5)
     URL = "url"                      # URL input with validation
     FILE = "file"                    # File upload (includes images)
     BUTTON = "button"                # Action button powered by workflows
     RELATION = "relation"            # Reference to another pipeline record
+    USER = "user"                    # User assignment field with role management
     
     # System Types (2)
     RECORD_DATA = "record_data"      # Predefined record metadata
@@ -465,6 +466,74 @@ class TagsFieldConfig(BaseFieldConfig):
         return v
 
 
+class UserFieldConfig(BaseFieldConfig):
+    """Configuration for user assignment fields - streamlined essential features"""
+    
+    # Assignment Configuration
+    allow_multiple: bool = True                      # Allow multiple user assignments
+    max_users: Optional[int] = None                  # Maximum number of users (None = unlimited)
+    
+    # Role Configuration  
+    default_role: str = "assigned"                   # Default role for new assignments
+    allowed_roles: List[str] = ["assigned", "owner", "collaborator", "reviewer"]  # Available roles
+    show_role_selector: bool = True                  # Show role dropdown in UI
+    require_role_selection: bool = False             # Force role selection or use default
+    
+    # User Filtering
+    restrict_to_user_types: List[str] = []           # Restrict to specific user types (empty = all)
+    
+    # Display Configuration
+    display_format: str = "name_with_role"           # name_only, name_with_role, avatar_with_name
+    show_user_avatars: bool = True                   # Display user profile pictures
+    avatar_size: str = "small"                       # small, medium, large
+    
+    # Assignment Behavior
+    auto_assign_creator: bool = False                # Automatically assign record creator
+    preserve_assignment_order: bool = True          # Maintain order of assignments (by activity)
+    
+    @validator('display_format')
+    def validate_display_format(cls, v):
+        valid_formats = ['name_only', 'name_with_role', 'avatar_with_name']
+        if v not in valid_formats:
+            raise ValueError(f'Display format must be one of: {valid_formats}')
+        return v
+    
+    @validator('avatar_size')
+    def validate_avatar_size(cls, v):
+        valid_sizes = ['small', 'medium', 'large']
+        if v not in valid_sizes:
+            raise ValueError(f'Avatar size must be one of: {valid_sizes}')
+        return v
+    
+    @validator('allowed_roles')
+    def validate_allowed_roles(cls, v):
+        """Validate that allowed roles are from a valid set"""
+        valid_roles = [
+            'assigned', 'owner', 'collaborator', 'reviewer', 
+            'manager', 'supervisor', 'lead', 'member', 
+            'primary', 'secondary', 'backup', 'observer'
+        ]
+        for role in v:
+            if role not in valid_roles:
+                raise ValueError(f'Invalid role: {role}. Valid roles: {valid_roles}')
+        return v
+    
+    @validator('default_role')
+    def validate_default_role(cls, v, values):
+        """Validate that default role is in allowed roles"""
+        allowed_roles = values.get('allowed_roles', [])
+        if allowed_roles and v not in allowed_roles:
+            raise ValueError(f'Default role "{v}" must be in allowed_roles: {allowed_roles}')
+        return v
+    
+    @validator('max_users')
+    def validate_max_users(cls, v):
+        """Validate max_users is positive"""
+        if v is not None and v < 1:
+            raise ValueError('Max users must be greater than 0')
+        return v
+
+
 # Field type registry - maps field types to their configuration classes
 FIELD_TYPE_CONFIGS = {
     # Basic Input Types (8) - Now with proper field-specific configurations
@@ -482,11 +551,12 @@ FIELD_TYPE_CONFIGS = {
     FieldType.MULTISELECT: SelectFieldConfig,
     FieldType.TAGS: TagsFieldConfig,
     
-    # Advanced Types (4)
+    # Advanced Types (5)
     FieldType.URL: URLFieldConfig,              # Proper URL validation and protocol options
     FieldType.FILE: FileFieldConfig,            # Includes images
     FieldType.BUTTON: ButtonFieldConfig,        # New workflow-powered buttons
     FieldType.RELATION: RelationFieldConfig,    # Reference to another pipeline
+    FieldType.USER: UserFieldConfig,            # User assignment field with comprehensive configuration
     
     # System Types (2)
     FieldType.RECORD_DATA: RecordDataFieldConfig,    # New predefined metadata

@@ -82,6 +82,25 @@ export function FieldConfigurationPanel({
           setGlobalOptions(globalResponse.data)
         } catch (error) {
           console.warn('Global options not available:', error)
+          setGlobalOptions({})
+        }
+        
+        // Load user types separately for USER field configuration
+        console.log('🔧 Loading user types for USER field configuration...')
+        try {
+          // Use the dedicated getUserTypes API method
+          const userTypesResponse = await globalOptionsApi.getUserTypes()
+          console.log('✅ User types loaded from globalOptionsApi.getUserTypes():', userTypesResponse.data)
+          setGlobalOptions(prev => ({
+            ...prev,
+            userTypes: userTypesResponse.data.user_types || []
+          }))
+        } catch (error) {
+          console.error('❌ Failed to load user types:', error)
+          setGlobalOptions(prev => ({
+            ...prev,
+            userTypes: []
+          }))
         }
         
         // Load pipelines for relation fields
@@ -2131,6 +2150,247 @@ export function FieldConfigurationPanel({
               <label htmlFor="auto-format-input" className="ml-2 text-sm text-gray-700 dark:text-gray-300">
                 Auto-format phone number as user types
               </label>
+            </div>
+          </div>
+        )
+
+      case 'user':
+        return (
+          <div className="space-y-4">
+            {/* Assignment Configuration */}
+            <div>
+              <div className="flex items-center mb-3">
+                <input
+                  type="checkbox"
+                  id="allow-multiple"
+                  checked={config.allow_multiple !== false}
+                  onChange={(e) => updateConfig('allow_multiple', e.target.checked)}
+                  className="w-4 h-4 text-primary bg-white border-gray-300 rounded focus:ring-primary focus:ring-2"
+                />
+                <label htmlFor="allow-multiple" className="ml-2 text-sm text-gray-700 dark:text-gray-300">
+                  Allow Multiple Users
+                </label>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  Maximum Users
+                </label>
+                <input
+                  type="number"
+                  value={config.max_users || ''}
+                  onChange={(e) => updateConfig('max_users', e.target.value ? parseInt(e.target.value) : null)}
+                  placeholder="No limit"
+                  min="1"
+                  className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary dark:bg-gray-700 dark:text-white"
+                />
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                  Maximum number of users that can be assigned (leave empty for unlimited)
+                </p>
+              </div>
+            </div>
+
+            {/* Role Configuration */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                Default Role
+              </label>
+              <select
+                value={config.default_role || 'assigned'}
+                onChange={(e) => updateConfig('default_role', e.target.value)}
+                className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary dark:bg-gray-700 dark:text-white"
+              >
+                <option value="assigned">Assigned</option>
+                <option value="owner">Owner</option>
+                <option value="collaborator">Collaborator</option>
+                <option value="reviewer">Reviewer</option>
+              </select>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                Default role assigned to users when no role is specified
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                Allowed Roles
+              </label>
+              <div className="space-y-2">
+                {['assigned', 'owner', 'collaborator', 'reviewer'].map((role) => (
+                  <div key={role} className="flex items-center">
+                    <input
+                      type="checkbox"
+                      id={`role-${role}`}
+                      checked={(config.allowed_roles || ['assigned', 'owner', 'collaborator', 'reviewer']).includes(role)}
+                      onChange={(e) => {
+                        const currentRoles = config.allowed_roles || ['assigned', 'owner', 'collaborator', 'reviewer']
+                        const newRoles = e.target.checked
+                          ? [...currentRoles, role]
+                          : currentRoles.filter((r: string) => r !== role)
+                        updateConfig('allowed_roles', newRoles)
+                      }}
+                      className="w-4 h-4 text-primary bg-white border-gray-300 rounded focus:ring-primary focus:ring-2"
+                    />
+                    <label htmlFor={`role-${role}`} className="ml-2 text-sm text-gray-700 dark:text-gray-300 capitalize">
+                      {role}
+                    </label>
+                  </div>
+                ))}
+              </div>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                Roles that can be assigned to users for this field
+              </p>
+            </div>
+
+            <div className="space-y-3">
+              <div className="flex items-center">
+                <input
+                  type="checkbox"
+                  id="show-role-selector"
+                  checked={config.show_role_selector !== false}
+                  onChange={(e) => updateConfig('show_role_selector', e.target.checked)}
+                  className="w-4 h-4 text-primary bg-white border-gray-300 rounded focus:ring-primary focus:ring-2"
+                />
+                <label htmlFor="show-role-selector" className="ml-2 text-sm text-gray-700 dark:text-gray-300">
+                  Show Role Selector
+                </label>
+              </div>
+
+              <div className="flex items-center">
+                <input
+                  type="checkbox"
+                  id="require-role-selection"
+                  checked={config.require_role_selection === true}
+                  onChange={(e) => updateConfig('require_role_selection', e.target.checked)}
+                  className="w-4 h-4 text-primary bg-white border-gray-300 rounded focus:ring-primary focus:ring-2"
+                />
+                <label htmlFor="require-role-selection" className="ml-2 text-sm text-gray-700 dark:text-gray-300">
+                  Require Role Selection
+                </label>
+              </div>
+            </div>
+
+            {/* User Filtering */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                Restrict to User Types
+              </label>
+              <div className="space-y-2">
+                {globalOptions?.userTypes ? (
+                  globalOptions.userTypes.map((userType: any) => (
+                    <div key={userType.name} className="flex items-center">
+                      <input
+                        type="checkbox"
+                        id={`user-type-${userType.slug || userType.name.toLowerCase()}`}
+                        checked={(config.restrict_to_user_types || []).includes(userType.name)}
+                        onChange={(e) => {
+                          const currentTypes = config.restrict_to_user_types || []
+                          const newTypes = e.target.checked
+                            ? [...currentTypes, userType.name]
+                            : currentTypes.filter((type: string) => type !== userType.name)
+                          updateConfig('restrict_to_user_types', newTypes)
+                        }}
+                        className="w-4 h-4 text-primary bg-white border-gray-300 rounded focus:ring-primary focus:ring-2"
+                      />
+                      <label htmlFor={`user-type-${userType.slug || userType.name.toLowerCase()}`} className="ml-2 text-sm text-gray-700 dark:text-gray-300">
+                        {userType.name}
+                        {userType.description && (
+                          <span className="text-xs text-gray-500 dark:text-gray-400 ml-1">
+                            - {userType.description}
+                          </span>
+                        )}
+                      </label>
+                    </div>
+                  ))
+                ) : (
+                  <div className="text-sm text-gray-500 dark:text-gray-400">
+                    Loading user types...
+                  </div>
+                )}
+              </div>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                Select specific user types to restrict assignments to (leave none selected to allow all user types)
+              </p>
+            </div>
+
+            {/* Display Configuration */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                Display Format
+              </label>
+              <select
+                value={config.display_format || 'name_with_role'}
+                onChange={(e) => updateConfig('display_format', e.target.value)}
+                className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary dark:bg-gray-700 dark:text-white"
+              >
+                <option value="name_only">Name Only</option>
+                <option value="name_with_role">Name with Role</option>
+                <option value="avatar_with_name">Avatar with Name</option>
+              </select>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                How to display assigned users in the interface
+              </p>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="flex items-center">
+                <input
+                  type="checkbox"
+                  id="show-user-avatars"
+                  checked={config.show_user_avatars !== false}
+                  onChange={(e) => updateConfig('show_user_avatars', e.target.checked)}
+                  className="w-4 h-4 text-primary bg-white border-gray-300 rounded focus:ring-primary focus:ring-2"
+                />
+                <label htmlFor="show-user-avatars" className="ml-2 text-sm text-gray-700 dark:text-gray-300">
+                  Show Avatars
+                </label>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  Avatar Size
+                </label>
+                <select
+                  value={config.avatar_size || 'small'}
+                  onChange={(e) => updateConfig('avatar_size', e.target.value)}
+                  className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary dark:bg-gray-700 dark:text-white"
+                >
+                  <option value="small">Small</option>
+                  <option value="medium">Medium</option>
+                  <option value="large">Large</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Assignment Behavior */}
+            <div className="space-y-3">
+              <div className="flex items-center">
+                <input
+                  type="checkbox"
+                  id="auto-assign-creator"
+                  checked={config.auto_assign_creator === true}
+                  onChange={(e) => updateConfig('auto_assign_creator', e.target.checked)}
+                  className="w-4 h-4 text-primary bg-white border-gray-300 rounded focus:ring-primary focus:ring-2"
+                />
+                <label htmlFor="auto-assign-creator" className="ml-2 text-sm text-gray-700 dark:text-gray-300">
+                  Auto-assign Record Creator
+                </label>
+              </div>
+
+              <div className="flex items-center">
+                <input
+                  type="checkbox"
+                  id="preserve-assignment-order"
+                  checked={config.preserve_assignment_order !== false}
+                  onChange={(e) => updateConfig('preserve_assignment_order', e.target.checked)}
+                  className="w-4 h-4 text-primary bg-white border-gray-300 rounded focus:ring-primary focus:ring-2"
+                />
+                <label htmlFor="preserve-assignment-order" className="ml-2 text-sm text-gray-700 dark:text-gray-300">
+                  Order by Activity
+                </label>
+                <p className="ml-6 text-xs text-gray-500 dark:text-gray-400">
+                  Show most recently active users first
+                </p>
+              </div>
             </div>
           </div>
         )

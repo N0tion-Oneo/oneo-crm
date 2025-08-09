@@ -607,6 +607,7 @@ class FieldOperationManager:
                             
                             record.data[field.slug] = default_value
                             record._skip_broadcast = True  # Prevent real-time broadcasts during migration
+                            record._migration_context = True  # Use migration validation context
                             record.save(update_fields=['data'])
                             migrated_count += 1
                         

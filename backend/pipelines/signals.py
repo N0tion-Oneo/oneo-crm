@@ -117,6 +117,22 @@ def handle_record_save(sender, instance, created, **kwargs):
             
             # Only create audit log if there are actual changes
             if changes:
+                # ✅ Validate user context before creating audit log
+                if not instance.updated_by:
+                    logger.error(f"SIGNAL_ERROR: No updated_by user for record {instance.id}")
+                    return
+                
+                if not hasattr(instance.updated_by, 'id') or not instance.updated_by.id:
+                    logger.error(f"SIGNAL_ERROR: Invalid updated_by user object for record {instance.id}: {instance.updated_by}")
+                    return
+                
+                if not instance.updated_by.is_authenticated:
+                    logger.error(f"SIGNAL_ERROR: User {instance.updated_by.id} is not authenticated for record {instance.id}")
+                    return
+                
+                # ✅ Log for debugging user context
+                logger.info(f"AUDIT_LOG_CREATION: Record {instance.id} updated by user {instance.updated_by.id} ({instance.updated_by.email})")
+                
                 audit_log = AuditLog.objects.create(
                     user=instance.updated_by,
                     action='updated',
@@ -127,9 +143,15 @@ def handle_record_save(sender, instance, created, **kwargs):
                         'pipeline_name': instance.pipeline.name,
                         'field_changes': changes,
                         'changes_summary': field_changes_summary,
-                        'total_changes': len(changes)
+                        'total_changes': len(changes),
+                        # ✅ Add debugging info
+                        'debug_user_id': instance.updated_by.id,
+                        'debug_user_email': instance.updated_by.email,
+                        'debug_timestamp': timezone.now().isoformat()
                     }
                 )
+                
+                logger.info(f"AUDIT_LOG_CREATED: ID {audit_log.id} for record {instance.id} by user {instance.updated_by.id}")
                 
                 # Broadcast audit log update for real-time Activity tab
                 try:
@@ -138,7 +160,7 @@ def handle_record_save(sender, instance, created, **kwargs):
                 except Exception as broadcast_error:
                     logger.error(f"Failed to broadcast audit log update: {broadcast_error}")
         except Exception as e:
-            logger.error(f"Failed to create audit log for record {instance.id}: {e}")
+            logger.error(f"AUDIT_LOG_FAILED: Record {instance.id}, User {instance.updated_by.id if instance.updated_by else 'None'}: {e}")
     
     # Update pipeline statistics
     if created:

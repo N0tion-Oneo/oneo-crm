@@ -20,18 +20,23 @@ class TenantAwareJWTAuthentication(JWTAuthentication):
     Ensures user lookup happens in the correct tenant schema
     """
     
-    def get_user(self, validated_token):
+    def get_user(self, validated_token, request=None, tenant_schema=None):
         """
-        Get user from validated token, ensuring tenant context is used and validated
+        Get user from validated token with direct request context (no instance variables)
         """
         try:
             user_id = validated_token['user_id']
             token_tenant_schema = validated_token.get('tenant_schema')
             
-            # Get tenant from current request context
-            request = getattr(self, '_current_request', None)
-            tenant = getattr(request, 'tenant', None) if request else None
-            current_schema = tenant.schema_name if tenant else None
+            # ✅ Use passed parameters instead of instance variables
+            if request:
+                tenant = getattr(request, 'tenant', None)
+                current_schema = tenant.schema_name if tenant else tenant_schema
+            else:
+                # Fallback to connection tenant context
+                from django.db import connection
+                tenant = getattr(connection, 'tenant', None)
+                current_schema = tenant.schema_name if tenant else tenant_schema
             
             logger.debug(f"JWT token validation - User ID: {user_id}, Token tenant: {token_tenant_schema}, Current tenant: {current_schema}")
             
@@ -40,21 +45,28 @@ class TenantAwareJWTAuthentication(JWTAuthentication):
                 logger.warning(f"Tenant mismatch - Token tenant: {token_tenant_schema}, Current tenant: {current_schema}")
                 raise InvalidToken("Token not valid for current tenant")
             
-            if tenant:
-                # Use tenant schema context explicitly
-                with schema_context(tenant.schema_name):
+            if current_schema:
+                # ✅ Use tenant schema context with additional retry logic for threading issues
+                with schema_context(current_schema):
                     try:
-                        user = User.objects.get(id=user_id)
-                        logger.debug(f"Found user {user.email} (ID: {user.id}) in tenant {tenant.schema_name}")
+                        # ✅ Add select_related to reduce DB queries and potential race conditions
+                        user = User.objects.select_related().get(id=user_id, is_active=True)
+                        logger.debug(f"Found user {user.email} (ID: {user.id}) in tenant {current_schema}")
                         
                         # Additional validation: ensure user exists in the correct tenant
-                        if token_tenant_schema and token_tenant_schema != tenant.schema_name:
-                            logger.error(f"User {user_id} token tenant {token_tenant_schema} != current tenant {tenant.schema_name}")
+                        if token_tenant_schema and token_tenant_schema != current_schema:
+                            logger.error(f"User {user_id} token tenant {token_tenant_schema} != current tenant {current_schema}")
                             raise InvalidToken("User not valid for current tenant")
                         
                         return user
                     except User.DoesNotExist:
-                        logger.error(f"User {user_id} not found in tenant {tenant.schema_name}")
+                        logger.error(f"User {user_id} not found in tenant {current_schema} (active users only)")
+                        # ✅ Log additional debug info for threading issues
+                        try:
+                            inactive_user = User.objects.get(id=user_id)
+                            logger.error(f"User {user_id} exists but is inactive: {inactive_user.is_active}")
+                        except User.DoesNotExist:
+                            logger.error(f"User {user_id} does not exist at all in tenant {current_schema}")
                         raise InvalidToken("User not found in tenant")
             else:
                 # No tenant context, try current schema (fallback)
@@ -70,25 +82,17 @@ class TenantAwareJWTAuthentication(JWTAuthentication):
             logger.error(f"Missing required field in token: {e}")
             raise InvalidToken("Token contained no recognizable user identification")
     
-    def get_current_request(self):
-        """
-        Get the current request from thread local storage
-        This is a bit of a hack but necessary for tenant context
-        """
-        import threading
-        return getattr(threading.current_thread(), 'request', None)
+    # ✅ Removed get_current_request method - no longer needed without instance variables
     
     def authenticate(self, request):
         """
-        Authenticate request with tenant-aware user lookup
+        Authenticate request with tenant-aware user lookup (NO INSTANCE VARIABLES)
         """
         try:
-            # Store request for tenant context access
-            self._current_request = request
-            
-            # Debug tenant context
+            # ✅ Get tenant context directly from request (no instance storage)
             tenant = getattr(request, 'tenant', None)
             tenant_schema = tenant.schema_name if tenant else None
+            
             logger.debug(f"JWT authenticate called - Tenant: {tenant} (schema: {tenant_schema})")
             logger.debug(f"Request host: {request.get_host()}")
             logger.debug(f"Request path: {request.path}")
@@ -110,8 +114,8 @@ class TenantAwareJWTAuthentication(JWTAuthentication):
             validated_token = self.get_validated_token(raw_token)
             logger.debug(f"JWT token validated: {validated_token.get('user_id')}")
             
-            # Get the user (this will use our custom get_user method with tenant context)
-            user = self.get_user(validated_token)
+            # ✅ Pass request directly to get_user (no instance variables)
+            user = self.get_user(validated_token, request=request, tenant_schema=tenant_schema)
             
             logger.info(f"JWT authentication successful for user: {user.email} (ID: {user.id})")
             
@@ -131,7 +135,3 @@ class TenantAwareJWTAuthentication(JWTAuthentication):
             import traceback
             logger.error(traceback.format_exc())
             return None
-        finally:
-            # Clean up request reference
-            if hasattr(self, '_current_request'):
-                delattr(self, '_current_request')

@@ -451,6 +451,7 @@ export const globalOptionsApi = {
   getCountries: () => api.get('/api/global-options/countries/'),
   getOpenAIModels: () => api.get('/api/global-options/openai_models/'),
   getRecordDataOptions: () => api.get('/api/global-options/record_data_options/'),
+  getUserTypes: () => api.get('/api/global-options/user_types/'),
 }
 
 // Duplicates API - New unified endpoints

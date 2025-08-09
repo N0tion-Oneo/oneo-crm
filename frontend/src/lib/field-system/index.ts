@@ -17,6 +17,7 @@ import { TagsFieldComponent } from './components/tags-field'
 import { AIFieldComponent } from './components/ai-field'
 import { ButtonFieldComponent } from './components/button-field'
 import { RecordDataFieldComponent } from './components/record-data-field'
+import { UserFieldComponent } from './components/user-field'
 
 /**
  * Initialize the field registry with all available field components
@@ -64,12 +65,12 @@ export function initializeFieldSystem() {
   registerFieldComponent('ai_generated', AIFieldComponent)
   registerFieldComponent('button', ButtonFieldComponent)
   registerFieldComponent('record_data', RecordDataFieldComponent)
+  registerFieldComponent('user', UserFieldComponent)
   
   // Legacy aliases
   registerFieldComponent('image', FileFieldComponent) // Images are handled by file component
   
   // Future fields (to be implemented)
-  // registerFieldComponent('user', UserFieldComponent)
   // registerFieldComponent('computed', ComputedFieldComponent)
   // registerFieldComponent('formula', FormulaFieldComponent)
   

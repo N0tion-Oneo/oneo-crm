@@ -329,8 +329,22 @@ class RecordSerializer(serializers.ModelSerializer):
     
     def update(self, instance, validated_data):
         """Update record with proper user assignment"""
+        import logging
+        logger = logging.getLogger(__name__)
+        
         request = self.context.get('request')
         
+        # 🔍 DEBUG: Log user context at serializer level
+        if request:
+            logger.info(f"SERIALIZER_UPDATE: Request user: {request.user.email if hasattr(request.user, 'email') else request.user} (ID: {getattr(request.user, 'id', 'No ID')})")
+            logger.info(f"SERIALIZER_UPDATE: Request object ID: {id(request)}")
+            logger.info(f"SERIALIZER_UPDATE: User object ID: {id(request.user)}")
+            logger.info(f"SERIALIZER_UPDATE: Record instance ID: {instance.id}")
+            
+            # Check for authentication state
+            if hasattr(request.user, 'is_authenticated'):
+                logger.info(f"SERIALIZER_UPDATE: User authenticated: {request.user.is_authenticated}")
+            
         if request and request.user:
             validated_data['updated_by'] = request.user
         

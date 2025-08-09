@@ -406,6 +406,8 @@ export function DynamicFormRenderer({
         showHelp={false}  // We handle help text in the outer form
         user={user} // Pass user context for permission evaluation
         formData={formData} // Pass form data for conditional rule evaluation
+        pipeline_id={pipelineId ? Number(pipelineId) : undefined} // Pass pipeline context for USER fields
+        record_id={recordId ? Number(recordId) : undefined} // Pass record context for USER fields
       />
     )
   }

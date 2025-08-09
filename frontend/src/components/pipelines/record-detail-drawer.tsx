@@ -648,7 +648,7 @@ export function RecordDetailDrawer({
   
   const shouldBypassEnterExit = (fieldType: string) => {
     // These field types should be immediately interactive without enter/exit pattern
-    return ['button', 'boolean'].includes(fieldType)
+    return ['button', 'boolean', 'user'].includes(fieldType)
   }
   
   const getEmptyStateText = (fieldType: string) => {
@@ -694,19 +694,23 @@ export function RecordDetailDrawer({
       const fieldType = convertToFieldType(field)
       
       const handleDirectChange = (newValue: any) => {
+        console.log(`🔵 Field ${field.name} onChange received:`, newValue)
         // Handle immediate interaction for button and boolean fields
         if (!record || !record.id) {
+          console.log(`🔵 Field ${field.name} updating formData:`, newValue)
           setFormData(prev => ({ ...prev, [field.name]: newValue }))
           return
         }
         
         // For existing records, use FieldSaveService for immediate save
+        console.log(`🔵 Field ${field.name} calling FieldSaveService with:`, newValue)
         isSavingRef.current = true
         fieldSaveService.onFieldChange({
           field: fieldType,
           newValue,
           apiEndpoint: `/api/pipelines/${pipeline.id}/records/${record.id}/`,
           onSuccess: (result) => {
+            console.log(`🔵 Field ${field.name} save SUCCESS:`, result)
             setFormData(prev => ({ ...prev, [field.name]: newValue }))
             setFieldErrors(prev => ({ ...prev, [field.name]: '' }))
             isSavingRef.current = false
@@ -732,6 +736,8 @@ export function RecordDetailDrawer({
             error={fieldError}
             autoFocus={false}
             context="drawer"
+            pipeline_id={pipeline?.id}
+            record_id={record?.id}
           />
         </div>
       )
@@ -881,6 +887,8 @@ export function RecordDetailDrawer({
           error={fieldError}
           autoFocus={true}
           context="drawer"
+          pipeline_id={pipeline?.id}
+          record_id={record?.id}
         />
       </div>
     )

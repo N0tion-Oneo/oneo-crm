@@ -39,16 +39,24 @@ def check_duplicates_on_record_save(sender, instance, **kwargs):
     # Get tenant from request (multi-tenant architecture)
     try:
         from django.db import connection
+        from tenants.models import Tenant
+        
         # Check if we're in a tenant context
         if not hasattr(connection, 'tenant') or not connection.tenant:
             logger.debug("No tenant context found, skipping duplicate checking")
             return
         
-        tenant = connection.tenant
         tenant_schema = connection.tenant.schema_name
         
         # Skip duplicate checking on public schema
         if tenant_schema == 'public':
+            return
+        
+        # Get the actual Tenant model instance (not the FakeTenant from connection)
+        try:
+            tenant = Tenant.objects.get(schema_name=tenant_schema)
+        except Tenant.DoesNotExist:
+            logger.error(f"Tenant model not found for schema {tenant_schema}")
             return
             
     except Exception as e:
@@ -138,16 +146,24 @@ def handle_duplicates_after_record_save(sender, instance, created, **kwargs):
     # Get tenant using the same approach as pre_save signal
     try:
         from django.db import connection
+        from tenants.models import Tenant
+        
         # Check if we're in a tenant context
         if not hasattr(connection, 'tenant') or not connection.tenant:
             logger.debug("No tenant context found, skipping duplicate match creation")
             return
         
-        tenant = connection.tenant
         tenant_schema = connection.tenant.schema_name
         
         # Skip processing on public schema
         if tenant_schema == 'public':
+            return
+        
+        # Get the actual Tenant model instance (not the FakeTenant from connection)
+        try:
+            tenant = Tenant.objects.get(schema_name=tenant_schema)
+        except Tenant.DoesNotExist:
+            logger.error(f"Tenant model not found for schema {tenant_schema} in post_save")
             return
             
     except Exception as e:

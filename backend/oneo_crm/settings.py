@@ -14,13 +14,25 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = config('SECRET_KEY', default='django-insecure-development-key-change-in-production')
 DEBUG = config('DEBUG', default=True, cast=bool)
 
-# Enhanced logging for debugging tenant issues
+# Enhanced logging for debugging user context issues
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
+    'formatters': {
+        'verbose': {
+            'format': '{levelname} {asctime} {module} {process:d} {thread:d} {message}',
+            'style': '{',
+        },
+    },
     'handlers': {
         'console': {
             'class': 'logging.StreamHandler',
+            'formatter': 'verbose',
+        },
+        'user_context_file': {
+            'class': 'logging.FileHandler',
+            'filename': BASE_DIR / 'logs' / 'user_context_debug.log',
+            'formatter': 'verbose',
         },
     },
     'loggers': {
@@ -32,6 +44,22 @@ LOGGING = {
         'django.request': {
             'handlers': ['console'],
             'level': 'DEBUG',
+            'propagate': True,
+        },
+        # ✅ Add specific logging for user context debugging
+        'authentication.jwt_authentication': {
+            'handlers': ['console', 'user_context_file'],
+            'level': 'DEBUG',
+            'propagate': True,
+        },
+        'api.serializers': {
+            'handlers': ['console', 'user_context_file'],
+            'level': 'INFO',
+            'propagate': True,
+        },
+        'pipelines.signals': {
+            'handlers': ['console', 'user_context_file'],
+            'level': 'INFO',
             'propagate': True,
         },
     },

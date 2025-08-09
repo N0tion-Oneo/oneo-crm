@@ -218,13 +218,21 @@ class GlobalOptionsViewSet(viewsets.GenericViewSet):
             ]
         }
     
+    def get_user_types(self):
+        """Get available user types for filtering"""
+        from authentication.models import UserType
+        
+        user_types = UserType.objects.all().values('name', 'slug', 'description')
+        return list(user_types)
+    
     def list(self, request):
         """Get all global options"""
         return Response({
             'currencies': self.get_currencies(),
             'countries': self.get_countries(),
             'openai_models': self.get_openai_models(),
-            'record_data_options': self.get_record_data_options()
+            'record_data_options': self.get_record_data_options(),
+            'userTypes': self.get_user_types()
         })
     
     @action(detail=False, methods=['get'])
@@ -246,3 +254,10 @@ class GlobalOptionsViewSet(viewsets.GenericViewSet):
     def record_data_options(self, request):
         """Get record data field options"""
         return Response(self.get_record_data_options())
+    
+    @action(detail=False, methods=['get'])
+    def user_types(self, request):
+        """Get available user types"""
+        return Response({
+            'user_types': self.get_user_types()
+        })

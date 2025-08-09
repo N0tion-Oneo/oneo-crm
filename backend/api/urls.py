@@ -12,13 +12,13 @@ from .views.relationships import RelationshipViewSet, RelationshipTypeViewSet
 from .views.auth import AuthViewSet
 from .views.field_types import FieldTypeViewSet
 from .views.global_options import GlobalOptionsViewSet
+from .views.users import UserViewSet
 
 from .views.duplicates import (
     DuplicateRuleViewSet, URLExtractionRuleViewSet, DuplicateRuleTestViewSet,
     DuplicateMatchViewSet, DuplicateAnalyticsViewSet, DuplicateExclusionViewSet
 )
 from .views.dynamic_forms import DynamicFormViewSet, PublicFormViewSet, SharedRecordViewSet
-from relationships.views import AssignmentViewSet
 from .views.ai import AIJobViewSet, AIUsageAnalyticsViewSet, AIPromptTemplateViewSet, AIEmbeddingViewSet
 
 # Import new API modules
@@ -65,10 +65,10 @@ router.register(r'pipelines', PipelineViewSet, basename='pipeline')
 router.register(r'search', GlobalSearchViewSet, basename='global-search')
 router.register(r'relationship-types', RelationshipTypeViewSet, basename='relationshiptype')
 router.register(r'relationships', RelationshipViewSet, basename='relationship')
-router.register(r'assignments', AssignmentViewSet, basename='assignment')
 router.register(r'auth', AuthViewSet, basename='auth')
 router.register(r'field-types', FieldTypeViewSet, basename='field-types')
 router.register(r'global-options', GlobalOptionsViewSet, basename='global-options')
+router.register(r'users', UserViewSet, basename='users')
 
 # Duplicates endpoints (simplified system)
 router.register(r'duplicate-rules', DuplicateRuleViewSet, basename='duplicate-rule')

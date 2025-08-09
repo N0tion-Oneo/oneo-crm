@@ -60,6 +60,7 @@ class FieldTypeViewSet(viewsets.GenericViewSet):
             FieldType.FILE: 'advanced',
             FieldType.BUTTON: 'advanced',
             FieldType.RELATION: 'advanced',
+            FieldType.USER: 'advanced',
             
             # System Types
             FieldType.RECORD_DATA: 'system',
@@ -83,6 +84,7 @@ class FieldTypeViewSet(viewsets.GenericViewSet):
             FieldType.FILE: 'File upload (includes images)',
             FieldType.BUTTON: 'Action button powered by workflows',
             FieldType.RELATION: 'Reference to another pipeline record (single selection)',
+            FieldType.USER: 'User assignment field with role management and comprehensive configuration',
             FieldType.RECORD_DATA: 'Predefined record metadata and analytics',
             FieldType.AI_GENERATED: 'AI-powered field with latest OpenAI models (0-1 temperature)',
         }
@@ -104,6 +106,7 @@ class FieldTypeViewSet(viewsets.GenericViewSet):
             FieldType.FILE: 'Paperclip',
             FieldType.BUTTON: 'Play',
             FieldType.RELATION: 'Link2',
+            FieldType.USER: 'Users',
             FieldType.RECORD_DATA: 'Database',
             FieldType.AI_GENERATED: 'Bot',
         }
@@ -269,6 +272,31 @@ class FieldTypeViewSet(viewsets.GenericViewSet):
             'percentage_display': {
                 'enum': ['decimal', 'whole'],
                 'description': 'Percentage display format'
+            },
+            # USER field options
+            'default_role': {
+                'enum': ['assigned', 'owner', 'collaborator', 'reviewer', 'manager', 'supervisor', 'lead', 'member', 'primary', 'secondary', 'backup', 'observer'],
+                'description': 'Default role for new user assignments'
+            },
+            'allowed_roles': {
+                'type': 'array',
+                'items': {
+                    'type': 'string',
+                    'enum': ['assigned', 'owner', 'collaborator', 'reviewer', 'manager', 'supervisor', 'lead', 'member', 'primary', 'secondary', 'backup', 'observer']
+                },
+                'description': 'Roles available for user assignments'
+            },
+            'display_format': {
+                'enum': ['name_only', 'name_with_role', 'name_with_email', 'avatar_with_name', 'full_details'],
+                'description': 'How to display assigned users'
+            },
+            'avatar_size': {
+                'enum': ['small', 'medium', 'large'],
+                'description': 'Size of user profile pictures'
+            },
+            'creator_default_role': {
+                'enum': ['assigned', 'owner', 'collaborator', 'reviewer', 'manager', 'supervisor', 'lead', 'member', 'primary', 'secondary', 'backup', 'observer'],
+                'description': 'Role for auto-assigned record creator'
             }
         }
         

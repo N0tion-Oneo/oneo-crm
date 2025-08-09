@@ -7,10 +7,81 @@ from django.contrib.auth import get_user_model
 from pipelines.models import Pipeline, Field, Record
 from relationships.models import RelationshipType, Relationship
 from authentication.models import UserType
+from authentication.permissions import SyncPermissionManager
 from ai.models import AIJob, AIUsageAnalytics, AIPromptTemplate, AIEmbedding
 from duplicates.models import URLExtractionRule, DuplicateRule, DuplicateRuleTest
+import logging
 
 User = get_user_model()
+logger = logging.getLogger(__name__)
+
+
+class UserAssignmentField(serializers.JSONField):
+    """
+    Custom serializer field for USER field assignments with pipeline permission validation
+    Validates that assigned users have access to the pipeline
+    """
+    
+    def __init__(self, pipeline_id=None, **kwargs):
+        self.pipeline_id = pipeline_id
+        super().__init__(**kwargs)
+    
+    def to_internal_value(self, data):
+        """Validate user assignments with pipeline permission checking"""
+        print(f"🔍 USER ASSIGNMENT FIELD: Received data: {data}")
+        print(f"🔍 USER ASSIGNMENT FIELD: Data type: {type(data)}")
+        # First, let JSONField handle basic JSON validation
+        validated_data = super().to_internal_value(data)
+        print(f"🔍 USER ASSIGNMENT FIELD: After JSONField validation: {validated_data}")
+        
+        # Skip validation if no pipeline context or no data
+        if not self.pipeline_id or not validated_data:
+            return validated_data
+        
+        # Extract user IDs from assignments for permission validation
+        user_ids = []
+        
+        if isinstance(validated_data, list):
+            # Multiple user assignments
+            for assignment in validated_data:
+                if isinstance(assignment, dict) and 'user_id' in assignment:
+                    user_ids.append(assignment['user_id'])
+                elif isinstance(assignment, int):
+                    user_ids.append(assignment)
+        elif isinstance(validated_data, dict) and 'user_id' in validated_data:
+            # Single user assignment
+            user_ids.append(validated_data['user_id'])
+        elif isinstance(validated_data, int):
+            # Simple user ID
+            user_ids.append(validated_data)
+        
+        # Validate each user has pipeline access
+        for user_id in user_ids:
+            if not self._validate_user_pipeline_access(user_id):
+                raise serializers.ValidationError(
+                    f'User {user_id} does not have access to this pipeline'
+                )
+        
+        return validated_data
+    
+    def _validate_user_pipeline_access(self, user_id: int) -> bool:
+        """Check if user has access to the pipeline"""
+        try:
+            user = User.objects.get(id=user_id, is_active=True)
+            permission_manager = SyncPermissionManager(user)
+            
+            # Check if user has any record-level access to the pipeline
+            has_read = permission_manager.has_permission('action', 'records', 'read', str(self.pipeline_id))
+            has_create = permission_manager.has_permission('action', 'records', 'create', str(self.pipeline_id))
+            has_update = permission_manager.has_permission('action', 'records', 'update', str(self.pipeline_id))
+            
+            return has_read or has_create or has_update
+            
+        except User.DoesNotExist:
+            return False
+        except Exception as e:
+            logger.warning(f"USER FIELD: Failed to validate user {user_id} pipeline access: {e}")
+            return False
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -97,12 +168,109 @@ class RecordSerializer(serializers.ModelSerializer):
         read_only_fields = ['title']
     
     def create(self, validated_data):
-        validated_data['created_by'] = self.context['request'].user
-        validated_data['updated_by'] = self.context['request'].user
-        return super().create(validated_data)
+        request = self.context.get('request')
+        
+        # ✅ Validate user context integrity
+        if not request:
+            raise serializers.ValidationError("No request context available")
+        if not hasattr(request, 'user') or not request.user:
+            raise serializers.ValidationError("No user in request context")
+        if not request.user.is_authenticated:
+            raise serializers.ValidationError("User is not authenticated")
+        
+        logger.info(f"SERIALIZER_CREATE: Record being created by user {request.user.id} ({request.user.email})")
+        
+        validated_data['created_by'] = request.user
+        validated_data['updated_by'] = request.user
+        
+        # Create the record first
+        record = super().create(validated_data)
+        
+        # Handle auto-assign creator for USER fields
+        self._auto_assign_creator(record)
+        
+        return record
+    
+    def _auto_assign_creator(self, record):
+        """Auto-assign creator to USER fields that have auto_assign_creator enabled"""
+        try:
+            from pipelines.field_types import FieldType
+            from django.utils import timezone
+            
+            # Get pipeline fields
+            pipeline = record.pipeline
+            user_fields = pipeline.fields.filter(field_type=FieldType.USER.value)
+            
+            for field in user_fields:
+                field_config = field.config or {}
+                
+                # Check if auto_assign_creator is enabled for this field
+                if field_config.get('auto_assign_creator', False):
+                    # Get current field data
+                    current_data = record.data.get(field.name, {})
+                    current_assignments = current_data.get('user_assignments', [])
+                    
+                    # Check if creator is already assigned
+                    creator_id = record.created_by.id
+                    is_already_assigned = any(
+                        assignment.get('user_id') == creator_id 
+                        for assignment in current_assignments
+                    )
+                    
+                    if not is_already_assigned:
+                        # Create creator assignment
+                        creator_role = field_config.get('creator_default_role', 'owner')
+                        creator_assignment = {
+                            'user_id': creator_id,
+                            'role': creator_role,
+                            'name': record.created_by.get_full_name(),
+                            'email': record.created_by.email,
+                            'display_name': record.created_by.get_full_name(),
+                            'display_email': record.created_by.email,
+                            'assigned_at': timezone.now().isoformat(),
+                            'auto_assigned': True
+                        }
+                        
+                        # Add creator assignment
+                        new_assignments = current_assignments + [creator_assignment]
+                        
+                        # Apply max_users limit if configured
+                        max_users = field_config.get('max_users')
+                        if max_users and len(new_assignments) > max_users:
+                            # Keep the most recent assignments including the creator
+                            new_assignments = new_assignments[-max_users:]
+                        
+                        # Update record data
+                        if field.name not in record.data:
+                            record.data[field.name] = {}
+                        record.data[field.name]['user_assignments'] = new_assignments
+                        
+                        logger.info(f"AUTO_ASSIGN: Added creator {creator_id} to field '{field.name}' with role '{creator_role}'")
+            
+            # Save the updated record if any changes were made
+            if user_fields.exists():
+                record.save(update_fields=['data', 'updated_at'])
+                
+        except Exception as e:
+            logger.error(f"AUTO_ASSIGN_ERROR: Failed to auto-assign creator: {e}")
+            # Don't fail record creation if auto-assignment fails
+            pass
     
     def update(self, instance, validated_data):
-        validated_data['updated_by'] = self.context['request'].user
+        request = self.context.get('request')
+        
+        # ✅ Extensive validation of user context
+        if not request:
+            raise serializers.ValidationError("No request context available")
+        if not hasattr(request, 'user') or not request.user:
+            raise serializers.ValidationError("No user in request context")
+        if not request.user.is_authenticated:
+            raise serializers.ValidationError("User is not authenticated")
+        
+        # ✅ Log for debugging user context issues
+        logger.info(f"SERIALIZER_UPDATE: Record {instance.id if instance else 'NEW'} being updated by user {request.user.id} ({request.user.email})")
+        
+        validated_data['updated_by'] = request.user
         return super().update(instance, validated_data)
 
 
@@ -224,6 +392,15 @@ class DynamicRecordSerializer(serializers.ModelSerializer):
                         required=is_required,
                         allow_empty=not is_required
                     )
+            elif field.field_type == 'user':
+                # Handle user assignment fields with pipeline permission validation
+                pipeline_id = getattr(self.pipeline, 'id', None) if hasattr(self, 'pipeline') else None
+                fields_dict[field_name] = UserAssignmentField(
+                    source=f'data.{field_name}',
+                    pipeline_id=pipeline_id,
+                    required=is_required,
+                    allow_null=not is_required
+                )
             else:
                 # Fallback to JSON field
                 fields_dict[field_name] = serializers.JSONField(
@@ -343,10 +520,16 @@ class DynamicRecordSerializer(serializers.ModelSerializer):
         print(f"   📦 Validated Data: {validated_data}")
         print(f"   🔍 Record ID: {instance.id}")
         
+        # 🔥 CRITICAL FIX: Add user context handling that was missing!
+        request = self.context.get('request')
+        if request and request.user and request.user.is_authenticated:
+            validated_data['updated_by'] = request.user
+        
         # Extract data updates from validated_data
         data_updates = validated_data.pop('data', {})
         
         print(f"   📊 Data Updates: {data_updates}")
+        
         if data_updates:
             print(f"   🔑 Updates contain {len(data_updates)} field(s): [{', '.join(data_updates.keys())}]")
             null_fields = [k for k, v in data_updates.items() if v is None]

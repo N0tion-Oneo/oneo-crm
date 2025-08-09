@@ -14,9 +14,9 @@ import logging
 User = get_user_model()
 logger = logging.getLogger(__name__)
 
-async def authenticate_websocket_jwt(token: str):
+async def authenticate_websocket_jwt(token: str, tenant_schema: str = None):
     """
-    Authenticate JWT token for WebSocket connections
+    Authenticate JWT token for WebSocket connections with tenant validation
     Returns user instance or None if authentication fails
     """
     if not token:
@@ -30,20 +30,37 @@ async def authenticate_websocket_jwt(token: str):
         # Validate JWT token
         access_token = AccessToken(token)
         user_id = access_token['user_id']
+        token_tenant_schema = access_token.get('tenant_schema')
         
-        # Get user from database
+        # ✅ Validate tenant context
+        if tenant_schema and token_tenant_schema and tenant_schema != token_tenant_schema:
+            logger.warning(f"WebSocket tenant mismatch - Expected: {tenant_schema}, Token: {token_tenant_schema}")
+            return None
+        
+        # Get user with tenant-aware caching
         user = await get_user_by_id(int(user_id))
         if not user or not user.is_active:
             logger.warning(f"User {user_id} not found or inactive")
             return None
         
+        # ✅ Final validation: user exists in current tenant
+        if tenant_schema:
+            from django_tenants.utils import schema_context
+            from asgiref.sync import sync_to_async
+            with schema_context(tenant_schema):
+                try:
+                    await sync_to_async(User.objects.get)(id=user_id, is_active=True)
+                except User.DoesNotExist:
+                    logger.error(f"WebSocket user {user_id} not found in tenant {tenant_schema}")
+                    return None
+        
         return user
         
     except (InvalidToken, TokenError, KeyError) as e:
-        logger.warning(f"JWT authentication failed: {e}")
+        logger.warning(f"WebSocket JWT authentication failed: {e}")
         return None
     except Exception as e:
-        logger.error(f"JWT authentication error: {e}")
+        logger.error(f"WebSocket JWT authentication error: {e}")
         return None
 
 async def authenticate_websocket_session(session_key: str):
@@ -90,39 +107,33 @@ async def authenticate_websocket_session(session_key: str):
 
 async def get_user_by_id(user_id: int):
     """
-    Get user by ID with caching (async version)
+    Get user by ID with tenant-aware caching (async version)
     """
     from asgiref.sync import sync_to_async
+    from django.db import connection
+    from django_tenants.utils import schema_context
     
-    # Check cache first
-    cache_key = f"user:{user_id}"
-    user_data = cache.get(cache_key)
+    # ✅ Include tenant context in cache key
+    tenant_schema = getattr(connection, 'schema_name', 'default')
+    cache_key = f"user:{tenant_schema}:{user_id}"
     
-    if user_data:
-        # Reconstruct user from cached data
-        try:
-            user = await sync_to_async(User.objects.get)(id=user_id)
-            return user
-        except User.DoesNotExist:
-            # User was deleted, remove from cache
-            cache.delete(cache_key)
-            return None
+    # ✅ For now, disable caching to avoid corruption during debugging
+    # TODO: Re-enable caching once user context issues are resolved
+    logger.debug(f"Getting user {user_id} from database (caching disabled during debug)")
     
-    # Get from database using async wrapper
+    # Get from database using async wrapper with tenant context
     try:
-        user = await sync_to_async(User.objects.get)(id=user_id, is_active=True)
+        if tenant_schema and tenant_schema != 'default':
+            with schema_context(tenant_schema):
+                user = await sync_to_async(User.objects.get)(id=user_id, is_active=True)
+        else:
+            user = await sync_to_async(User.objects.get)(id=user_id, is_active=True)
         
-        # Cache user data for 5 minutes
-        cache.set(cache_key, {
-            'id': user.id,
-            'username': user.username,
-            'email': user.email,
-            'is_active': user.is_active,
-        }, 300)
-        
+        logger.debug(f"Found user {user.email} (ID: {user.id}) in tenant {tenant_schema}")
         return user
         
     except User.DoesNotExist:
+        logger.warning(f"User {user_id} not found in tenant {tenant_schema}")
         return None
 
 def extract_auth_from_scope(scope):

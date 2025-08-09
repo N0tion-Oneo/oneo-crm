@@ -22,7 +22,9 @@ export function FieldRenderer({
   error,
   className,
   autoFocus = false,
-  context = 'form'
+  context = 'form',
+  pipeline_id,
+  record_id
 }: FieldRenderProps) {
   
   // Pure UI rendering - no save management
@@ -36,7 +38,9 @@ export function FieldRenderer({
     error,
     className,
     autoFocus,
-    context
+    context,
+    pipeline_id,
+    record_id
   })
 }
 
@@ -89,6 +93,9 @@ export interface FieldWrapperProps {
   // New props for permission-based requirements
   user?: User | null
   formData?: Record<string, any>
+  // Context data for specific field types (like USER fields)
+  pipeline_id?: number
+  record_id?: number
 }
 
 export function FieldWrapper({
@@ -107,7 +114,9 @@ export function FieldWrapper({
   labelClassName = '',
   helpClassName = '',
   user,
-  formData = {}
+  formData = {},
+  pipeline_id,
+  record_id
 }: FieldWrapperProps) {
   
   const fieldLabel = field.display_name || field.name
@@ -148,6 +157,8 @@ export function FieldWrapper({
         error={error}
         autoFocus={autoFocus}
         context={context}
+        pipeline_id={pipeline_id}
+        record_id={record_id}
       />
     </div>
   )

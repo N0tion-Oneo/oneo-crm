@@ -7,7 +7,7 @@ import { toast } from '@/hooks/use-toast'
 // Save strategy function moved from deleted field-save-manager.tsx
 export function getSaveStrategy(fieldType: string): 'immediate' | 'on-exit' | 'continuous' | 'on-change' | 'manual' {
   // Immediate save for choices and toggles
-  if (['select', 'multiselect', 'radio', 'boolean', 'relation'].includes(fieldType)) {
+  if (['select', 'multiselect', 'radio', 'boolean', 'relation', 'user'].includes(fieldType)) {
     return 'immediate'
   }
   

@@ -2,7 +2,7 @@
 import React from 'react'
 import { 
   ArrowUp, ArrowDown, CheckSquare, Square, Type, FileText, Hash, 
-  Calendar, Mail, Phone, Link, Image, Users, Bot, Tag 
+  Calendar, Mail, Phone, Link, Image, Users, Bot, Tag, Clock, User
 } from 'lucide-react'
 import { RecordField, Sort, Record } from '@/types/records'
 import { FieldUtilsService } from '@/services/records'
@@ -104,6 +104,28 @@ export function RecordTableHeader({
             </th>
           )
         })}
+        
+        {/* System metadata columns */}
+        <th className="w-32 px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+          <div className="flex items-center space-x-2">
+            <Clock className="w-4 h-4" />
+            <span>Created</span>
+          </div>
+        </th>
+        
+        <th className="w-32 px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+          <div className="flex items-center space-x-2">
+            <Clock className="w-4 h-4" />
+            <span>Updated</span>
+          </div>
+        </th>
+        
+        <th className="w-32 px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+          <div className="flex items-center space-x-2">
+            <User className="w-4 h-4" />
+            <span>Created By</span>
+          </div>
+        </th>
         
         {/* Actions column */}
         <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">

@@ -14,7 +14,6 @@ import { TagsFieldConfig } from '@/components/pipelines/field-configs/TagsFieldC
 import { FileFieldConfig } from '@/components/pipelines/field-configs/FileFieldConfig'
 import { AddressFieldConfig } from '@/components/pipelines/field-configs/AddressFieldConfig'
 import { ButtonFieldConfig } from '@/components/pipelines/field-configs/ButtonFieldConfig'
-import { RecordDataFieldConfig } from '@/components/pipelines/field-configs/RecordDataFieldConfig'
 
 /**
  * Registry mapping field types to their configuration components
@@ -108,10 +107,6 @@ export const fieldConfigRegistry: Record<string, FieldConfigComponent> = {
 
   button: {
     component: ButtonFieldConfig
-  },
-
-  record_data: {
-    component: RecordDataFieldConfig
   }
 }
 

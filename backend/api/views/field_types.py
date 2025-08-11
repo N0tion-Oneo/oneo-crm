@@ -32,7 +32,7 @@ class FieldTypeViewSet(viewsets.GenericViewSet):
                 config_schema = {"type": "object", "properties": {}}
         
         # Determine field capabilities - Updated for Tier 1 (simplified validation)
-        is_computed = field_type in [FieldType.RECORD_DATA, FieldType.AI_GENERATED]
+        is_computed = field_type in [FieldType.AI_GENERATED]
         # Tier 1: Reduced validation capabilities - most validation moved to form level (Tier 3)
         supports_validation = field_type in [
             FieldType.EMAIL, FieldType.PHONE, FieldType.URL, FieldType.ADDRESS
@@ -63,7 +63,6 @@ class FieldTypeViewSet(viewsets.GenericViewSet):
             FieldType.USER: 'advanced',
             
             # System Types
-            FieldType.RECORD_DATA: 'system',
             FieldType.AI_GENERATED: 'system',
         }
         
@@ -85,8 +84,7 @@ class FieldTypeViewSet(viewsets.GenericViewSet):
             FieldType.BUTTON: 'Action button powered by workflows',
             FieldType.RELATION: 'Reference to another pipeline record (single selection)',
             FieldType.USER: 'User assignment field with role management and comprehensive configuration',
-            FieldType.RECORD_DATA: 'Predefined record metadata and analytics',
-            FieldType.AI_GENERATED: 'AI-powered field with latest OpenAI models (0-1 temperature)',
+            FieldType.AI_GENERATED: 'AI-powered field with latest OpenAI models (0-1 temperature)'
         }
         
         # Icon mapping (Lucide React icons)
@@ -107,7 +105,6 @@ class FieldTypeViewSet(viewsets.GenericViewSet):
             FieldType.BUTTON: 'Play',
             FieldType.RELATION: 'Link2',
             FieldType.USER: 'Users',
-            FieldType.RECORD_DATA: 'Database',
             FieldType.AI_GENERATED: 'Bot',
         }
         

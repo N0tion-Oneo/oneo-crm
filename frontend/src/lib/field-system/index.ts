@@ -16,7 +16,6 @@ import { AddressFieldComponent } from './components/address-field'
 import { TagsFieldComponent } from './components/tags-field'
 import { AIFieldComponent } from './components/ai-field'
 import { ButtonFieldComponent } from './components/button-field'
-import { RecordDataFieldComponent } from './components/record-data-field'
 import { UserFieldComponent } from './components/user-field'
 
 /**
@@ -64,7 +63,6 @@ export function initializeFieldSystem() {
   registerFieldComponent('ai', AIFieldComponent)
   registerFieldComponent('ai_generated', AIFieldComponent)
   registerFieldComponent('button', ButtonFieldComponent)
-  registerFieldComponent('record_data', RecordDataFieldComponent)
   registerFieldComponent('user', UserFieldComponent)
   
   // Legacy aliases

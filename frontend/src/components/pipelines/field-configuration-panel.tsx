@@ -136,7 +136,7 @@ export function FieldConfigurationPanel({
     const needsKeyValueOnChange = [
       'phone', 'number', 'decimal', 'currency', 'percentage', 'auto_increment',
       'text', 'textarea', 'email', 'url', 'select', 'multiselect', 'boolean',
-      'date', 'tags', 'file', 'address', 'button', 'record_data', 'ai_generated',
+      'date', 'tags', 'file', 'address', 'button', 'ai_generated',
       'ai_field', 'ai', 'relation', 'user'
     ]
     const onChangeHandler = needsKeyValueOnChange.includes(fieldType) 

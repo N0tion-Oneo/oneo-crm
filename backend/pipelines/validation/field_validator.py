@@ -50,14 +50,6 @@ class FieldValidator:
                 'Export AI-generated content before creating new field'
             ]
         },
-        ('record_data', '*'): {
-            'reason': 'System record data fields cannot be changed',
-            'explanation': 'Record data fields are system-managed and tied to core functionality. Changing them would break record management features.',
-            'alternatives': [
-                'Use computed fields for custom record data views',
-                'Create new field that references record metadata'
-            ]
-        },
         
         # Relationship field conversions - contain references to other records
         ('relation', '*'): {
@@ -123,14 +115,6 @@ class FieldValidator:
             ]
         },
         
-        ('*', 'record_data'): {
-            'reason': 'Cannot convert fields to system record data type',
-            'explanation': 'Record data fields are system-managed and cannot be created from user data.',
-            'alternatives': [
-                'Use existing record metadata features',
-                'Create computed field that formats record information'
-            ]
-        },
         
         # Ambiguous/error-prone conversions
         ('date', 'number'): {

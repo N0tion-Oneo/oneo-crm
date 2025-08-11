@@ -82,8 +82,21 @@ function AIFieldInput({
     loadTenantConfig()
   }, [])
 
-  // Get AI config from field.field_config or field.config (fallback)
-  const aiConfig: AIFieldConfig = field.field_config || field.config || getFieldConfig(field, 'ai_config', {})
+  // Get AI config from field.ai_config (primary) or field.field_config/field.config (fallback)
+  const aiConfig: AIFieldConfig = (field as any).ai_config || field.field_config || field.config || getFieldConfig(field, 'ai_config', {})
+  
+  // DEBUG: Log field data to understand the structure
+  useEffect(() => {
+    console.log('🔍 AI Field Debug - Field data:', {
+      field_name: field.name,
+      field_type: field.field_type,
+      field_config: field.field_config,
+      config: field.config,
+      ai_config: (field as any).ai_config,
+      resolved_aiConfig: aiConfig
+    })
+  }, [field, aiConfig])
+  
   const {
     prompt,
     model,

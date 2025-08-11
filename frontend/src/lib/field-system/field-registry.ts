@@ -75,7 +75,6 @@ export class FieldResolver {
       'tags': 'tags',
       'relation': 'relation',
       'button': 'button',
-      'record_data': 'record_data',
       'ai_field': 'ai',
       'ai': 'ai',
       'ai_generated': 'ai',

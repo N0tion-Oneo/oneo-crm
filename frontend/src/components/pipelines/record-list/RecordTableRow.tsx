@@ -17,6 +17,22 @@ export interface RecordTableRowProps {
   className?: string
 }
 
+// Helper function to format system timestamps
+const formatSystemTimestamp = (timestamp: string): string => {
+  const date = new Date(timestamp)
+  const now = new Date()
+  const diffMs = now.getTime() - date.getTime()
+  const diffMins = Math.floor(diffMs / 60000)
+  const diffHours = Math.floor(diffMs / 3600000)
+  const diffDays = Math.floor(diffMs / 86400000)
+
+  if (diffMins < 1) return 'Just now'
+  if (diffMins < 60) return `${diffMins}m ago`
+  if (diffHours < 24) return `${diffHours}h ago`
+  if (diffDays < 7) return `${diffDays}d ago`
+  return date.toLocaleDateString()
+}
+
 export function RecordTableRow({
   record,
   fields,
@@ -27,6 +43,7 @@ export function RecordTableRow({
   pipelineId,
   className = ""
 }: RecordTableRowProps) {
+
 
   const renderFieldValue = (field: RecordField, value: any) => {
     // Handle interactive fields (buttons, checkboxes)
@@ -203,6 +220,28 @@ export function RecordTableRow({
           </td>
         )
       })}
+      
+      {/* System metadata columns */}
+      {/* Created At */}
+      <td className="w-32 px-4 py-3 text-sm text-gray-500 dark:text-gray-400">
+        <div className="truncate" title={new Date(record.created_at).toLocaleString()}>
+          {formatSystemTimestamp(record.created_at)}
+        </div>
+      </td>
+      
+      {/* Updated At */}
+      <td className="w-32 px-4 py-3 text-sm text-gray-500 dark:text-gray-400">
+        <div className="truncate" title={new Date(record.updated_at).toLocaleString()}>
+          {formatSystemTimestamp(record.updated_at)}
+        </div>
+      </td>
+      
+      {/* Created By */}
+      <td className="w-32 px-4 py-3 text-sm text-gray-500 dark:text-gray-400">
+        <div className="truncate" title={record.created_by ? `${record.created_by.first_name} ${record.created_by.last_name}` : 'System'}>
+          {record.created_by ? `${record.created_by.first_name} ${record.created_by.last_name}` : 'System'}
+        </div>
+      </td>
       
       {/* Actions cell */}
       <td className="px-4 py-3">

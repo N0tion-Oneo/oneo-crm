@@ -22,6 +22,7 @@ export class FieldUtilsService {
     }
   }
 
+
   /**
    * Format field value for display in table (returns JSX or string)
    */

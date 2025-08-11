@@ -71,8 +71,7 @@ class FieldType(str, Enum):
     RELATION = "relation"            # Reference to another pipeline record
     USER = "user"                    # User assignment field with role management
     
-    # System Types (2)
-    RECORD_DATA = "record_data"      # Predefined record metadata
+    # System Types (1)
     AI_GENERATED = "ai_generated"    # AI-powered field with latest OpenAI models
 
 
@@ -381,37 +380,6 @@ class ButtonFieldConfig(BaseFieldConfig):
         return v
 
 
-class RecordDataFieldConfig(BaseFieldConfig):
-    """Configuration for predefined record metadata fields"""
-    data_type: str                           # 'timestamp', 'user', 'count', 'duration', 'status'
-    
-    # Timestamp fields
-    timestamp_type: Optional[str] = None     # 'created_at', 'updated_at', 'last_engaged_at', etc.
-    
-    # User fields  
-    user_type: Optional[str] = None          # 'created_by', 'updated_by', 'first_contacted_by', etc.
-    
-    # Count fields
-    count_type: Optional[str] = None         # 'total_communications', 'days_in_pipeline', etc.
-    
-    # Duration fields
-    duration_type: Optional[str] = None      # 'time_to_response', 'stage_duration', etc.
-    
-    # Status fields
-    status_type: Optional[str] = None        # 'engagement_status', 'response_status', etc.
-    
-    # Display formatting
-    format: str = 'relative'                 # 'relative' ("2 days ago") vs 'absolute' ("Jan 15, 2024")
-    include_time: bool = False               # For timestamp fields
-    
-    @validator('data_type')
-    def validate_data_type(cls, v):
-        valid_types = ['timestamp', 'user', 'count', 'duration', 'status']
-        if v not in valid_types:
-            raise ValueError(f'Data type must be one of: {valid_types}')
-        return v
-
-
 class AIGeneratedFieldConfig(BaseFieldConfig):
     """Configuration for AI-powered fields with latest OpenAI models and tools"""
     # Core AI Settings - Model pulled from tenant AI configuration
@@ -595,8 +563,7 @@ FIELD_TYPE_CONFIGS = {
     FieldType.RELATION: RelationFieldConfig,    # Reference to another pipeline
     FieldType.USER: UserFieldConfig,            # User assignment field with comprehensive configuration
     
-    # System Types (2)
-    FieldType.RECORD_DATA: RecordDataFieldConfig,    # New predefined metadata
+    # System Types (1)
     FieldType.AI_GENERATED: AIGeneratedFieldConfig,  # Enhanced AI with latest models
 }
 

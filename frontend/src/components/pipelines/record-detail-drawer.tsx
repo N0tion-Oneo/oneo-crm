@@ -49,6 +49,7 @@ import {
 interface RecordField extends FieldWithPermissions {
   field_config?: { [key: string]: any }
   config?: { [key: string]: any } // Legacy support
+  ai_config?: { [key: string]: any } // AI field configuration
   original_slug?: string // Preserve original backend slug for API calls
 }
 
@@ -64,8 +65,11 @@ const convertToFieldType = (recordField: RecordField): Field => ({
   original_slug: recordField.original_slug, // ⭐ CRITICAL: Include backend slug for FieldSaveService
   is_readonly: false, // RecordField doesn't have is_readonly
   help_text: undefined, // RecordField doesn't have help_text
-  placeholder: undefined // RecordField doesn't have placeholder
-})
+  placeholder: undefined, // RecordField doesn't have placeholder
+  // Pass through AI config for AI fields
+  ...(recordField.ai_config && { ai_config: recordField.ai_config })
+} as Field)
+
 
 // Provide fallback default values for field types that return null/undefined
 const getFallbackDefaultValue = (fieldType: string): any => {
@@ -274,7 +278,6 @@ export function RecordDetailDrawer({
           // Try with display_name or slug transformations
           backendValue = record.data?.[field.display_name?.toLowerCase().replace(/\s+/g, '_')]
         }
-        
         
         // Always try to map the value, even if it's empty string, 0, false, etc.
         if (backendValue !== undefined) {

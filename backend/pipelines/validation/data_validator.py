@@ -113,8 +113,6 @@ class FieldValidator:
                 # This will be passed from the pipeline validation context
                 pipeline_id = getattr(self, '_pipeline_id', None)
                 result.cleaned_value = self._validate_user_assignment(value, pipeline_id)
-            elif self.field_type == FieldType.RECORD_DATA:
-                result.cleaned_value = self._validate_record_data(value)
             elif self.field_type == FieldType.AI_GENERATED:
                 result.cleaned_value = self._validate_ai_field(value)
             else:
@@ -878,43 +876,6 @@ class FieldValidator:
             'config': self.config.model_dump() if self.config else {}
         }
     
-    def _validate_record_data(self, value: Any) -> Any:
-        """Validate record data field using RecordDataFieldConfig"""
-        # Record data fields are typically system-generated
-        # Validation depends on the data type
-        if self.config and hasattr(self.config, 'data_type'):
-            data_type = self.config.data_type
-            
-            if data_type == 'timestamp':
-                # Validate timestamp format
-                if isinstance(value, str):
-                    try:
-                        datetime.fromisoformat(value.replace('Z', '+00:00'))
-                    except ValueError:
-                        raise ValueError('Invalid timestamp format')
-                elif not isinstance(value, datetime):
-                    raise ValueError('Timestamp must be a datetime object or ISO string')
-            
-            elif data_type == 'user':
-                # Validate user ID
-                try:
-                    int(value)
-                except (TypeError, ValueError):
-                    raise ValueError('User value must be a user ID (integer)')
-            
-            elif data_type in ['count', 'duration']:
-                # Validate numeric value
-                try:
-                    float(value)
-                except (TypeError, ValueError):
-                    raise ValueError(f'{data_type.title()} value must be numeric')
-            
-            elif data_type == 'status':
-                # Status can be any string
-                if not isinstance(value, str):
-                    value = str(value)
-        
-        return value
     
     def _validate_ai_field(self, value: Any) -> Any:
         """Validate AI field using AIGeneratedFieldConfig"""
@@ -1366,7 +1327,7 @@ def _get_field_default_value(field_type: FieldType, field_config: Dict[str, Any]
         default_value = None  # No default file
     elif field_type == FieldType.AI_GENERATED:
         default_value = None  # AI fields start null until processed
-    elif field_type in [FieldType.BUTTON, FieldType.RECORD_DATA]:
+    elif field_type == FieldType.BUTTON:
         default_value = None  # Special fields calculated separately
     elif field_type == FieldType.USER:
         default_value = None  # User fields should be null initially - but editable

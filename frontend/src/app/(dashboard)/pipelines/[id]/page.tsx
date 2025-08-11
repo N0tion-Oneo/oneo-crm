@@ -49,6 +49,7 @@ export default function PipelineRecordsPage() {
             display_order: field.display_order || 0,
             field_config: field.field_config || {},
             config: field.field_config || {}, // Legacy support
+            ai_config: field.ai_config || {}, // AI field configuration
             // Preserve original slug for backend API calls
             original_slug: field.slug,
             business_rules: field.business_rules || {}
@@ -167,7 +168,8 @@ export default function PipelineRecordsPage() {
             // required removed - use stage-specific business rules only
             visible: field.is_visible_in_list !== false,
             order: field.display_order || 0,
-            config: field.field_config || {}
+            config: field.field_config || {},
+            ai_config: field.ai_config || {} // AI field configuration
           })),
           stages: pipelineResponse.data.stages || []
         }
@@ -201,7 +203,8 @@ export default function PipelineRecordsPage() {
           required: false, // Requirements handled by conditional rules
           visible: field.is_visible_in_list !== false,
           order: field.display_order || 0,
-          config: field.field_config || {}
+          config: field.field_config || {},
+          ai_config: field.ai_config || {} // AI field configuration
         })),
         stages: response.data.stages || []
       }

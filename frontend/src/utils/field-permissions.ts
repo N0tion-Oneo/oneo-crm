@@ -41,6 +41,7 @@ export interface FieldWithPermissions {
   is_visible_in_detail?: boolean
   display_order: number
   business_rules?: BusinessRules
+  ai_config?: { [key: string]: any } // AI field configuration
 }
 
 export interface FieldPermissionResult {

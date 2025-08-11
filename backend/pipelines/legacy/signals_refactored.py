@@ -1,7 +1,15 @@
 """
+🔴 DEPRECATED - DO NOT USE 🔴
 Simplified Pipeline Signal Handlers
 All complex business logic moved to FieldOperationManager
 Signals now serve as simple triggers that delegate to unified system
+
+REPLACED BY: pipelines/signals.py
+
+This file was an alternative implementation that is not currently active.
+The system uses pipelines/signals.py (imported in apps.py).
+
+Date deprecated: 2025-08-10
 """
 
 import logging

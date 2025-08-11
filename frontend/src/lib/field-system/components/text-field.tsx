@@ -11,11 +11,18 @@ export const TextFieldComponent: FieldComponent = {
     const [isEditing, setIsEditing] = useState(false)
     
     // Update local value when external value changes and not editing
+    // BUT: preserve user input for new records during editing session
     useEffect(() => {
       if (!isEditing) {
-        setLocalValue(value || '')
+        // Only update if we have a meaningful external value or if localValue is empty
+        // This prevents overriding user input in new record creation
+        if (value !== null && value !== undefined && value !== '') {
+          setLocalValue(value)
+        } else if (localValue === '' || localValue === null || localValue === undefined) {
+          setLocalValue(value || '')
+        }
       }
-    }, [value, isEditing])
+    }, [value, isEditing, localValue])
     
     const maxLength = getFieldConfig(field, 'max_length')
     const minLength = getFieldConfig(field, 'min_length')
@@ -60,6 +67,10 @@ export const TextFieldComponent: FieldComponent = {
     }
     
     const handleBlur = () => {
+      // Ensure parent has the latest value before we stop editing
+      if (localValue !== value) {
+        onChange(localValue)
+      }
       setIsEditing(false)
       onBlur?.()
     }

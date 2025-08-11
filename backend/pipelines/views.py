@@ -578,8 +578,8 @@ class FieldViewSet(viewsets.ModelViewSet):
             
             if dry_run:
                 # For dry run, use FieldValidator to analyze changes without applying them
-                from .validation.field_validator import FieldValidator
-                validator = FieldValidator()
+                from .validation.field_validator import FieldValidator as AdvancedFieldValidator
+                validator = AdvancedFieldValidator()
                 
                 # Validate the changes
                 validation_result = validator.validate_field_update(field, new_config)

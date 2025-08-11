@@ -1,5 +1,5 @@
 'use client'
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -9,7 +9,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { PermissionGuard } from '@/components/permissions/PermissionGuard'
 import TenantConfigModal from '@/components/ai/TenantConfigModal'
 import { useWebSocket, type RealtimeMessage } from '@/contexts/websocket-context'
-import { Plus, Settings, TrendingUp, Zap, FileText, Brain, Search, Users, MessageSquare, BarChart3, Play, Pause, AlertCircle, Clock, User, Database, Copy, ChevronDown, ChevronUp, Eye, AlertTriangle, CheckCircle, XCircle } from 'lucide-react'
+import { Plus, Settings, TrendingUp, Zap, FileText, Brain, Search, Users, MessageSquare, BarChart3, Play, Pause, AlertCircle, Clock, User, Database, Copy, ChevronDown, ChevronUp, Eye, AlertTriangle, CheckCircle, XCircle, Activity, RefreshCw, Trash2, PlayCircle, RotateCcw } from 'lucide-react'
 import { api } from '@/lib/api'
 
 interface AIJob {
@@ -76,6 +76,65 @@ interface TenantConfig {
   concurrent_jobs: number
 }
 
+interface WorkerHealth {
+  workers_online: number
+  worker_details: Record<string, any>
+  worker_stats: Record<string, any>
+  queue_lengths: {
+    ai_processing: number
+    celery: number
+    maintenance: number
+    total: number
+  }
+  job_counts: {
+    pending: number
+    processing: number
+    total_active: number
+  }
+  health_status: 'healthy' | 'no_workers' | 'jobs_not_queuing' | 'potential_stuck_jobs' | 'error'
+  health_message: string
+  timestamp: string
+}
+
+interface SystemDiagnostics {
+  tenant_info: {
+    name: string
+    schema: string
+    id: string
+  }
+  ai_config: {
+    ai_enabled: boolean
+    has_openai_key: boolean
+    has_anthropic_key: boolean
+    default_provider: string
+    default_model: string
+    concurrent_jobs: number
+    usage_limits: any
+  }
+  job_stats: {
+    total_jobs: number
+    pending: number
+    processing: number
+    completed: number
+    failed: number
+    cancelled: number
+  }
+  connectivity: Record<string, string>
+  recent_errors: Array<{
+    job_id: number
+    error_message: string
+    failed_at: string
+    retry_count: number
+    can_retry: boolean
+  }>
+  overall_health: {
+    status: 'healthy' | 'issues_detected'
+    issues: string[]
+    issues_count: number
+    timestamp: string
+  }
+}
+
 const JOB_TYPE_CONFIG = {
   field_generation: {
     icon: Zap,
@@ -122,7 +181,10 @@ export default function AIPage() {
   const [loading, setLoading] = useState(true)
   const [expandedJobs, setExpandedJobs] = useState<Set<string>>(new Set())
   const [configModalOpen, setConfigModalOpen] = useState(false)
-  const [activeTab, setActiveTab] = useState<'overview' | 'jobs' | 'templates' | 'analytics' | 'search' | 'config'>('overview')
+  const [activeTab, setActiveTab] = useState<'overview' | 'jobs' | 'templates' | 'analytics' | 'search' | 'management'>('overview')
+  const [workerHealth, setWorkerHealth] = useState<WorkerHealth | null>(null)
+  const [systemDiagnostics, setSystemDiagnostics] = useState<SystemDiagnostics | null>(null)
+  const [bulkOperationLoading, setBulkOperationLoading] = useState(false)
 
   // WebSocket integration for real-time AI job updates
   const { isConnected, connectionStatus, subscribe, unsubscribe } = useWebSocket()
@@ -298,6 +360,103 @@ export default function AIPage() {
     }
   }
 
+  const loadWorkerHealth = useCallback(async () => {
+    try {
+      const response = await api.get('/api/v1/ai-jobs/worker_health/')
+      setWorkerHealth(response.data)
+    } catch (error: any) {
+      console.error('Failed to load worker health:', error)
+      setWorkerHealth(null)
+    }
+  }, [])
+
+  const loadSystemDiagnostics = useCallback(async () => {
+    try {
+      const response = await api.get('/api/v1/ai-jobs/diagnostics/')
+      setSystemDiagnostics(response.data)
+    } catch (error: any) {
+      console.error('Failed to load system diagnostics:', error)
+      setSystemDiagnostics(null)
+    }
+  }, [])
+
+  // Load management data when switching to management tab
+  useEffect(() => {
+    if (activeTab === 'management') {
+      loadWorkerHealth()
+      loadSystemDiagnostics()
+    }
+  }, [activeTab, loadWorkerHealth, loadSystemDiagnostics])
+
+  const performBulkRetry = async () => {
+    setBulkOperationLoading(true)
+    try {
+      const response = await api.post('/api/v1/ai-jobs/bulk_retry/')
+      console.log('✅ Bulk retry completed:', response.data)
+      
+      // Show success message and reload data
+      if (response.data.retried_count > 0) {
+        alert(`Successfully retried ${response.data.retried_count} failed jobs`)
+        await loadAIData()
+      } else {
+        alert('No failed jobs to retry')
+      }
+    } catch (error: any) {
+      console.error('❌ Bulk retry failed:', error)
+      alert('Failed to retry jobs: ' + (error.response?.data?.error || error.message))
+    } finally {
+      setBulkOperationLoading(false)
+    }
+  }
+
+  const performBulkCancel = async () => {
+    setBulkOperationLoading(true)
+    try {
+      const response = await api.post('/api/v1/ai-jobs/bulk_cancel/')
+      console.log('✅ Bulk cancel completed:', response.data)
+      
+      // Show success message and reload data
+      if (response.data.cancelled_count > 0) {
+        alert(`Successfully cancelled ${response.data.cancelled_count} pending jobs`)
+        await loadAIData()
+      } else {
+        alert('No pending jobs to cancel')
+      }
+    } catch (error: any) {
+      console.error('❌ Bulk cancel failed:', error)
+      alert('Failed to cancel jobs: ' + (error.response?.data?.error || error.message))
+    } finally {
+      setBulkOperationLoading(false)
+    }
+  }
+
+  const performQueuePending = async () => {
+    setBulkOperationLoading(true)
+    try {
+      const response = await api.post('/api/v1/ai-jobs/queue_pending/')
+      console.log('✅ Queue pending completed:', response.data)
+      
+      // Show detailed message
+      const { queued_count, failed_count, total_pending } = response.data
+      if (queued_count > 0) {
+        let message = `Successfully queued ${queued_count} jobs for processing`
+        if (failed_count > 0) {
+          message += `. ${failed_count} jobs failed to queue.`
+        }
+        alert(message)
+        await loadAIData()
+        await loadWorkerHealth()
+      } else {
+        alert('No pending jobs to queue')
+      }
+    } catch (error: any) {
+      console.error('❌ Queue pending failed:', error)
+      alert('Failed to queue jobs: ' + (error.response?.data?.error || error.message))
+    } finally {
+      setBulkOperationLoading(false)
+    }
+  }
+
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'completed': return 'bg-green-100 text-green-800'
@@ -357,7 +516,7 @@ export default function AIPage() {
 
         {/* Tabs */}
         <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as any)} className="space-y-6">
-          <TabsList className="grid w-full grid-cols-5">
+          <TabsList className="grid w-full grid-cols-6">
             <TabsTrigger value="overview" className="flex items-center gap-2">
               <TrendingUp className="h-4 w-4" />
               Overview
@@ -365,6 +524,10 @@ export default function AIPage() {
             <TabsTrigger value="jobs" className="flex items-center gap-2">
               <Zap className="h-4 w-4" />
               Jobs
+            </TabsTrigger>
+            <TabsTrigger value="management" className="flex items-center gap-2">
+              <Activity className="h-4 w-4" />
+              Management
             </TabsTrigger>
             <TabsTrigger value="templates" className="flex items-center gap-2">
               <FileText className="h-4 w-4" />
@@ -772,6 +935,276 @@ export default function AIPage() {
               </div>
             </CardContent>
           </Card>
+          </TabsContent>
+
+          <TabsContent value="management">
+          <div className="space-y-6">
+            {/* Worker Health Status */}
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between">
+                <div>
+                  <CardTitle>System Health</CardTitle>
+                  <CardDescription>Celery worker status and queue monitoring</CardDescription>
+                </div>
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  onClick={() => { loadWorkerHealth(); loadSystemDiagnostics(); }}
+                >
+                  <RefreshCw className="h-4 w-4 mr-2" />
+                  Refresh
+                </Button>
+              </CardHeader>
+              <CardContent>
+                {workerHealth ? (
+                  <div className="space-y-4">
+                    {/* Health Status Banner */}
+                    <div className={`p-4 rounded-lg flex items-center justify-between ${
+                      workerHealth.health_status === 'healthy' ? 'bg-green-50 border-green-200' :
+                      workerHealth.health_status === 'no_workers' ? 'bg-red-50 border-red-200' :
+                      'bg-yellow-50 border-yellow-200'
+                    }`}>
+                      <div className="flex items-center space-x-3">
+                        <div className={`w-3 h-3 rounded-full ${
+                          workerHealth.health_status === 'healthy' ? 'bg-green-500' :
+                          workerHealth.health_status === 'no_workers' ? 'bg-red-500' :
+                          'bg-yellow-500'
+                        }`}></div>
+                        <div>
+                          <h4 className="font-medium capitalize">{workerHealth.health_status.replace('_', ' ')}</h4>
+                          <p className="text-sm text-gray-600">{workerHealth.health_message}</p>
+                        </div>
+                      </div>
+                      <Badge variant={workerHealth.health_status === 'healthy' ? 'default' : 'destructive'}>
+                        {workerHealth.health_status.toUpperCase()}
+                      </Badge>
+                    </div>
+
+                    {/* Statistics Grid */}
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                      <div className="bg-blue-50 p-3 rounded-lg">
+                        <div className="text-2xl font-bold text-blue-600">{workerHealth.workers_online}</div>
+                        <div className="text-sm text-blue-700">Workers Online</div>
+                      </div>
+                      <div className="bg-orange-50 p-3 rounded-lg">
+                        <div className="text-2xl font-bold text-orange-600">{workerHealth.queue_lengths.total}</div>
+                        <div className="text-sm text-orange-700">Queued Tasks</div>
+                      </div>
+                      <div className="bg-yellow-50 p-3 rounded-lg">
+                        <div className="text-2xl font-bold text-yellow-600">{workerHealth.job_counts.pending}</div>
+                        <div className="text-sm text-yellow-700">Pending Jobs</div>
+                      </div>
+                      <div className="bg-purple-50 p-3 rounded-lg">
+                        <div className="text-2xl font-bold text-purple-600">{workerHealth.job_counts.processing}</div>
+                        <div className="text-sm text-purple-700">Processing</div>
+                      </div>
+                    </div>
+
+                    {/* Queue Details */}
+                    <div className="border rounded-lg p-4">
+                      <h5 className="font-medium mb-3">Queue Status</h5>
+                      <div className="space-y-2">
+                        <div className="flex justify-between items-center">
+                          <span className="text-sm">AI Processing Queue:</span>
+                          <Badge variant="outline">{workerHealth.queue_lengths.ai_processing} tasks</Badge>
+                        </div>
+                        <div className="flex justify-between items-center">
+                          <span className="text-sm">General Queue:</span>
+                          <Badge variant="outline">{workerHealth.queue_lengths.celery} tasks</Badge>
+                        </div>
+                        <div className="flex justify-between items-center">
+                          <span className="text-sm">Maintenance Queue:</span>
+                          <Badge variant="outline">{workerHealth.queue_lengths.maintenance} tasks</Badge>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-center py-8">
+                    <Button onClick={loadWorkerHealth} variant="outline">
+                      <Activity className="h-4 w-4 mr-2" />
+                      Check Worker Health
+                    </Button>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Bulk Operations */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Bulk Operations</CardTitle>
+                <CardDescription>Manage multiple AI jobs at once</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <Button 
+                    onClick={performBulkRetry} 
+                    disabled={bulkOperationLoading}
+                    className="flex items-center justify-center"
+                    variant="outline"
+                  >
+                    <RotateCcw className="h-4 w-4 mr-2" />
+                    Retry All Failed
+                  </Button>
+                  <Button 
+                    onClick={performBulkCancel} 
+                    disabled={bulkOperationLoading}
+                    className="flex items-center justify-center"
+                    variant="outline"
+                  >
+                    <Trash2 className="h-4 w-4 mr-2" />
+                    Cancel All Pending
+                  </Button>
+                  <Button 
+                    onClick={performQueuePending} 
+                    disabled={bulkOperationLoading}
+                    className="flex items-center justify-center"
+                    variant="default"
+                  >
+                    <PlayCircle className="h-4 w-4 mr-2" />
+                    Queue Pending Jobs
+                  </Button>
+                </div>
+                {bulkOperationLoading && (
+                  <div className="mt-4 text-center">
+                    <div className="flex items-center justify-center space-x-2">
+                      <RefreshCw className="h-4 w-4 animate-spin" />
+                      <span className="text-sm text-gray-600">Processing bulk operation...</span>
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* System Diagnostics */}
+            <Card>
+              <CardHeader>
+                <CardTitle>System Diagnostics</CardTitle>
+                <CardDescription>Detailed system health information</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {systemDiagnostics ? (
+                  <div className="space-y-6">
+                    {/* Overall Health */}
+                    <div className={`p-4 rounded-lg ${
+                      systemDiagnostics.overall_health.status === 'healthy' ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'
+                    }`}>
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <h5 className="font-medium">Overall System Health</h5>
+                          <p className="text-sm text-gray-600">
+                            {systemDiagnostics.overall_health.status === 'healthy' ? 
+                              'All systems operational' : 
+                              `${systemDiagnostics.overall_health.issues_count} issues detected`}
+                          </p>
+                        </div>
+                        <Badge variant={systemDiagnostics.overall_health.status === 'healthy' ? 'default' : 'destructive'}>
+                          {systemDiagnostics.overall_health.status}
+                        </Badge>
+                      </div>
+                      {systemDiagnostics.overall_health.issues.length > 0 && (
+                        <div className="mt-3">
+                          <h6 className="text-sm font-medium mb-2">Issues:</h6>
+                          <ul className="text-sm space-y-1">
+                            {systemDiagnostics.overall_health.issues.map((issue, index) => (
+                              <li key={index} className="flex items-center">
+                                <AlertTriangle className="h-3 w-3 mr-2 text-red-500" />
+                                {issue}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Configuration Status */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="border rounded-lg p-4">
+                        <h5 className="font-medium mb-3">AI Configuration</h5>
+                        <div className="space-y-2 text-sm">
+                          <div className="flex justify-between">
+                            <span>AI Enabled:</span>
+                            <Badge variant={systemDiagnostics.ai_config.ai_enabled ? 'default' : 'secondary'}>
+                              {systemDiagnostics.ai_config.ai_enabled ? 'Yes' : 'No'}
+                            </Badge>
+                          </div>
+                          <div className="flex justify-between">
+                            <span>OpenAI Key:</span>
+                            <Badge variant={systemDiagnostics.ai_config.has_openai_key ? 'default' : 'secondary'}>
+                              {systemDiagnostics.ai_config.has_openai_key ? 'Configured' : 'Missing'}
+                            </Badge>
+                          </div>
+                          <div className="flex justify-between">
+                            <span>Default Model:</span>
+                            <span className="text-gray-600">{systemDiagnostics.ai_config.default_model}</span>
+                          </div>
+                        </div>
+                      </div>
+                      
+                      <div className="border rounded-lg p-4">
+                        <h5 className="font-medium mb-3">Job Statistics</h5>
+                        <div className="space-y-2 text-sm">
+                          <div className="flex justify-between">
+                            <span>Total Jobs:</span>
+                            <span className="font-medium">{systemDiagnostics.job_stats.total_jobs}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span>Pending:</span>
+                            <Badge variant={systemDiagnostics.job_stats.pending > 0 ? 'secondary' : 'default'}>
+                              {systemDiagnostics.job_stats.pending}
+                            </Badge>
+                          </div>
+                          <div className="flex justify-between">
+                            <span>Failed:</span>
+                            <Badge variant={systemDiagnostics.job_stats.failed > 0 ? 'destructive' : 'default'}>
+                              {systemDiagnostics.job_stats.failed}
+                            </Badge>
+                          </div>
+                          <div className="flex justify-between">
+                            <span>Completed:</span>
+                            <Badge variant="default">{systemDiagnostics.job_stats.completed}</Badge>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Recent Errors */}
+                    {systemDiagnostics.recent_errors.length > 0 && (
+                      <div className="border rounded-lg p-4">
+                        <h5 className="font-medium mb-3 flex items-center">
+                          <AlertTriangle className="h-4 w-4 mr-2 text-red-500" />
+                          Recent Errors
+                        </h5>
+                        <div className="space-y-2">
+                          {systemDiagnostics.recent_errors.map((error, index) => (
+                            <div key={index} className="bg-red-50 p-3 rounded text-sm">
+                              <div className="flex justify-between items-start mb-1">
+                                <span className="font-medium">Job {error.job_id}</span>
+                                <span className="text-xs text-gray-500">{new Date(error.failed_at).toLocaleString()}</span>
+                              </div>
+                              <p className="text-red-700 mb-1">{error.error_message}</p>
+                              <div className="flex justify-between items-center">
+                                <span className="text-xs text-gray-600">Retries: {error.retry_count}</span>
+                                {error.can_retry && <Badge variant="outline" className="text-xs">Can Retry</Badge>}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-center py-8">
+                    <Button onClick={loadSystemDiagnostics} variant="outline">
+                      <Activity className="h-4 w-4 mr-2" />
+                      Run System Diagnostics
+                    </Button>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
           </TabsContent>
 
           <TabsContent value="templates">

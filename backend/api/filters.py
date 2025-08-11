@@ -66,15 +66,22 @@ class DynamicRecordFilter(filters.FilterSet):
     
     def __init__(self, *args, **kwargs):
         pipeline = kwargs.pop('pipeline', None)
+        print(f"🚀 DynamicRecordFilter.__init__ called with pipeline: {pipeline}")
         super().__init__(*args, **kwargs)
         
         if pipeline:
+            print(f"🚀 Adding dynamic filters for pipeline: {pipeline.name}")
             self._add_dynamic_filters(pipeline)
+        else:
+            print(f"🚀 No pipeline provided to DynamicRecordFilter")
     
     def _add_dynamic_filters(self, pipeline):
         """Add filters based on pipeline field schema"""
+        print(f"🔧 _add_dynamic_filters called for {pipeline.name}")
+        
         for field in pipeline.fields.all():
             filter_name = f"data__{field.slug}"
+            print(f"  📝 Adding filters for field: {field.name} ({field.field_type})")
             
             if field.field_type in ['text', 'textarea', 'email', 'url']:
                 # Text field filters
@@ -144,6 +151,38 @@ class DynamicRecordFilter(filters.FilterSet):
                     lookup_expr='in',
                     method='filter_choice_in'
                 )
+                
+            elif field.field_type == 'user':
+                # User field filters - custom method for JSONB array filtering
+                print(f"  📝 Adding user field filter for: {field.slug}")
+                user_filter = filters.NumberFilter(method='filter_user_field_contains')
+                self.filters[f"{filter_name}__user_id"] = user_filter
+                self.filters[f"{filter_name}__isnull"] = filters.BooleanFilter(
+                    field_name=f'data__{field.slug}',
+                    lookup_expr='isnull'
+                )
+                print(f"  ✅ Created user filter: {filter_name}__user_id with method: {user_filter.method}")
+                
+            elif field.field_type in ['tags']:
+                # Tags field filters
+                self.filters[f"{filter_name}__icontains"] = filters.CharFilter(
+                    field_name=f'data__{field.slug}',
+                    lookup_expr='icontains'
+                )
+                self.filters[f"{filter_name}__isnull"] = filters.BooleanFilter(
+                    field_name=f'data__{field.slug}',
+                    lookup_expr='isnull'
+                )
+                
+            elif field.field_type in ['relation', 'relationship']:
+                # Relationship field filters
+                self.filters[f"{filter_name}__contains"] = filters.NumberFilter(
+                    method='filter_relationship_contains'
+                )
+                self.filters[f"{filter_name}__isnull"] = filters.BooleanFilter(
+                    field_name=f'data__{field.slug}',
+                    lookup_expr='isnull'
+                )
     
     def filter_search(self, queryset, name, value):
         """Full-text search across record data"""
@@ -171,6 +210,51 @@ class DynamicRecordFilter(filters.FilterSet):
         values = [v.strip() for v in value.split(',')]
         field_name = name.replace('__in', '')
         return queryset.filter(**{f"{field_name}__in": values})
+    
+    
+    def filter_relationship_contains(self, queryset, name, value):
+        """Filter records where relationship field contains specific record ID"""
+        if not value:
+            return queryset
+        
+        # Extract field slug from filter name
+        field_slug = name.replace('data__', '').replace('__contains', '')
+        
+        # Handle both single values and arrays for relationship fields
+        return queryset.extra(
+            where=[
+                "(data->%s @> %s OR (data->%s)::text = %s)"
+            ],
+            params=[field_slug, f'[{int(value)}]', field_slug, str(int(value))]
+        )
+    
+    def filter_user_field_contains(self, queryset, name, value):
+        """Filter records where user field array contains specific user_id"""
+        print(f"🎯🎯🎯 CUSTOM USER FILTER METHOD CALLED! 🎯🎯🎯")
+        print(f"🔍 FILTERING USER FIELD: {name} = {value}")
+        print(f"🔍 QuerySet before filter: {queryset.count()} records")
+        
+        if not value:
+            print(f"🔍 No value provided, returning original queryset")
+            return queryset
+        
+        # Extract field slug from filter name: data__sales_agent__user_id -> sales_agent
+        field_slug = name.replace('data__', '').replace('__user_id', '')
+        
+        print(f"  🎯 Field slug: {field_slug}")
+        print(f"  🔍 Looking for user_id: {value}")
+        
+        # Use simple JSONB containment with a constructed user object
+        # This checks if the array contains an object with the specific user_id
+        filtered_queryset = queryset.extra(
+            where=[
+                "data->%s @> %s::jsonb"
+            ],
+            params=[field_slug, f'[{{"user_id": {int(value)}}}]']
+        )
+        
+        print(f"🔍 QuerySet after filter: {filtered_queryset.count()} records")
+        return filtered_queryset
     
     class Meta:
         model = Record

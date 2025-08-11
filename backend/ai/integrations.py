@@ -416,21 +416,34 @@ def trigger_field_ai_processing(record, changed_fields: List[str], user: User) -
                     logger.info(f"   🤖 Model: {ai_job.model_name}")
                     logger.info(f"   📝 Prompt Template: {ai_job.prompt_template[:100]}...")
                     
-                    # Queue the job for processing
-                    logger.info(f"🔥 AI JOB STEP 3: Queueing Celery Task")
-                    task_result = process_ai_job.delay(ai_job.id, tenant.schema_name)
-                    logger.info(f"   🔄 Celery Task ID: {task_result.id}")
+                    # Queue the job for processing AFTER transaction commits
+                    logger.info(f"🔥 AI JOB STEP 3: Scheduling Celery Task (after transaction commit)")
+                    
+                    def queue_ai_task():
+                        task_result = process_ai_job.delay(ai_job.id, tenant.schema_name)
+                        logger.info(f"   🔄 Celery Task Queued: {task_result.id}")
+                        
+                        # Store task ID in job for tracking
+                        ai_job.ai_config['celery_task_id'] = task_result.id
+                        ai_job.save(update_fields=['ai_config'])
+                        logger.info(f"   💾 Saved Celery Task ID to job record: {task_result.id}")
+                        return task_result.id
+                    
+                    from django.db import transaction
+                    task_id_placeholder = "queued_on_commit"
+                    transaction.on_commit(queue_ai_task)
+                    logger.info(f"   📋 Task will be queued after transaction commits")
                     
                     triggered_jobs.append({
                         'field': field.name,
                         'job_id': str(ai_job.id),
-                        'status': 'queued',
-                        'celery_task_id': str(task_result.id)
+                        'status': 'queued_on_commit',
+                        'celery_task_id': task_id_placeholder
                     })
                     
-                    logger.info(f"🔥 AI JOB STEP 4: Job Queued Successfully")
-                    logger.info(f"   ✅ AI job {ai_job.id} queued for field {field.name}")
-                    logger.info(f"   🔄 Celery task: {task_result.id}")
+                    logger.info(f"🔥 AI JOB STEP 4: Job Scheduled Successfully")
+                    logger.info(f"   ✅ AI job {ai_job.id} scheduled for field {field.name}")
+                    logger.info(f"   🔄 Celery task will be queued after transaction commits")
                     
                 except Exception as e:
                     logger.error(f"Failed to queue AI job for field {field.name}: {e}")

@@ -374,6 +374,317 @@ class AIJobViewSet(viewsets.ModelViewSet):
             'avg_response_time_ms': usage['avg_response_time'] or 0
         }
 
+    @extend_schema(
+        summary="Check Celery worker health",
+        description="Get status of Celery workers and queue lengths"
+    )
+    @action(detail=False, methods=['get'])
+    def worker_health(self, request):
+        """Check Celery worker health and queue status"""
+        try:
+            from celery import current_app
+            import redis
+            from django.conf import settings
+            
+            # Check Celery worker status
+            inspect = current_app.control.inspect()
+            active_workers = inspect.active() or {}
+            stats = inspect.stats() or {}
+            
+            # Check Redis queue lengths
+            try:
+                redis_client = redis.Redis.from_url(settings.CELERY_BROKER_URL)
+                ai_queue_length = redis_client.llen('ai_processing')
+                celery_queue_length = redis_client.llen('celery')
+                maintenance_queue_length = redis_client.llen('maintenance')
+            except Exception as e:
+                logger.warning(f"Failed to check Redis queues: {e}")
+                ai_queue_length = celery_queue_length = maintenance_queue_length = 0
+            
+            # Get pending jobs count
+            pending_jobs = self.get_queryset().filter(status='pending').count()
+            processing_jobs = self.get_queryset().filter(status='processing').count()
+            
+            # Determine health status
+            workers_online = len(active_workers)
+            total_queued = ai_queue_length + celery_queue_length
+            health_status = 'healthy'
+            
+            if workers_online == 0:
+                health_status = 'no_workers'
+            elif pending_jobs > 10 and total_queued == 0:
+                health_status = 'jobs_not_queuing'
+            elif pending_jobs > 0 and workers_online > 0 and total_queued == 0:
+                health_status = 'potential_stuck_jobs'
+            
+            return Response({
+                'workers_online': workers_online,
+                'worker_details': active_workers,
+                'worker_stats': stats,
+                'queue_lengths': {
+                    'ai_processing': ai_queue_length,
+                    'celery': celery_queue_length,
+                    'maintenance': maintenance_queue_length,
+                    'total': total_queued
+                },
+                'job_counts': {
+                    'pending': pending_jobs,
+                    'processing': processing_jobs,
+                    'total_active': pending_jobs + processing_jobs
+                },
+                'health_status': health_status,
+                'health_message': self._get_health_message(health_status, workers_online, pending_jobs, total_queued),
+                'timestamp': timezone.now().isoformat()
+            })
+    
+        except Exception as e:
+            logger.error(f"Error checking worker health: {e}")
+            return Response({
+                'error': str(e),
+                'health_status': 'error',
+                'health_message': f'Failed to check worker health: {str(e)}',
+                'timestamp': timezone.now().isoformat()
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    def _get_health_message(self, health_status, workers_online, pending_jobs, total_queued):
+        """Get human-readable health message"""
+        messages = {
+            'healthy': f'{workers_online} worker(s) online, {pending_jobs} pending jobs, {total_queued} queued tasks',
+            'no_workers': f'No Celery workers online! {pending_jobs} jobs pending.',
+            'jobs_not_queuing': f'Jobs not being queued properly. {pending_jobs} pending jobs but no queued tasks.',
+            'potential_stuck_jobs': f'Potential stuck jobs detected. {pending_jobs} pending, {workers_online} workers online, but no queued tasks.',
+            'error': 'Error checking system health'
+        }
+        return messages.get(health_status, 'Unknown health status')
+
+    @extend_schema(
+        summary="Bulk retry failed jobs",
+        description="Retry all failed jobs that can be retried"
+    )
+    @action(detail=False, methods=['post'])
+    def bulk_retry(self, request):
+        """Retry all retryable failed jobs"""
+        failed_jobs = self.get_queryset().filter(status='failed')
+        retried_jobs = []
+        
+        for job in failed_jobs:
+            if job.can_retry():
+                job.status = 'pending'
+                job.retry_count += 1
+                job.error_message = ''
+                job.save()
+                retried_jobs.append({
+                    'job_id': job.id,
+                    'field_name': job.field_name,
+                    'retry_count': job.retry_count
+                })
+        
+        logger.info(f"Bulk retry: {len(retried_jobs)} jobs retried by user {request.user.id}")
+        
+        return Response({
+            'retried_count': len(retried_jobs),
+            'total_failed': failed_jobs.count(),
+            'retried_jobs': retried_jobs,
+            'message': f'Successfully retried {len(retried_jobs)} jobs'
+        })
+
+    @extend_schema(
+        summary="Bulk cancel pending jobs", 
+        description="Cancel all pending jobs"
+    )
+    @action(detail=False, methods=['post'])
+    def bulk_cancel(self, request):
+        """Cancel all pending jobs"""
+        pending_jobs = self.get_queryset().filter(status='pending')
+        job_details = []
+        
+        for job in pending_jobs:
+            job_details.append({
+                'job_id': job.id,
+                'field_name': job.field_name,
+                'created_at': job.created_at
+            })
+            job.status = 'cancelled'
+            job.save()
+        
+        cancelled_count = len(job_details)
+        logger.info(f"Bulk cancel: {cancelled_count} jobs cancelled by user {request.user.id}")
+        
+        return Response({
+            'cancelled_count': cancelled_count,
+            'cancelled_jobs': job_details,
+            'message': f'Successfully cancelled {cancelled_count} pending jobs'
+        })
+
+    @extend_schema(
+        summary="Queue all pending jobs",
+        description="Manually queue all pending jobs for processing"
+    )
+    @action(detail=False, methods=['post'])
+    def queue_pending(self, request):
+        """Queue all pending jobs for processing"""
+        from ai.tasks import process_ai_job
+        from django.db import connection
+        
+        tenant_schema = connection.tenant.schema_name
+        pending_jobs = self.get_queryset().filter(status='pending')
+        
+        queued_jobs = []
+        failed_to_queue = []
+        
+        for job in pending_jobs:
+            try:
+                task_result = process_ai_job.delay(job.id, tenant_schema)
+                
+                # Update job with task ID
+                if not job.ai_config:
+                    job.ai_config = {}
+                job.ai_config['celery_task_id'] = task_result.id
+                job.save(update_fields=['ai_config'])
+                
+                queued_jobs.append({
+                    'job_id': job.id,
+                    'task_id': task_result.id,
+                    'field_name': job.field_name,
+                    'model_name': job.model_name
+                })
+                
+            except Exception as e:
+                logger.error(f"Failed to queue job {job.id}: {e}")
+                failed_to_queue.append({
+                    'job_id': job.id,
+                    'error': str(e),
+                    'field_name': job.field_name
+                })
+        
+        logger.info(f"Bulk queue: {len(queued_jobs)} jobs queued, {len(failed_to_queue)} failed by user {request.user.id}")
+        
+        return Response({
+            'queued_count': len(queued_jobs),
+            'failed_count': len(failed_to_queue),
+            'total_pending': pending_jobs.count(),
+            'queued_jobs': queued_jobs,
+            'failed_jobs': failed_to_queue,
+            'message': f'Successfully queued {len(queued_jobs)} jobs for processing'
+        })
+
+    @extend_schema(
+        summary="Run AI system diagnostics",
+        description="Check AI system health, API keys, and connectivity"
+    )
+    @action(detail=False, methods=['get'])
+    def diagnostics(self, request):
+        """Run comprehensive AI system diagnostics"""
+        from django.db import connection
+        
+        tenant = connection.tenant
+        diagnostics = {
+            'tenant_info': {
+                'name': tenant.name,
+                'schema': tenant.schema_name,
+                'id': str(tenant.id)
+            },
+            'ai_config': {},
+            'job_stats': {},
+            'connectivity': {},
+            'recent_errors': []
+        }
+        
+        # Check AI configuration
+        try:
+            ai_config = tenant.get_ai_config() or {}
+            diagnostics['ai_config'] = {
+                'ai_enabled': ai_config.get('enabled', True),
+                'has_openai_key': bool(ai_config.get('openai_api_key')),
+                'has_anthropic_key': bool(ai_config.get('anthropic_api_key')), 
+                'default_provider': ai_config.get('default_provider', 'openai'),
+                'default_model': ai_config.get('default_model', 'gpt-4o-mini'),
+                'concurrent_jobs': ai_config.get('concurrent_jobs', 5),
+                'usage_limits': ai_config.get('usage_limits', {})
+            }
+        except Exception as e:
+            diagnostics['ai_config']['error'] = str(e)
+            diagnostics['connectivity']['ai_config_error'] = str(e)
+        
+        # Check job statistics
+        try:
+            queryset = self.get_queryset()
+            diagnostics['job_stats'] = {
+                'total_jobs': queryset.count(),
+                'pending': queryset.filter(status='pending').count(),
+                'processing': queryset.filter(status='processing').count(),
+                'completed': queryset.filter(status='completed').count(),
+                'failed': queryset.filter(status='failed').count(),
+                'cancelled': queryset.filter(status='cancelled').count()
+            }
+            
+            # Add recent job activity
+            recent_jobs = queryset.order_by('-created_at')[:5]
+            diagnostics['recent_jobs'] = [
+                {
+                    'id': job.id,
+                    'status': job.status,
+                    'job_type': job.job_type,
+                    'created_at': job.created_at,
+                    'field_name': job.field_name
+                }
+                for job in recent_jobs
+            ]
+            
+        except Exception as e:
+            diagnostics['job_stats']['error'] = str(e)
+        
+        # Check recent errors
+        try:
+            recent_failures = queryset.filter(status='failed').order_by('-updated_at')[:3]
+            diagnostics['recent_errors'] = [
+                {
+                    'job_id': job.id,
+                    'error_message': job.error_message[:200],  # Truncate long errors
+                    'failed_at': job.updated_at,
+                    'retry_count': job.retry_count,
+                    'can_retry': job.can_retry()
+                }
+                for job in recent_failures
+            ]
+        except Exception as e:
+            diagnostics['recent_errors'] = [{'error': f'Failed to get recent errors: {str(e)}'}]
+        
+        # Test AI processor initialization
+        try:
+            from ai.processors import AIFieldProcessor
+            processor = AIFieldProcessor(tenant, request.user)
+            diagnostics['connectivity']['ai_processor'] = 'initialized_successfully'
+        except Exception as e:
+            diagnostics['connectivity']['ai_processor_error'] = str(e)
+        
+        # Check database connectivity
+        try:
+            test_count = AIJob.objects.count()
+            diagnostics['connectivity']['database'] = f'connected_({test_count}_total_jobs)'
+        except Exception as e:
+            diagnostics['connectivity']['database_error'] = str(e)
+        
+        # Overall health assessment
+        issues = []
+        if diagnostics['ai_config'].get('error'):
+            issues.append('AI configuration error')
+        if not diagnostics['ai_config'].get('has_openai_key') and not diagnostics['ai_config'].get('has_anthropic_key'):
+            issues.append('No API keys configured')
+        if diagnostics['job_stats'].get('pending', 0) > 10:
+            issues.append(f"{diagnostics['job_stats']['pending']} pending jobs")
+        if diagnostics['connectivity'].get('ai_processor_error'):
+            issues.append('AI processor initialization failed')
+        
+        diagnostics['overall_health'] = {
+            'status': 'healthy' if len(issues) == 0 else 'issues_detected',
+            'issues': issues,
+            'issues_count': len(issues),
+            'timestamp': timezone.now().isoformat()
+        }
+        
+        return Response(diagnostics)
+
 
 class AIUsageAnalyticsViewSet(viewsets.ReadOnlyModelViewSet):
     """

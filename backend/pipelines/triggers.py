@@ -10,7 +10,7 @@ from django.urls import reverse
 from django.conf import settings
 
 from .models import Record, Pipeline, Field
-from .validators import get_current_stage
+# get_current_stage function was not found - removing unused import
 
 logger = logging.getLogger(__name__)
 

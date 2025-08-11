@@ -208,7 +208,7 @@ export function DynamicFormRenderer({
         endpoint,
         fieldCount: response.data?.fields?.length || 0,
         sampleField: response.data?.fields?.[0] || null,
-        fieldsWithLegacyRequired: response.data?.fields?.filter(f => f.is_required === true) || []
+        fieldsWithLegacyRequired: response.data?.fields?.filter((f: any) => f.is_required === true) || []
       })
       
       setFormSchema(response.data)

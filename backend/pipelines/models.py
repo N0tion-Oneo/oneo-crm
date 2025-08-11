@@ -13,8 +13,8 @@ import logging
 import re
 
 from .field_types import FieldType, FIELD_TYPE_CONFIGS, validate_field_config
-from .validation.field_validator import FieldValidator
-from .validators import validate_record_data
+from .validation.field_validator import FieldValidator as AdvancedFieldValidator
+from .validation import validate_record_data
 
 
 def field_slugify(value):
@@ -291,31 +291,16 @@ class Pipeline(models.Model):
             return None
     
     def validate_record_data(self, data: dict, context='storage') -> dict:
-        """Validate record data against pipeline schema"""
-        field_definitions = []
-        for field in self.fields.all():
-            field_definitions.append({
-                'slug': field.slug,
-                'field_type': field.field_type,
-                'field_config': field.field_config,
-                'storage_constraints': field.storage_constraints,
-                'business_rules': field.business_rules,
-                'ai_config': field.ai_config if field.is_ai_field else {},
-                'pipeline_id': self.id,  # Add pipeline context for USER field validation
-            })
-        
-        return validate_record_data(field_definitions, data, context)
+        """Validate record data against pipeline schema using unified validator"""
+        from .validation import RecordValidator
+        validator = RecordValidator(self)
+        return validator.validate_record_data(data, context)
     
     def validate_stage_transition(self, record_data: dict, target_stage: str) -> tuple[bool, list]:
-        """Validate if record can transition to target stage based on business rules"""
-        errors = []
-        
-        for field in self.fields.all():
-            is_valid, field_errors = field.check_business_rules(record_data, target_stage)
-            if not is_valid:
-                errors.extend(field_errors)
-        
-        return len(errors) == 0, errors
+        """Validate if record can transition to target stage using unified validator"""
+        from .validation import RecordValidator
+        validator = RecordValidator(self)
+        return validator.validate_stage_transition(record_data, target_stage)
     
     def get_ai_fields(self):
         """Get all AI fields for this pipeline"""
@@ -727,245 +712,22 @@ class Pipeline(models.Model):
         }
     
     async def validate_non_critical_rules_async(self, data: dict, changed_field_slug: str = None) -> dict:
-        """
-        Asynchronously validate non-critical business rules (warnings, display logic)
-        
-        Args:
-            data: Record data to validate
-            changed_field_slug: If provided, only validate rules affected by this field
-        """
-        import asyncio
-        from django.db import connection
-        
-        print(f"🟡 ASYNC VALIDATION: Starting non-critical validation for {changed_field_slug or 'all fields'}")
-        
-        # Get non-critical rules
-        rule_categories = self.categorize_business_rules_by_priority()
-        non_critical_rules = rule_categories['non_critical']
-        
-        if changed_field_slug:
-            # Filter to only affected fields
-            cascade_data = self.get_all_affected_fields_with_cascades(changed_field_slug)
-            affected_fields = set(cascade_data['affected_fields'])
-            non_critical_rules = [r for r in non_critical_rules if r['field_slug'] in affected_fields]
-            print(f"   📊 Filtering to {len(non_critical_rules)} affected non-critical rules")
-        
-        # Process rules asynchronously with small delays to prevent blocking
-        results = {'warnings': [], 'display_changes': [], 'suggestions': []}
-        
-        for rule_data in non_critical_rules:
-            try:
-                # Small delay to prevent database overload
-                await asyncio.sleep(0.01)  
-                
-                field_slug = rule_data['field_slug']
-                business_rules = rule_data['business_rules']
-                
-                # Process show_when/hide_when rules (display logic)
-                conditional_rules = business_rules.get('conditional_rules', {})
-                
-                if conditional_rules.get('show_when') or conditional_rules.get('hide_when'):
-                    display_result = await self._evaluate_display_rules_async(field_slug, data, conditional_rules)
-                    if display_result:
-                        results['display_changes'].append(display_result)
-                
-                # Process warning rules
-                if business_rules.get('show_warnings') and business_rules.get('warning_message'):
-                    warning_result = await self._evaluate_warning_rules_async(field_slug, data, business_rules)
-                    if warning_result:
-                        results['warnings'].append(warning_result)
-                
-                print(f"   ✅ Processed non-critical rules for {field_slug}")
-                
-            except Exception as e:
-                print(f"   ❌ Error processing non-critical rules for {field_slug}: {e}")
-                continue
-        
-        print(f"🟡 ASYNC VALIDATION COMPLETE: {len(results['warnings'])} warnings, {len(results['display_changes'])} display changes")
-        return results
-    
-    async def _evaluate_display_rules_async(self, field_slug: str, data: dict, conditional_rules: dict) -> dict:
-        """Evaluate show_when/hide_when rules asynchronously"""
-        from .validators import _evaluate_condition
-        
-        result = {'field': field_slug, 'action': None, 'reason': None}
-        
-        # Check show_when rules
-        show_when_rules = conditional_rules.get('show_when', [])
-        for rule in show_when_rules:
-            condition_field = rule.get('field')
-            if condition_field in data:
-                field_value = data[condition_field]
-                condition_met = _evaluate_condition(field_value, rule.get('condition', 'equals'), rule.get('value'))
-                if condition_met:
-                    result['action'] = 'show'
-                    result['reason'] = f"Show because {condition_field} {rule.get('condition')} {rule.get('value')}"
-                    break
-        
-        # Check hide_when rules
-        hide_when_rules = conditional_rules.get('hide_when', [])
-        for rule in hide_when_rules:
-            condition_field = rule.get('field')
-            if condition_field in data:
-                field_value = data[condition_field]
-                condition_met = _evaluate_condition(field_value, rule.get('condition', 'equals'), rule.get('value'))
-                if condition_met:
-                    result['action'] = 'hide'
-                    result['reason'] = f"Hide because {condition_field} {rule.get('condition')} {rule.get('value')}"
-                    break
-        
-        return result if result['action'] else None
-    
-    async def _evaluate_warning_rules_async(self, field_slug: str, data: dict, business_rules: dict) -> dict:
-        """Evaluate warning rules asynchronously"""
-        # This would evaluate conditions that should show warnings but not block saving
-        field_value = data.get(field_slug)
-        warning_message = business_rules.get('warning_message')
-        
-        # Example: Check if field is empty but not required
-        if not field_value and warning_message:
-            return {
-                'field': field_slug,
-                'type': 'warning',
-                'message': warning_message
-            }
-        
-        return None
+        """Asynchronously validate non-critical business rules using unified validator"""
+        from .validation import RecordValidator
+        validator = RecordValidator(self)
+        return await validator.validate_non_critical_rules_async(data, changed_field_slug)
     
     def validate_critical_rules_sync(self, data: dict, context='business_rules', changed_field_slug=None) -> dict:
-        """
-        Synchronously validate critical business rules (blocking rules)
-        
-        This is optimized for speed and only validates rules that can block operations
-        """
-        print(f"🔴 CRITICAL VALIDATION: Starting for {changed_field_slug or 'all fields'}")
-        
-        # Get critical rules only
-        rule_categories = self.categorize_business_rules_by_priority()
-        critical_rules = rule_categories['critical']
-        
-        if changed_field_slug:
-            # Use cascade analysis for critical rules
-            cascade_data = self.get_all_affected_fields_with_cascades(changed_field_slug)
-            affected_fields = set(cascade_data['affected_fields'])
-            critical_rules = [r for r in critical_rules if r['field_slug'] in affected_fields]
-            print(f"   📊 Filtering to {len(critical_rules)} affected critical rules")
-        
-        # Build field definitions for critical fields only
-        critical_field_slugs = [r['field_slug'] for r in critical_rules]
-        fields_to_validate = self.fields.filter(slug__in=critical_field_slugs)
-        
-        field_definitions = []
-        for field in fields_to_validate:
-            field_definitions.append({
-                'slug': field.slug,
-                'field_type': field.field_type,
-                'field_config': field.field_config,
-                'storage_constraints': field.storage_constraints,
-                'business_rules': field.business_rules,
-                'ai_config': field.ai_config if field.is_ai_field else {},
-            })
-        
-        print(f"🔴 CRITICAL VALIDATION SCOPE: {len(field_definitions)} critical field(s)")
-        
-        # Use existing validation function but only on critical fields
-        from .validators import validate_record_data
-        return validate_record_data(field_definitions, data, context)
+        """Synchronously validate critical business rules using unified validator"""
+        from .validation import RecordValidator
+        validator = RecordValidator(self)
+        return validator.validate_critical_rules_sync(data, context, changed_field_slug)
     
     def validate_record_data_optimized(self, data: dict, context='storage', changed_field_slug=None) -> dict:
-        """
-        Optimized validation with dependency tracking
-        
-        Args:
-            data: Record data to validate
-            context: Validation context ('storage', 'form', 'business_rules', 'migration')
-            changed_field_slug: If provided, optimize validation for this specific field change
-        """
-        print(f"🎯 OPTIMIZED VALIDATION: context={context}, changed_field={changed_field_slug}")
-        
-        # PHASE 3: PRIORITY-BASED VALIDATION STRATEGY
-        if context == 'business_rules' and changed_field_slug:
-            print(f"🚀 PHASE 3: Priority-based validation for {changed_field_slug}")
-            
-            # Step 1: Validate critical rules synchronously (blocking)
-            critical_result = self.validate_critical_rules_sync(data, context, changed_field_slug)
-            
-            # Step 2: If critical validation passes, trigger async non-critical validation
-            if critical_result['is_valid']:
-                print(f"✅ Critical rules passed, starting async validation...")
-                
-                # Trigger async validation in background (don't wait for it)
-                import asyncio
-                try:
-                    # Create task but don't await it (fire and forget)
-                    loop = asyncio.get_event_loop()
-                    async_task = loop.create_task(
-                        self.validate_non_critical_rules_async(data, changed_field_slug)
-                    )
-                    print(f"🟡 Async validation task created: {async_task}")
-                except RuntimeError:
-                    # No event loop running, skip async validation
-                    print(f"⚠️  No event loop available, skipping async validation")
-                
-                # Return critical validation result immediately
-                return critical_result
-            else:
-                # Critical validation failed, no need for async validation
-                print(f"❌ Critical rules failed, skipping async validation")
-                return critical_result
-                
-        elif context == 'business_rules':
-            # FULL BUSINESS RULES: Use traditional cascade validation
-            cascade_data = self.get_all_affected_fields_with_cascades(changed_field_slug) if changed_field_slug else None
-            if cascade_data:
-                affected_fields = cascade_data['affected_fields']
-                fields_to_validate = self.fields.filter(slug__in=affected_fields)
-                print(f"🧠 FULL BUSINESS RULES WITH CASCADES: Validating {len(affected_fields)} field(s)")
-                print(f"   🌊 Max cascade depth: {cascade_data['max_depth']}")
-            else:
-                fields_to_validate = self.fields.all()
-                print(f"🔄 FULL BUSINESS RULES: Validating all {fields_to_validate.count()} fields")
-            
-        elif context == 'migration':
-            # MIGRATION CONTEXT: No validation needed - migrations should always be safe
-            print(f"🔧 MIGRATION CONTEXT: Bypassing all validation - migration operations are pre-validated")
-            return {
-                'is_valid': True,
-                'errors': {},
-                'cleaned_data': data or {},
-                'context': 'migration',
-                'metadata': {
-                    'validation_bypassed': True,
-                    'reason': 'migration_context'
-                }
-            }
-            
-        elif context == 'storage' and changed_field_slug:
-            # STORAGE CONTEXT: Only validate the changed field (fastest)
-            fields_to_validate = self.fields.filter(slug=changed_field_slug)
-            print(f"🎯 STORAGE VALIDATION: Only validating changed field: {changed_field_slug}")
-            
-        else:
-            # FULL VALIDATION: New records or complete updates
-            fields_to_validate = self.fields.all()
-            print(f"🔄 FULL VALIDATION: Validating all {fields_to_validate.count()} fields")
-        
-        # Build field definitions for the necessary fields
-        field_definitions = []
-        for field in fields_to_validate:
-            field_definitions.append({
-                'slug': field.slug,
-                'field_type': field.field_type,
-                'field_config': field.field_config,
-                'storage_constraints': field.storage_constraints,
-                'business_rules': field.business_rules,
-                'ai_config': field.ai_config if field.is_ai_field else {},
-            })
-        
-        print(f"🔧 VALIDATION SCOPE: Processing {len(field_definitions)} field definition(s)")
-        
-        # Use the existing validation function with the filtered field definitions
-        return validate_record_data(field_definitions, data, context)
+        """Optimized validation with dependency tracking using unified validator"""
+        from .validation import RecordValidator
+        validator = RecordValidator(self)
+        return validator.validate_record_data_optimized(data, context, changed_field_slug)
 
 
 class Field(models.Model):
@@ -1068,58 +830,44 @@ class Field(models.Model):
             logger.error(f"Failed to update pipeline schema cache after field save: {e}")
     
     def clean(self):
-        """Validate field configuration"""
-        try:
-            field_type = FieldType(self.field_type)
-            validate_field_config(field_type, self.field_config)
-        except Exception as e:
-            raise ValidationError(f'Invalid field configuration: {e}')
+        """Validate field configuration using unified validator"""
+        validator = AdvancedFieldValidator()
+        result = validator.validate_field_model_clean(self)
         
-        # Validate AI configuration if it's an AI field
-        if self.is_ai_field and self.field_type == FieldType.AI_GENERATED:
-            if not self.ai_config.get('prompt'):  # Fixed: use 'prompt' not 'ai_prompt'
-                raise ValidationError('AI fields must have a prompt in ai_config')
+        if not result.valid:
+            raise ValidationError(result.errors[0] if result.errors else 'Field validation failed')
     
     def get_validator(self):
-        """Get validator instance for this field"""
-        ai_config = self.ai_config if self.is_ai_field else None
-        return FieldValidator(FieldType(self.field_type), self.field_config, ai_config)
+        """Get validator instance for this field using unified validator"""
+        validator = AdvancedFieldValidator()
+        return validator.create_field_validator_instance(self)
     
     def validate_value(self, value, context=None):
-        """Validate a value against this field's storage constraints"""
-        # Only validate storage constraints - form and business validation handled separately
-        validator = self.get_validator()
-        return validator.validate_storage(value, self.storage_constraints)
+        """Validate a value against this field's storage constraints using unified validator"""
+        validator = AdvancedFieldValidator()
+        result = validator.validate_field_value_storage(self, value, context)
+        
+        # Return the original format for backward compatibility
+        if hasattr(result, 'is_valid'):
+            return result  # Already in the right format
+        
+        # Create a simple result object for backward compatibility
+        class ValidationResult:
+            def __init__(self, is_valid, errors, cleaned_value=None):
+                self.is_valid = is_valid
+                self.errors = errors
+                self.cleaned_value = cleaned_value
+        
+        cleaned_value = result.metadata.get('cleaned_value', value)
+        return ValidationResult(result.valid, result.errors, cleaned_value)
     
     def check_business_rules(self, record_data, target_stage=None):
-        """Check if record meets business rules for this field"""
-        if not self.business_rules:
-            return True, []
+        """Check if record meets business rules for this field using unified validator"""
+        validator = AdvancedFieldValidator()
+        result = validator.validate_business_rules(self, record_data, target_stage)
         
-        errors = []
-        value = record_data.get(self.slug)
-        
-        # Check stage requirements
-        stage_requirements = self.business_rules.get('stage_requirements', {})
-        if target_stage and target_stage in stage_requirements:
-            requirements = stage_requirements[target_stage]
-            if requirements.get('required') and not value:
-                errors.append(f"{self.display_name} is required for {target_stage} stage")
-        
-        # Check conditional requirements
-        conditional_rules = self.business_rules.get('conditional_requirements', [])
-        for rule in conditional_rules:
-            condition_field = rule.get('condition_field')
-            condition_value = rule.get('condition_value')
-            requires_field = rule.get('requires_field') == self.slug
-            
-            if (requires_field and 
-                condition_field in record_data and 
-                record_data[condition_field] == condition_value and 
-                not value):
-                errors.append(f"{self.display_name} is required when {condition_field} is {condition_value}")
-        
-        return len(errors) == 0, errors
+        # Return the original format for backward compatibility
+        return result.valid, result.errors
     
     def soft_delete(self, user, reason=""):
         """Soft delete the field - SIMPLIFIED to delegate to FieldOperationManager"""
@@ -1158,9 +906,9 @@ class Field(models.Model):
     def validate_restore(self, user, dry_run=False):
         """Validate field restore operation - SIMPLIFIED to delegate to FieldValidator"""
         try:
-            from .validation.field_validator import FieldValidator
+            from .validation.field_validator import FieldValidator as AdvancedFieldValidator
             
-            validator = FieldValidator()
+            validator = AdvancedFieldValidator()
             validation_result = validator.validate_field_restoration(self)
             
             return {
@@ -1375,319 +1123,15 @@ class Record(models.Model):
         return self.title or f"Record {self.id}"
     
     def save(self, *args, **kwargs):
-        # Track if this is a new record
-        is_new = self.pk is None
+        """Simplified save method delegating to RecordOperationManager"""
+        from .record_operations import get_record_operation_manager
         
-        print(f"🟢 DATABASE STEP 1: Model Save Starting")
-        print(f"   🆔 Record ID: {self.pk or 'NEW'}")
-        print(f"   📦 Data to save: {self.data}")
-        if self.data:
-            print(f"   🔑 Data contains {len(self.data)} field(s): [{', '.join(self.data.keys())}]")
-            null_fields = [k for k, v in self.data.items() if v is None]
-            if null_fields:
-                print(f"   ⚠️  Data contains {len(null_fields)} NULL fields: [{', '.join(null_fields)}]")
+        manager = get_record_operation_manager(self)
+        result = manager.process_record_save(*args, **kwargs)
         
-        # Store original data for change detection
-        original_data = {}
-        if not is_new:
-            try:
-                original_record = Record.objects.get(pk=self.pk)
-                original_data = original_record.data.copy()
-                print(f"   📊 Original data had {len(original_data)} fields")
-                
-                # 🔍 DEBUG: Enhanced button field debugging
-                button_field_name = 'ai_summary_trigger'
-                if button_field_name in original_data:
-                    original_button = original_data[button_field_name]
-                    current_button = self.data.get(button_field_name) if self.data else None
-                    print(f"   🔍 BUTTON DEBUG - Original: {original_button}")
-                    print(f"   🔍 BUTTON DEBUG - Current:  {current_button}")
-                    print(f"   🔍 BUTTON DEBUG - Same?     {original_button == current_button}")
-                    
-                    if original_button and current_button:
-                        print(f"   🔍 BUTTON DETAILS - Original triggered: {original_button.get('triggered')}")
-                        print(f"   🔍 BUTTON DETAILS - Current triggered:  {current_button.get('triggered')}")
-                        print(f"   🔍 BUTTON DETAILS - Click count change: {original_button.get('click_count')} -> {current_button.get('click_count')}")
-                        
-            except Record.DoesNotExist:
-                pass
-        
-        # Initialize changed_fields for all cases
-        changed_fields = set()
-        
-        # Determine validation context based on update type
-        if not is_new and original_data:
-            # Check what fields changed to determine if this is a partial update
-            current_data = self.data or {}
-            
-            for field_name in set(list(original_data.keys()) + list(current_data.keys())):
-                old_value = original_data.get(field_name)
-                new_value = current_data.get(field_name)
-                if old_value != new_value:
-                    changed_fields.add(field_name)
-            
-            # Consider it a partial update if only a few fields changed
-            is_partial_update = len(changed_fields) <= 3 and len(changed_fields) > 0
-            
-            # Check if this is a migration context (data operations that don't need business validation)
-            if hasattr(self, '_migration_context') and self._migration_context:
-                validation_context = 'migration'
-                print(f"🔧 MIGRATION MODE: Using migration validation context")
-            else:
-                validation_context = 'storage' if is_partial_update else 'business_rules'
-            
-            print(f"🔍 UPDATE ANALYSIS: {len(changed_fields)} field(s) changed: {list(changed_fields)}")
-            print(f"   📋 Context: {validation_context} {'(partial update)' if is_partial_update else '(full update)'}")
-        else:
-            # New records always get full business rules validation
-            validation_context = 'business_rules'
-            print(f"🔍 NEW RECORD: Using business_rules validation context")
-        
-        # Determine which field(s) changed for optimized validation
-        changed_field_slug = None
-        if not is_new and validation_context in ['storage', 'business_rules'] and len(changed_fields) == 1:
-            changed_field_slug = list(changed_fields)[0]
-            print(f"🎯 SINGLE FIELD CHANGE DETECTED: {changed_field_slug}")
-        
-        # Use optimized validation with dependency tracking
-        validation_result = self.pipeline.validate_record_data_optimized(
-            self.data, 
-            validation_context, 
-            changed_field_slug=changed_field_slug
-        )
-        if not validation_result['is_valid']:
-            # Flatten validation errors for Django ValidationError
-            error_messages = []
-            for field_name, field_errors in validation_result['errors'].items():
-                if isinstance(field_errors, list):
-                    error_messages.extend([f"{field_name}: {error}" for error in field_errors])
-                else:
-                    error_messages.append(f"{field_name}: {field_errors}")
-            raise ValidationError(error_messages)
-        
-        # Update cleaned data - MERGE with existing data to prevent data loss
-        if not is_new and original_data:
-            # Merge validated fields with existing data
-            merged_data = original_data.copy()
-            merged_data.update(validation_result['cleaned_data'])
-            self.data = merged_data
-            print(f"   🔄 MERGE: Combined {len(original_data)} existing + {len(validation_result['cleaned_data'])} validated = {len(merged_data)} total fields")
-        else:
-            # New records or full updates can replace data entirely
-            self.data = validation_result['cleaned_data']
-        
-        print(f"🟢 DATABASE STEP 2: After Validation")
-        print(f"   📦 Cleaned data: {self.data}")
-        if self.data:
-            print(f"   🔑 Cleaned contains {len(self.data)} field(s): [{', '.join(self.data.keys())}]")
-            null_fields = [k for k, v in self.data.items() if v is None]
-            if null_fields:
-                print(f"   ⚠️  Cleaned contains {len(null_fields)} NULL fields: [{', '.join(null_fields)}]")
-        
-        # Generate title if not provided
-        if not self.title:
-            self.title = self._generate_title()
-        
-        # Update version if data changed
-        if not is_new and original_data != self.data:
-            self.version += 1
-        
-        # ✅ CRITICAL FIX: Trigger AI field updates BEFORE database save to avoid race condition
-        # This ensures AI processing happens before Django signals fire
-        print(f"🔍 AI TRIGGER CHECK: Record {self.id or 'NEW'}")
-        print(f"   📊 is_new: {is_new}")
-        print(f"   🚫 _skip_ai_processing: {getattr(self, '_skip_ai_processing', False)}")
-        
-        if not is_new and not getattr(self, '_skip_ai_processing', False):
-            # Debug: Compare original vs current data for the button field specifically
-            button_field = 'ai_summary_trigger'
-            if button_field in original_data and button_field in self.data:
-                print(f"   🔍 BUTTON FIELD DEBUG:")
-                print(f"      📜 Original: {original_data[button_field]}")
-                print(f"      📄 Current:  {self.data[button_field]}")
-                print(f"      ⚖️  Equal: {original_data[button_field] == self.data[button_field]}")
-            
-            # ✅ CRITICAL FIX: Use pre-calculated changed_fields to avoid validation normalization issues
-            # The changed_fields set was calculated before validation normalized key orders
-            changed_fields_list = list(changed_fields)
-            print(f"   🔄 Changed fields detected: {changed_fields_list}")
-            
-            if changed_fields_list:
-                print(f"   ✅ Calling _trigger_ai_updates with fields: {changed_fields_list}")
-                self._trigger_ai_updates(changed_fields_list)
-            else:
-                print(f"   ❌ No changed fields detected, skipping AI processing")
-        else:
-            if is_new:
-                print(f"   ⏸️  Skipping AI processing: Record is new")
-            else:
-                print(f"   ⏸️  Skipping AI processing: _skip_ai_processing is True")
-        
-        print(f"🟢 DATABASE STEP 3: Saving to Database")
-        super().save(*args, **kwargs)
-        print(f"🟢 DATABASE STEP 3.1: super().save() completed successfully")
-        print(f"   ✅ Database save complete for record {self.pk}")
-        
-        # Update search vector
-        self._update_search_vector()
-        
-        # Update pipeline statistics
-        if is_new:
-            self._update_pipeline_stats()
-        
-        # Broadcast record update
-        from api.events import broadcaster
-        if hasattr(self, '_skip_broadcast') and self._skip_broadcast:
-            return
-        
-        try:
-            import asyncio
-            changes = self._get_changed_fields(original_data, self.data) if not is_new and original_data else None
-            
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                loop.create_task(broadcaster.broadcast_record_update(
-                    self, 
-                    event_type="created" if is_new else "updated",
-                    user_id=getattr(self, '_current_user_id', None),
-                    changes=changes
-                ))
-            else:
-                broadcaster.sync_broadcast_record_update(
-                    self, 
-                    event_type="created" if is_new else "updated",
-                    user_id=getattr(self, '_current_user_id', None),
-                    changes=changes
-                )
-        except Exception:
-            pass  # Don't fail save if broadcast fails
+        if not result.success:
+            raise ValidationError(result.errors)
     
-    def _generate_title(self) -> str:
-        """Generate display title from record data"""
-        # Look for common title fields
-        title_fields = ['name', 'title', 'subject', 'company', 'company_name', 'full_name', 'first_name']
-        
-        for field_slug in title_fields:
-            if field_slug in self.data and self.data[field_slug]:
-                return str(self.data[field_slug])[:500]
-        
-        # Fallback to first non-empty field
-        for key, value in self.data.items():
-            if value and isinstance(value, (str, int, float)):
-                return f"{key}: {str(value)[:100]}"
-        
-        # Final fallback
-        return f"{self.pipeline.name} Record #{self.id or 'New'}"
-    
-    def _update_search_vector(self):
-        """Update full-text search vector"""
-        from django.contrib.postgres.search import SearchVector
-        
-        # Get searchable field values
-        searchable_text = []
-        
-        for field in self.pipeline.fields.filter(is_searchable=True):
-            value = self.data.get(field.slug)
-            if value:
-                if isinstance(value, (list, dict)):
-                    searchable_text.append(str(value))
-                else:
-                    searchable_text.append(str(value))
-        
-        # Add title and tags
-        if self.title:
-            searchable_text.append(self.title)
-        if self.tags:
-            searchable_text.extend(self.tags)
-        
-        # Update search vector
-        if searchable_text:
-            search_text = ' '.join(searchable_text)
-            Record.objects.filter(id=self.id).update(
-                search_vector=SearchVector('title') + SearchVector(models.Value(search_text))
-            )
-    
-    def _update_pipeline_stats(self):
-        """Update pipeline statistics"""
-        from django.utils import timezone
-        
-        Pipeline.objects.filter(id=self.pipeline_id).update(
-            record_count=models.F('record_count') + 1,
-            last_record_created=timezone.now()
-        )
-    
-    def _get_changed_fields(self, old_data: dict, new_data: dict) -> list:
-        """Get list of fields that changed"""
-        changed_fields = []
-        
-        logger.info(f"🔍 CHANGE DETECTION: Comparing field data")
-        logger.info(f"   📊 Old data keys: {list(old_data.keys())}")
-        logger.info(f"   📊 New data keys: {list(new_data.keys())}")
-        
-        # Check for changed values
-        for field_slug in set(old_data.keys()) | set(new_data.keys()):
-            old_value = old_data.get(field_slug)
-            new_value = new_data.get(field_slug)
-            
-            logger.info(f"   🔍 Field '{field_slug}':")
-            logger.info(f"      📜 Old: {old_value}")
-            logger.info(f"      📄 New: {new_value}")
-            logger.info(f"      ⚖️  Equal: {old_value == new_value}")
-            logger.info(f"      🔢 Types: {type(old_value)} vs {type(new_value)}")
-            
-            if old_value != new_value:
-                logger.info(f"      ✅ CHANGED: Adding '{field_slug}' to changed fields")
-                changed_fields.append(field_slug)
-            else:
-                logger.info(f"      ❌ NO CHANGE: Field '{field_slug}' unchanged")
-        
-        logger.info(f"🔍 CHANGE DETECTION RESULT: {len(changed_fields)} changed field(s): {changed_fields}")
-        return changed_fields
-    
-    def _trigger_ai_updates(self, changed_fields: list):
-        """Trigger AI field updates using the unified AI system"""
-        print(f"🤖 AI STEP 1: Starting AI Processing Chain")
-        print(f"   📋 Record ID: {self.id}")
-        print(f"   🔄 Changed Fields: {changed_fields}")
-        print(f"   📊 Total Fields in Record: {len(self.data)}")
-        
-        try:
-            from ai.integrations import trigger_field_ai_processing
-            
-            print(f"🤖 AI STEP 2: AI Integration Module Loaded")
-            logger.info(f"🤖 AI STEP 1: Starting AI Processing Chain")
-            logger.info(f"   📋 Record ID: {self.id}")
-            logger.info(f"   🔄 Changed Fields: {changed_fields}")
-            logger.info(f"   📊 Total Fields in Record: {len(self.data)}")
-            
-            # Get the user who made the change (if available)
-            user = getattr(self, '_current_user', None) or self.updated_by
-            if not user:
-                logger.warning(f"❌ AI STEP 1 FAILED: No user context for AI processing on record {self.id}")
-                logger.warning(f"   _current_user: {getattr(self, '_current_user', 'NOT_SET')}")
-                logger.warning(f"   updated_by: {self.updated_by}")
-                return
-            
-            logger.info(f"🤖 AI STEP 2: User Context Validated")
-            logger.info(f"   👤 User: {user.email} (ID: {user.id})")
-            logger.info(f"   🔑 User Type: {user.user_type.name if hasattr(user, 'user_type') and user.user_type else 'Unknown'}")
-            
-            # Trigger AI processing using the new unified system
-            logger.info(f"🤖 AI STEP 3: Calling trigger_field_ai_processing")
-            result = trigger_field_ai_processing(self, changed_fields, user)
-            
-            logger.info(f"🤖 AI STEP 4: Processing Complete")
-            logger.info(f"   ✅ Triggered Jobs: {len(result.get('triggered_jobs', []))}")
-            logger.info(f"   📋 Job Details: {result.get('triggered_jobs', [])}")
-            
-            if result.get('triggered_jobs'):
-                for job in result.get('triggered_jobs', []):
-                    logger.info(f"   🔧 AI Job Created: Field '{job.get('field')}', Job ID: {job.get('job_id', 'Unknown')}")
-            
-        except Exception as e:
-            logger.error(f"❌ AI PROCESSING FAILED for record {self.id}: {e}")
-            import traceback
-            logger.error(f"   📋 Full traceback: {traceback.format_exc()}")
     
     def soft_delete(self, deleted_by: User):
         """Soft delete the record"""

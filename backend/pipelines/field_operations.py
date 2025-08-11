@@ -11,8 +11,8 @@ from django.core.exceptions import ValidationError
 
 from .models import Pipeline, Field, Record
 from .field_types import FieldType
-from .validation.field_validator import FieldValidator
-from .migration.data_migrator import DataMigrator
+from .validation.field_validator import FieldValidator as AdvancedFieldValidator
+from .validation.data_migrator import DataMigrator
 from .state.field_state_manager import get_field_state_manager
 from core.models import AuditLog
 
@@ -58,7 +58,7 @@ class FieldOperationManager:
     def __init__(self, pipeline: Pipeline):
         self.pipeline = pipeline
         self._operation_counter = 0
-        self.validator = FieldValidator()
+        self.validator = AdvancedFieldValidator()
         self.migrator = DataMigrator(pipeline)
         self.state_manager = get_field_state_manager()
     
@@ -136,7 +136,7 @@ class FieldOperationManager:
         
         try:
             with transaction.atomic():
-                # Step 1: Validate field creation using FieldValidator
+                # Step 1: Validate field creation using AdvancedFieldValidator
                 validation_result = self.validator.validate_field_creation(field_config, self.pipeline)
                 if not validation_result.valid:
                     return FieldOperationResult(
@@ -272,7 +272,7 @@ class FieldOperationManager:
                         errors=["Failed to retrieve field state for change tracking"]
                     )
                 
-                # Step 3: Validate field changes using FieldValidator
+                # Step 3: Validate field changes using AdvancedFieldValidator
                 validation_result = self.validator.validate_field_update(field, changes)
                 if not validation_result.valid:
                     return FieldOperationResult(
@@ -384,7 +384,7 @@ class FieldOperationManager:
                         errors=["Field not found or already deleted"]
                     )
                 
-                # Step 2: Validate deletion using FieldValidator
+                # Step 2: Validate deletion using AdvancedFieldValidator
                 validation_result = self.validator.validate_field_deletion(field, hard_delete)
                 if not validation_result.valid:
                     return FieldOperationResult(
@@ -493,7 +493,7 @@ class FieldOperationManager:
                         errors=["Field not found or not deleted"]
                     )
                 
-                # Step 2: Validate restoration using FieldValidator
+                # Step 2: Validate restoration using AdvancedFieldValidator
                 validation_result = self.validator.validate_field_restoration(field)
                 if not validation_result.valid:
                     return FieldOperationResult(
@@ -564,7 +564,7 @@ class FieldOperationManager:
         Returns:
             MigrationResult with migration details
         """
-        from .migration.data_migrator import MigrationResult
+        from .validation.data_migrator import MigrationResult
         import time
         
         start_time = time.time()

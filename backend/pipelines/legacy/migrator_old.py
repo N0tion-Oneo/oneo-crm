@@ -1,6 +1,15 @@
 """
+🔴 DEPRECATED - DO NOT USE 🔴
 Field Schema Migration Engine
 Handles migration of existing record data when field schemas change
+
+MOVED TO: pipelines/validation/data_migrator.py
+
+This file is kept for reference only. All new imports should use:
+from pipelines.validation import DataMigrator, MigrationResult
+
+Date moved: 2025-01-10
+Reason: Validation system reorganization for better architecture
 """
 import logging
 from typing import Dict, Any, List, Optional, Tuple
@@ -10,7 +19,7 @@ from datetime import timedelta
 
 from .models import Pipeline, Field, Record
 from .field_types import FieldType
-from .validators import FieldValidator, validate_record_data
+from .validation import FieldValidator, validate_record_data
 
 logger = logging.getLogger(__name__)
 

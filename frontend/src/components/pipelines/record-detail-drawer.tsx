@@ -67,6 +67,47 @@ const convertToFieldType = (recordField: RecordField): Field => ({
   placeholder: undefined // RecordField doesn't have placeholder
 })
 
+// Provide fallback default values for field types that return null/undefined
+const getFallbackDefaultValue = (fieldType: string): any => {
+  switch (fieldType) {
+    case 'text':
+    case 'textarea':
+    case 'email':
+    case 'phone':
+    case 'url':
+    case 'address':
+      return '' // Empty string for text-based fields - ensures editability
+    
+    case 'number':
+    case 'integer':
+    case 'decimal':
+    case 'float':
+    case 'currency':
+    case 'percentage':
+    case 'date':
+    case 'datetime':
+    case 'time':
+    case 'select':
+    case 'relation':
+    case 'user':
+    case 'file':
+    case 'image':
+    case 'ai_generated':
+    case 'button':
+      return null // Null for fields that should remain unset initially
+    
+    case 'boolean':
+      return false // Boolean fields default to false
+    
+    case 'multiselect':
+    case 'tags':
+      return [] // Empty array for multi-value fields
+    
+    default:
+      return null // Safe fallback
+  }
+}
+
 interface Record {
   id: string
   data: { [key: string]: any }
@@ -148,18 +189,29 @@ export function RecordDetailDrawer({
   const fieldSaveService = useRef(new FieldSaveService()).current
   const isSavingRef = useRef(false)  // Track when we're saving to prevent formData reset
 
-  // Debug formData changes with stack trace
+  // Debug formData changes with stack trace - Enhanced for new record debugging
   useEffect(() => {
-    if (record && Object.keys(formData).length > 0) {
-      console.log(`📋 DRAWER formData changed for record ${record.id}:`, {
+    const isNewRecord = !record
+    const hasFormData = Object.keys(formData).length > 0
+    
+    if ((record && hasFormData) || (isNewRecord && hasFormData)) {
+      console.log(`📋 DRAWER formData changed:`, {
+        recordType: isNewRecord ? 'NEW_RECORD' : 'EXISTING_RECORD',
+        recordId: record?.id || 'NEW',
         formDataKeys: Object.keys(formData),
         formDataSize: Object.keys(formData).length,
-        recordId: record.id,
         isSaving: isSavingRef.current,
-        stackTrace: new Error().stack?.split('\n').slice(1, 8).join('\n')
+        editingField: editingField,
+        localFieldValuesCount: Object.keys(localFieldValues).length,
+        stackTrace: new Error().stack?.split('\n').slice(1, 6).join('\n')
       })
+      
+      // Special debugging for new records
+      if (isNewRecord && hasFormData) {
+        console.log(`🆕 NEW RECORD formData details:`, formData)
+      }
     }
-  }, [formData, record?.id])
+  }, [formData, record?.id, editingField])
 
   // Field filtering with conditional visibility support
   const visibleFields = useMemo(() => {
@@ -253,6 +305,22 @@ export function RecordDetailDrawer({
 
   // Initialize form data when record ID changes (not on every record update)
   useEffect(() => {
+    console.log(`🔄 USEEFFECT TRIGGERED:`, {
+      hasRecord: !!record,
+      recordId: record?.id,
+      fieldsLength: pipeline.fields.length,
+      hasExistingFormData: Object.keys(formData).length > 0,
+      editingField: editingField,
+      reason: 'record ID or pipeline fields changed'
+    })
+
+    // DEFENSIVE: Don't reset formData if user is actively editing a new record
+    // This prevents losing user input when pipeline fields change
+    if (!record && Object.keys(formData).length > 0 && editingField) {
+      console.log(`⚠️  PREVENTING RESET: User is actively editing new record field '${editingField}'`)
+      return
+    }
+
     if (record) {
       // Record ID changed - safe to reset formData
       
@@ -275,30 +343,43 @@ export function RecordDetailDrawer({
       setOriginalData(normalizedData)
       loadActivities(record.id)
     } else {
-      // New record - initialize with default values using field registry
+      // New record - initialize ALL fields with appropriate defaults
       const defaultData: { [key: string]: any } = {}
+      
+      console.log(`🆕 NEW RECORD: Initializing formData for ${pipeline.fields.length} fields`)
+      
       pipeline.fields.forEach(field => {
         const fieldType = convertToFieldType(field)
         const defaultValue = getFieldDefaultValue(fieldType)
+        
+        // Initialize ALL fields, including those with null/undefined defaults
+        // This ensures every field exists in formData to prevent input loss
         if (defaultValue !== undefined && defaultValue !== null) {
-          // Use field.name as the key since that's what our frontend uses internally
           defaultData[field.name] = defaultValue
+          console.log(`   ✅ Field '${field.name}' (${field.field_type}): initialized with default ${JSON.stringify(defaultValue)}`)
+        } else {
+          // Provide appropriate fallback defaults for null/undefined values
+          const fallbackDefault = getFallbackDefaultValue(field.field_type)
+          defaultData[field.name] = fallbackDefault
+          console.log(`   🔧 Field '${field.name}' (${field.field_type}): initialized with fallback ${JSON.stringify(fallbackDefault)}`)
         }
       })
       
-
+      console.log(`🆕 NEW RECORD: Final formData has ${Object.keys(defaultData).length} fields:`, Object.keys(defaultData))
 
       setFormData(defaultData)
       setOriginalData({})
       setActivities([])
     }
     
-    // Reset field editing state
-    setEditingField(null)
-    setLocalFieldValues({})
-    setFieldErrors({})
-    setValidationErrors([])
-  }, [record?.id, pipeline.fields.length])  // 🔧 FIXED: Use length to avoid array recreation issues
+    // Reset field editing state (unless user is actively editing)
+    if (!editingField) {
+      setEditingField(null)
+      setLocalFieldValues({})
+      setFieldErrors({})
+      setValidationErrors([])
+    }
+  }, [record?.id, pipeline.fields.length])  // Dependencies: only reset when record ID or field count changes
 
   // Auto-enable editing for new records
   useEffect(() => {
@@ -425,10 +506,19 @@ export function RecordDetailDrawer({
 
   // Simple field change handler like DynamicFormRenderer
   const handleFieldChange = (fieldName: string, value: any) => {
+    console.log(`🔄 handleFieldChange called:`, { fieldName, value })
+    
     setFormData(prev => ({
       ...prev,
       [fieldName]: value
     }))
+
+    // Keep localFieldValues in sync for proper field exit handling
+    setLocalFieldValues(prev => {
+      const updated = { ...prev, [fieldName]: value }
+      console.log(`🔄 localFieldValues updated:`, { fieldName, value, before: prev[fieldName], after: updated[fieldName] })
+      return updated
+    })
 
     // Clear validation error for this field
     setValidationErrors(prev => 
@@ -442,10 +532,12 @@ export function RecordDetailDrawer({
     console.log(`🔍 Current formData for ${fieldName}:`, formData[fieldName])
     setEditingField(fieldName)
     
-    // Preserve the actual value instead of converting falsy values to empty strings
-    // Field components handle their own empty state formatting (0, false, null, [], etc.)
-    setLocalFieldValues(prev => ({ ...prev, [fieldName]: currentValue }))
+    // Use the most recent value: formData takes precedence over currentValue for new records
+    const initialValue = formData[fieldName] !== undefined ? formData[fieldName] : currentValue
+    setLocalFieldValues(prev => ({ ...prev, [fieldName]: initialValue }))
     setFieldErrors(prev => ({ ...prev, [fieldName]: '' })) // Clear any errors
+    
+    console.log(`🔵 Field enter - set localFieldValue:`, { fieldName, currentValue, formDataValue: formData[fieldName], finalValue: initialValue })
     
     // Lock field for collaboration if we have a record
     if (record && isConnected) {
@@ -454,8 +546,23 @@ export function RecordDetailDrawer({
   }
 
   const handleFieldExit = async (fieldName: string, passedValue?: any) => {
-    const newValue = passedValue !== undefined ? passedValue : localFieldValues[fieldName]
+    // Use passedValue first, then localFieldValues, then fallback to current formData
+    const newValue = passedValue !== undefined 
+      ? passedValue 
+      : (localFieldValues[fieldName] !== undefined && localFieldValues[fieldName] !== '') 
+        ? localFieldValues[fieldName] 
+        : formData[fieldName]
     const oldValue = formData[fieldName]
+    
+    console.log(`🚪 Field exit: ${fieldName}`, {
+      passedValue,
+      localFieldValue: localFieldValues[fieldName],
+      currentFormData: formData[fieldName],
+      finalNewValue: newValue,
+      oldValue,
+      strategy: passedValue !== undefined ? 'passedValue' : 
+               (localFieldValues[fieldName] !== undefined && localFieldValues[fieldName] !== '') ? 'localFieldValues' : 'formData'
+    })
     
 
     
@@ -798,10 +905,43 @@ export function RecordDetailDrawer({
     const shouldExitImmediately = ['select', 'boolean', 'radio'].includes(field.field_type)
     
     const handleFieldRegistryChange = (newValue: any) => {
+      console.log(`🔵 Field change: ${field.name}`, {
+        newValue,
+        isNewRecord: !record || !record.id,
+        fieldType: field.field_type,
+        currentFormDataKeys: Object.keys(formData)
+      })
+      
       // For NEW records, don't use field-level saving - just update local formData
       // The record will be created when the user clicks "Create Record"
       if (!record || !record.id) {
-        setFormData(prev => ({ ...prev, [field.name]: newValue }))
+        console.log(`🆕 NEW RECORD: Updating formData for field '${field.name}'`)
+        
+        // Defensive check: ensure field exists in formData before updating
+        if (!(field.name in formData)) {
+          console.warn(`⚠️  Field '${field.name}' missing from formData! Adding it now.`)
+        }
+        
+        setFormData(prev => {
+          const updated = { ...prev, [field.name]: newValue }
+          console.log(`🆕 NEW RECORD: formData updated`, {
+            fieldName: field.name,
+            oldValue: prev[field.name],
+            newValue: newValue,
+            totalFields: Object.keys(updated).length
+          })
+          return updated
+        })
+
+        // Also update localFieldValues to keep them in sync for field exit handling
+        setLocalFieldValues(prev => {
+          const updated = { ...prev, [field.name]: newValue }
+          console.log(`🆕 NEW RECORD: localFieldValues synced`, {
+            fieldName: field.name,
+            newValue: newValue
+          })
+          return updated
+        })
         return
       }
       

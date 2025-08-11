@@ -2,6 +2,7 @@
 Unified Data Migration Engine
 Consolidates data transformation logic from migrator.py into single system
 Handles all field change types: renames, type changes, constraint updates
+Moved from pipelines/migration/data_migrator.py for better organization
 """
 import logging
 from typing import Dict, Any, List, Optional, Tuple, Callable
@@ -90,7 +91,7 @@ class DataMigrator:
             MigrationResult with detailed outcome
         """
         start_time = timezone.now()
-        logger.info(f"[{operation_id}] Starting data migration: {change_analysis['migration_types']}")
+        logger.info(f"MIGRATION: Starting data migration [{operation_id}] - {change_analysis['migration_types']}")
         
         try:
             with transaction.atomic():
@@ -98,7 +99,7 @@ class DataMigrator:
                 migration_plan = self._create_migration_plan(field, original_state, change_analysis)
                 
                 if not migration_plan['records_to_migrate']:
-                    logger.info(f"[{operation_id}] No records to migrate")
+                    logger.info(f"MIGRATION: COMPLETED [{operation_id}] - No records to migrate")
                     return MigrationResult(
                         success=True,
                         metadata={'migration_plan': migration_plan, 'reason': 'no_records_to_migrate'}
@@ -142,12 +143,13 @@ class DataMigrator:
                         'dry_run': dry_run
                     })
                     
-                    logger.info(f"[{operation_id}] Migration completed: success={migration_result.success}, "
-                              f"processed={migration_result.records_processed}, time={processing_time:.2f}s")
+                    status = "PASSED" if migration_result.success else "FAILED"
+                    logger.info(f"MIGRATION: {status} [{operation_id}] - "
+                               f"processed={migration_result.records_processed}, time={processing_time:.2f}s")
                     
                     return migration_result
                 else:
-                    logger.warning(f"[{operation_id}] No migration handler for types: {change_analysis['migration_types']}")
+                    logger.warning(f"MIGRATION: No handler [{operation_id}] - {change_analysis['migration_types']}")
                     return MigrationResult(
                         success=False,
                         errors=[f"No migration handler for types: {change_analysis['migration_types']}"],
@@ -161,7 +163,7 @@ class DataMigrator:
         except Exception as e:
             end_time = timezone.now()
             processing_time = (end_time - start_time).total_seconds()
-            logger.error(f"[{operation_id}] Migration failed: {str(e)}")
+            logger.error(f"MIGRATION: FAILED [{operation_id}] - {str(e)}")
             return MigrationResult(
                 success=False,
                 errors=[f"Migration failed: {str(e)}"],
@@ -285,7 +287,7 @@ class DataMigrator:
             
         except Exception as e:
             preview_result['error'] = f'Preview generation failed: {str(e)}'
-            logger.error(f"Migration preview failed: {str(e)}")
+            logger.error(f"MIGRATION: Preview generation failed - {str(e)}")
         
         return preview_result
     

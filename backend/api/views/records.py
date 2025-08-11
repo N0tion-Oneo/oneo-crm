@@ -90,18 +90,208 @@ class RecordViewSet(viewsets.ModelViewSet):
     def get_filterset_class(self):
         """Return dynamic filterset based on pipeline"""
         pipeline_pk = self.kwargs.get('pipeline_pk')
+        print(f"🔧 GET_FILTERSET_CLASS called for pipeline {pipeline_pk}")
+        
+        # Cache the filterset class to avoid creating multiple instances
+        cache_key = f"_cached_filterset_class_{pipeline_pk}"
+        if hasattr(self, cache_key):
+            cached_class = getattr(self, cache_key)
+            print(f"🔧 Using cached filterset class for pipeline {pipeline_pk}")
+            return cached_class
         
         if pipeline_pk:
             try:
                 pipeline = Pipeline.objects.get(id=pipeline_pk)
-                # Create dynamic filter instance
-                return lambda *args, **kwargs: DynamicRecordFilter(
-                    *args, pipeline=pipeline, **kwargs
-                )
+                print(f"🔧 Creating NEW filterset class for pipeline: {pipeline.name}")
+                
+                # Create a proper filter class, not a lambda
+                class PipelineDynamicRecordFilter(DynamicRecordFilter):
+                    def __init__(self, *args, **kwargs):
+                        print(f"🚨 PIPELINE_FILTERSET INIT called with params: {list(kwargs.keys())}")
+                        print(f"🚨 Args: {args}")
+                        super().__init__(*args, pipeline=pipeline, **kwargs)
+                
+                # Cache the class for reuse
+                setattr(self, cache_key, PipelineDynamicRecordFilter)
+                return PipelineDynamicRecordFilter
+                
             except Pipeline.DoesNotExist:
+                print(f"❌ Pipeline {pipeline_pk} not found")
                 pass
         
+        print(f"🔧 Returning None filterset class")
         return None
+    
+    def filter_queryset(self, queryset):
+        """
+        Custom filter method to handle ALL JSONB field filtering and bypass dual filterset issue.
+        
+        This method completely bypasses the broken DRF dynamic filterset system and handles 
+        filtering directly for ALL field types that require special PostgreSQL JSONB operations.
+        """
+        # Skip standard DRF filtering as it's not working due to dual instance issue
+        # queryset = super().filter_queryset(queryset)
+        
+        # Handle custom JSONB field filtering directly for ALL field types
+        for param_name, param_value in self.request.query_params.items():
+            if not param_value:  # Skip empty parameters
+                continue
+                
+            try:
+                # User field filtering: data__sales_agent__user_id
+                if param_name.endswith('__user_id'):
+                    field_slug = param_name.replace('data__', '').replace('__user_id', '')
+                    queryset = queryset.extra(
+                        where=["data->%s @> %s::jsonb"],
+                        params=[field_slug, f'[{{"user_id": {int(param_value)}}}]']
+                    )
+                
+                # Tags field filtering: data__company_tags__icontains
+                elif '__icontains' in param_name and param_name.startswith('data__') and 'tags' in param_name:
+                    field_slug = param_name.replace('data__', '').replace('__icontains', '')
+                    # Handle JSONB array contains for tags
+                    queryset = queryset.extra(
+                        where=["data->%s ? %s"],
+                        params=[field_slug, param_value]
+                    )
+                
+                # Relationship field filtering: data__relationship_field__contains
+                elif '__contains' in param_name and param_name.startswith('data__') and not 'tags' in param_name:
+                    field_slug = param_name.replace('data__', '').replace('__contains', '')
+                    # Handle both single values and arrays for relationship fields
+                    queryset = queryset.extra(
+                        where=["(data->%s @> %s OR (data->%s)::text = %s)"],
+                        params=[field_slug, f'[{int(param_value)}]', field_slug, str(int(param_value))]
+                    )
+                
+                # Text field filtering: data__field_name__icontains (not tags)
+                elif param_name.startswith('data__') and '__icontains' in param_name and 'tags' not in param_name:
+                    field_slug = param_name.replace('data__', '').replace('__icontains', '')
+                    # Handle JSONB text field with proper casting
+                    queryset = queryset.extra(
+                        where=["(data->>%s) ILIKE %s"],
+                        params=[field_slug, f'%{param_value}%']
+                    )
+                
+                # Exact text field filtering: data__field_name__exact
+                elif param_name.startswith('data__') and '__exact' in param_name:
+                    field_slug = param_name.replace('data__', '').replace('__exact', '')
+                    queryset = queryset.extra(
+                        where=["(data->>%s) = %s"],
+                        params=[field_slug, param_value]
+                    )
+                
+                # Number field filtering: data__field_name__gte, __lte, __gt, __lt
+                elif param_name.startswith('data__') and ('__gte' in param_name or '__lte' in param_name or '__gt' in param_name or '__lt' in param_name):
+                    if '__gte' in param_name:
+                        field_slug = param_name.replace('data__', '').replace('__gte', '')
+                        operator = '>='
+                    elif '__lte' in param_name:
+                        field_slug = param_name.replace('data__', '').replace('__lte', '')
+                        operator = '<='
+                    elif '__gt' in param_name:
+                        field_slug = param_name.replace('data__', '').replace('__gt', '')
+                        operator = '>'
+                    elif '__lt' in param_name:
+                        field_slug = param_name.replace('data__', '').replace('__lt', '')
+                        operator = '<'
+                    
+                    # Handle number/decimal fields stored as JSONB
+                    queryset = queryset.extra(
+                        where=[f"CAST(data->>%s AS NUMERIC) {operator} %s"],
+                        params=[field_slug, float(param_value)]
+                    )
+                
+                # Basic number field filtering: data__field_name (exact match)
+                elif param_name.startswith('data__') and param_name.count('__') == 1:
+                    field_slug = param_name.replace('data__', '')
+                    # Try numeric first, fallback to text
+                    try:
+                        numeric_value = float(param_value)
+                        queryset = queryset.extra(
+                            where=["CAST(data->>%s AS NUMERIC) = %s"],
+                            params=[field_slug, numeric_value]
+                        )
+                    except ValueError:
+                        # Not a number, treat as text
+                        queryset = queryset.extra(
+                            where=["(data->>%s) = %s"],
+                            params=[field_slug, param_value]
+                        )
+                
+                # Boolean field filtering: data__field_name (true/false)
+                elif param_name.startswith('data__') and param_value.lower() in ['true', 'false']:
+                    field_slug = param_name.replace('data__', '')
+                    bool_value = param_value.lower() == 'true'
+                    queryset = queryset.extra(
+                        where=["CAST(data->>%s AS BOOLEAN) = %s"],
+                        params=[field_slug, bool_value]
+                    )
+                
+                # Date field filtering: data__field_name__date, __gte, __lte
+                elif param_name.startswith('data__') and ('__date' in param_name):
+                    field_slug = param_name.replace('data__', '').replace('__date', '')
+                    queryset = queryset.extra(
+                        where=["DATE(CAST(data->>%s AS TIMESTAMP)) = %s"],
+                        params=[field_slug, param_value]
+                    )
+                
+                # Select/Choice field filtering: data__field_name__in
+                elif param_name.startswith('data__') and '__in' in param_name:
+                    field_slug = param_name.replace('data__', '').replace('__in', '')
+                    values = [v.strip() for v in param_value.split(',')]
+                    # Create multiple OR conditions for each value
+                    where_conditions = []
+                    params = []
+                    for value in values:
+                        where_conditions.append("(data->>%s) = %s")
+                        params.extend([field_slug, value])
+                    
+                    if where_conditions:
+                        queryset = queryset.extra(
+                            where=[f"({' OR '.join(where_conditions)})"],
+                            params=params
+                        )
+                
+                # Null/empty field filtering: data__field_name__isnull
+                elif param_name.startswith('data__') and '__isnull' in param_name:
+                    field_slug = param_name.replace('data__', '').replace('__isnull', '')
+                    is_null = param_value.lower() == 'true'
+                    if is_null:
+                        queryset = queryset.extra(
+                            where=["(data->>%s IS NULL OR data->>%s = '')"],
+                            params=[field_slug, field_slug]
+                        )
+                    else:
+                        queryset = queryset.extra(
+                            where=["(data->>%s IS NOT NULL AND data->>%s != '')"],
+                            params=[field_slug, field_slug]
+                        )
+                
+                # Standard field filtering (status, created_by, etc.)
+                elif param_name in ['status', 'created_by', 'updated_by', 'created_at', 'updated_at']:
+                    filter_dict = {param_name: param_value}
+                    queryset = queryset.filter(**filter_dict)
+                
+                # Date range filtering for created_at, updated_at
+                elif param_name in ['created_after', 'created_before', 'updated_after', 'updated_before']:
+                    if param_name == 'created_after':
+                        queryset = queryset.filter(created_at__gte=param_value)
+                    elif param_name == 'created_before':
+                        queryset = queryset.filter(created_at__lte=param_value)
+                    elif param_name == 'updated_after':
+                        queryset = queryset.filter(updated_at__gte=param_value)
+                    elif param_name == 'updated_before':
+                        queryset = queryset.filter(updated_at__lte=param_value)
+                    
+            except (ValueError, TypeError, KeyError) as e:
+                # Log error but don't break the query if parameter is invalid
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning(f"Invalid filter parameter '{param_name}={param_value}': {e}")
+        
+        return queryset
+    
     
     def update(self, request, *args, **kwargs):
         """Custom update with comprehensive logging"""

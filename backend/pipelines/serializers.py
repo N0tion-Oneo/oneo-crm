@@ -5,7 +5,7 @@ from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from .models import Pipeline, Field, Record, PipelineTemplate
 from .field_types import FieldType, validate_field_config
-from .validators import validate_record_data
+from .validation import validate_record_data
 
 User = get_user_model()
 

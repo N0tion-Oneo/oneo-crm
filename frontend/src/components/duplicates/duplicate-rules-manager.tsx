@@ -137,7 +137,7 @@ export function DuplicateRulesManager({
         created_by: savedRule.created_by || { id: '', name: 'Unknown', email: '' },
         test_cases_count: 0,
         matches_count: 0,
-        last_run: null
+        last_run: undefined
       }
       setRules([newRule, ...rules])
     }

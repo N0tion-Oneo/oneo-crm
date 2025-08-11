@@ -206,7 +206,7 @@ class DynamicFormGenerator:
         if require_when_config:
             try:
                 # Import here to avoid circular imports
-                from .validators import _evaluate_conditional_rules
+                from .validation import _evaluate_conditional_rules
                 return _evaluate_conditional_rules(require_when_config, stage_context)
             except Exception as e:
                 print(f"Error evaluating conditional rules for {field.slug}: {e}")

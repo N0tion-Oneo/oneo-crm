@@ -23,7 +23,7 @@ from pipelines.serializers import FieldManagementActionSerializer
 from api.filters import PipelineFilter
 from api.permissions import PipelinePermission
 from authentication.permissions import SyncPermissionManager as PermissionManager
-from rest_framework.exceptions import PermissionDenied
+from rest_framework.exceptions import PermissionDenied, NotFound
 
 
 class PipelineViewSet(viewsets.ModelViewSet):
@@ -460,6 +460,32 @@ class FieldViewSet(viewsets.ModelViewSet):
             ).select_related('pipeline', 'created_by')
         return Field.objects.none()
     
+    def get_object(self):
+        """Get field object, including soft-deleted fields for restore operations"""
+        action = getattr(self, 'action', None)
+        pipeline_pk = self.kwargs.get('pipeline_pk')
+        field_pk = self.kwargs.get('pk')
+        
+        if not pipeline_pk or not field_pk:
+            raise NotFound("Pipeline ID and Field ID are required")
+        
+        # For restore operations, include soft-deleted fields
+        if action == 'restore':
+            queryset = Field.objects.with_deleted().filter(
+                pipeline_id=pipeline_pk
+            ).select_related('pipeline', 'created_by')
+        else:
+            queryset = self.get_queryset()
+        
+        try:
+            obj = queryset.get(pk=field_pk)
+        except Field.DoesNotExist:
+            raise NotFound(f"Field with ID {field_pk} not found in pipeline {pipeline_pk}")
+        
+        # Check object permissions
+        self.check_object_permissions(self.request, obj)
+        return obj
+    
     def perform_create(self, serializer):
         """Create field using FieldOperationManager for migration consistency"""
         pipeline_pk = self.kwargs.get('pipeline_pk')
@@ -713,7 +739,7 @@ class FieldViewSet(viewsets.ModelViewSet):
         
         # Import here to avoid circular imports
         from pipelines.serializers import MigrationValidationSerializer
-        from pipelines.migration_validator import MigrationValidator
+        from pipelines.validation import MigrationValidator
         
         serializer = MigrationValidationSerializer(data=request.data)
         
@@ -1054,7 +1080,7 @@ class FieldViewSet(viewsets.ModelViewSet):
         
         # Import here to avoid circular imports
         from pipelines.serializers import FieldMigrationSerializer
-        from pipelines.migration_validator import MigrationValidator
+        from pipelines.validation import MigrationValidator
         from pipelines.migrator import FieldSchemaMigrator
         
         serializer = FieldMigrationSerializer(data=request.data)

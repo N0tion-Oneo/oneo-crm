@@ -1,5 +1,14 @@
 """
+🔴 DEPRECATED - DO NOT USE 🔴
 Field validation system for dynamic pipeline fields
+
+MOVED TO: pipelines/validation/data_validator.py
+
+This file is kept for reference only. All new imports should use:
+from pipelines.validation import ValidationResult, FieldValidator, validate_record_data
+
+Date moved: 2025-01-10
+Reason: Validation system reorganization for better architecture
 """
 from typing import Any, Dict, List, Union
 from datetime import datetime, date

@@ -511,7 +511,7 @@ class FieldValidator:
         current_type = field.field_type
         new_type = new_config.get('field_type', current_type)
         
-        logger.info(f"Validating migration: {current_type} → {new_type} for field {field.name}")
+        logger.info(f"MIGRATION: Validating {current_type} → {new_type} for field '{field.name}'")
         
         # If no type change, check for constraint changes only
         if current_type == new_type:
@@ -520,7 +520,7 @@ class FieldValidator:
         # Check hard-denied patterns first
         denial = self._check_denial_patterns(current_type, new_type)
         if denial:
-            logger.warning(f"Migration denied: {current_type} → {new_type} - {denial['reason']}")
+            logger.error(f"MIGRATION: FAILED - {current_type} → {new_type} blocked: {denial['reason']}")
             return {
                 'allowed': False,
                 'category': 'denied',
@@ -535,7 +535,7 @@ class FieldValidator:
         # Check safe patterns
         safe_migration = self._check_safe_patterns(current_type, new_type)
         if safe_migration:
-            logger.info(f"Safe migration approved: {current_type} → {new_type}")
+            logger.info(f"MIGRATION: PASSED - {current_type} → {new_type} approved (safe)")
             return {
                 'allowed': True,
                 'category': 'safe',
@@ -550,7 +550,7 @@ class FieldValidator:
         # Check risky patterns
         risky_migration = self._check_risky_patterns(current_type, new_type)
         if risky_migration:
-            logger.warning(f"Risky migration flagged: {current_type} → {new_type} - {risky_migration['warning']}")
+            logger.warning(f"MIGRATION: WARNING - {current_type} → {new_type} allowed but risky: {risky_migration['warning']}")
             return {
                 'allowed': True,
                 'category': 'risky',
@@ -564,7 +564,7 @@ class FieldValidator:
             }
         
         # Unknown migration pattern - deny by default for safety
-        logger.error(f"Unknown migration pattern denied: {current_type} → {new_type}")
+        logger.error(f"MIGRATION: FAILED - {current_type} → {new_type} denied (unknown pattern)")
         return {
             'allowed': False,
             'category': 'denied',
@@ -764,7 +764,7 @@ class FieldValidator:
             )
             
         except Exception as e:
-            logger.error(f"Error analyzing dependencies: {e}")
+            logger.error(f"VALIDATION: Dependency analysis failed - {e}")
             dependencies['error'] = f'Error analyzing dependencies: {str(e)}'
         
         return dependencies
@@ -840,3 +840,140 @@ class FieldValidator:
             f'Export {current_type} data before making changes',
             'Contact system administrator for custom migration support'
         ]
+    
+    # =============================================================================
+    # MODEL VALIDATION METHODS - Moved from pipelines/models.py Field model
+    # =============================================================================
+    
+    def validate_field_model_clean(self, field) -> FieldValidationResult:
+        """
+        Validate field configuration (moved from Field.clean())
+        
+        Args:
+            field: Field model instance
+            
+        Returns:
+            FieldValidationResult with validation outcome
+        """
+        errors = []
+        warnings = []
+        metadata = {}
+        
+        try:
+            from ..field_types import FieldType, validate_field_config
+            
+            # Validate field type and configuration
+            field_type = FieldType(field.field_type)
+            validate_field_config(field_type, field.field_config)
+            
+            # Validate AI configuration if it's an AI field
+            if field.is_ai_field and field.field_type == FieldType.AI_GENERATED:
+                if not field.ai_config.get('prompt'):
+                    errors.append('AI fields must have a prompt in ai_config')
+                    
+        except Exception as e:
+            errors.append(f'Invalid field configuration: {e}')
+        
+        return FieldValidationResult(
+            valid=len(errors) == 0,
+            errors=errors,
+            warnings=warnings,
+            metadata=metadata
+        )
+    
+    def validate_field_value_storage(self, field, value, context=None) -> FieldValidationResult:
+        """
+        Validate a value against field's storage constraints (moved from Field.validate_value())
+        
+        Args:
+            field: Field model instance
+            value: Value to validate
+            context: Optional validation context
+            
+        Returns:
+            FieldValidationResult with validation outcome
+        """
+        # Use the existing data_validator for storage validation
+        from .data_validator import FieldValidator as DataValidator
+        from ..field_types import FieldType
+        
+        ai_config = field.ai_config if field.is_ai_field else None
+        validator = DataValidator(FieldType(field.field_type), field.field_config, ai_config)
+        
+        # Validate against storage constraints
+        result = validator.validate_storage(value, field.storage_constraints)
+        
+        return FieldValidationResult(
+            valid=result.is_valid,
+            errors=result.errors,
+            warnings=result.warnings if hasattr(result, 'warnings') else [],
+            metadata={'cleaned_value': result.cleaned_value if hasattr(result, 'cleaned_value') else value}
+        )
+    
+    def validate_business_rules(self, field, record_data, target_stage=None) -> FieldValidationResult:
+        """
+        Check if record meets business rules for this field (moved from Field.check_business_rules())
+        
+        Args:
+            field: Field model instance
+            record_data: Record data dictionary
+            target_stage: Optional target stage for stage requirements
+            
+        Returns:
+            FieldValidationResult with validation outcome
+        """
+        errors = []
+        warnings = []
+        metadata = {}
+        
+        if not field.business_rules:
+            return FieldValidationResult(valid=True, errors=[], warnings=[], metadata={})
+        
+        value = record_data.get(field.slug)
+        
+        # Check stage requirements
+        stage_requirements = field.business_rules.get('stage_requirements', {})
+        if target_stage and target_stage in stage_requirements:
+            requirements = stage_requirements[target_stage]
+            if requirements.get('required') and not value:
+                errors.append(f"{field.display_name} is required for {target_stage} stage")
+        
+        # Check conditional requirements
+        conditional_rules = field.business_rules.get('conditional_requirements', [])
+        for rule in conditional_rules:
+            condition_field = rule.get('condition_field')
+            condition_value = rule.get('condition_value')
+            requires_field = rule.get('requires_field') == field.slug
+            
+            if (requires_field and 
+                condition_field in record_data and 
+                record_data[condition_field] == condition_value and 
+                not value):
+                errors.append(f"{field.display_name} is required when {condition_field} is {condition_value}")
+        
+        metadata['business_rules_checked'] = True
+        metadata['target_stage'] = target_stage
+        metadata['field_value'] = value
+        
+        return FieldValidationResult(
+            valid=len(errors) == 0,
+            errors=errors,
+            warnings=warnings,
+            metadata=metadata
+        )
+    
+    def create_field_validator_instance(self, field):
+        """
+        Create validator instance for a field (replaces Field.get_validator())
+        
+        Args:
+            field: Field model instance
+            
+        Returns:
+            DataValidator instance configured for the field
+        """
+        from .data_validator import FieldValidator as DataValidator
+        from ..field_types import FieldType
+        
+        ai_config = field.ai_config if field.is_ai_field else None
+        return DataValidator(FieldType(field.field_type), field.field_config, ai_config)

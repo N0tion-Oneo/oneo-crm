@@ -33,6 +33,10 @@ class AIPermission(permissions.BasePermission):
             return permission_manager.has_permission('action', 'ai_features', 'configure')
         elif view.action == 'delete_api_key':
             return permission_manager.has_permission('action', 'ai_features', 'configure')
+        elif view.action in ['worker_health', 'diagnostics']:
+            return permission_manager.has_permission('action', 'ai_features', 'read')
+        elif view.action in ['bulk_retry', 'queue_pending', 'bulk_cancel']:
+            return permission_manager.has_permission('action', 'ai_features', 'create')
         
         return False
     

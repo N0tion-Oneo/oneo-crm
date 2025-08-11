@@ -1,6 +1,15 @@
 """
+🔴 DEPRECATED - DO NOT USE 🔴
 Comprehensive migration validation system with hard-denial rules
 Validates field migration feasibility before execution to prevent data disasters
+
+MOVED TO: pipelines/validation/migration_validator.py
+
+This file is kept for reference only. All new imports should use:
+from pipelines.validation import MigrationValidator
+
+Date moved: 2025-01-10
+Reason: Validation system reorganization for better architecture
 """
 from typing import Dict, Any, List, Tuple, Optional
 import logging
@@ -700,7 +709,7 @@ class MigrationValidator:
                 return str(value).lower() in ['true', '1', 'yes', 'on']
             elif target_type in ['email', 'phone', 'url', 'select', 'multiselect', 'number'] and current_type in ['text', 'textarea']:
                 # Use actual field validators with proper configurations
-                from .validators import FieldValidator
+                from .validation import FieldValidator
                 from .field_types import FieldType, FIELD_TYPE_CONFIGS
                 
                 try:
@@ -745,7 +754,7 @@ class MigrationValidator:
                 return str(value)
             elif target_type in ['date', 'boolean', 'address', 'tags'] and current_type in ['text', 'textarea']:
                 # Use actual validators with proper configurations
-                from .validators import FieldValidator
+                from .validation import FieldValidator
                 from .field_types import FieldType, FIELD_TYPE_CONFIGS
                 
                 try:

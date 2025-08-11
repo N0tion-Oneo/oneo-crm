@@ -3,7 +3,7 @@
 import React, { useState, useMemo } from 'react'
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameMonth, isSameDay, isToday, parseISO, addMonths, subMonths } from 'date-fns'
 import { ChevronLeft, ChevronRight, Calendar, Plus, Eye } from 'lucide-react'
-import { type Record, type Pipeline, convertToFieldType } from './record-list-view'
+import { type Record, type Pipeline, convertToFieldType } from '@/types/records'
 import { FieldResolver } from '@/lib/field-system/field-registry'
 
 interface CalendarViewProps {

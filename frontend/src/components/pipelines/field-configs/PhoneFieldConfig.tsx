@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { globalOptionsApi } from '@/lib/api'
 import {
   Checkbox,
+  Input,
   Label,
   Select,
   SelectContent,
@@ -210,6 +211,32 @@ export function PhoneFieldConfig({
               </Label>
             </div>
           </div>
+
+          {/* Custom Validation Pattern */}
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <Label htmlFor="validation-pattern">Custom Validation Pattern (Optional)</Label>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <HelpCircle className="h-4 w-4 text-muted-foreground" />
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p className="max-w-xs">Regular expression pattern for additional phone number validation. Leave empty for standard validation.</p>
+                </TooltipContent>
+              </Tooltip>
+            </div>
+            
+            <Input
+              type="text"
+              value={config.validation_pattern || ''}
+              onChange={(e) => onChange('validation_pattern', e.target.value || null)}
+              placeholder="^\\+?[1-9]\\d{1,14}$"
+              className="font-mono text-sm"
+            />
+            <p className="text-xs text-muted-foreground">
+              Advanced: Custom regex pattern for phone number validation
+            </p>
+          </div>
         </div>
 
         {/* Display Format */}
@@ -250,6 +277,36 @@ export function PhoneFieldConfig({
           <p className="text-xs text-muted-foreground">
             Choose how phone numbers are displayed throughout the system
           </p>
+        </div>
+
+        <Separator />
+
+        {/* Display Preferences */}
+        <div className="space-y-4">
+          <Label className="text-base font-medium text-gray-900 dark:text-white">Display Preferences</Label>
+          
+          <div className="flex items-center space-x-2">
+            <Checkbox
+              id="show-country-flag"
+              checked={config.show_country_flag || false}
+              onCheckedChange={(checked) => onChange('show_country_flag', checked)}
+            />
+            <div className="flex items-center gap-2">
+              <Label htmlFor="show-country-flag" className="text-sm font-normal text-gray-700 dark:text-gray-300">
+                Show country flag in display
+              </Label>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div className="px-2 py-1 bg-yellow-100 dark:bg-yellow-900/20 text-yellow-800 dark:text-yellow-200 text-xs rounded border border-yellow-200 dark:border-yellow-800">
+                    Future Feature
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p className="max-w-xs">This feature will be available in a future update. The setting will be saved for when the feature becomes available.</p>
+                </TooltipContent>
+              </Tooltip>
+            </div>
+          </div>
         </div>
 
         {/* Configuration Summary */}

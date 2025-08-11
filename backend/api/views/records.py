@@ -146,6 +146,14 @@ class RecordViewSet(viewsets.ModelViewSet):
                         params=[field_slug, f'[{{"user_id": {int(param_value)}}}]']
                     )
                 
+                # User role filtering: data__sales_agent__user_role
+                elif param_name.endswith('__user_role'):
+                    field_slug = param_name.replace('data__', '').replace('__user_role', '')
+                    queryset = queryset.extra(
+                        where=["data->%s @> %s::jsonb"],
+                        params=[field_slug, f'[{{"role": "{param_value}"}}]']
+                    )
+                
                 # Tags field filtering: data__company_tags__icontains
                 elif '__icontains' in param_name and param_name.startswith('data__') and 'tags' in param_name:
                     field_slug = param_name.replace('data__', '').replace('__icontains', '')

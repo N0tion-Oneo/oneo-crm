@@ -125,46 +125,170 @@ export function UserFieldConfig({
 
       <Separator />
 
+      {/* User Type Filtering */}
+      <div className="space-y-4">
+        <Label className="text-base font-medium text-gray-900 dark:text-white">User Filtering</Label>
+
+        <div className="space-y-3">
+          <HelpTooltipWrapper helpText="Restrict field to specific user types. Leave empty to allow all user types.">
+            <Label>Restrict to User Types (Optional)</Label>
+          </HelpTooltipWrapper>
+          
+          <div className="p-3 border rounded-md bg-muted/20">
+            <p className="text-xs text-muted-foreground mb-2">
+              Select user types that can be assigned to this field. Leave empty to allow all user types.
+            </p>
+            
+            {['admin', 'manager', 'user', 'viewer'].map((userType) => (
+              <div key={userType} className="flex items-center space-x-2">
+                <Checkbox
+                  id={`user-type-${userType}`}
+                  checked={(config.restrict_to_user_types || []).includes(userType)}
+                  onCheckedChange={(checked) => {
+                    const currentTypes = config.restrict_to_user_types || []
+                    const newTypes = checked 
+                      ? [...currentTypes, userType]
+                      : currentTypes.filter((t: string) => t !== userType)
+                    onChange('restrict_to_user_types', newTypes)
+                  }}
+                />
+                <Label htmlFor={`user-type-${userType}`} className="text-sm font-normal capitalize">
+                  {userType}
+                </Label>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <Separator />
+
       {/* Display Options */}
       <div className="space-y-4">
-        <Label className="text-base font-medium text-gray-900 dark:text-white">Display Options</Label>
+        <Label className="text-base font-medium text-gray-900 dark:text-white">Display Configuration</Label>
+
+        <div className="space-y-4">
+          {/* Display Format */}
+          <div className="space-y-2">
+            <HelpTooltipWrapper helpText="Choose how user assignments are displayed">
+              <Label>Display Format</Label>
+            </HelpTooltipWrapper>
+            <Select
+              value={config.display_format || 'name_with_role'}
+              onValueChange={(value) => onChange('display_format', value)}
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="name_only">Name Only</SelectItem>
+                <SelectItem value="name_with_role">Name with Role</SelectItem>
+                <SelectItem value="avatar_with_name">Avatar with Name</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Avatar Settings */}
+          <div className="space-y-3">
+            <div className="flex items-center space-x-2">
+              <Checkbox
+                id="show-user-avatars"
+                checked={config.show_user_avatars !== false}
+                onCheckedChange={(checked) => onChange('show_user_avatars', checked)}
+              />
+              <HelpTooltipWrapper helpText="Display user profile pictures in the assignment display">
+                <Label htmlFor="show-user-avatars" className="text-sm font-normal text-gray-700 dark:text-gray-300">
+                  Show User Avatars
+                </Label>
+              </HelpTooltipWrapper>
+            </div>
+
+            {config.show_user_avatars !== false && (
+              <div className="ml-6 space-y-2">
+                <HelpTooltipWrapper helpText="Size of user avatar images">
+                  <Label>Avatar Size</Label>
+                </HelpTooltipWrapper>
+                <Select
+                  value={config.avatar_size || 'small'}
+                  onValueChange={(value) => onChange('avatar_size', value)}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="small">Small</SelectItem>
+                    <SelectItem value="medium">Medium</SelectItem>
+                    <SelectItem value="large">Large</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+          </div>
+
+          {/* Role Selector Options */}
+          <div className="space-y-3">
+            <div className="flex items-center space-x-2">
+              <Checkbox
+                id="show-role-selector"
+                checked={config.show_role_selector !== false}
+                onCheckedChange={(checked) => onChange('show_role_selector', checked)}
+              />
+              <HelpTooltipWrapper helpText="Display a role selector when assigning users to this field">
+                <Label htmlFor="show-role-selector" className="text-sm font-normal text-gray-700 dark:text-gray-300">
+                  Show Role Selector
+                </Label>
+              </HelpTooltipWrapper>
+            </div>
+
+            {config.show_role_selector !== false && (
+              <div className="ml-6">
+                <div className="flex items-center space-x-2">
+                  <Checkbox
+                    id="require-role-selection"
+                    checked={config.require_role_selection || false}
+                    onCheckedChange={(checked) => onChange('require_role_selection', checked)}
+                  />
+                  <HelpTooltipWrapper helpText="Require users to select a role when assigning users">
+                    <Label htmlFor="require-role-selection" className="text-sm font-normal text-gray-700 dark:text-gray-300">
+                      Require Role Selection
+                    </Label>
+                  </HelpTooltipWrapper>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <Separator />
+
+      {/* Assignment Behavior */}
+      <div className="space-y-4">
+        <Label className="text-base font-medium text-gray-900 dark:text-white">Assignment Behavior</Label>
 
         <div className="space-y-3">
           <div className="flex items-center space-x-2">
             <Checkbox
-              id="show-role-selector"
-              checked={config.show_role_selector !== false}
-              onCheckedChange={(checked) => onChange('show_role_selector', checked)}
+              id="auto-assign-creator"
+              checked={config.auto_assign_creator || false}
+              onCheckedChange={(checked) => onChange('auto_assign_creator', checked)}
             />
-            <HelpTooltipWrapper helpText="Display a role selector when assigning users to this field">
-              <Label htmlFor="show-role-selector" className="text-sm font-normal text-gray-700 dark:text-gray-300">
-                Show Role Selector
+            <HelpTooltipWrapper helpText="Automatically assign the record creator when a new record is created">
+              <Label htmlFor="auto-assign-creator" className="text-sm font-normal text-gray-700 dark:text-gray-300">
+                Auto-assign record creator
               </Label>
             </HelpTooltipWrapper>
           </div>
 
           <div className="flex items-center space-x-2">
             <Checkbox
-              id="require-role-selection"
-              checked={config.require_role_selection || false}
-              onCheckedChange={(checked) => onChange('require_role_selection', checked)}
+              id="preserve-assignment-order"
+              checked={config.preserve_assignment_order !== false}
+              onCheckedChange={(checked) => onChange('preserve_assignment_order', checked)}
             />
-            <HelpTooltipWrapper helpText="Require users to select a role when assigning users (only applies if role selector is shown)">
-              <Label htmlFor="require-role-selection" className="text-sm font-normal text-gray-700 dark:text-gray-300">
-                Require Role Selection
-              </Label>
-            </HelpTooltipWrapper>
-          </div>
-
-          <div className="flex items-center space-x-2">
-            <Checkbox
-              id="show-user-avatars"
-              checked={config.show_user_avatars !== false}
-              onCheckedChange={(checked) => onChange('show_user_avatars', checked)}
-            />
-            <HelpTooltipWrapper helpText="Display user profile pictures in the assignment display">
-              <Label htmlFor="show-user-avatars" className="text-sm font-normal text-gray-700 dark:text-gray-300">
-                Show User Avatars
+            <HelpTooltipWrapper helpText="Maintain the order of user assignments based on when they were added">
+              <Label htmlFor="preserve-assignment-order" className="text-sm font-normal text-gray-700 dark:text-gray-300">
+                Preserve assignment order
               </Label>
             </HelpTooltipWrapper>
           </div>
@@ -180,6 +304,11 @@ export function UserFieldConfig({
             {config.max_users && <div>• Maximum: {config.max_users} users</div>}
             <div>• Default role: {availableRoles.find(r => r.value === (config.default_role || 'assigned'))?.label}</div>
             <div>• Available roles: {(config.allowed_roles || ['assigned', 'owner', 'collaborator', 'reviewer']).length}</div>
+            {config.restrict_to_user_types?.length > 0 && <div>• Restricted to: {config.restrict_to_user_types.join(', ')} user types</div>}
+            <div>• Display format: {config.display_format || 'name_with_role'}</div>
+            {config.show_user_avatars !== false && <div>• Avatar size: {config.avatar_size || 'small'}</div>}
+            {config.auto_assign_creator && <div>• Auto-assign creator enabled</div>}
+            {config.preserve_assignment_order !== false && <div>• Assignment order preserved</div>}
           </div>
         </div>
       </div>

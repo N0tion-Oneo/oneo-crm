@@ -12,10 +12,9 @@ import { BooleanFieldConfig } from '@/components/pipelines/field-configs/Boolean
 import { DateFieldConfig } from '@/components/pipelines/field-configs/DateFieldConfig'
 import { TagsFieldConfig } from '@/components/pipelines/field-configs/TagsFieldConfig'
 import { FileFieldConfig } from '@/components/pipelines/field-configs/FileFieldConfig'
-
-// TODO: Import remaining field config components as they are created
-// import { AddressFieldConfig } from '@/components/pipelines/field-configs/AddressFieldConfig'
-// import { ButtonFieldConfig } from '@/components/pipelines/field-configs/ButtonFieldConfig'
+import { AddressFieldConfig } from '@/components/pipelines/field-configs/AddressFieldConfig'
+import { ButtonFieldConfig } from '@/components/pipelines/field-configs/ButtonFieldConfig'
+import { RecordDataFieldConfig } from '@/components/pipelines/field-configs/RecordDataFieldConfig'
 
 /**
  * Registry mapping field types to their configuration components
@@ -99,16 +98,21 @@ export const fieldConfigRegistry: Record<string, FieldConfigComponent> = {
 
   file: {
     component: FileFieldConfig
-  }
+  },
 
-  // TODO: Add remaining field types as components are created
-  // address: {
-  //   component: AddressFieldConfig,
-  //   requiresGlobalOptions: true // For countries/regions
-  // },
-  // button: {
-  //   component: ButtonFieldConfig
-  // }
+  // New field configurations
+  address: {
+    component: AddressFieldConfig,
+    requiresGlobalOptions: true // For countries/regions
+  },
+
+  button: {
+    component: ButtonFieldConfig
+  },
+
+  record_data: {
+    component: RecordDataFieldConfig
+  }
 }
 
 /**

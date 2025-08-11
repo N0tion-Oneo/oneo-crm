@@ -212,7 +212,7 @@ export const NumberFieldComponent: FieldComponent = {
             
             return (
               <div 
-                className="space-y-2" 
+                className="flex items-center space-x-2" 
                 onBlur={(e) => {
                   // Only call parent onBlur if focus is leaving the entire currency field container
                   const isLeavingContainer = !e.currentTarget.contains(e.relatedTarget as Node)
@@ -221,63 +221,58 @@ export const NumberFieldComponent: FieldComponent = {
                   }
                 }}
               >
-                <div>
-                  <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
-                    Currency
-                  </label>
-                  <select
-                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    value={currentCurrency}
-                    disabled={isFieldDisabled}
-                    onChange={(e) => {
-                      const newCurrency = e.target.value
-                      setCurrentCurrency(newCurrency)
-                      updateCurrencyValue(currentAmount, newCurrency)
-                    }}
-                  >
-                    <option value="USD">$ USD - US Dollar</option>
-                    <option value="EUR">€ EUR - Euro</option>
-                    <option value="GBP">£ GBP - British Pound</option>
-                    <option value="ZAR">R ZAR - South African Rand</option>
-                    <option value="CAD">CA$ CAD - Canadian Dollar</option>
-                    <option value="AUD">A$ AUD - Australian Dollar</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
-                    Amount
-                  </label>
-                  <input
-                    type="number"
-                    value={localValue}
-                    onChange={(e) => {
-                      const newValue = e.target.value
-                      // Update local value for smooth typing
-                      setLocalValue(newValue)
-                      
-                      if (newValue === '') {
-                        setCurrentAmount(0)
-                        updateCurrencyValue(null, currentCurrency)
-                      } else {
-                        const numValue = parseFloat(newValue)
-                        if (!isNaN(numValue)) {
-                          setCurrentAmount(numValue)
-                          updateCurrencyValue(numValue, currentCurrency)
-                        }
+                {/* Currency selector */}
+                <select
+                  className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 min-w-[100px]"
+                  value={currentCurrency}
+                  disabled={isFieldDisabled}
+                  onChange={(e) => {
+                    const newCurrency = e.target.value
+                    setCurrentCurrency(newCurrency)
+                    updateCurrencyValue(currentAmount, newCurrency)
+                  }}
+                >
+                  <option value="USD">USD $</option>
+                  <option value="EUR">EUR €</option>
+                  <option value="GBP">GBP £</option>
+                  <option value="ZAR">ZAR R</option>
+                  <option value="CAD">CAD $</option>
+                  <option value="AUD">AUD $</option>
+                  <option value="JPY">JPY ¥</option>
+                  <option value="CNY">CNY ¥</option>
+                </select>
+
+                {/* Amount input */}
+                <input
+                  type="number"
+                  value={localValue}
+                  onChange={(e) => {
+                    const newValue = e.target.value
+                    // Update local value for smooth typing
+                    setLocalValue(newValue)
+                    
+                    if (newValue === '') {
+                      setCurrentAmount(0)
+                      updateCurrencyValue(null, currentCurrency)
+                    } else {
+                      const numValue = parseFloat(newValue)
+                      if (!isNaN(numValue)) {
+                        setCurrentAmount(numValue)
+                        updateCurrencyValue(numValue, currentCurrency)
                       }
-                    }}
-                    onFocus={handleFocus}
-                    onKeyDown={handleKeyDown}
-                    disabled={isFieldDisabled}
-                    className={inputClass}
-                    placeholder="Enter amount"
-                    min={min}
-                    max={max}
-                    step={step}
-                    autoFocus={autoFocus}
-                    // Required attribute handled by FieldWrapper
-                  />
-                </div>
+                    }
+                  }}
+                  onFocus={handleFocus}
+                  onKeyDown={handleKeyDown}
+                  disabled={isFieldDisabled}
+                  className={`flex-1 ${inputClass}`}
+                  placeholder="Enter amount"
+                  min={min}
+                  max={max}
+                  step={step}
+                  autoFocus={autoFocus}
+                  // Required attribute handled by FieldWrapper
+                />
               </div>
             )
           })()

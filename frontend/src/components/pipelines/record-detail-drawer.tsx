@@ -43,8 +43,22 @@ import {
   CheckSquare,
   Square,
   Bot,
-  Share2
+  Share2,
+  AlignLeft,
+  Calculator,
+  Globe,
+  ChevronDown,
+  List,
+  ToggleLeft,
+  GitBranch,
+  MapPin,
+  MousePointer,
+  Database,
+  HelpCircle
 } from 'lucide-react'
+
+// Import tooltip components
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui'
 
 interface RecordField extends FieldWithPermissions {
   field_config?: { [key: string]: any }
@@ -162,6 +176,57 @@ export interface RecordDetailDrawerProps {
   onClose: () => void
   onSave: (recordId: string, data: { [key: string]: any }) => Promise<void>
   onDelete?: (recordId: string) => Promise<void>
+}
+
+// Field icons mapping (from pipeline-field-builder)
+const FIELD_ICONS: Record<string, any> = {
+  text: AlignLeft,
+  textarea: FileText,
+  number: Hash,
+  decimal: Calculator,
+  currency: Calculator,
+  percentage: Calculator,
+  auto_increment: Hash,
+  email: Mail,
+  phone: Phone,
+  date: Calendar,
+  boolean: ToggleLeft,
+  select: ChevronDown,
+  multiselect: List,
+  url: Globe,
+  file: FileText,
+  relation: GitBranch,
+  ai_generated: Bot,
+  ai_field: Bot,
+  ai: Bot,
+  tags: Tag,
+  address: MapPin,
+  button: MousePointer,
+  user: User,
+}
+
+// Utility function to get field icon component
+const getFieldIcon = (fieldType: string) => {
+  const IconComponent = FIELD_ICONS[fieldType] || Type
+  return IconComponent
+}
+
+// Utility function to format field name for display
+const formatFieldName = (field: RecordField): string => {
+  // Priority order: display_name -> formatted name/slug -> fallback
+  if (field.display_name?.trim()) {
+    return field.display_name.trim()
+  }
+  
+  if (field.name?.trim()) {
+    // Convert slug to readable format: company_name -> Company Name
+    return field.name
+      .replace(/_/g, ' ')
+      .replace(/\b\w/g, l => l.toUpperCase())
+      .trim()
+  }
+  
+  return 'Unnamed Field'
 }
 
 export function RecordDetailDrawer({ 
@@ -483,12 +548,20 @@ export function RecordDetailDrawer({
     const fieldError = fieldErrors[field.name]
     const fieldType = convertToFieldType(field)
     
+    console.log('renderFieldInput:', { fieldName: field.name, fieldType: field.field_type, value, formData: formData[field.name] }) // DEBUG
+    
     
     const handleFieldChange = (newValue: any) => {
+      console.log('RecordDrawer handleFieldChange:', { fieldName: field.name, newValue, recordId: record?.id }) // DEBUG
       
       // For NEW records, just update formData - record will be created when user clicks "Create Record"
       if (!record || !record.id) {
-        setFormData(prev => ({ ...prev, [field.name]: newValue }))
+        console.log('NEW record - updating formData:', { fieldName: field.name, newValue }) // DEBUG
+        setFormData(prev => {
+          const updated = { ...prev, [field.name]: newValue }
+          console.log('formData updated:', updated) // DEBUG
+          return updated
+        })
         
         // Clear validation error for this field
         setValidationErrors(prev => prev.filter(error => error.field !== field.name))
@@ -497,18 +570,25 @@ export function RecordDetailDrawer({
       }
       
       // For EXISTING records, use FieldSaveService based on save strategy
+      console.log('EXISTING record - using FieldSaveService:', { fieldName: field.name, newValue, isSaving: isSavingRef.current }) // DEBUG
       isSavingRef.current = true
       fieldSaveService.onFieldChange({
         field: fieldType,
         newValue,
         apiEndpoint: `/api/pipelines/${pipeline.id}/records/${record.id}/`,
         onSuccess: (result) => {
-          setFormData(prev => ({ ...prev, [field.name]: newValue }))
+          console.log('FieldSaveService SUCCESS - updating formData:', { fieldName: field.name, newValue, result }) // DEBUG
+          setFormData(prev => {
+            const updated = { ...prev, [field.name]: newValue }
+            console.log('EXISTING record formData updated:', updated) // DEBUG
+            return updated
+          })
           setFieldErrors(prev => ({ ...prev, [field.name]: '' }))
           setValidationErrors(prev => prev.filter(error => error.field !== field.name))
           isSavingRef.current = false
         },
         onError: (error) => {
+          console.log('FieldSaveService ERROR:', { fieldName: field.name, error }) // DEBUG
           setFieldErrors(prev => ({ 
             ...prev, 
             [field.name]: error.response?.data?.message || error.message || 'Save failed'
@@ -691,15 +771,41 @@ export function RecordDetailDrawer({
               <div className="space-y-4">
                 {visibleFields.map((field) => {
                   const permissions = getFieldPermissions(field)
+                  const IconComponent = getFieldIcon(field.field_type)
+                  const fieldName = formatFieldName(field)
+                  const hasHelpText = field.help_text?.trim()
+                  
                   return (
-                    <div key={field.name}>
-                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                        {field.display_name || field.name}
-                        {permissions.required && <span className="text-red-500 ml-1">*</span>}
-                        {permissions.readonly && <span className="text-gray-500 ml-1">(read-only)</span>}
-                      </label>
-                      {renderFieldInput(field)}
-                    </div>
+                    <TooltipProvider key={field.name}>
+                      <div>
+                        <div className="flex items-center mb-2">
+                          {/* Field Icon */}
+                          <IconComponent className="w-4 h-4 mr-2 text-gray-500 dark:text-gray-400 flex-shrink-0" />
+                          
+                          {/* Field Label */}
+                          <label className="block text-sm font-bold text-gray-900 dark:text-white flex-grow">
+                            {fieldName}
+                            {permissions.required && <span className="text-red-500 ml-1">*</span>}
+                            {permissions.readonly && <span className="text-gray-500 ml-1 font-normal">(read-only)</span>}
+                          </label>
+                          
+                          {/* Help Text Tooltip */}
+                          {hasHelpText && (
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <HelpCircle className="w-4 h-4 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 cursor-help ml-1 flex-shrink-0" />
+                              </TooltipTrigger>
+                              <TooltipContent>
+                                <p className="max-w-xs">{field.help_text}</p>
+                              </TooltipContent>
+                            </Tooltip>
+                          )}
+                        </div>
+                        
+                        {/* Field Input */}
+                        {renderFieldInput(field)}
+                      </div>
+                    </TooltipProvider>
                   )
                 })}
               </div>

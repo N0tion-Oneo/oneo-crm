@@ -43,6 +43,7 @@ import {
   MousePointer,
   Database,
   User,
+  Tag,
 } from 'lucide-react'
 
 // Complete field interface matching new architecture
@@ -132,7 +133,7 @@ const FIELD_ICONS: Record<string, any> = {
   ai_generated: Bot,
   ai_field: Bot,
   ai: Bot,
-  tags: Hash,
+  tags: Tag,
   address: MapPin,
   button: MousePointer,
   user: User,

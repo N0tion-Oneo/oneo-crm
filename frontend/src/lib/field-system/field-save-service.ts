@@ -6,8 +6,9 @@ import { toast } from '@/hooks/use-toast'
 
 // Save strategy function moved from deleted field-save-manager.tsx
 export function getSaveStrategy(fieldType: string): 'immediate' | 'on-exit' | 'continuous' | 'on-change' | 'manual' {
-  // Immediate save for choices, toggles, and action buttons
-  if (['select', 'multiselect', 'radio', 'boolean', 'relation', 'user', 'button'].includes(fieldType)) {
+  // Immediate save for choices, toggles, tags, and action buttons
+  // Tags need immediate feedback for good UX when adding/removing
+  if (['select', 'multiselect', 'radio', 'boolean', 'relation', 'user', 'button', 'tags'].includes(fieldType)) {
     return 'immediate'
   }
   
@@ -16,8 +17,8 @@ export function getSaveStrategy(fieldType: string): 'immediate' | 'on-exit' | 'c
     return 'on-exit'
   }
   
-  // Continuous save for complex interactive fields
-  if (['tags', 'file', 'image'].includes(fieldType)) {
+  // Continuous save for complex interactive fields (file uploads only)
+  if (['file', 'image'].includes(fieldType)) {
     return 'continuous'
   }
   
@@ -37,10 +38,10 @@ export interface FieldSaveParams {
  * FieldSaveService - Centralized field saving with strategy-based timing
  * 
  * Handles when and how to save field values based on field type strategies:
- * - immediate: Save instantly (select, boolean, relation)
+ * - immediate: Save instantly (select, boolean, relation, tags)
  * - on-exit: Save when user exits field (text, email, number)
  * - on-change: Debounced save (ai_generated)
- * - continuous: Save when user signals done (tags)
+ * - continuous: Save when user signals done (file uploads)
  * - manual: Save when explicitly called (file uploads)
  */
 export interface SaveValidationResult {

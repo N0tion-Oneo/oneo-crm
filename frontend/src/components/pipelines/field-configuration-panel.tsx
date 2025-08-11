@@ -1,7 +1,8 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import { fieldTypesApi, globalOptionsApi } from '@/lib/api'
+import { useState, useEffect, useCallback } from 'react'
+import { useFieldConfigCache, useFieldType } from '@/contexts/FieldConfigCacheContext'
+import { ErrorBoundary } from '@/components/error-boundary'
 import {
   Accordion,
   AccordionContent,
@@ -58,63 +59,57 @@ export function FieldConfigurationPanel({
   aiConfig = {},
   onAiConfigChange
 }: FieldConfigurationPanelProps) {
-  const [fieldTypeConfig, setFieldTypeConfig] = useState<FieldTypeConfig | null>(null)
-  const [globalOptions, setGlobalOptions] = useState<any>(null)
-  const [loading, setLoading] = useState(true)
+  const { globalOptions, globalOptionsLoading } = useFieldConfigCache()
+  // Use the new useFieldType hook instead of manual loading
+  const { fieldTypeConfig, loading, error: fieldTypeError } = useFieldType(fieldType)
   const [configErrors, setConfigErrors] = useState<string[]>([])
 
-  // Load field type configuration and global options
-  useEffect(() => {
-    const loadData = async () => {
-      try {
-        setLoading(true)
-        
-        // Load field type configuration
-        const fieldResponse = await fieldTypesApi.get(fieldType)
-        setFieldTypeConfig(fieldResponse.data)
-        
-        // Load global options if field config requires them
-        const fieldConfigComponent = getFieldConfigComponent(fieldType)
-        if (fieldConfigComponent?.requiresGlobalOptions) {
-          try {
-            const globalResponse = await globalOptionsApi.getAll()
-            setGlobalOptions(globalResponse.data)
-          } catch (error) {
-            console.warn('Global options not available:', error)
-            setGlobalOptions({})
-          }
-        }
-        
-      } catch (error) {
-        console.error('Failed to load field configuration:', error)
-      } finally {
-        setLoading(false)
-      }
-    }
+  // Log field type loading for debugging (commented out for performance)
+  // useEffect(() => {
+  //   console.log('[FieldConfigurationPanel] Field type state:', {
+  //     fieldType,
+  //     hasConfig: !!fieldTypeConfig,
+  //     loading,
+  //     error: fieldTypeError,
+  //     isVisible
+  //   })
+  // }, [fieldType, fieldTypeConfig, loading, fieldTypeError, isVisible])
 
-    loadData()
-  }, [fieldType])
-
-  // Validate configuration when it changes
+  // Debounced validation to prevent excessive processing
   useEffect(() => {
-    if (fieldTypeConfig) {
+    if (!fieldTypeConfig) return
+    
+    const timeoutId = setTimeout(() => {
       const errors = validateFieldConfig(fieldType, config, aiConfig)
       setConfigErrors(errors)
-    }
+    }, 150) // Debounce validation by 150ms
+    
+    return () => clearTimeout(timeoutId)
   }, [fieldType, config, aiConfig, fieldTypeConfig])
 
-  // Update configuration with validation
-  const updateConfig = (key: string, value: any) => {
+  // Update configuration with validation - optimized with useCallback
+  const updateConfig = useCallback((key: string, value: any) => {
     const newConfig = { ...config, [key]: value }
     onChange(newConfig)
-  }
+  }, [config, onChange])
 
-  // Update storage constraints
-  const updateStorageConstraints = (key: string, value: any) => {
+  // Update storage constraints - optimized with useCallback
+  const updateStorageConstraints = useCallback((key: string, value: any) => {
     if (onStorageConstraintsChange) {
       onStorageConstraintsChange({ ...storageConstraints, [key]: value })
     }
-  }
+  }, [storageConstraints, onStorageConstraintsChange])
+
+  // Memoized onChange handler for components that expect (newConfig) => void
+  const memoizedOnChange = useCallback((newConfig: Record<string, any>) => {
+    onChange(newConfig)
+  }, [onChange])
+
+  // Memoized onChange handler for components that expect (key, value) => void
+  const memoizedKeyValueOnChange = useCallback((key: string, value: any) => {
+    const newConfig = { ...config, [key]: value }
+    onChange(newConfig)
+  }, [config, onChange])
 
   // Render the field-specific configuration component
   const renderFieldConfiguration = () => {
@@ -136,18 +131,22 @@ export function FieldConfigurationPanel({
 
     const Component = fieldConfigComponent.component
 
+    // Determine which onChange handler to use based on field type
+    // ALL field config components expect (key, value) interface, not (newConfig) interface
+    const needsKeyValueOnChange = [
+      'phone', 'number', 'decimal', 'currency', 'percentage', 'auto_increment',
+      'text', 'textarea', 'email', 'url', 'select', 'multiselect', 'boolean',
+      'date', 'tags', 'file', 'address', 'button', 'record_data', 'ai_generated',
+      'ai_field', 'ai', 'relation', 'user'
+    ]
+    const onChangeHandler = needsKeyValueOnChange.includes(fieldType) 
+      ? memoizedKeyValueOnChange 
+      : memoizedOnChange
+
     // Prepare props based on component requirements
     const componentProps: any = {
       config,
-      onChange: (newConfig: Record<string, any>) => {
-        // Handle both individual key updates and complete config updates
-        if (typeof newConfig === 'object' && newConfig !== null) {
-          onChange(newConfig)
-        } else {
-          // Fallback for single key updates
-          updateConfig(arguments[0], arguments[1])
-        }
-      }
+      onChange: onChangeHandler
     }
 
     // Add conditional props
@@ -174,7 +173,11 @@ export function FieldConfigurationPanel({
       componentProps.fieldType = fieldType
     }
 
-    return <Component {...componentProps} />
+    return (
+      <ErrorBoundary>
+        <Component {...componentProps} />
+      </ErrorBoundary>
+    )
   }
 
   if (!isVisible) return null

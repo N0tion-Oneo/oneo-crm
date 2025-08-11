@@ -59,10 +59,28 @@ export function getCategoryColor(category: string): string {
   return colors[category] || colors.basic
 }
 
+// Memoization cache for validation results
+const validationCache = new Map<string, string[]>()
+
 /**
- * Validate configuration values based on field type
+ * Create a cache key for validation memoization
+ */
+function createValidationCacheKey(fieldType: string, config: Record<string, any>, aiConfig?: Record<string, any>): string {
+  const configStr = JSON.stringify(config, Object.keys(config).sort())
+  const aiConfigStr = aiConfig ? JSON.stringify(aiConfig, Object.keys(aiConfig).sort()) : ''
+  return `${fieldType}:${configStr}:${aiConfigStr}`
+}
+
+/**
+ * Validate configuration values based on field type (memoized for performance)
  */
 export function validateFieldConfig(fieldType: string, config: Record<string, any>, aiConfig?: Record<string, any>): string[] {
+  // Check cache first
+  const cacheKey = createValidationCacheKey(fieldType, config, aiConfig)
+  if (validationCache.has(cacheKey)) {
+    return validationCache.get(cacheKey)!
+  }
+
   const errors: string[] = []
 
   switch (fieldType) {
@@ -112,6 +130,15 @@ export function validateFieldConfig(fieldType: string, config: Record<string, an
       }
       break
   }
+
+  // Cache the result (limit cache size to prevent memory leaks)
+  if (validationCache.size > 100) {
+    const firstKey = validationCache.keys().next().value
+    if (firstKey) {
+      validationCache.delete(firstKey)
+    }
+  }
+  validationCache.set(cacheKey, errors)
 
   return errors
 }

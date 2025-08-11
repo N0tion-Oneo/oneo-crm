@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback, useMemo } from 'react'
 import { fieldTypesApi, permissionsApi, aiApi } from '@/lib/api'
 import { FieldConfigurationPanel } from './field-configuration-panel'
 import { ConditionalRulesBuilder } from './conditional-rules-builder'
@@ -122,24 +122,204 @@ const getFieldIcon = (fieldType: string) => {
   return <IconComponent className="w-5 h-5 text-gray-500" />
 }
 
+// Memoized Field Item Component to prevent unnecessary re-renders
+const FieldItem = React.memo(({ 
+  field, 
+  index, 
+  isEditing, 
+  fieldTypeInfo, 
+  availableFieldTypes,
+  onEditClick,
+  onMoveField,
+  onCloneField,
+  onToggleVisibility,
+  onManageField,
+  onDeleteField
+}: {
+  field: PipelineField
+  index: number
+  isEditing: boolean
+  fieldTypeInfo?: FieldType
+  availableFieldTypes: FieldType[]
+  onEditClick: (fieldId: string) => void
+  onMoveField: (fieldId: string, direction: 'up' | 'down') => void
+  onCloneField: (fieldId: string) => void
+  onToggleVisibility: (fieldId: string, visible: boolean) => void
+  onManageField: (field: PipelineField) => void
+  onDeleteField: (fieldId: string) => void
+}) => {
+  const Icon = FIELD_ICONS[field.field_type || field.type || 'text'] || Type
+  
+  return (
+    <div
+      key={field.id}
+      className={`group relative p-4 border rounded-xl cursor-pointer transition-all duration-200 ${
+        isEditing 
+          ? 'border-primary bg-primary/5 ring-2 ring-primary/20 shadow-md' 
+          : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600 hover:shadow-sm bg-white dark:bg-gray-800'
+      }`}
+      onClick={() => onEditClick(field.id)}
+    >
+      {/* Field Header */}
+      <div className="flex items-start justify-between mb-3">
+        <div className="flex items-center space-x-3 min-w-0 flex-1">
+          <div className={`p-2 rounded-lg ${isEditing ? 'bg-primary text-white' : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400'}`}>
+            <Icon className="w-4 h-4" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="font-semibold text-gray-900 dark:text-white truncate">
+              {field.display_name || field.label || field.name}
+            </div>
+            <div className="text-xs text-gray-500 dark:text-gray-400 truncate">
+              {fieldTypeInfo?.label || (field.field_type || field.type)}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Field Status Badges */}
+      <div className="flex flex-wrap gap-1 mb-3">
+        
+        {/* Field Lifecycle Status */}
+        <FieldStatusIndicator 
+          status={field.deletion_status?.status || 'active'}
+          deletionInfo={field.deletion_status}
+          size="sm"
+        />
+        
+        {/* Stage-specific required badges */}
+        {getRequiredStages(field).map((stage) => (
+          <span key={stage} className="inline-flex items-center px-2 py-0.5 text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-300 rounded-full">
+            Required: {stage.charAt(0).toUpperCase() + stage.slice(1)}
+          </span>
+        ))}
+        {!(field.is_visible_in_list ?? field.visible ?? true) && (
+          <span className="inline-flex items-center px-2 py-0.5 text-xs font-medium bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300 rounded-full">
+            Hidden
+          </span>
+        )}
+        {field.is_ai_field && (
+          <span className="inline-flex items-center px-2 py-0.5 text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-300 rounded-full">
+            <Bot className="w-3 h-3 mr-1" />
+            AI
+          </span>
+        )}
+        
+      </div>
+
+      {/* Relationship Field Configuration Display */}
+      {(field.field_type === 'relation' || field.type === 'relation') && field.field_config && hasEnhancedRelationshipFeatures(field.field_config) && (
+        <div className="mb-3 p-2 bg-gray-50 dark:bg-gray-800 rounded-lg">
+          <RelationshipFieldIndicator 
+            fieldConfig={field.field_config} 
+            size="sm"
+            showDetails={true}
+          />
+        </div>
+      )}
+
+      {/* Field Actions */}
+      <div className="flex items-center justify-between">
+        <div className="text-xs text-gray-400 dark:text-gray-500">
+          Position {index + 1}
+        </div>
+        
+        <div className="flex items-center space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
+          <button
+            onClick={(e) => {
+              e.stopPropagation()
+              onMoveField(field.id, 'up')
+            }}
+            disabled={index === 0}
+            className="p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            title="Move up"
+          >
+            ↑
+          </button>
+          
+          <button
+            onClick={(e) => {
+              e.stopPropagation()
+              onMoveField(field.id, 'down')
+            }}
+            disabled={index === availableFieldTypes.length - 1}
+            className="p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            title="Move down"
+          >
+            ↓
+          </button>
+          
+          <div className="w-px h-4 bg-gray-300 dark:bg-gray-600" />
+          
+          <button
+            onClick={(e) => {
+              e.stopPropagation()
+              onCloneField(field.id)
+            }}
+            className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-md transition-colors"
+            title="Clone field"
+          >
+            <Copy className="w-3 h-3" />
+          </button>
+          
+          <button
+            onClick={(e) => {
+              e.stopPropagation()
+              const currentVisible = field.is_visible_in_list ?? field.visible ?? true
+              onToggleVisibility(field.id, !currentVisible)
+            }}
+            className="p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md transition-colors"
+            title={`${(field.is_visible_in_list ?? field.visible ?? true) ? 'Hide' : 'Show'} field`}
+          >
+            {(field.is_visible_in_list ?? field.visible ?? true) ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
+          </button>
+          
+          <button
+            onClick={(e) => {
+              e.stopPropagation()
+              onManageField(field)
+            }}
+            className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-md transition-colors"
+            title="Manage field lifecycle"
+          >
+            <Shield className="w-3 h-3" />
+          </button>
+          
+          <button
+            onClick={(e) => {
+              e.stopPropagation()
+              onDeleteField(field.id)
+            }}
+            className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-md transition-colors"
+            title="Delete field"
+          >
+            <Trash2 className="w-3 h-3" />
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+})
+
+// Cache for stage requirements calculation to avoid repeated processing
+const stageCache = new Map<string, string[]>()
+
 // Helper function to extract required stages from field business rules
 const getRequiredStages = (field: PipelineField): string[] => {
-  const stageReqs = field.business_rules?.stage_requirements || {}
+  // Create cache key based on field ID and business rules hash
+  const cacheKey = `${field.id}_${JSON.stringify(field.business_rules?.stage_requirements || {})}`
   
-  // Debug logging for contact_email field
-  if (field.name === 'contact_email') {
-    console.log('=== CONTACT EMAIL FIELD DEBUG ===')
-    console.log('Field object:', field)
-    console.log('field.required:', field.required)
-    console.log('field.business_rules:', field.business_rules)
-    console.log('stage_requirements:', stageReqs)
-    console.log('Entries:', Object.entries(stageReqs))
-    console.log('Filtered entries:', Object.entries(stageReqs).filter(([stage, config]: [string, any]) => config.required === true))
+  if (stageCache.has(cacheKey)) {
+    return stageCache.get(cacheKey)!
   }
   
-  return Object.entries(stageReqs)
+  const stageReqs = field.business_rules?.stage_requirements || {}
+  const result = Object.entries(stageReqs)
     .filter(([stage, config]: [string, any]) => config.required === true)
     .map(([stage]) => stage)
+  
+  stageCache.set(cacheKey, result)
+  return result
 }
 
 export function PipelineFieldBuilder({ pipelineId, fields, onFieldsChange, onSave }: Props) {
@@ -286,6 +466,19 @@ export function PipelineFieldBuilder({ pipelineId, fields, onFieldsChange, onSav
     }
   }
   
+  // Memoized field action handlers to prevent re-renders
+  // Update field - optimized to avoid full array mapping  
+  const updateField = useCallback((fieldId: string, updates: Partial<PipelineField>) => {
+    onFieldsChange(prevFields => {
+      const index = prevFields.findIndex(f => f.id === fieldId)
+      if (index === -1) return prevFields
+      
+      const newFields = [...prevFields]
+      newFields[index] = { ...newFields[index], ...updates }
+      return newFields
+    })
+  }, [onFieldsChange])
+  
   // Clone field function
   const cloneField = (fieldId: string) => {
     const originalField = fields.find(f => f.id === fieldId)
@@ -304,13 +497,6 @@ export function PipelineFieldBuilder({ pipelineId, fields, onFieldsChange, onSav
     setEditingField(clonedField.id)
   }
   
-  // Update field
-  const updateField = (fieldId: string, updates: Partial<PipelineField>) => {
-    onFieldsChange(fields.map(field => 
-      field.id === fieldId ? { ...field, ...updates } : field
-    ))
-  }
-  
   // Delete field
   const deleteField = (fieldId: string) => {
     onFieldsChange(fields.filter(field => field.id !== fieldId))
@@ -318,6 +504,33 @@ export function PipelineFieldBuilder({ pipelineId, fields, onFieldsChange, onSav
       setEditingField(null)
     }
   }
+
+  const handleEditClick = useCallback((fieldId: string) => {
+    setEditingField(fieldId)
+  }, [])
+
+  const handleMoveField = useCallback((fieldId: string, direction: 'up' | 'down') => {
+    moveField(fieldId, direction)
+  }, [])
+
+  const handleCloneField = useCallback((fieldId: string) => {
+    cloneField(fieldId)
+  }, [])
+
+  const handleToggleVisibility = useCallback((fieldId: string, visible: boolean) => {
+    updateField(fieldId, { 
+      is_visible_in_list: visible,
+      visible: visible // Legacy support
+    })
+  }, [updateField])
+
+  const handleManageField = useCallback((field: PipelineField) => {
+    setManagingField(field)
+  }, [])
+
+  const handleDeleteField = useCallback((fieldId: string) => {
+    deleteField(fieldId)
+  }, [])
   
   // Reorder fields
   const moveField = (fieldId: string, direction: 'up' | 'down') => {
@@ -480,161 +693,24 @@ export function PipelineFieldBuilder({ pipelineId, fields, onFieldsChange, onSav
           ) : (
             <div className="p-3 space-y-3">
               {fields.map((field, index) => {
-                const Icon = FIELD_ICONS[field.field_type || field.type || 'text'] || Type
                 const isEditing = editingField === field.id
                 const fieldTypeInfo = availableFieldTypes.find(t => t.key === (field.field_type || field.type))
                 
                 return (
-                  <div
+                  <FieldItem
                     key={field.id}
-                    className={`group relative p-4 border rounded-xl cursor-pointer transition-all duration-200 ${
-                      isEditing 
-                        ? 'border-primary bg-primary/5 ring-2 ring-primary/20 shadow-md' 
-                        : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600 hover:shadow-sm bg-white dark:bg-gray-800'
-                    }`}
-                    onClick={() => setEditingField(field.id)}
-                  >
-                    {/* Field Header */}
-                    <div className="flex items-start justify-between mb-3">
-                      <div className="flex items-center space-x-3 min-w-0 flex-1">
-                        <div className={`p-2 rounded-lg ${isEditing ? 'bg-primary text-white' : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400'}`}>
-                          <Icon className="w-4 h-4" />
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <div className="font-semibold text-gray-900 dark:text-white truncate">
-                            {field.display_name || field.label || field.name}
-                          </div>
-                          <div className="text-xs text-gray-500 dark:text-gray-400 truncate">
-                            {fieldTypeInfo?.label || (field.field_type || field.type)}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Field Status Badges */}
-                    <div className="flex flex-wrap gap-1 mb-3">
-                      
-                      {/* Field Lifecycle Status */}
-                      <FieldStatusIndicator 
-                        status={field.deletion_status?.status || 'active'}
-                        deletionInfo={field.deletion_status}
-                        size="sm"
-                      />
-                      
-                      {/* Stage-specific required badges */}
-                      {getRequiredStages(field).map((stage) => (
-                        <span key={stage} className="inline-flex items-center px-2 py-0.5 text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-300 rounded-full">
-                          Required: {stage.charAt(0).toUpperCase() + stage.slice(1)}
-                        </span>
-                      ))}
-                      {!(field.is_visible_in_list ?? field.visible ?? true) && (
-                        <span className="inline-flex items-center px-2 py-0.5 text-xs font-medium bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300 rounded-full">
-                          Hidden
-                        </span>
-                      )}
-                      {field.is_ai_field && (
-                        <span className="inline-flex items-center px-2 py-0.5 text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-300 rounded-full">
-                          <Bot className="w-3 h-3 mr-1" />
-                          AI
-                        </span>
-                      )}
-                      
-                    </div>
-
-                    {/* Relationship Field Configuration Display */}
-                    {(field.field_type === 'relation' || field.type === 'relation') && field.field_config && hasEnhancedRelationshipFeatures(field.field_config) && (
-                      <div className="mb-3 p-2 bg-gray-50 dark:bg-gray-800 rounded-lg">
-                        <RelationshipFieldIndicator 
-                          fieldConfig={field.field_config} 
-                          size="sm"
-                          showDetails={true}
-                        />
-                      </div>
-                    )}
-
-                    {/* Field Actions */}
-                    <div className="flex items-center justify-between">
-                      <div className="text-xs text-gray-400 dark:text-gray-500">
-                        Position {index + 1}
-                      </div>
-                      
-                      <div className="flex items-center space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            moveField(field.id, 'up')
-                          }}
-                          disabled={index === 0}
-                          className="p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-                          title="Move up"
-                        >
-                          ↑
-                        </button>
-                        
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            moveField(field.id, 'down')
-                          }}
-                          disabled={index === fields.length - 1}
-                          className="p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-                          title="Move down"
-                        >
-                          ↓
-                        </button>
-                        
-                        <div className="w-px h-4 bg-gray-300 dark:bg-gray-600" />
-                        
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            cloneField(field.id)
-                          }}
-                          className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-md transition-colors"
-                          title="Clone field"
-                        >
-                          <Copy className="w-3 h-3" />
-                        </button>
-                        
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            const currentVisible = field.is_visible_in_list ?? field.visible ?? true
-                            updateField(field.id, { 
-                              is_visible_in_list: !currentVisible,
-                              visible: !currentVisible // Legacy support
-                            })
-                          }}
-                          className="p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md transition-colors"
-                          title={`${(field.is_visible_in_list ?? field.visible ?? true) ? 'Hide' : 'Show'} field`}
-                        >
-                          {(field.is_visible_in_list ?? field.visible ?? true) ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
-                        </button>
-                        
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            setManagingField(field)
-                          }}
-                          className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-md transition-colors"
-                          title="Manage field lifecycle"
-                        >
-                          <Shield className="w-3 h-3" />
-                        </button>
-                        
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            deleteField(field.id)
-                          }}
-                          className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-md transition-colors"
-                          title="Delete field"
-                        >
-                          <Trash2 className="w-3 h-3" />
-                        </button>
-                      </div>
-                    </div>
-                  </div>
+                    field={field}
+                    index={index}
+                    isEditing={isEditing}
+                    fieldTypeInfo={fieldTypeInfo}
+                    availableFieldTypes={availableFieldTypes}
+                    onEditClick={handleEditClick}
+                    onMoveField={handleMoveField}
+                    onCloneField={handleCloneField}
+                    onToggleVisibility={handleToggleVisibility}
+                    onManageField={handleManageField}
+                    onDeleteField={handleDeleteField}
+                  />
                 )
               })}
             </div>
@@ -727,6 +803,23 @@ function FieldEditor({
 }) {
   const fieldType = availableFieldTypes.find(t => t.key === (field.field_type || field.type))
   const [activeTab, setActiveTab] = useState('basic')
+
+  // Memoized onChange handlers to prevent performance issues
+  const handleConfigChange = useCallback((newConfig: Record<string, any>) => {
+    onUpdate({ 
+      field_config: newConfig,
+      config: newConfig // Legacy support
+    })
+  }, [onUpdate])
+
+  const handleStorageConstraintsChange = useCallback((newConstraints: Record<string, any>) => {
+    onUpdate({ 
+      storage_constraints: newConstraints,
+      // Sync legacy properties for backward compatibility
+      enforce_uniqueness: newConstraints.enforce_uniqueness || false,
+      create_index: newConstraints.create_index || false
+    })
+  }, [onUpdate])
 
   const tabs = [
     {
@@ -1249,6 +1342,29 @@ function AdvancedSettings({
   fields: PipelineField[]
   onUpdate: (updates: Partial<PipelineField>) => void
 }) {
+  // Memoized onChange handlers for AdvancedSettings
+  const handleConfigChange = useCallback((newConfig: Record<string, any>) => {
+    const start = performance.now()
+    console.log('[PERF] AdvancedSettings handleConfigChange START')
+    console.log('[PERF] New config object:', newConfig)
+    
+    onUpdate({ 
+      field_config: newConfig,
+      config: newConfig // Legacy support
+    })
+    
+    const end = performance.now()
+    console.log(`[PERF] AdvancedSettings handleConfigChange TOTAL: ${end - start}ms`)
+  }, [onUpdate])
+
+  const handleStorageConstraintsChange = useCallback((newConstraints: Record<string, any>) => {
+    onUpdate({ 
+      storage_constraints: newConstraints,
+      // Sync legacy properties for backward compatibility
+      enforce_uniqueness: newConstraints.enforce_uniqueness || false,
+      create_index: newConstraints.create_index || false
+    })
+  }, [onUpdate])
   return (
     <div className="space-y-6">
       <div>
@@ -1272,17 +1388,9 @@ function AdvancedSettings({
         <FieldConfigurationPanel
           fieldType={field.field_type || field.type || ''}
           config={field.field_config || field.config || {}}
-          onChange={(newConfig) => onUpdate({ 
-            field_config: newConfig,
-            config: newConfig // Legacy support
-          })}
+          onChange={handleConfigChange}
           storageConstraints={field.storage_constraints || {}}
-          onStorageConstraintsChange={(newConstraints) => onUpdate({ 
-            storage_constraints: newConstraints,
-            // Sync legacy properties for backward compatibility
-            enforce_uniqueness: newConstraints.enforce_uniqueness || false,
-            create_index: newConstraints.create_index || false
-          })}
+          onStorageConstraintsChange={handleStorageConstraintsChange}
           // AI configuration props
           aiConfig={field.ai_config || {}}
           onAiConfigChange={(newAiConfig) => onUpdate({

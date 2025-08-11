@@ -11,18 +11,12 @@ export const TextFieldComponent: FieldComponent = {
     const [isEditing, setIsEditing] = useState(false)
     
     // Update local value when external value changes and not editing
-    // BUT: preserve user input for new records during editing session
     useEffect(() => {
       if (!isEditing) {
-        // Only update if we have a meaningful external value or if localValue is empty
-        // This prevents overriding user input in new record creation
-        if (value !== null && value !== undefined && value !== '') {
-          setLocalValue(value)
-        } else if (localValue === '' || localValue === null || localValue === undefined) {
-          setLocalValue(value || '')
-        }
+        // Always sync with external value when not actively editing
+        setLocalValue(value || '')
       }
-    }, [value, isEditing, localValue])
+    }, [value, isEditing])
     
     const maxLength = getFieldConfig(field, 'max_length')
     const minLength = getFieldConfig(field, 'min_length')

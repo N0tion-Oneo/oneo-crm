@@ -1,7 +1,7 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import { pipelinesApi, relationshipsApi } from '@/lib/api'
+import React, { useState, useEffect } from 'react'
+import { usePipelines, useRelationshipTypes, usePipelineFields } from '@/contexts/FieldConfigCacheContext'
 import {
   Label,
   Select,
@@ -49,145 +49,67 @@ interface RelationFieldConfigProps {
   onChange: (config: Record<string, any>) => void
 }
 
-export function RelationFieldConfig({
+export const RelationFieldConfig = React.memo(function RelationFieldConfig({
   config,
   onChange
 }: RelationFieldConfigProps) {
-  const [pipelines, setPipelines] = useState<Pipeline[]>([])
-  const [targetPipelineFields, setTargetPipelineFields] = useState<PipelineField[]>([])
-  const [relationshipTypes, setRelationshipTypes] = useState<RelationshipType[]>([])
-  const [loading, setLoading] = useState(true)
-  const [loadingFields, setLoadingFields] = useState(false)
-  const [loadingRelationshipTypes, setLoadingRelationshipTypes] = useState(false)
+  // Use cached data from context with error handling
+  const { pipelines, loading: pipelinesLoading, error: pipelinesError } = usePipelines()
+  const { relationshipTypes, loading: relationshipTypesLoading, error: relationshipTypesError } = useRelationshipTypes()
+  const { fields: targetPipelineFields, loading: loadingFields, error: fieldsError } = usePipelineFields(
+    config.target_pipeline_id?.toString() || ''
+  )
 
-  // Debug: Track config changes (cleaned up)
-  // console.log('🔧 RelationFieldConfig render with config:', config)
+  // Debug logging for component state
+  React.useEffect(() => {
+    console.log('[RelationFieldConfig] Component state:', {
+      config,
+      pipelinesCount: pipelines?.length || 0,
+      pipelinesLoading,
+      pipelinesError,
+      relationshipTypesCount: relationshipTypes?.length || 0,
+      relationshipTypesLoading,
+      relationshipTypesError,
+      targetFieldsCount: targetPipelineFields?.length || 0,
+      loadingFields,
+      fieldsError
+    })
+  }, [config, pipelines, pipelinesLoading, pipelinesError, relationshipTypes, relationshipTypesLoading, relationshipTypesError, targetPipelineFields, loadingFields, fieldsError])
 
-  // Load available pipelines
-  useEffect(() => {
-    const loadPipelines = async () => {
-      try {
-        setLoading(true)
-        const response = await pipelinesApi.list()
-        setPipelines(response.data.results || [])
-      } catch (error) {
-        console.error('Failed to load pipelines:', error)
-        setPipelines([])
-      } finally {
-        setLoading(false)
-      }
-    }
-
-    loadPipelines()
-  }, [])
-
-  // Load available relationship types
-  useEffect(() => {
-    const loadRelationshipTypes = async () => {
-      try {
-        setLoadingRelationshipTypes(true)
-        console.log('🔗 Loading relationship types...')
-        const response = await relationshipsApi.getRelationshipTypes()
-        console.log('🔗 Relationship types response:', {
-          status: response.status,
-          data: response.data,
-          dataLength: response.data?.length,
-          firstType: response.data?.[0],
-          fullResponse: response
-        })
-        
-        // Handle different response structures
-        let types = []
-        if (Array.isArray(response.data)) {
-          types = response.data
-        } else if (response.data?.results && Array.isArray(response.data.results)) {
-          types = response.data.results
-        } else if (response.data?.relationship_types && Array.isArray(response.data.relationship_types)) {
-          types = response.data.relationship_types
-        } else {
-          console.warn('🔗 Unexpected API response structure:', response.data)
-          types = []
-        }
-        
-        console.log('🔗 Parsed relationship types:', types)
-        setRelationshipTypes(types)
-      } catch (error) {
-        console.error('❌ Failed to load relationship types:', error)
-        console.error('❌ Error details:', {
-          message: error.message,
-          response: error.response?.data,
-          status: error.response?.status,
-          url: error.config?.url,
-          method: error.config?.method
-        })
-        setRelationshipTypes([])
-      } finally {
-        setLoadingRelationshipTypes(false)
-      }
-    }
-
-    loadRelationshipTypes()
-  }, [])
-
-  // Load fields for the selected target pipeline
-  useEffect(() => {
-    const loadTargetPipelineFields = async () => {
-      if (!config.target_pipeline_id) {
-        setTargetPipelineFields([])
-        return
-      }
-
-      try {
-        setLoadingFields(true)
-        const pipelineIdStr = config.target_pipeline_id.toString()
-        
-        const response = await pipelinesApi.getFields(pipelineIdStr)
-        
-        // Handle different possible response structures
-        let fields = []
-        if (Array.isArray(response.data)) {
-          fields = response.data
-        } else if (response.data?.results && Array.isArray(response.data.results)) {
-          fields = response.data.results
-        } else if (response.data?.fields && Array.isArray(response.data.fields)) {
-          fields = response.data.fields
-        } else {
-          console.warn('Unexpected API response structure for pipeline fields:', response.data)
-          fields = []
-        }
-        
-        setTargetPipelineFields(fields)
-      } catch (error) {
-        console.error('❌ Failed to load target pipeline fields:', error)
-        console.error('❌ Error details:', error.response?.data, error.response?.status)
-        setTargetPipelineFields([])
-      } finally {
-        setLoadingFields(false)
-      }
-    }
-
-    loadTargetPipelineFields()
-  }, [config.target_pipeline_id])
 
   const handlePipelineChange = (value: string) => {
-    // Ensure value is always a string for consistent comparison
-    const newPipelineIdStr = value ? value.toString() : null
-    const currentPipelineIdStr = config.target_pipeline_id?.toString() || null
-    
-    // Clear display field when pipeline changes and update both at once
-    // Convert to integer for backend compatibility
-    const pipelineIdForBackend = newPipelineIdStr ? parseInt(newPipelineIdStr) : null
-    if (newPipelineIdStr !== currentPipelineIdStr) {
-      onChange({ 
-        ...config, 
-        target_pipeline_id: pipelineIdForBackend, 
-        display_field: '' 
-      })
+    try {
+      console.log('[RelationFieldConfig] handlePipelineChange called with:', value)
+      // Ensure value is always a string for consistent comparison
+      const newPipelineIdStr = value ? value.toString() : null
+      const currentPipelineIdStr = config.target_pipeline_id?.toString() || null
+      
+      // Clear display field when pipeline changes and update both at once
+      // Convert to integer for backend compatibility
+      const pipelineIdForBackend = newPipelineIdStr ? parseInt(newPipelineIdStr) : null
+      if (newPipelineIdStr !== currentPipelineIdStr) {
+        const newConfig = { 
+          ...config, 
+          target_pipeline_id: pipelineIdForBackend, 
+          display_field: '' 
+        }
+        console.log('[RelationFieldConfig] Pipeline changed, updating config:', newConfig)
+        onChange(newConfig)
+      }
+    } catch (error) {
+      console.error('[RelationFieldConfig] Error in handlePipelineChange:', error)
     }
   }
 
   const handleDisplayFieldChange = (value: string) => {
-    onChange({ ...config, display_field: value })
+    try {
+      console.log('[RelationFieldConfig] handleDisplayFieldChange called with:', value)
+      const newConfig = { ...config, display_field: value }
+      console.log('[RelationFieldConfig] Display field changed, updating config:', newConfig)
+      onChange(newConfig)
+    } catch (error) {
+      console.error('[RelationFieldConfig] Error in handleDisplayFieldChange:', error)
+    }
   }
 
   return (
@@ -209,7 +131,7 @@ export function RelationFieldConfig({
             </Tooltip>
           </div>
           
-          {loading ? (
+          {pipelinesLoading ? (
             <div className="p-3 text-sm border rounded-md bg-muted text-gray-700 dark:text-gray-300">
               Loading available pipelines...
             </div>
@@ -237,7 +159,7 @@ export function RelationFieldConfig({
             </Select>
           )}
           
-          {!loading && pipelines.length === 0 && (
+          {!pipelinesLoading && pipelines.length === 0 && (
             <div className="flex items-center gap-2 p-3 text-sm bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-md">
               <AlertCircle className="h-4 w-4 text-yellow-600 dark:text-yellow-400" />
               <span className="text-yellow-800 dark:text-yellow-200">
@@ -344,7 +266,16 @@ export function RelationFieldConfig({
             <Checkbox
               id="allow-multiple"
               checked={config.allow_multiple || false}
-              onCheckedChange={(checked) => onChange({...config, allow_multiple: checked})}
+              onCheckedChange={(checked) => {
+                try {
+                  console.log('[RelationFieldConfig] allow_multiple checkbox changed:', checked)
+                  const newConfig = {...config, allow_multiple: checked}
+                  console.log('[RelationFieldConfig] Updating config with allow_multiple:', newConfig)
+                  onChange(newConfig)
+                } catch (error) {
+                  console.error('[RelationFieldConfig] Error in allow_multiple checkbox:', error)
+                }
+              }}
             />
             <Label htmlFor="allow-multiple" className="text-sm font-normal text-gray-700 dark:text-gray-300">
               Allow Multiple Relationships
@@ -362,10 +293,19 @@ export function RelationFieldConfig({
                 min="1"
                 placeholder="No limit"
                 value={config.max_relationships || ''}
-                onChange={(e) => onChange({
-                  ...config, 
-                  max_relationships: e.target.value ? parseInt(e.target.value) : null
-                })}
+                onChange={(e) => {
+                  try {
+                    console.log('[RelationFieldConfig] max_relationships input changed:', e.target.value)
+                    const newConfig = {
+                      ...config, 
+                      max_relationships: e.target.value ? parseInt(e.target.value) : null
+                    }
+                    console.log('[RelationFieldConfig] Updating config with max_relationships:', newConfig)
+                    onChange(newConfig)
+                  } catch (error) {
+                    console.error('[RelationFieldConfig] Error in max_relationships input:', error)
+                  }
+                }}
                 className="w-32"
               />
               <p className="text-xs text-muted-foreground">
@@ -417,7 +357,7 @@ export function RelationFieldConfig({
               <Label className="text-sm text-gray-700 dark:text-gray-300">
                 Default Relationship Type *
               </Label>
-              {loadingRelationshipTypes ? (
+              {relationshipTypesLoading ? (
                 <div className="p-3 text-sm border rounded-md bg-muted text-gray-700 dark:text-gray-300">
                   Loading relationship types...
                 </div>
@@ -607,4 +547,4 @@ export function RelationFieldConfig({
       </div>
     </TooltipProvider>
   )
-}
+})

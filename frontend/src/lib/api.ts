@@ -13,12 +13,13 @@ const getApiBaseUrl = () => {
   const port = '8000'
   const baseUrl = `http://${currentHost}:${port}`
   
-  // Debug logging to help troubleshoot
-  console.log('🔧 API Base URL generated:', {
-    currentHost,
-    fullUrl: window.location.href,
-    generatedBaseUrl: baseUrl
-  })
+  // Debug logging in development only
+  if (process.env.NODE_ENV === 'development') {
+    console.log('🔧 API Base URL generated:', {
+      currentHost,
+      generatedBaseUrl: baseUrl
+    })
+  }
   
   return baseUrl
 }
@@ -38,15 +39,11 @@ api.interceptors.request.use(
     // Set dynamic base URL
     config.baseURL = getApiBaseUrl()
     
-    // Comprehensive API request logging
-    const fullUrl = `${config.baseURL}${config.url}`
-    console.log(`🟠 API STEP 1: HTTP Request Outgoing`)
-    console.log(`   🌐 ${config.method?.toUpperCase()} ${fullUrl}`)
-    if (config.data && config.method?.toLowerCase() === 'patch') {
-      console.log(`   📦 Request Body:`, JSON.stringify(config.data, null, 2))
-      if (config.data.data) {
-        console.log(`   🔑 Request contains ${Object.keys(config.data.data).length} field(s): [${Object.keys(config.data.data).join(', ')}]`)
-      }
+    // API request logging in development only
+    if (process.env.NODE_ENV === 'development') {
+      const fullUrl = `${config.baseURL}${config.url}`
+      console.log(`🟠 API STEP 1: HTTP Request Outgoing`)
+      console.log(`   🌐 ${config.method?.toUpperCase()} ${fullUrl}`)
     }
     
     // Add JWT token if available
@@ -65,18 +62,10 @@ api.interceptors.request.use(
 // Response interceptor to handle authentication errors and token refresh
 api.interceptors.response.use(
   (response) => {
-    // Comprehensive API response logging  
-    console.log(`🟠 API STEP 2: HTTP Response Received`)
-    console.log(`   ✅ ${response.status} ${response.config.method?.toUpperCase()} ${response.config.url}`)
-    if (response.config.method?.toLowerCase() === 'patch' && response.data) {
-      console.log(`   📊 Response contains ${Object.keys(response.data || {}).length} fields`)
-      console.log(`   📋 Response data:`, response.data)
-      if (response.data.data) {
-        const nullFields = Object.entries(response.data.data).filter(([k, v]) => v === null).map(([k]) => k)
-        if (nullFields.length > 0) {
-          console.log(`   ⚠️  Response contains ${nullFields.length} NULL fields: [${nullFields.join(', ')}]`)
-        }
-      }
+    // API response logging in development only
+    if (process.env.NODE_ENV === 'development') {
+      console.log(`🟠 API STEP 2: HTTP Response Received`)
+      console.log(`   ✅ ${response.status} ${response.config.method?.toUpperCase()} ${response.config.url}`)
     }
     return response
   },

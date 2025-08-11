@@ -1,7 +1,7 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import { globalOptionsApi } from '@/lib/api'
+import React, { useState, useEffect } from 'react'
+import { useGlobalOptions } from '@/contexts/FieldConfigCacheContext'
 import {
   Checkbox,
   Label,
@@ -28,34 +28,15 @@ interface Country {
   phone_code: string
 }
 
-export function AddressFieldConfig({
+export const AddressFieldConfig = React.memo(function AddressFieldConfig({
   config,
   onChange,
-  globalOptions
+  globalOptions: propGlobalOptions
 }: AddressFieldConfigProps) {
-  const [countries, setCountries] = useState<Country[]>([])
-  const [loading, setLoading] = useState(false)
-
-  // Load countries if not provided in globalOptions
-  useEffect(() => {
-    if (!globalOptions?.countries) {
-      const loadCountries = async () => {
-        try {
-          setLoading(true)
-          const response = await globalOptionsApi.getAll()
-          setCountries(response.data.countries || [])
-        } catch (error) {
-          console.error('Failed to load countries:', error)
-          setCountries([])
-        } finally {
-          setLoading(false)
-        }
-      }
-      loadCountries()
-    } else {
-      setCountries(globalOptions?.countries || [])
-    }
-  }, [globalOptions?.countries])
+  // Use cached global options, but fall back to prop if provided
+  const { globalOptions: cachedGlobalOptions, loading } = useGlobalOptions()
+  const globalOptions = propGlobalOptions || cachedGlobalOptions
+  const countries = globalOptions?.countries || []
 
   const addressFormats = [
     { value: 'single_line', label: 'Single Line', description: 'One text field for the entire address' },
@@ -333,4 +314,4 @@ export function AddressFieldConfig({
       </div>
     </div>
   )
-}
+})

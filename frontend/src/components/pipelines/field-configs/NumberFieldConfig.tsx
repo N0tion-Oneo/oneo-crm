@@ -1,7 +1,7 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import { globalOptionsApi } from '@/lib/api'
+import React, { useState, useEffect } from 'react'
+import { useGlobalOptions } from '@/contexts/FieldConfigCacheContext'
 import {
   Input,
   Label,
@@ -43,33 +43,27 @@ const numberFormats = [
 export function NumberFieldConfig({
   config,
   onChange,
-  globalOptions
+  globalOptions: propGlobalOptions
 }: NumberFieldConfigProps) {
-  const [currencies, setCurrencies] = useState<Currency[]>([])
-  const [loading, setLoading] = useState(false)
-
-  // Load currencies if not provided in globalOptions
-  useEffect(() => {
-    if (!globalOptions?.currencies && config.format === 'currency') {
-      const loadCurrencies = async () => {
-        try {
-          setLoading(true)
-          const response = await globalOptionsApi.getAll()
-          setCurrencies(response.data.currencies || [])
-        } catch (error) {
-          console.error('Failed to load currencies:', error)
-          setCurrencies([])
-        } finally {
-          setLoading(false)
-        }
-      }
-      loadCurrencies()
-    } else {
-      setCurrencies(globalOptions?.currencies || [])
-    }
-  }, [globalOptions?.currencies, config.format])
+  // Use cached global options, but fall back to prop if provided
+  const { globalOptions: cachedGlobalOptions, loading, error } = useGlobalOptions()
+  const globalOptions = propGlobalOptions || cachedGlobalOptions
+  const currencies = globalOptions?.currencies || []
 
   const selectedFormat = config.format || 'integer'
+
+  // Debug logging for component state
+  React.useEffect(() => {
+    console.log('[NumberFieldConfig] Component state:', {
+      config,
+      hasGlobalOptions: !!globalOptions,
+      hasPropOptions: !!propGlobalOptions,
+      loading,
+      error,
+      currenciesCount: currencies.length,
+      selectedFormat
+    })
+  }, [config, globalOptions, propGlobalOptions, loading, error, currencies.length, selectedFormat])
 
   return (
     <div className="space-y-6">
@@ -81,7 +75,14 @@ export function NumberFieldConfig({
         
         <Select
           value={selectedFormat}
-          onValueChange={(value) => onChange('format', value)}
+          onValueChange={(value) => {
+            try {
+              console.log('[NumberFieldConfig] format dropdown changed:', value)
+              onChange('format', value)
+            } catch (error) {
+              console.error('[NumberFieldConfig] Error in format dropdown:', error)
+            }
+          }}
         >
           <SelectTrigger>
             <SelectValue />
@@ -115,7 +116,16 @@ export function NumberFieldConfig({
               ) : (
                 <Select
                   value={config.currency_code || 'any'}
-                  onValueChange={(value) => onChange('currency_code', value === 'any' ? null : value)}
+                  onValueChange={(value) => {
+                    try {
+                      console.log('[NumberFieldConfig] currency_code dropdown changed:', value)
+                      const newValue = value === 'any' ? null : value
+                      console.log('[NumberFieldConfig] Setting currency_code to:', newValue)
+                      onChange('currency_code', newValue)
+                    } catch (error) {
+                      console.error('[NumberFieldConfig] Error in currency_code dropdown:', error)
+                    }
+                  }}
                 >
                   <SelectTrigger>
                     <SelectValue placeholder="Allow any currency" />

@@ -7,13 +7,23 @@ export const PhoneFieldComponent: FieldComponent = {
     const { field, value, onChange, onBlur, onKeyDown, disabled, error, className, autoFocus } = props
     
     // Local state for editing to prevent re-render issues
-    const [localValue, setLocalValue] = useState(value || '')
+    // Handle phone objects like {number: "720837293", country_code: "+27"}
+    const getDisplayValue = (val: any): string => {
+      if (!val) return ''
+      if (typeof val === 'object' && val.number !== undefined) {
+        // Format as international number: country_code + number
+        return (val.country_code || '') + val.number
+      }
+      return val.toString()
+    }
+    
+    const [localValue, setLocalValue] = useState(getDisplayValue(value))
     const [isEditing, setIsEditing] = useState(false)
     
     // Update local value when external value changes and not editing
     useEffect(() => {
       if (!isEditing) {
-        setLocalValue(value || '')
+        setLocalValue(getDisplayValue(value))
       }
     }, [value, isEditing])
     
@@ -21,6 +31,7 @@ export const PhoneFieldComponent: FieldComponent = {
     const defaultCountry = getFieldConfig(field, 'default_country', null) // Should be null by default
     const allowedCountries = getFieldConfig(field, 'allowed_countries', []) // Empty array means all countries allowed
     const requireCountryCode = getFieldConfig(field, 'require_country_code', true)
+    
     const formatDisplay = getFieldConfig(field, 'format_display', true)
     const displayFormat = getFieldConfig(field, 'display_format', 'international')
     const autoFormatInput = getFieldConfig(field, 'auto_format_input', true)
@@ -153,6 +164,18 @@ export const PhoneFieldComponent: FieldComponent = {
               
               return cleanPhoneNumber(value, initialCountryCode)
             })
+            
+            // Update state when external value changes (for existing records)
+            useEffect(() => {
+              if (value && typeof value === 'object') {
+                if (value.country_code) {
+                  setCurrentCountryCode(value.country_code)
+                }
+                if (value.number) {
+                  setCurrentNumber(value.number)
+                }
+              }
+            }, [value])
             
             const updatePhoneValue = (newNumber: string | null, newCountryCode: string) => {
               if (newNumber === null || newNumber === '') {

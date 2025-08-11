@@ -6,14 +6,23 @@ export const NumberFieldComponent: FieldComponent = {
   renderInput: (props: FieldRenderProps) => {
     const { field, value, onChange, onBlur, onKeyDown, disabled, error, className, autoFocus } = props
     
-    // Local state for editing to prevent re-render issues
-    const [localValue, setLocalValue] = useState(value || '')
+    // Local state for editing to prevent re-render issues  
+    // Extract display value from complex objects for input field
+    const getDisplayValue = (val: any): string => {
+      if (!val) return ''
+      if (typeof val === 'object' && val.amount !== undefined) {
+        return val.amount.toString()
+      }
+      return val.toString()
+    }
+    
+    const [localValue, setLocalValue] = useState(getDisplayValue(value))
     const [isEditing, setIsEditing] = useState(false)
     
     // Update local value when external value changes and not editing
     useEffect(() => {
       if (!isEditing) {
-        setLocalValue(value || '')
+        setLocalValue(getDisplayValue(value))
       }
     }, [value, isEditing])
     
@@ -82,23 +91,9 @@ export const NumberFieldComponent: FieldComponent = {
               amount: numValue,
               currency: currencyCode
             }
-            console.log(`💰 FIXED CURRENCY FIELD CHANGE:`, {
-              fieldName: field.name,
-              format: format,
-              amount: numValue,
-              currency: currencyCode,
-              sendingValue: currencyObject,
-              sendingType: 'currency_object'
-            })
             onChange(currencyObject)
           } else {
             // For non-currency fields, send simple numbers
-            console.log(`🔢 NUMBER FIELD CHANGE:`, {
-              fieldName: field.name,
-              format: format,
-              sendingValue: numValue,
-              sendingType: 'number'
-            })
             onChange(numValue)
           }
         }
@@ -209,14 +204,6 @@ export const NumberFieldComponent: FieldComponent = {
                   currency: newCurrency
                 }
                 
-                console.log(`💰 CURRENCY FIELD CHANGE:`, {
-                  fieldName: field.name,
-                  format: format,
-                  amount: newAmount,
-                  currency: newCurrency,
-                  sendingValue: currencyObject,
-                  sendingType: 'currency_object'
-                })
                 
                 // Send complete currency object so backend can validate and store both amount and currency
                 onChange(currencyObject)

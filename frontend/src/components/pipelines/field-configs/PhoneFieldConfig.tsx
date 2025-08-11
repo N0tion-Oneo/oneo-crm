@@ -1,9 +1,8 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import { globalOptionsApi } from '@/lib/api'
+import React, { useState, useEffect } from 'react'
+import { useGlobalOptions } from '@/contexts/FieldConfigCacheContext'
 import {
-  Checkbox,
   Input,
   Label,
   Select,
@@ -15,7 +14,8 @@ import {
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
-  Separator
+  Separator,
+  Checkbox
 } from '@/components/ui'
 import { HelpCircle } from 'lucide-react'
 
@@ -34,26 +34,20 @@ export function PhoneFieldConfig({
   config,
   onChange
 }: PhoneFieldConfigProps) {
-  const [countries, setCountries] = useState<Country[]>([])
-  const [loading, setLoading] = useState(true)
+  // Use cached global options
+  const { globalOptions, loading, error } = useGlobalOptions()
+  const countries = globalOptions?.countries || []
 
-  // Load available countries
-  useEffect(() => {
-    const loadCountries = async () => {
-      try {
-        setLoading(true)
-        const response = await globalOptionsApi.getAll()
-        setCountries(response.data.countries || [])
-      } catch (error) {
-        console.error('Failed to load countries:', error)
-        setCountries([])
-      } finally {
-        setLoading(false)
-      }
-    }
-
-    loadCountries()
-  }, [])
+  // Debug logging for component state (commented out for performance)
+  // React.useEffect(() => {
+  //   console.log('[PhoneFieldConfig] Component state:', {
+  //     config,
+  //     hasGlobalOptions: !!globalOptions,
+  //     loading,
+  //     error,
+  //     countriesCount: countries.length
+  //   })
+  // }, [config, globalOptions, loading, error, countries.length])
 
   const displayFormats = [
     { 
@@ -76,13 +70,13 @@ export function PhoneFieldConfig({
     }
   ]
 
-  const handleCountryToggle = (countryCode: string, checked: boolean) => {
+  const handleCountryToggle = React.useCallback((countryCode: string, checked: boolean) => {
     const currentCountries = config.allowed_countries || []
     const newCountries = checked
       ? [...currentCountries, countryCode]
       : currentCountries.filter((c: string) => c !== countryCode)
     onChange('allowed_countries', newCountries)
-  }
+  }, [config.allowed_countries, onChange])
 
   return (
     <TooltipProvider>
@@ -108,7 +102,10 @@ export function PhoneFieldConfig({
           ) : (
             <Select
               value={config.default_country || 'any'}
-              onValueChange={(value) => onChange('default_country', value === 'any' ? null : value)}
+              onValueChange={(value) => {
+                const newValue = value === 'any' ? null : value
+                onChange('default_country', newValue)
+              }}
             >
               <SelectTrigger>
                 <SelectValue placeholder="Allow any country" />
@@ -159,7 +156,7 @@ export function PhoneFieldConfig({
                     <Checkbox
                       id={`country-${country.code}`}
                       checked={(config.allowed_countries || []).includes(country.code)}
-                      onCheckedChange={(checked) => handleCountryToggle(country.code, !!checked)}
+                      onCheckedChange={(checked) => handleCountryToggle(country.code, checked)}
                     />
                     <Label htmlFor={`country-${country.code}`} className="text-sm font-normal text-gray-700 dark:text-gray-300">
                       {country.name} ({country.phone_code})

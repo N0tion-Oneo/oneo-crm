@@ -173,9 +173,6 @@ export function RecordDetailDrawer({
   const [originalData, setOriginalData] = useState<{ [key: string]: any }>({})
   const [activeTab, setActiveTab] = useState<'details' | 'activity' | 'communications'>('details')
   
-  // Field-level editing state for enter/exit pattern
-  const [editingField, setEditingField] = useState<string | null>(null)
-  const [localFieldValues, setLocalFieldValues] = useState<{[key: string]: any}>({})
   const [fieldErrors, setFieldErrors] = useState<{[key: string]: string}>({})
   
   const [validationErrors, setValidationErrors] = useState<ValidationError[]>([])
@@ -189,29 +186,6 @@ export function RecordDetailDrawer({
   const fieldSaveService = useRef(new FieldSaveService()).current
   const isSavingRef = useRef(false)  // Track when we're saving to prevent formData reset
 
-  // Debug formData changes with stack trace - Enhanced for new record debugging
-  useEffect(() => {
-    const isNewRecord = !record
-    const hasFormData = Object.keys(formData).length > 0
-    
-    if ((record && hasFormData) || (isNewRecord && hasFormData)) {
-      console.log(`📋 DRAWER formData changed:`, {
-        recordType: isNewRecord ? 'NEW_RECORD' : 'EXISTING_RECORD',
-        recordId: record?.id || 'NEW',
-        formDataKeys: Object.keys(formData),
-        formDataSize: Object.keys(formData).length,
-        isSaving: isSavingRef.current,
-        editingField: editingField,
-        localFieldValuesCount: Object.keys(localFieldValues).length,
-        stackTrace: new Error().stack?.split('\n').slice(1, 6).join('\n')
-      })
-      
-      // Special debugging for new records
-      if (isNewRecord && hasFormData) {
-        console.log(`🆕 NEW RECORD formData details:`, formData)
-      }
-    }
-  }, [formData, record?.id, editingField])
 
   // Field filtering with conditional visibility support
   const visibleFields = useMemo(() => {
@@ -242,12 +216,6 @@ export function RecordDetailDrawer({
   const { isConnected } = useDocumentSubscription(
     record?.id || '',
     (message: RealtimeMessage) => {
-      console.log('🎯 Record drawer received message:', {
-        type: message.type,
-        recordId: record?.id,
-        messageData: message.data,
-        messagePayload: message.payload
-      })
       if (message.type === 'record_update' && message.payload.record_id === record?.id) {
         // Update form data with real-time changes from other users
         if (message.payload.field_name && message.payload.value !== undefined) {
@@ -256,36 +224,13 @@ export function RecordDetailDrawer({
             ...prev,
             [message.payload.field_name]: message.payload.value
           }))
-        } else {
-          console.log(`🚨 WEBSOCKET message without field_name/value:`, {
-            hasFieldName: !!message.payload.field_name,
-            hasValue: message.payload.value !== undefined,
-            fullPayload: message.payload
-          })
         }
       } else if (message.type === 'activity_update') {
         // Handle real-time activity updates
-        console.log('🎯 Processing activity update')
         const activityData = message.data || message.payload
-        console.log('🎯 Activity data:', activityData)
-        console.log('🎯 Record ID comparison:', {
-          activityRecordId: activityData?.record_id,
-          currentRecordId: record?.id,
-          recordIdType: typeof activityData?.record_id,
-          currentRecordIdType: typeof record?.id,
-          matches: activityData?.record_id === record?.id
-        })
         if (activityData && String(activityData.record_id) === String(record?.id)) {
-          console.log('✅ Adding activity to list:', activityData)
           // Add new activity to the beginning of the activities list
-          setActivities(prev => {
-            console.log('🎯 Previous activities count:', prev.length)
-            const newActivities = [activityData, ...prev]
-            console.log('🎯 New activities count:', newActivities.length)
-            return newActivities
-          })
-        } else {
-          console.log('❌ Activity update ignored - record ID mismatch or missing data')
+          setActivities(prev => [activityData, ...prev])
         }
       }
     },
@@ -305,48 +250,54 @@ export function RecordDetailDrawer({
 
   // Initialize form data when record ID changes (not on every record update)
   useEffect(() => {
-    console.log(`🔄 USEEFFECT TRIGGERED:`, {
-      hasRecord: !!record,
-      recordId: record?.id,
-      fieldsLength: pipeline.fields.length,
-      hasExistingFormData: Object.keys(formData).length > 0,
-      editingField: editingField,
-      reason: 'record ID or pipeline fields changed'
-    })
-
-    // DEFENSIVE: Don't reset formData if user is actively editing a new record
-    // This prevents losing user input when pipeline fields change
-    if (!record && Object.keys(formData).length > 0 && editingField) {
-      console.log(`⚠️  PREVENTING RESET: User is actively editing new record field '${editingField}'`)
-      return
-    }
 
     if (record) {
-      // Record ID changed - safe to reset formData
+      // Record ID changed - initialize with existing record data
       
-      // Use centralized field normalization to ensure proper data types
-      const normalizedData = normalizeRecordData(pipeline.fields, record.data)
+      // Map backend field slugs to frontend field names and normalize data types
+      const formData: { [key: string]: any } = {}
       
-      console.log('🔧 Normalizing record data:', { 
-        raw: record.data, 
-        normalized: normalizedData,
-        fields: pipeline.fields.map(f => ({ name: f.name, type: f.field_type }))
+      pipeline.fields.forEach(field => {
+        const fieldType = convertToFieldType(field)
+        const backendSlug = field.original_slug || field.name
+        
+        // Try multiple ways to get the value from backend data
+        let backendValue = record.data?.[backendSlug]
+        
+        // Fallback attempts if primary slug doesn't work
+        if (backendValue === undefined) {
+          // Try with the field name directly
+          backendValue = record.data?.[field.name]
+        }
+        
+        if (backendValue === undefined && field.original_slug) {
+          // Try with display_name or slug transformations
+          backendValue = record.data?.[field.display_name?.toLowerCase().replace(/\s+/g, '_')]
+        }
+        
+        
+        // Always try to map the value, even if it's empty string, 0, false, etc.
+        if (backendValue !== undefined) {
+          // Use field system normalization for proper data types
+          const normalizedValue = normalizeFieldValue(fieldType, backendValue)
+          formData[field.name] = normalizedValue
+        } else {
+          // Only use defaults if the field is truly missing from backend data
+          const defaultValue = getFieldDefaultValue(fieldType)
+          const fallbackDefault = defaultValue !== undefined && defaultValue !== null 
+            ? defaultValue 
+            : getFallbackDefaultValue(field.field_type)
+          formData[field.name] = fallbackDefault
+        }
       })
       
-      console.log(`🔄 USEEFFECT setting formData (record ID change):`, {
-        recordId: record.id,
-        normalizedDataKeys: Object.keys(normalizedData),
-        normalizedDataSize: Object.keys(normalizedData).length,
-        reason: 'Record ID changed'
-      })
-      setFormData(normalizedData)
-      setOriginalData(normalizedData)
+      
+      setFormData(formData)
+      setOriginalData(formData)
       loadActivities(record.id)
     } else {
       // New record - initialize ALL fields with appropriate defaults
       const defaultData: { [key: string]: any } = {}
-      
-      console.log(`🆕 NEW RECORD: Initializing formData for ${pipeline.fields.length} fields`)
       
       pipeline.fields.forEach(field => {
         const fieldType = convertToFieldType(field)
@@ -356,50 +307,24 @@ export function RecordDetailDrawer({
         // This ensures every field exists in formData to prevent input loss
         if (defaultValue !== undefined && defaultValue !== null) {
           defaultData[field.name] = defaultValue
-          console.log(`   ✅ Field '${field.name}' (${field.field_type}): initialized with default ${JSON.stringify(defaultValue)}`)
         } else {
           // Provide appropriate fallback defaults for null/undefined values
           const fallbackDefault = getFallbackDefaultValue(field.field_type)
           defaultData[field.name] = fallbackDefault
-          console.log(`   🔧 Field '${field.name}' (${field.field_type}): initialized with fallback ${JSON.stringify(fallbackDefault)}`)
         }
       })
       
-      console.log(`🆕 NEW RECORD: Final formData has ${Object.keys(defaultData).length} fields:`, Object.keys(defaultData))
 
       setFormData(defaultData)
       setOriginalData({})
       setActivities([])
     }
     
-    // Reset field editing state (unless user is actively editing)
-    if (!editingField) {
-      setEditingField(null)
-      setLocalFieldValues({})
-      setFieldErrors({})
-      setValidationErrors([])
-    }
+    // Reset field errors and validation errors
+    setFieldErrors({})
+    setValidationErrors([])
   }, [record?.id, pipeline.fields.length])  // Dependencies: only reset when record ID or field count changes
 
-  // Auto-enable editing for new records
-  useEffect(() => {
-    if (!record && pipeline.fields.length > 0) {
-      // New record: enable editing for the first field to get user started
-      const firstEditableField = visibleFields.find(field => {
-        const permissions = getFieldPermissions(field)
-        return permissions.editable && !permissions.readonly
-      })
-      
-      if (firstEditableField) {
-        handleFieldEnter(firstEditableField.name, formData[firstEditableField.name] || '')
-      }
-    } else if (record) {
-      // Existing record: start with no fields in edit mode
-      setEditingField(null)
-      setLocalFieldValues({})
-      setFieldErrors({})
-    }
-  }, [record, pipeline.fields.length, visibleFields.length])
 
   // Cleanup FieldSaveService when component unmounts
   useEffect(() => {
@@ -412,11 +337,8 @@ export function RecordDetailDrawer({
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && isOpen) {
-        // Only close drawer if no field is being edited
-        if (!editingField) {
-          e.preventDefault()
-          onClose()
-        }
+        e.preventDefault()
+        onClose()
       }
     }
 
@@ -427,7 +349,7 @@ export function RecordDetailDrawer({
     return () => {
       document.removeEventListener('keydown', handleKeyDown)
     }
-  }, [isOpen, editingField, onClose])
+  }, [isOpen, onClose])
 
   // Auto-save functionality removed - only save on blur/manual save
 
@@ -474,15 +396,6 @@ export function RecordDetailDrawer({
       const permissions = getFieldPermissions(field)
       const value = formData[field.name]
       
-      // Debug logging for each field validation
-      console.log('Validating field:', {
-        name: field.name,
-        display_name: field.display_name,
-        permissions: permissions,
-        value: value,
-        hasValue: !!value
-      })
-      
       // Use field registry validation with permission awareness
       const fieldType = convertToFieldType(field)
       
@@ -504,134 +417,7 @@ export function RecordDetailDrawer({
     return errors
   }
 
-  // Simple field change handler like DynamicFormRenderer
-  const handleFieldChange = (fieldName: string, value: any) => {
-    console.log(`🔄 handleFieldChange called:`, { fieldName, value })
-    
-    setFormData(prev => ({
-      ...prev,
-      [fieldName]: value
-    }))
 
-    // Keep localFieldValues in sync for proper field exit handling
-    setLocalFieldValues(prev => {
-      const updated = { ...prev, [fieldName]: value }
-      console.log(`🔄 localFieldValues updated:`, { fieldName, value, before: prev[fieldName], after: updated[fieldName] })
-      return updated
-    })
-
-    // Clear validation error for this field
-    setValidationErrors(prev => 
-      prev.filter(error => error.field !== fieldName)
-    )
-  }
-
-  // Field enter/exit handlers for smooth editing
-  const handleFieldEnter = (fieldName: string, currentValue: any) => {
-    console.log(`🔵 Field enter: ${fieldName}`, currentValue)
-    console.log(`🔍 Current formData for ${fieldName}:`, formData[fieldName])
-    setEditingField(fieldName)
-    
-    // Use the most recent value: formData takes precedence over currentValue for new records
-    const initialValue = formData[fieldName] !== undefined ? formData[fieldName] : currentValue
-    setLocalFieldValues(prev => ({ ...prev, [fieldName]: initialValue }))
-    setFieldErrors(prev => ({ ...prev, [fieldName]: '' })) // Clear any errors
-    
-    console.log(`🔵 Field enter - set localFieldValue:`, { fieldName, currentValue, formDataValue: formData[fieldName], finalValue: initialValue })
-    
-    // Lock field for collaboration if we have a record
-    if (record && isConnected) {
-      lockField(record.id, fieldName)
-    }
-  }
-
-  const handleFieldExit = async (fieldName: string, passedValue?: any) => {
-    // Use passedValue first, then localFieldValues, then fallback to current formData
-    const newValue = passedValue !== undefined 
-      ? passedValue 
-      : (localFieldValues[fieldName] !== undefined && localFieldValues[fieldName] !== '') 
-        ? localFieldValues[fieldName] 
-        : formData[fieldName]
-    const oldValue = formData[fieldName]
-    
-    console.log(`🚪 Field exit: ${fieldName}`, {
-      passedValue,
-      localFieldValue: localFieldValues[fieldName],
-      currentFormData: formData[fieldName],
-      finalNewValue: newValue,
-      oldValue,
-      strategy: passedValue !== undefined ? 'passedValue' : 
-               (localFieldValues[fieldName] !== undefined && localFieldValues[fieldName] !== '') ? 'localFieldValues' : 'formData'
-    })
-    
-
-    
-    // If value hasn't changed, just exit edit mode
-    if (newValue === oldValue) {
-      setEditingField(null)
-      setLocalFieldValues(prev => {
-        const { [fieldName]: _, ...rest } = prev
-        return rest
-      })
-      if (record && isConnected) {
-        unlockField(record.id, fieldName)
-      }
-      return
-    }
-
-    // Validate the field before saving
-    const field = pipeline.fields.find(f => f.name === fieldName)
-    if (field) {
-      const fieldValidation = validateSingleField(field, newValue)
-      if (fieldValidation.error) {
-        setFieldErrors(prev => ({ ...prev, [fieldName]: fieldValidation.error! }))
-        return // Don't exit edit mode if validation fails
-      }
-    }
-
-    // Update formData (this will trigger conditional field visibility and auto-save)
-    setFormData(prev => {
-      const updated = { ...prev, [fieldName]: newValue }
-      console.log(`💾 Updated formData for ${fieldName}:`, updated[fieldName])
-      return updated
-    })
-
-    // Clear validation error for this field
-    setValidationErrors(prev => prev.filter(error => error.field !== fieldName))
-    
-    // Clean up editing state
-    setEditingField(null)
-    setLocalFieldValues(prev => {
-      const { [fieldName]: _, ...rest } = prev
-      return rest
-    })
-    setFieldErrors(prev => ({ ...prev, [fieldName]: '' }))
-    
-    // Unlock field for collaboration
-    if (record && isConnected) {
-      unlockField(record.id, fieldName)
-    }
-  }
-
-  // Validate a single field (used during field exit)
-  const validateSingleField = (field: RecordField, value: any): { error?: string } => {
-    // Convert to field system format and use field system validation
-    const fieldSystemField = convertToFieldType(field)
-    const validationResult = FieldResolver.validate(fieldSystemField, value)
-    
-    // Override required validation with permissions-aware version
-    const permissions = getFieldPermissions(field)
-    if (permissions.required && FieldResolver.isEmpty(fieldSystemField, value)) {
-      return { error: `${field.display_name || field.name} is required` }
-    }
-    
-    // Return field system validation result
-    if (!validationResult.isValid && validationResult.error) {
-      return { error: validationResult.error }
-    }
-
-    return {}
-  }
 
   // Simple field permissions evaluation without complex state tracking
   const getFieldPermissions = (field: RecordField): FieldPermissionResult => {
@@ -671,12 +457,6 @@ export function RecordDetailDrawer({
         setLastSaved(new Date())
         
         // Call parent onSave with new record ID
-        console.log(`📤 DRAWER CALLING onSave:`, {
-          recordId: newRecord.id || 'new',
-          isNewRecord: true,
-          formDataKeys: Object.keys(formData),
-          formDataSize: Object.keys(formData).length
-        })
         await onSave(newRecord.id || 'new', formData)
         onClose()
       } else {
@@ -691,336 +471,68 @@ export function RecordDetailDrawer({
 
 
 
-  // Handle Enter key for field exit
-  const handleFieldKeyDown = (e: React.KeyboardEvent, fieldName: string) => {
-    if (e.key === 'Enter' && !e.shiftKey) { // Allow Shift+Enter for new lines in textarea
-      e.preventDefault()
-      handleFieldExit(fieldName)
-    }
-    if (e.key === 'Escape') {
-      // Cancel editing without saving
-      setEditingField(null)
-      setLocalFieldValues(prev => {
-        const { [fieldName]: _, ...rest } = prev
-        return rest
-      })
-      setFieldErrors(prev => ({ ...prev, [fieldName]: '' }))
-      if (record && isConnected) {
-        unlockField(record.id, fieldName)
-      }
-    }
-  }
 
-  // Tags are now handled by the field system instead of hardcoded logic
-
-  // Helper functions for field-type aware display
-  const getDisplayStyling = (fieldType: string, isLocked: boolean) => {
-    const baseClasses = 'min-h-[42px] rounded-md flex items-center justify-between group transition-colors'
-    
-    if (isLocked) {
-      return `${baseClasses} bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800`
-    }
-    
-    switch (fieldType) {
-      case 'button':
-        return `${baseClasses} bg-blue-100 dark:bg-blue-900/30 border border-blue-300 dark:border-blue-700 text-blue-700 dark:text-blue-300 cursor-pointer hover:bg-blue-200 dark:hover:bg-blue-900/50 px-4 py-2`
-      
-      case 'boolean':
-        return `${baseClasses} bg-transparent cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 px-1 py-2`
-      
-      case 'select':
-      case 'multiselect':
-        return `${baseClasses} bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 cursor-pointer hover:border-gray-400 dark:hover:border-gray-500 px-3 py-2`
-      
-      case 'tags':
-        return `${baseClasses} bg-gray-25 dark:bg-gray-800/50 border border-gray-200 dark:border-gray-700 cursor-pointer hover:border-gray-300 dark:hover:border-gray-600 px-3 py-2`
-      
-      case 'date':
-      case 'datetime':
-      case 'time':
-        return `${baseClasses} bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 cursor-pointer hover:border-gray-400 dark:hover:border-gray-500 px-3 py-2`
-      
-      case 'file':
-      case 'image':
-        return `${baseClasses} bg-gray-25 dark:bg-gray-800/50 border border-dashed border-gray-300 dark:border-gray-600 cursor-pointer hover:border-gray-400 dark:hover:border-gray-500 px-3 py-2`
-      
-      case 'relation':
-        return `${baseClasses} bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 cursor-pointer hover:border-gray-400 dark:hover:border-gray-500 px-3 py-2`
-      
-      case 'ai':
-        return `${baseClasses} bg-purple-25 dark:bg-purple-900/10 border border-purple-200 dark:border-purple-800 cursor-pointer hover:border-purple-300 dark:hover:border-purple-700 px-3 py-2`
-      
-      default:
-        // Text-based fields (text, textarea, email, phone, number, etc.)
-        return `${baseClasses} bg-gray-50 dark:bg-gray-800 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 px-3 py-2`
-    }
-  }
   
-  const shouldBypassEnterExit = (fieldType: string) => {
-    // These field types should be immediately interactive without enter/exit pattern
-    return ['button', 'boolean', 'user', 'relation'].includes(fieldType)
-  }
-  
-  const getEmptyStateText = (fieldType: string) => {
-    switch (fieldType) {
-      case 'button':
-        return 'Click to configure button'
-      case 'boolean':
-        return 'Click to toggle'
-      case 'select':
-        return 'Click to select option'
-      case 'multiselect':
-        return 'Click to select options'
-      case 'tags':
-        return 'Click to add tags'
-      case 'date':
-        return 'Click to select date'
-      case 'datetime':
-        return 'Click to select date and time'
-      case 'time':
-        return 'Click to select time'
-      case 'file':
-      case 'image':
-        return 'Click to upload file'
-      case 'relation':
-        return 'Click to select record'
-      case 'ai':
-        return 'Click to generate content'
-      default:
-        return 'Click to edit'
-    }
-  }
 
-  // Render field input with enter/exit pattern using field registry
+  // Render field input - unified single path for all field types
   const renderFieldInput = (field: RecordField) => {
-    const isEditing = editingField === field.name
-    const value = isEditing ? localFieldValues[field.name] : formData[field.name]
+    const value = formData[field.name]
     const fieldError = fieldErrors[field.name]
-    const fieldLock = record ? getFieldLock(record.id, field.name) : null
-    const isLocked = record ? isFieldLocked(record.id, field.name) : false
-
-    // For fields that should bypass enter/exit pattern, render them directly in interactive mode
-    if (shouldBypassEnterExit(field.field_type) && !isLocked) {
-      const fieldType = convertToFieldType(field)
-      
-      const handleDirectChange = (newValue: any) => {
-        console.log(`🔵 Field ${field.name} onChange received:`, newValue)
-        // Handle immediate interaction for button and boolean fields
-        if (!record || !record.id) {
-          console.log(`🔵 Field ${field.name} updating formData:`, newValue)
-          setFormData(prev => ({ ...prev, [field.name]: newValue }))
-          return
-        }
-        
-        // For existing records, use FieldSaveService for immediate save
-        console.log(`🔵 Field ${field.name} calling FieldSaveService with:`, newValue)
-        isSavingRef.current = true
-        fieldSaveService.onFieldChange({
-          field: fieldType,
-          newValue,
-          apiEndpoint: `/api/pipelines/${pipeline.id}/records/${record.id}/`,
-          onSuccess: (result) => {
-            console.log(`🔵 Field ${field.name} save SUCCESS:`, result)
-            setFormData(prev => ({ ...prev, [field.name]: newValue }))
-            setFieldErrors(prev => ({ ...prev, [field.name]: '' }))
-            isSavingRef.current = false
-          },
-          onError: (error) => {
-            setFieldErrors(prev => ({ 
-              ...prev, 
-              [field.name]: error.response?.data?.message || error.message || 'Save failed'
-            }))
-            isSavingRef.current = false
-          }
-        })
-      }
-      
-      return (
-        <div>
-          <FieldRenderer
-            field={fieldType}
-            value={value}
-            onChange={handleDirectChange}
-            onBlur={() => {}}
-            disabled={false}
-            error={fieldError}
-            autoFocus={false}
-            context="drawer"
-            pipeline_id={pipeline?.id}
-            record_id={record?.id}
-          />
-        </div>
-      )
-    }
-
-    // Display mode (not editing) with field-type aware styling
-    if (!isEditing) {
-      const canEdit = !isLocked
-      const fieldType = convertToFieldType(field)
-      
-      return (
-        <div>
-          <div 
-            className={getDisplayStyling(field.field_type, isLocked)}
-            onClick={() => canEdit && handleFieldEnter(field.name, value)}
-          >
-            {value !== null && value !== undefined && value !== '' ? (
-              <FieldDisplay 
-                field={fieldType}
-                value={value}
-                context="detail"
-                className="text-gray-900 dark:text-white"
-              />
-            ) : (
-              <span className="text-gray-500 italic">{getEmptyStateText(field.field_type)}</span>
-            )}
-            
-            <div className="flex items-center space-x-2">
-              {isLocked && fieldLock && 'user_name' in fieldLock && (
-                <div className="flex items-center space-x-1 text-red-600 dark:text-red-400">
-                  <Lock className="w-3 h-3" />
-                  <span className="text-xs">{fieldLock.user_name}</span>
-                </div>
-              )}
-              {canEdit && !shouldBypassEnterExit(field.field_type) && (
-                <Edit className="w-4 h-4 text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity" />
-              )}
-            </div>
-          </div>
-          
-          {/* Lock message */}
-          {isLocked && fieldLock && (
-            <p className="mt-1 text-xs text-red-600 dark:text-red-400">
-              Currently being edited by {fieldLock.user_name}
-            </p>
-          )}
-        </div>
-      )
-    }
-
-    // Edit mode - use field registry with enter/exit pattern integration
     const fieldType = convertToFieldType(field)
     
-    // Special handling for fields that should exit immediately after change
-    const shouldExitImmediately = ['select', 'boolean', 'radio'].includes(field.field_type)
     
-    const handleFieldRegistryChange = (newValue: any) => {
-      console.log(`🔵 Field change: ${field.name}`, {
-        newValue,
-        isNewRecord: !record || !record.id,
-        fieldType: field.field_type,
-        currentFormDataKeys: Object.keys(formData)
-      })
+    const handleFieldChange = (newValue: any) => {
       
-      // For NEW records, don't use field-level saving - just update local formData
-      // The record will be created when the user clicks "Create Record"
+      // For NEW records, just update formData - record will be created when user clicks "Create Record"
       if (!record || !record.id) {
-        console.log(`🆕 NEW RECORD: Updating formData for field '${field.name}'`)
+        setFormData(prev => ({ ...prev, [field.name]: newValue }))
         
-        // Defensive check: ensure field exists in formData before updating
-        if (!(field.name in formData)) {
-          console.warn(`⚠️  Field '${field.name}' missing from formData! Adding it now.`)
-        }
-        
-        setFormData(prev => {
-          const updated = { ...prev, [field.name]: newValue }
-          console.log(`🆕 NEW RECORD: formData updated`, {
-            fieldName: field.name,
-            oldValue: prev[field.name],
-            newValue: newValue,
-            totalFields: Object.keys(updated).length
-          })
-          return updated
-        })
-
-        // Also update localFieldValues to keep them in sync for field exit handling
-        setLocalFieldValues(prev => {
-          const updated = { ...prev, [field.name]: newValue }
-          console.log(`🆕 NEW RECORD: localFieldValues synced`, {
-            fieldName: field.name,
-            newValue: newValue
-          })
-          return updated
-        })
+        // Clear validation error for this field
+        setValidationErrors(prev => prev.filter(error => error.field !== field.name))
+        setFieldErrors(prev => ({ ...prev, [field.name]: '' }))
         return
       }
       
-      // For EXISTING records, use FieldSaveService for field-level saving
-      const shouldUpdateFormDataImmediately = ['select', 'boolean', 'radio'].includes(field.field_type)
-      
-      // Track saving state for immediate-save field types
-      if (shouldUpdateFormDataImmediately) {
-        isSavingRef.current = true
-      }
-      
+      // For EXISTING records, use FieldSaveService based on save strategy
+      isSavingRef.current = true
       fieldSaveService.onFieldChange({
         field: fieldType,
         newValue,
         apiEndpoint: `/api/pipelines/${pipeline.id}/records/${record.id}/`,
         onSuccess: (result) => {
-          // Only update formData immediately for fields that save immediately
-          // This prevents re-renders during typing for text fields
-          if (shouldUpdateFormDataImmediately) {
-            setFormData(prev => ({ ...prev, [field.name]: newValue }))
-            
-            // Exit editing mode immediately for dropdown fields
-            // This ensures the field shows the saved value from formData instead of old localFieldValues
-            setEditingField(null)
-            
-            isSavingRef.current = false  // Reset saving state
-          }
-          // Always clear field errors on successful save
+          setFormData(prev => ({ ...prev, [field.name]: newValue }))
           setFieldErrors(prev => ({ ...prev, [field.name]: '' }))
+          setValidationErrors(prev => prev.filter(error => error.field !== field.name))
+          isSavingRef.current = false
         },
         onError: (error) => {
-          // Show field error
           setFieldErrors(prev => ({ 
             ...prev, 
             [field.name]: error.response?.data?.message || error.message || 'Save failed'
           }))
-          if (shouldUpdateFormDataImmediately) {
-            // Exit editing mode even on error for immediate save fields
-            setEditingField(null)
-            isSavingRef.current = false  // Reset saving state on error
-          }
+          isSavingRef.current = false
         }
       })
     }
 
-    const handleFieldRegistryBlur = () => {
-      // For NEW records, don't try to save - just keep the value in formData
+    const handleFieldBlur = () => {
+      // For NEW records, no blur handling needed
       if (!record || !record.id) {
         return
       }
       
-      // For EXISTING records, save via FieldSaveService and update formData when successful
-      isSavingRef.current = true  // Track that we're saving
+      // For EXISTING records, handle field exit via FieldSaveService
+      isSavingRef.current = true
       fieldSaveService.onFieldExit(field.name).then((result) => {
         if (result && result.savedValue !== undefined) {
-          // Apply the same normalization that server data goes through
-          // This ensures consistent data format between server and local updates
-          const fieldType = convertToFieldType(field)
           const normalizedValue = normalizeFieldValue(fieldType, result.savedValue)
-          
-          // Update formData with the normalized saved value so UI shows the change
           setFormData(prev => ({ ...prev, [field.name]: normalizedValue }))
-          
-          // Exit editing mode for continuous save fields (tags, file uploads)
-          // This ensures fields show the saved value from formData instead of old local state
-          const strategy = getSaveStrategy(field.field_type)
-          if (strategy === 'continuous') {
-            setEditingField(null)
-          }
         }
       }).catch((error) => {
         // Error already handled by FieldSaveService toast
       }).finally(() => {
-        isSavingRef.current = false  // Reset saving state
+        isSavingRef.current = false
       })
-    }
-
-    const handleFieldRegistryKeyDown = (e: React.KeyboardEvent) => {
-      handleFieldKeyDown(e, field.name)
     }
 
     return (
@@ -1028,12 +540,11 @@ export function RecordDetailDrawer({
         <FieldRenderer
           field={fieldType}
           value={value}
-          onChange={handleFieldRegistryChange}
-          onBlur={handleFieldRegistryBlur}
-          onKeyDown={handleFieldRegistryKeyDown}
+          onChange={handleFieldChange}
+          onBlur={handleFieldBlur}
           disabled={false}
           error={fieldError}
-          autoFocus={true}
+          autoFocus={false}
           context="drawer"
           pipeline_id={pipeline?.id}
           record_id={record?.id}

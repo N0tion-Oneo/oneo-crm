@@ -1,7 +1,7 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import { aiApi } from '@/lib/api'
+import React, { useState } from 'react'
+import { useTenantAIConfig } from '@/contexts/FieldConfigCacheContext'
 import {
   Checkbox,
   Label,
@@ -31,36 +31,16 @@ interface AIFieldConfigProps {
   availableFields: { id: string; name: string; display_name: string; field_type: string }[]
 }
 
-export function AIFieldConfig({
+export const AIFieldConfig = React.memo(function AIFieldConfig({
   config,
   aiConfig,
   onConfigChange,
   onAiConfigChange,
   availableFields
 }: AIFieldConfigProps) {
-  const [tenantAiConfig, setTenantAiConfig] = useState<any>(null)
-  const [loadingAiConfig, setLoadingAiConfig] = useState(false)
-  const [aiConfigError, setAiConfigError] = useState<string | null>(null)
+  // Use cached tenant AI config
+  const { tenantAIConfig: tenantAiConfig, loading: loadingAiConfig, error: aiConfigError } = useTenantAIConfig()
   const [showAdvancedTools, setShowAdvancedTools] = useState(false)
-
-  // Load tenant AI configuration
-  useEffect(() => {
-    const loadTenantAiConfig = async () => {
-      try {
-        setLoadingAiConfig(true)
-        setAiConfigError(null)
-        const response = await aiApi.jobs.tenantConfig()
-        setTenantAiConfig(response.data)
-      } catch (error: any) {
-        console.error('Failed to load tenant AI configuration:', error)
-        setAiConfigError(error.response?.data?.detail || 'Failed to load AI configuration')
-      } finally {
-        setLoadingAiConfig(false)
-      }
-    }
-
-    loadTenantAiConfig()
-  }, [])
 
   const updateAiConfig = (key: string, value: any) => {
     onAiConfigChange({ ...aiConfig, [key]: value })
@@ -340,4 +320,4 @@ export function AIFieldConfig({
       </div>
     </TooltipProvider>
   )
-}
+})

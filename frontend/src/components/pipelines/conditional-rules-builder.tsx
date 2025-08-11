@@ -1,7 +1,16 @@
 'use client'
 
-import React, { useState } from 'react'
+import React, { useState, useCallback, useMemo } from 'react'
 import { Plus, X, Eye, EyeOff, AlertCircle, Layers, ChevronDown, ChevronRight } from 'lucide-react'
+
+// Simple debounce utility
+const debounce = (func: (...args: any[]) => void, delay: number) => {
+  let timeoutId: NodeJS.Timeout
+  return (...args: any[]) => {
+    clearTimeout(timeoutId)
+    timeoutId = setTimeout(() => func(...args), delay)
+  }
+}
 
 interface ConditionalRule {
   field: string
@@ -78,20 +87,23 @@ const RuleRow: React.FC<{
   onRuleChange: (rule: ConditionalRule) => void
   onRemove: () => void
   ruleType: 'show_when' | 'hide_when' | 'require_when'
-}> = ({ rule, availableFields, userTypes = [], onRuleChange, onRemove, ruleType }) => {
-  const selectedField = availableFields.find(f => f.name === rule.field)
+}> = React.memo(({ rule, availableFields, userTypes = [], onRuleChange, onRemove, ruleType }) => {
+  const selectedField = useMemo(() => 
+    availableFields.find(f => f.name === rule.field), 
+    [availableFields, rule.field]
+  )
   
-  const handleFieldChange = (fieldName: string) => {
+  const handleFieldChange = useCallback((fieldName: string) => {
     onRuleChange({ ...rule, field: fieldName })
-  }
+  }, [rule, onRuleChange])
   
-  const handleConditionChange = (condition: string) => {
+  const handleConditionChange = useCallback((condition: string) => {
     onRuleChange({ ...rule, condition })
-  }
+  }, [rule, onRuleChange])
   
-  const handleValueChange = (value: string) => {
+  const handleValueChange = useCallback((value: string) => {
     onRuleChange({ ...rule, value })
-  }
+  }, [rule, onRuleChange])
 
   return (
     <div className="flex items-center space-x-2 p-3 bg-gray-50 dark:bg-gray-800 rounded-lg">
@@ -167,7 +179,7 @@ const RuleRow: React.FC<{
       </button>
     </div>
   )
-}
+})
 
 const RuleGroupBuilder: React.FC<{
   group: ConditionalRuleGroup
@@ -177,44 +189,44 @@ const RuleGroupBuilder: React.FC<{
   onRemove?: () => void
   depth?: number
   ruleType: 'show_when' | 'hide_when' | 'require_when'
-}> = ({ group, availableFields, userTypes, onGroupChange, onRemove, depth = 0, ruleType }) => {
+}> = React.memo(({ group, availableFields, userTypes, onGroupChange, onRemove, depth = 0, ruleType }) => {
   const [isCollapsed, setIsCollapsed] = useState(false)
 
-  const updateLogic = (logic: 'AND' | 'OR') => {
+  const updateLogic = useCallback((logic: 'AND' | 'OR') => {
     onGroupChange({ ...group, logic })
-  }
+  }, [group, onGroupChange])
 
-  const addRule = () => {
+  const addRule = useCallback(() => {
     const newRule = createEmptyRule()
     onGroupChange({
       ...group,
       rules: [...group.rules, newRule]
     })
-  }
+  }, [group, onGroupChange])
 
-  const addGroup = () => {
+  const addGroup = useCallback(() => {
     const newGroup = createEmptyRuleGroup()
     onGroupChange({
       ...group,
       rules: [...group.rules, newGroup]
     })
-  }
+  }, [group, onGroupChange])
 
-  const updateRule = (index: number, updatedItem: ConditionalRule | ConditionalRuleGroup) => {
+  const updateRule = useCallback((index: number, updatedItem: ConditionalRule | ConditionalRuleGroup) => {
     const newRules = [...group.rules]
     newRules[index] = updatedItem
     onGroupChange({ ...group, rules: newRules })
-  }
+  }, [group, onGroupChange])
 
-  const removeRule = (index: number) => {
+  const removeRule = useCallback((index: number) => {
     const newRules = group.rules.filter((_, i) => i !== index)
     onGroupChange({ ...group, rules: newRules })
-  }
+  }, [group, onGroupChange])
 
-  const getLogicColor = (logic: string) => {
+  const getLogicColor = useMemo(() => (logic: string) => {
     return logic === 'OR' ? 'text-orange-600 bg-orange-50 border-orange-200 dark:bg-orange-900/20 dark:text-orange-400 dark:border-orange-800' 
                           : 'text-blue-600 bg-blue-50 border-blue-200 dark:bg-blue-900/20 dark:text-blue-400 dark:border-blue-800'
-  }
+  }, [])
 
   return (
     <div className={`border rounded-lg transition-all duration-200 ${
@@ -334,7 +346,7 @@ const RuleGroupBuilder: React.FC<{
       )}
     </div>
   )
-}
+})
 
 export const ConditionalRulesBuilder: React.FC<ConditionalRulesBuilderProps> = ({
   field,
@@ -355,8 +367,8 @@ export const ConditionalRulesBuilder: React.FC<ConditionalRulesBuilderProps> = (
     currentRules.require_when || createEmptyRuleGroup()
   )
 
-  // Create enhanced field list with stage funnel indicators
-  const enhancedFields = [
+  // Create enhanced field list with stage funnel indicators (memoized)
+  const enhancedFields = useMemo(() => [
     // Add user_type as a virtual field if userTypes are available
     ...(userTypes.length > 0 ? [{
       id: 'user_type',
@@ -375,9 +387,15 @@ export const ConditionalRulesBuilder: React.FC<ConditionalRulesBuilderProps> = (
       }
       return f
     })
-  ]
+  ], [userTypes.length, availableFields, field?.name])
 
-  const updateRules = (
+  // Debounced rule updates to prevent excessive processing
+  const debouncedOnChange = useMemo(
+    () => debounce(onChange, 300),
+    [onChange]
+  )
+
+  const updateRules = useCallback((
     newShowWhenGroup: ConditionalRuleGroup, 
     newHideWhenGroup: ConditionalRuleGroup, 
     newRequireWhenGroup: ConditionalRuleGroup
@@ -395,23 +413,23 @@ export const ConditionalRulesBuilder: React.FC<ConditionalRulesBuilderProps> = (
       rules.require_when = newRequireWhenGroup
     }
     
-    onChange(rules)
-  }
+    debouncedOnChange(rules)
+  }, [debouncedOnChange])
 
-  const handleShowWhenChange = (group: ConditionalRuleGroup) => {
+  const handleShowWhenChange = useCallback((group: ConditionalRuleGroup) => {
     setShowWhenGroup(group)
     updateRules(group, hideWhenGroup, requireWhenGroup)
-  }
+  }, [hideWhenGroup, requireWhenGroup, updateRules])
 
-  const handleHideWhenChange = (group: ConditionalRuleGroup) => {
+  const handleHideWhenChange = useCallback((group: ConditionalRuleGroup) => {
     setHideWhenGroup(group)
     updateRules(showWhenGroup, group, requireWhenGroup)
-  }
+  }, [showWhenGroup, requireWhenGroup, updateRules])
 
-  const handleRequireWhenChange = (group: ConditionalRuleGroup) => {
+  const handleRequireWhenChange = useCallback((group: ConditionalRuleGroup) => {
     setRequireWhenGroup(group)
     updateRules(showWhenGroup, hideWhenGroup, group)
-  }
+  }, [showWhenGroup, hideWhenGroup, updateRules])
 
 
   if (enhancedFields.length === 0) {

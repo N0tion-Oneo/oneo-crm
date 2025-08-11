@@ -1,11 +1,12 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { useAuth } from '@/features/auth/context'
 import { ArrowLeft, Save, AlertCircle, ChevronRight, Settings, Database, Sparkles, Archive, RotateCcw } from 'lucide-react'
 import { PipelineFieldBuilder } from '@/components/pipelines/pipeline-field-builder'
 import { DeletedFieldsList } from '@/components/pipelines/deleted-fields-list'
+import { FieldConfigCacheProvider } from '@/contexts/FieldConfigCacheContext'
 import { pipelinesApi } from '@/lib/api'
 
 interface PipelineField {
@@ -204,11 +205,19 @@ export default function PipelineFieldsPage() {
     }
   }
 
-  // Handle field changes
-  const handleFieldsChange = (newFields: PipelineField[]) => {
-    setFields(newFields)
-    setHasChanges(true)
-  }
+  // Handle field changes - support both direct arrays and functional updates
+  const handleFieldsChange = useCallback((newFields: PipelineField[] | ((prev: PipelineField[]) => PipelineField[])) => {
+    if (typeof newFields === 'function') {
+      setFields(prevFields => {
+        const updatedFields = newFields(prevFields)
+        setHasChanges(true)
+        return updatedFields
+      })
+    } else {
+      setFields(newFields)
+      setHasChanges(true)
+    }
+  }, [])
 
   // Handle field restoration - refresh both lists
   const handleFieldRestored = async () => {
@@ -406,7 +415,8 @@ export default function PipelineFieldsPage() {
   }
 
   return (
-    <div className="h-screen flex flex-col bg-gray-50 dark:bg-gray-900">
+    <FieldConfigCacheProvider>
+      <div className="h-screen flex flex-col bg-gray-50 dark:bg-gray-900">
       {/* Enhanced Header */}
       <div className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 shadow-sm">
         <div className="px-6 py-4">
@@ -579,6 +589,7 @@ export default function PipelineFieldsPage() {
           )}
         </div>
       </div>
-    </div>
+      </div>
+    </FieldConfigCacheProvider>
   )
 }

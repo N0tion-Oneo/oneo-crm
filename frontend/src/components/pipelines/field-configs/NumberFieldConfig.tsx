@@ -132,7 +132,7 @@ export function NumberFieldConfig({
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="any">Allow any currency</SelectItem>
-                    {currencies.map((currency) => (
+                    {currencies.map((currency: any) => (
                       <SelectItem key={currency.code} value={currency.code}>
                         {currency.name} ({currency.symbol})
                       </SelectItem>
@@ -285,7 +285,7 @@ export function NumberFieldConfig({
           <div className="text-blue-700 dark:text-blue-300 space-y-1">
             <div>• Format: {numberFormats.find(f => f.value === selectedFormat)?.label}</div>
             {selectedFormat === 'currency' && config.currency_code && (
-              <div>• Currency: {currencies.find(c => c.code === config.currency_code)?.name}</div>
+              <div>• Currency: {currencies.find((c: any) => c.code === config.currency_code)?.name}</div>
             )}
             {selectedFormat === 'auto_increment' && (
               <div>• Auto-increment: {config.auto_increment_prefix || ''}{(config.auto_increment_start || 1).toString().padStart(config.auto_increment_padding || 1, '0')}</div>

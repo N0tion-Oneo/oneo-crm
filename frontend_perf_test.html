@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Frontend Performance Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .test-result { margin: 10px 0; padding: 10px; border-left: 4px solid #007bff; background: #f8f9fa; }
+        .high-severity { border-left-color: #dc3545; }
+        .medium-severity { border-left-color: #ffc107; }
+        .low-severity { border-left-color: #28a745; }
+        .code { background: #f1f1f1; padding: 10px; margin: 10px 0; font-family: monospace; }
+        button { padding: 10px 20px; margin: 10px 5px; }
+    </style>
+</head>
+<body>
+    <h1>🔍 Frontend Performance Test</h1>
+    <p>This test will identify frontend performance bottlenecks in the record list system.</p>
+    
+    <button onclick="runAllTests()">Run All Tests</button>
+    <button onclick="clearResults()">Clear Results</button>
+    
+    <div id="results"></div>
+
+    <script>
+        let testResults = [];
+
+        function logResult(testName, duration, severity, details) {
+            const result = {
+                testName,
+                duration,
+                severity,
+                details,
+                timestamp: new Date().toLocaleTimeString()
+            };
+            testResults.push(result);
+            displayResults();
+        }
+
+        function clearResults() {
+            testResults = [];
+            displayResults();
+        }
+
+        function displayResults() {
+            const resultsDiv = document.getElementById('results');
+            if (testResults.length === 0) {
+                resultsDiv.innerHTML = '<p>No test results yet. Click "Run All Tests" to start.</p>';
+                return;
+            }
+
+            let html = '<h2>Test Results</h2>';
+            testResults.forEach(result => {
+                const severityClass = result.severity.toLowerCase().replace(' ', '-');
+                html += `
+                    <div class="test-result ${severityClass}-severity">
+                        <strong>${result.testName}</strong><br>
+                        Duration: ${result.duration}ms<br>
+                        Severity: ${result.severity}<br>
+                        ${result.details}<br>
+                        <small>Time: ${result.timestamp}</small>
+                    </div>
+                `;
+            });
+            resultsDiv.innerHTML = html;
+        }
+
+        // Test API call performance
+        async function testAPICall() {
+            console.log('🌐 Testing API Call Performance...');
+            
+            const times = [];
+            const testUrl = 'http://oneotalent.localhost:8000/api/v1/pipelines/';
+            
+            for (let i = 0; i < 5; i++) {
+                try {
+                    const start = performance.now();
+                    const response = await fetch(testUrl, {
+                        headers: {
+                            'Authorization': 'Bearer your-jwt-token-here', // Would need real token
+                        }
+                    });
+                    const end = performance.now();
+                    
+                    if (response.ok) {
+                        times.push(end - start);
+                    } else if (response.status === 401) {
+                        // Expected without proper JWT - just test network speed
+                        times.push(end - start);
+                    }
+                } catch (error) {
+                    // Network timing still useful
+                    const end = performance.now();
+                    // Can't get start time from catch, estimate
+                }
+            }
+            
+            if (times.length > 0) {
+                const avgTime = times.reduce((a, b) => a + b) / times.length;
+                const severity = avgTime > 500 ? 'HIGH' : avgTime > 200 ? 'MEDIUM' : 'LOW';
+                
+                logResult('API Call Performance', 
+                    Math.round(avgTime), 
+                    severity, 
+                    `Average time for pipeline API call. ${times.length} successful attempts.`);
+            } else {
+                logResult('API Call Performance', 
+                    0, 
+                    'HIGH', 
+                    'Unable to complete API calls - possible network or CORS issue');
+            }
+        }
+
+        // Test DOM manipulation performance
+        function testDOMPerformance() {
+            console.log('🖥️ Testing DOM Manipulation Performance...');
+            
+            const start = performance.now();
+            
+            // Simulate record list rendering
+            const container = document.createElement('div');
+            const recordCount = 100;
+            
+            // Simulate field grouping logic (the suspected bottleneck)
+            const fields = [];
+            for (let i = 0; i < 20; i++) {
+                fields.push({
+                    name: `field_${i}`,
+                    field_group: i % 3 === 0 ? `group_${Math.floor(i/3)}` : null,
+                    display_order: i
+                });
+            }
+            
+            // Simulate the complex field grouping from RecordListView
+            const groups = new Map();
+            fields.forEach(field => {
+                const groupId = field.field_group ? String(field.field_group) : null;
+                if (!groups.has(groupId)) {
+                    groups.set(groupId, []);
+                }
+                groups.get(groupId).push(field);
+            });
+            
+            // Sort groups and create DOM elements
+            groups.forEach(groupFields => {
+                groupFields.sort((a, b) => a.display_order - b.display_order);
+            });
+            
+            // Create table elements (similar to RecordTable)
+            for (let i = 0; i < recordCount; i++) {
+                const row = document.createElement('div');
+                row.className = 'record-row';
+                
+                // Create cells for each field (simulating RecordTableRow)
+                fields.forEach(field => {
+                    const cell = document.createElement('div');
+                    cell.className = 'record-cell';
+                    cell.textContent = `Record ${i} - ${field.name}`;
+                    row.appendChild(cell);
+                });
+                
+                container.appendChild(row);
+            }
+            
+            const end = performance.now();
+            const duration = end - start;
+            const severity = duration > 100 ? 'HIGH' : duration > 50 ? 'MEDIUM' : 'LOW';
+            
+            logResult('DOM Manipulation', 
+                Math.round(duration), 
+                severity, 
+                `Time to create ${recordCount} record rows with ${fields.length} fields each. Field grouping included.`);
+        }
+
+        // Test memory usage patterns
+        function testMemoryUsage() {
+            console.log('🧠 Testing Memory Usage...');
+            
+            const start = performance.now();
+            let memoryStart = 0;
+            
+            // Get initial memory if available
+            if (performance.memory) {
+                memoryStart = performance.memory.usedJSHeapSize;
+            }
+            
+            // Simulate React component re-renders (the suspected issue)
+            const iterations = 1000;
+            const mockRecords = [];
+            
+            for (let i = 0; i < iterations; i++) {
+                // Simulate creating record objects (like in useRecordData)
+                const record = {
+                    id: i,
+                    data: {},
+                    created_at: new Date().toISOString(),
+                    updated_at: new Date().toISOString()
+                };
+                
+                // Add field data
+                for (let j = 0; j < 10; j++) {
+                    record.data[`field_${j}`] = `value_${i}_${j}`;
+                }
+                
+                mockRecords.push(record);
+                
+                // Simulate useMemo recalculation (suspected bottleneck)
+                const visibleFields = [];
+                for (let k = 0; k < 20; k++) {
+                    if (Math.random() > 0.3) { // 70% visible
+                        visibleFields.push({
+                            name: `field_${k}`,
+                            display_order: k,
+                            field_group: k % 3 === 0 ? Math.floor(k/3) : null
+                        });
+                    }
+                }
+            }
+            
+            const end = performance.now();
+            const duration = end - start;
+            
+            let memoryUsed = 0;
+            if (performance.memory) {
+                memoryUsed = (performance.memory.usedJSHeapSize - memoryStart) / 1024 / 1024; // MB
+            }
+            
+            const severity = duration > 200 ? 'HIGH' : duration > 100 ? 'MEDIUM' : 'LOW';
+            
+            logResult('Memory/Object Creation', 
+                Math.round(duration), 
+                severity, 
+                `Created ${iterations} mock records. Memory used: ${memoryUsed.toFixed(2)} MB. Simulated useMemo recalculations.`);
+        }
+
+        // Test React-like rendering patterns
+        function testReactPatterns() {
+            console.log('⚛️ Testing React-like Patterns...');
+            
+            const start = performance.now();
+            
+            // Simulate the exact field grouping logic from RecordListView
+            const pipeline = {
+                fields: [],
+                field_groups: []
+            };
+            
+            // Create mock pipeline data
+            for (let i = 0; i < 25; i++) {
+                pipeline.fields.push({
+                    name: `field_${i}`,
+                    display_order: i,
+                    field_group: i % 4 === 0 ? Math.floor(i/4) : null
+                });
+            }
+            
+            for (let i = 0; i < 6; i++) {
+                pipeline.field_groups.push({
+                    id: i,
+                    name: `Group ${i}`,
+                    display_order: i
+                });
+            }
+            
+            const visibleFields = new Set();
+            pipeline.fields.forEach(field => {
+                if (Math.random() > 0.2) { // 80% visible
+                    visibleFields.add(field.name);
+                }
+            });
+            
+            // Run the exact logic from the problematic useMemo 100 times
+            for (let iteration = 0; iteration < 100; iteration++) {
+                const visibleFieldsArray = pipeline.fields.filter(field => visibleFields.has(field.name));
+                
+                // The complex field grouping logic
+                if (!pipeline.field_groups || pipeline.field_groups.length === 0) {
+                    visibleFieldsArray.sort((a, b) => (a.display_order || 0) - (b.display_order || 0));
+                    continue;
+                }
+
+                const groups = new Map();
+                visibleFieldsArray.forEach(field => {
+                    const groupId = field.field_group ? String(field.field_group) : null;
+                    if (!groups.has(groupId)) {
+                        groups.set(groupId, []);
+                    }
+                    groups.get(groupId).push(field);
+                });
+                
+                groups.forEach(groupFields => {
+                    groupFields.sort((a, b) => (a.display_order || 0) - (b.display_order || 0));
+                });
+                
+                const sortedFields = [];
+                const sortedFieldGroups = [...pipeline.field_groups].sort((a, b) => a.display_order - b.display_order);
+                
+                sortedFieldGroups.forEach(group => {
+                    const groupFields = groups.get(String(group.id));
+                    if (groupFields && groupFields.length > 0) {
+                        sortedFields.push(...groupFields);
+                    }
+                });
+                
+                const ungroupedFields = groups.get(null);
+                if (ungroupedFields && ungroupedFields.length > 0) {
+                    sortedFields.push(...ungroupedFields);
+                }
+            }
+            
+            const end = performance.now();
+            const duration = end - start;
+            const severity = duration > 50 ? 'HIGH' : duration > 20 ? 'MEDIUM' : 'LOW';
+            
+            logResult('React Field Grouping Logic', 
+                Math.round(duration), 
+                severity, 
+                `Ran field grouping logic 100 times. This simulates the useMemo in RecordListView that processes ${pipeline.fields.length} fields.`);
+        }
+
+        async function runAllTests() {
+            testResults = [];
+            displayResults();
+            
+            console.log('🚀 Starting Frontend Performance Tests...');
+            
+            try {
+                await testAPICall();
+                testDOMPerformance();
+                testMemoryUsage();
+                testReactPatterns();
+                
+                // Add summary
+                const highSeverity = testResults.filter(r => r.severity === 'HIGH').length;
+                const mediumSeverity = testResults.filter(r => r.severity === 'MEDIUM').length;
+                
+                if (highSeverity > 0) {
+                    logResult('SUMMARY', 0, 'HIGH', 
+                        `Found ${highSeverity} high severity and ${mediumSeverity} medium severity issues. Frontend optimization needed.`);
+                } else if (mediumSeverity > 0) {
+                    logResult('SUMMARY', 0, 'MEDIUM', 
+                        `Found ${mediumSeverity} medium severity issues. Some optimization recommended.`);
+                } else {
+                    logResult('SUMMARY', 0, 'LOW', 
+                        'No major frontend performance issues detected. Problem may be elsewhere.');
+                }
+                
+            } catch (error) {
+                console.error('Test error:', error);
+                logResult('Error', 0, 'HIGH', `Test suite failed: ${error.message}`);
+            }
+        }
+
+        // Initialize
+        displayResults();
+    </script>
+</body>
+</html>

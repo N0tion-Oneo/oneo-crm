@@ -71,7 +71,7 @@ export const TagsFieldComponent: FieldComponent = {
       
       // Check forbidden characters
       if (forbiddenChars) {
-        const hasForbiddenChar = forbiddenChars.split('').some(char => trimmedTag.includes(char))
+        const hasForbiddenChar = forbiddenChars.split('').some((char: string) => trimmedTag.includes(char))
         if (hasForbiddenChar) {
           console.log(`Tag not added - contains forbidden characters: ${forbiddenChars}`) // DEBUG
           return
@@ -470,7 +470,7 @@ export const TagsFieldComponent: FieldComponent = {
         
         // Check forbidden characters
         if (forbiddenChars) {
-          const hasForbiddenChar = forbiddenChars.split('').some(char => tagStr.includes(char))
+          const hasForbiddenChar = forbiddenChars.split('').some((char: string) => tagStr.includes(char))
           if (hasForbiddenChar) {
             return {
               isValid: false,

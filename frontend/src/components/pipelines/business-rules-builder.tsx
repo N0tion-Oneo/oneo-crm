@@ -335,7 +335,7 @@ export function BusinessRulesBuilder({
         const updatedConditionalRules = {
           ...currentConditionalRules,
           require_when: updatedRules.length > 0 ? {
-            logic: 'OR',
+            logic: 'OR' as const,
             rules: updatedRules
           } : undefined
         }

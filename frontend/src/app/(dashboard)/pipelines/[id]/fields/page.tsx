@@ -36,7 +36,7 @@ interface PipelineField {
   ai_config?: Record<string, any>       // For AI fields only
   
   // Field group assignment
-  field_group?: number | string | null  // Field group ID
+  field_group?: string | null  // Field group ID
   
   // Field lifecycle management
   is_deleted?: boolean
@@ -389,20 +389,14 @@ export default function PipelineFieldsPage() {
     }
   }
 
-  if (authLoading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-gray-500">Loading...</div>
-      </div>
-    )
-  }
-
-  if (!isAuthenticated) {
+  // Let the dashboard layout handle auth loading to prevent spinner cascade
+  if (!isAuthenticated && !authLoading) {
     router.push('/login')
     return null
   }
 
-  if (loading) {
+  // Only show loading if we're past auth and actually loading pipeline data
+  if (loading && !authLoading) {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="text-gray-500">Loading pipeline...</div>

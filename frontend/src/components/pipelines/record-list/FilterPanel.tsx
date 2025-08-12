@@ -93,7 +93,7 @@ export function FilterPanel({
     const userConfig = field.field_config || {}
     const allowedRoles = userConfig.allowed_roles || ['assigned', 'owner', 'collaborator', 'reviewer']
     
-    return allowedRoles.map(role => ({
+    return allowedRoles.map((role: string) => ({
       value: role,
       label: role.charAt(0).toUpperCase() + role.slice(1)
     }))
@@ -219,7 +219,7 @@ export function FilterPanel({
             })
             
             if (relationResponse.data.results) {
-              const configuredDisplayField = field.field_config.display_field
+              const configuredDisplayField = field.field_config?.display_field
               const sampleRecordDataKeys = Object.keys(relationResponse.data.results[0]?.data || {})
               
               // The display_field should ideally be a field slug, but handle display names as fallback
@@ -281,7 +281,7 @@ export function FilterPanel({
                   value: record.id.toString(),
                   label: String(label).trim()
                 }
-              }).filter(option => option.label && option.label !== 'Record undefined')
+              }).filter((option: any) => option.label && option.label !== 'Record undefined')
               
               console.log(`🔗 Found ${relationOptions.length} relation options:`, relationOptions)
               options = relationOptions
@@ -538,9 +538,9 @@ export function FilterPanel({
                   setNewFilterValue('') // Reset value when field changes
                   
                   // Reset operator to appropriate default for field type
-                  if (['user', 'tags', 'relation', 'relationship', 'related'].includes(fieldType)) {
+                  if (fieldType && ['user', 'tags', 'relation', 'relationship', 'related'].includes(fieldType)) {
                     setNewFilterOperator('contains') // Default to contains for these field types
-                  } else if (['number', 'decimal', 'integer', 'float', 'currency', 'percentage'].includes(fieldType)) {
+                  } else if (fieldType && ['number', 'decimal', 'integer', 'float', 'currency', 'percentage'].includes(fieldType)) {
                     setNewFilterOperator('equals') // Default to equals for numeric types
                   } else {
                     setNewFilterOperator('equals') // Default to equals for other types
@@ -569,7 +569,7 @@ export function FilterPanel({
                   const fieldType = pipeline.fields.find(f => f.name === newFilterField)?.field_type
                   
                   // For user, tag, and relationship fields, only show contains and empty/not empty
-                  if (['user', 'tags', 'relation', 'relationship', 'related'].includes(fieldType)) {
+                  if (fieldType && ['user', 'tags', 'relation', 'relationship', 'related'].includes(fieldType)) {
                     return (
                       <>
                         <option value="contains">Contains</option>
@@ -580,7 +580,7 @@ export function FilterPanel({
                   }
                   
                   // For numeric fields, show numeric operators
-                  if (['number', 'decimal', 'integer', 'float', 'currency', 'percentage'].includes(fieldType)) {
+                  if (fieldType && ['number', 'decimal', 'integer', 'float', 'currency', 'percentage'].includes(fieldType)) {
                     return (
                       <>
                         <option value="equals">Equals</option>
@@ -593,7 +593,7 @@ export function FilterPanel({
                   }
                   
                   // For text fields, show text operators
-                  if (['text', 'textarea', 'email', 'phone', 'url'].includes(fieldType)) {
+                  if (fieldType && ['text', 'textarea', 'email', 'phone', 'url'].includes(fieldType)) {
                     return (
                       <>
                         <option value="equals">Equals</option>
@@ -607,7 +607,7 @@ export function FilterPanel({
                   }
                   
                   // For temporal fields, show date/time operators
-                  if (['date', 'datetime', 'time'].includes(fieldType)) {
+                  if (fieldType && ['date', 'datetime', 'time'].includes(fieldType)) {
                     return (
                       <>
                         <option value="equals">Equals</option>
@@ -620,7 +620,7 @@ export function FilterPanel({
                   }
                   
                   // For selection fields, show equals and empty operators
-                  if (['select', 'multiselect', 'radio', 'checkbox', 'boolean'].includes(fieldType)) {
+                  if (fieldType && ['select', 'multiselect', 'radio', 'checkbox', 'boolean'].includes(fieldType)) {
                     return (
                       <>
                         <option value="equals">Equals</option>

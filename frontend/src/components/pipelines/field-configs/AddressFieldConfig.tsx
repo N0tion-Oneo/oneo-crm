@@ -217,7 +217,7 @@ export const AddressFieldConfig = React.memo(function AddressFieldConfig({
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="none">No default country</SelectItem>
-                {countries.map((country) => (
+                {countries.map((country: any) => (
                   <SelectItem key={country.code} value={country.code}>
                     {country.name}
                   </SelectItem>
@@ -304,7 +304,7 @@ export const AddressFieldConfig = React.memo(function AddressFieldConfig({
               <div>• Components: {Object.entries(components).filter(([_, enabled]) => enabled).length}/6 enabled</div>
             )}
             {config.default_country && (
-              <div>• Default country: {countries.find(c => c.code === config.default_country)?.name}</div>
+              <div>• Default country: {countries.find((c: any) => c.code === config.default_country)?.name}</div>
             )}
             <div>• Display: {displayFormats.find(d => d.value === (config.display_format || 'full'))?.label}</div>
             {config.enable_geocoding && <div>• Geocoding enabled</div>}

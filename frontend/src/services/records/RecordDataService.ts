@@ -9,7 +9,7 @@ export interface FetchRecordsParams {
   search?: string
   filters?: Filter[]
   sort?: Sort
-  fieldTypes?: Record<string, string> // Map of fieldName -> fieldType
+  fieldTypes?: {[key: string]: string} // Map of fieldName -> fieldType
 }
 
 export interface FetchRecordsResponse {

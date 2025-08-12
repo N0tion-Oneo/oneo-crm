@@ -99,7 +99,7 @@ const KanbanViewComponent = function KanbanView({
     window.addEventListener('resize', handleResize)
     return () => window.removeEventListener('resize', handleResize)
   }, [])
-  const columnRefs = useRef<Record<string, HTMLDivElement | null>>({})
+  const columnRefs = useRef<{[key: string]: HTMLDivElement | null}>({})
   const kanbanBoardRef = useRef<HTMLDivElement>(null)
   
   // Cleanup refs and timeouts on unmount
@@ -128,7 +128,7 @@ const KanbanViewComponent = function KanbanView({
     const options = kanbanFieldConfig.field_config?.options || []
     return [
       { value: '', label: 'No Value' },
-      ...options.map(option => 
+      ...options.map((option: any) => 
         typeof option === 'string' 
           ? { value: option, label: option }
           : { value: option.value || option.label, label: option.label || option.value }
@@ -379,7 +379,7 @@ const KanbanViewComponent = function KanbanView({
         layout={false} // Disable all layout animations
         initial={false}
         animate={false}
-        exit={false}
+        exit={false as any}
         drag // Allow full drag movement
         dragMomentum={false}
         dragElastic={0.1}
@@ -704,7 +704,7 @@ const KanbanViewComponent = function KanbanView({
                         layout={false}
                         initial={false}
                         animate={false}
-                        exit={false}
+                        exit={false as any}
                         style={{ 
                           position: 'static', // Use static positioning to prevent stacking
                           zIndex: draggedRecord?.id === record.id ? 50 : 'auto',

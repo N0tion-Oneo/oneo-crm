@@ -1,5 +1,5 @@
 // useRecordData - Hook for managing record data fetching, pagination, and CRUD operations
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { Record, Pipeline, Filter, Sort } from '@/types/records'
 import { RecordDataService, FetchRecordsResponse } from '@/services/records'
 
@@ -61,6 +61,25 @@ export function useRecordData(options: UseRecordDataOptions): UseRecordDataRetur
   const [totalRecords, setTotalRecords] = useState(0)
   const [totalPages, setTotalPages] = useState(0)
 
+  // Create stable field types reference to prevent unnecessary re-renders
+  const fieldTypes = useMemo(() => {
+    const types: {[key: string]: string} = {}
+    pipeline.fields.forEach(field => {
+      types[field.name] = field.field_type
+    })
+    return types
+  }, [pipeline.fields])
+
+  // Stable filters reference to prevent re-renders when filters array reference changes
+  const stableFilters = useMemo(() => {
+    return filters.length > 0 ? filters : undefined
+  }, [filters])
+
+  // Stable search query to prevent re-renders
+  const stableSearchQuery = useMemo(() => {
+    return searchQuery.trim() || undefined
+  }, [searchQuery])
+
   const fetchRecords = useCallback(async () => {
     if (!pipeline?.id) return
 
@@ -68,18 +87,12 @@ export function useRecordData(options: UseRecordDataOptions): UseRecordDataRetur
     setError(null)
 
     try {
-      // Create field types map for proper filter handling
-      const fieldTypes: Record<string, string> = {}
-      pipeline.fields.forEach(field => {
-        fieldTypes[field.name] = field.field_type
-      })
-
       const response: FetchRecordsResponse = await RecordDataService.fetchRecords({
         pipelineId: pipeline.id,
         page: currentPage,
         pageSize: recordsPerPage,
-        search: searchQuery.trim() || undefined,
-        filters: filters.length > 0 ? filters : undefined,
+        search: stableSearchQuery,
+        filters: stableFilters,
         sort,
         fieldTypes
       })
@@ -93,7 +106,7 @@ export function useRecordData(options: UseRecordDataOptions): UseRecordDataRetur
     } finally {
       setLoading(false)
     }
-  }, [pipeline.id, pipeline.fields, currentPage, recordsPerPage, searchQuery, filters, sort])
+  }, [pipeline.id, currentPage, recordsPerPage, stableSearchQuery, stableFilters, sort, fieldTypes])
 
   const refreshRecords = useCallback(async () => {
     await fetchRecords()
@@ -192,10 +205,12 @@ export function useRecordData(options: UseRecordDataOptions): UseRecordDataRetur
     }
   }, [fetchRecords, autoFetch, pipeline?.id])
 
-  // Reset page when search/filters change
+  // Reset page when search/filters change - but only if not on page 1 already to prevent unnecessary re-fetch
   useEffect(() => {
-    setCurrentPage(1)
-  }, [searchQuery, filters, sort])
+    if (currentPage !== 1) {
+      setCurrentPage(1)
+    }
+  }, [searchQuery, filters, sort, currentPage])
 
   const pagination = {
     currentPage,

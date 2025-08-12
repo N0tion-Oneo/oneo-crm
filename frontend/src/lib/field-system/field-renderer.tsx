@@ -123,11 +123,12 @@ export function FieldWrapper({
   const helpText = field.help_text
   
   // Use permission-based requirement evaluation instead of static is_required
+  const mappedContext = context === 'table' ? 'list' : context === 'drawer' ? 'detail' : context === 'display' ? 'detail' : context as ("form" | "list" | "detail" | undefined)
   const permissions = user ? evaluateFieldPermissions(
     field as FieldWithPermissions, 
     user, 
     formData, 
-    context
+    mappedContext
   ) : { required: false, visible: true, editable: true, readonly: false, conditionallyHidden: false }
   
   const isRequired = permissions.required

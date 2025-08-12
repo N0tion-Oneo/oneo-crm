@@ -21,7 +21,13 @@ interface AuthProviderProps {
 export function AuthProvider({ children }: AuthProviderProps) {
   const [user, setUser] = useState<User | null>(null)
   const [tenant, setTenant] = useState<Tenant | null>(null)
-  const [isLoading, setIsLoading] = useState(true)
+  // Start with false if we can quickly check for tokens
+  const [isLoading, setIsLoading] = useState(() => {
+    if (typeof window === 'undefined') return true
+    const hasTokens = !!(Cookies.get('oneo_access_token') || Cookies.get('oneo_refresh_token'))
+    // Start with false to minimize loading states, but set to true if we have tokens to validate
+    return hasTokens
+  })
   const router = useRouter()
 
   // Check authentication status - ensure we have essential user data
@@ -45,17 +51,24 @@ export function AuthProvider({ children }: AuthProviderProps) {
   }, [])
 
   const initializeAuth = async () => {
+    console.log('🔐 Initializing auth...')
     try {
       // Check if we have JWT tokens
       const accessToken = Cookies.get('oneo_access_token')
       const refreshToken = Cookies.get('oneo_refresh_token')
 
+      console.log('🔐 Token check:', { hasAccess: !!accessToken, hasRefresh: !!refreshToken })
+
       if (!accessToken && !refreshToken) {
         // No tokens available
+        console.log('🔐 No tokens found, clearing auth data')
         clearAuthData()
         setIsLoading(false)
         return
       }
+
+      // We have tokens, so show loading while validating
+      setIsLoading(true)
 
       if (!accessToken && refreshToken) {
         // Try to refresh the access token
@@ -280,7 +293,10 @@ export function AuthProvider({ children }: AuthProviderProps) {
   }
 
   const clearAuthData = () => {
+    // Clear all auth-related cookies
     Cookies.remove('oneo_tenant')
+    Cookies.remove('oneo_access_token')
+    Cookies.remove('oneo_refresh_token')
     setUser(null)
     setTenant(null)
   }

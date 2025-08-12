@@ -53,7 +53,7 @@ export const ButtonFieldComponent: FieldComponent = {
         last_triggered: clickTimestamp,
         click_count: (currentValue.click_count || 0) + 1, // Always increment for unique change
         config: {
-          help_text,
+          help_text: helpText,
           button_text: buttonText,
           button_style: buttonStyle,
           button_size: buttonSize,

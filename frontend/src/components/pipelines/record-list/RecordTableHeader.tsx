@@ -14,7 +14,7 @@ import {
 import { RecordField, Sort, Record, FieldGroup } from '@/types/records'
 import { FieldUtilsService } from '@/services/records'
 
-const STATIC_FIELD_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
+const STATIC_FIELD_ICONS: {[key: string]: React.ComponentType<{ className?: string }>} = {
   text: Type,
   textarea: FileText,
   number: Hash,
@@ -47,7 +47,7 @@ const STATIC_FIELD_ICONS: Record<string, React.ComponentType<{ className?: strin
 
 // Helper function to get group icon component (same as in record detail drawer)
 const getGroupIcon = (iconValue: string) => {
-  const iconMap: Record<string, any> = {
+  const iconMap: {[key: string]: any} = {
     // General/Common
     'folder': Database,
     'tag': Tag,

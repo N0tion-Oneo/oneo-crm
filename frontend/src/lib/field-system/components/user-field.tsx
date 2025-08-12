@@ -98,8 +98,8 @@ export const UserFieldComponent: FieldComponent = {
         console.log('✅ USER FIELD: State updated - filteredUsers length:', users.length)
       } catch (error) {
         console.error('❌ USER FIELD: Failed to load users:', error)
-        if (error.response) {
-          console.error('Error response:', error.response.status, error.response.data)
+        if ((error as any).response) {
+          console.error('Error response:', (error as any).response.status, (error as any).response.data)
         }
         setAvailableUsers([])
         setFilteredUsers([])
@@ -333,7 +333,7 @@ export const UserFieldComponent: FieldComponent = {
               required={require_role_selection}
             >
               {require_role_selection && <option value="">Select role...</option>}
-              {allowed_roles.map(role => (
+              {allowed_roles.map((role: string) => (
                 <option key={role} value={role}>
                   {role.charAt(0).toUpperCase() + role.slice(1)}
                 </option>
@@ -553,7 +553,7 @@ export const UserFieldComponent: FieldComponent = {
     if (!allow_multiple && assignments.length > 1) {
       return {
         isValid: false,
-        errors: ['Only one user can be assigned to this field']
+        error: 'Only one user can be assigned to this field'
       }
     }
     
@@ -561,7 +561,7 @@ export const UserFieldComponent: FieldComponent = {
     if (max_users && assignments.length > max_users) {
       return {
         isValid: false,
-        errors: [`Maximum of ${max_users} users allowed, but ${assignments.length} are assigned`]
+        error: `Maximum of ${max_users} users allowed, but ${assignments.length} are assigned`
       }
     }
     
@@ -570,7 +570,7 @@ export const UserFieldComponent: FieldComponent = {
       if (!assignment.user_id || typeof assignment.user_id !== 'number') {
         return {
           isValid: false,
-          errors: ['Invalid user ID in assignment']
+          error: 'Invalid user ID in assignment'
         }
       }
       
@@ -578,7 +578,7 @@ export const UserFieldComponent: FieldComponent = {
       if (require_role_selection && (!assignment.role || assignment.role.trim() === '')) {
         return {
           isValid: false,
-          errors: ['Role selection is required for all user assignments']
+          error: 'Role selection is required for all user assignments'
         }
       }
       
@@ -586,7 +586,7 @@ export const UserFieldComponent: FieldComponent = {
       if (assignment.role && assignment.role.trim() !== '' && !allowed_roles.includes(assignment.role)) {
         return {
           isValid: false,
-          errors: [`Invalid role: ${assignment.role}. Allowed roles: ${allowed_roles.join(', ')}`]
+          error: `Invalid role: ${assignment.role}. Allowed roles: ${allowed_roles.join(', ')}`
         }
       }
     }

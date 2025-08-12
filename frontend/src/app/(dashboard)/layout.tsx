@@ -21,20 +21,11 @@ export default function DashboardLayout({
     }
   }, [isAuthenticated, isLoading, router])
 
-  // Show loading while checking authentication
+  // Don't show dashboard loading - let individual pages handle their own loading
+  // This eliminates the dashboard loading spinner that cascades with page loading
   if (isLoading) {
-    return (
-      <div className="min-h-screen bg-gray-100 dark:bg-gray-900 flex items-center justify-center">
-        <div className="text-center">
-          <div className="inline-flex items-center justify-center w-12 h-12 bg-primary rounded-xl mb-4">
-            <span className="text-primary-foreground font-bold text-xl">O</span>
-          </div>
-          <h1 className="text-xl font-semibold text-gray-900 dark:text-white">
-            Loading...
-          </h1>
-        </div>
-      </div>
-    )
+    // Still redirect if needed, but don't show loading UI
+    return null
   }
 
   // Don't render dashboard if not authenticated (will redirect)

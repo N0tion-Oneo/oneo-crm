@@ -47,7 +47,7 @@ export function TestNewComponents() {
           <div className="flex items-center space-x-2">
             <Checkbox 
               checked={checkboxChecked}
-              onCheckedChange={setCheckboxChecked}
+              onCheckedChange={(checked) => setCheckboxChecked(checked === true)}
               id="test-checkbox"
             />
             <Label htmlFor="test-checkbox">Check me</Label>

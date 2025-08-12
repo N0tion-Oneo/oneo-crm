@@ -701,7 +701,7 @@ const SortableGroup: React.FC<SortableGroupProps> = ({
             <button
               onClick={(e) => {
                 e.stopPropagation()
-                deleteFieldGroup(group.id)
+                onDeleteGroup(group.id)
               }}
               className="p-1 text-gray-400 hover:text-red-600 rounded"
               title="Delete group"
@@ -1085,6 +1085,10 @@ export function PipelineFieldBuilder({ pipelineId, fields, onFieldsChange, onSav
   const [draggedField, setDraggedField] = useState<PipelineField | null>(null)
   const [draggedGroup, setDraggedGroup] = useState<FieldGroup | null>(null)
   
+  // Group deletion dialog state
+  const [deletionDialogGroup, setDeletionDialogGroup] = useState<FieldGroup | null>(null)
+  const [isDeletingGroup, setIsDeletingGroup] = useState(false)
+  
   // Load available field types and user types
   useEffect(() => {
     const loadData = async () => {
@@ -1159,7 +1163,7 @@ export function PipelineFieldBuilder({ pipelineId, fields, onFieldsChange, onSav
         console.log('🔧 Field groups API response:', response)
         
         // Handle both paginated and direct array responses
-        const groupsData = response.data?.results || response.results || response.data || response || []
+        const groupsData = response.data?.results || (response as any).results || response.data || response || []
         const validGroupsData = Array.isArray(groupsData) ? groupsData : []
         console.log('🔧 Setting field groups:', validGroupsData.length, 'groups')
         setFieldGroups(validGroupsData)
@@ -1239,15 +1243,13 @@ export function PipelineFieldBuilder({ pipelineId, fields, onFieldsChange, onSav
   // Memoized field action handlers to prevent re-renders
   // Update field - optimized to avoid full array mapping  
   const updateField = useCallback((fieldId: string, updates: Partial<PipelineField>) => {
-    onFieldsChange(prevFields => {
-      const index = prevFields.findIndex(f => f.id === fieldId)
-      if (index === -1) return prevFields
-      
-      const newFields = [...prevFields]
-      newFields[index] = { ...newFields[index], ...updates }
-      return newFields
-    })
-  }, [onFieldsChange])
+    const index = fields.findIndex(f => f.id === fieldId)
+    if (index === -1) return
+    
+    const newFields = [...fields]
+    newFields[index] = { ...fields[index], ...updates }
+    onFieldsChange(newFields)
+  }, [fields, onFieldsChange])
   
   
   // Delete field
@@ -1259,6 +1261,30 @@ export function PipelineFieldBuilder({ pipelineId, fields, onFieldsChange, onSav
   }
   
   // Field Groups Management Functions
+  const deleteFieldGroup = async (groupId: string) => {
+    if (!pipelineId) return
+    
+    if (!confirm('Are you sure you want to delete this field group? Fields in this group will be moved to "Ungrouped Fields".')) {
+      return
+    }
+    
+    try {
+      await pipelinesApi.deleteFieldGroup(pipelineId, groupId)
+      
+      // Remove group from local state
+      setFieldGroups(groups => groups.filter(g => g.id !== groupId))
+      
+      // Update fields that were in this group to be ungrouped
+      onFieldsChange(fields.map(field => 
+        field.field_group === groupId 
+          ? { ...field, field_group: null, field_group_name: undefined }
+          : field
+      ))
+    } catch (error) {
+      console.error('Failed to delete field group:', error)
+    }
+  }
+
   const createFieldGroup = async () => {
     if (!pipelineId || !newGroupName.trim()) return
     
@@ -1292,7 +1318,7 @@ export function PipelineFieldBuilder({ pipelineId, fields, onFieldsChange, onSav
         // Assign field to group - convert fieldId to integer
         const fieldIdInt = parseInt(fieldId, 10)
         console.log('🔄 Calling pipelinesApi.assignFieldsToGroup:', { pipelineId, groupId, fieldIds: [fieldIdInt], originalFieldId: fieldId })
-        const assignResponse = await pipelinesApi.assignFieldsToGroup(pipelineId, groupId, [fieldIdInt])
+        const assignResponse = await pipelinesApi.assignFieldsToGroup(pipelineId, groupId, [fieldId])
         console.log('✅ Assign response:', assignResponse.data)
       } else {
         // Find the field's current group and ungroup it
@@ -1300,7 +1326,7 @@ export function PipelineFieldBuilder({ pipelineId, fields, onFieldsChange, onSav
         if (field?.field_group) {
           const fieldIdInt = parseInt(fieldId, 10)
           console.log('🔄 Calling pipelinesApi.ungroupFields:', { pipelineId, groupId: field.field_group, fieldIds: [fieldIdInt], originalFieldId: fieldId })
-          await pipelinesApi.ungroupFields(pipelineId, field.field_group, [fieldIdInt])
+          await pipelinesApi.ungroupFields(pipelineId, field.field_group, [fieldId])
         }
       }
       
@@ -1317,7 +1343,7 @@ export function PipelineFieldBuilder({ pipelineId, fields, onFieldsChange, onSav
           console.log('🔍 Field groups reload response:', groupsResponse)
           
           // Handle both paginated and direct array responses
-          const groupsData = groupsResponse.data?.results || groupsResponse.results || groupsResponse.data || groupsResponse || []
+          const groupsData = groupsResponse.data?.results || (groupsResponse as any).results || groupsResponse.data || groupsResponse || []
           const validGroupsData = Array.isArray(groupsData) ? groupsData : []
           console.log('🔄 Setting field groups (delayed):', validGroupsData.length, 'groups')
           setFieldGroups(validGroupsData)
@@ -1344,30 +1370,6 @@ export function PipelineFieldBuilder({ pipelineId, fields, onFieldsChange, onSav
     setCollapsedGroups(newCollapsedGroups)
     saveCollapseState(newCollapsedGroups)
   }, [collapsedGroups, saveCollapseState])
-  
-  const deleteFieldGroup = async (groupId: string) => {
-    if (!pipelineId) return
-    
-    if (!confirm('Are you sure you want to delete this field group? Fields in this group will be moved to "Ungrouped Fields".')) {
-      return
-    }
-    
-    try {
-      await pipelinesApi.deleteFieldGroup(pipelineId, groupId)
-      
-      // Remove group from local state
-      setFieldGroups(groups => groups.filter(g => g.id !== groupId))
-      
-      // Update fields that were in this group to be ungrouped
-      onFieldsChange(fields.map(field => 
-        field.field_group === groupId 
-          ? { ...field, field_group: null, field_group_name: undefined }
-          : field
-      ))
-    } catch (error) {
-      console.error('Failed to delete field group:', error)
-    }
-  }
 
   // Field group editing functions
   const startEditingGroup = (group: FieldGroup) => {
@@ -1579,7 +1581,7 @@ export function PipelineFieldBuilder({ pipelineId, fields, onFieldsChange, onSav
             await handleFieldReorder(activeFieldId, overFieldId)
           } else {
             // Move field to different group
-            await assignFieldToGroup(activeFieldId, overField.field_group)
+            await assignFieldToGroup(activeFieldId, overField.field_group || null)
           }
         }
       }
@@ -2085,7 +2087,7 @@ export function PipelineFieldBuilder({ pipelineId, fields, onFieldsChange, onSav
       )}
       
       {/* Field Management Panel */}
-      {managingField && (
+      {managingField && pipelineId && (
         <FieldManagementPanel
           field={managingField}
           pipelineId={pipelineId}
@@ -2617,7 +2619,7 @@ function DisplaySettings({
               const selectFields = fields.filter(f => f.field_type === 'select')
               
               for (const rule of requireWhen.rules) {
-                if (rule.field && rule.condition === 'equals' && rule.value) {
+                if ('field' in rule && rule.field && rule.condition === 'equals' && rule.value) {
                   // Check if this rule references a select field (likely a stage field)
                   const referencedField = selectFields.find(f => f.name === rule.field)
                   if (referencedField) {
@@ -2634,7 +2636,7 @@ function DisplaySettings({
               
               // Only update stage_requirements if we found stage-related rules
               if (Object.keys(stageRequirements).length > 0) {
-                updatedBusinessRules.stage_requirements = stageRequirements
+                (updatedBusinessRules as any).stage_requirements = stageRequirements
               }
             }
             

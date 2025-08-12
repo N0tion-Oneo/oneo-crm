@@ -12,7 +12,6 @@ const testFields: Field[] = [
     name: 'text_field',
     display_name: 'Limited Text Field',
     field_type: 'text',
-    is_required: true,
     placeholder: 'Enter some text...',
     field_config: { 
       max_length: 50,
@@ -24,7 +23,6 @@ const testFields: Field[] = [
     name: 'textarea_field',
     display_name: 'Multi-line Text',
     field_type: 'textarea',
-    is_required: false,
     placeholder: 'Enter multiple lines...',
     field_config: { 
       enable_rich_text: false
@@ -35,7 +33,6 @@ const testFields: Field[] = [
     name: 'currency_field',
     display_name: 'Currency Field (USD)',
     field_type: 'number',
-    is_required: false,
     field_config: { 
       format: 'currency',
       currency_code: 'USD',
@@ -47,7 +44,6 @@ const testFields: Field[] = [
     name: 'percentage_field',
     display_name: 'Percentage Field',
     field_type: 'number',
-    is_required: false,
     field_config: {
       format: 'percentage',
       decimal_places: 1
@@ -58,7 +54,6 @@ const testFields: Field[] = [
     name: 'integer_field',
     display_name: 'Integer Field',
     field_type: 'number',
-    is_required: false,
     field_config: {
       format: 'integer'
     }
@@ -68,7 +63,6 @@ const testFields: Field[] = [
     name: 'email_field',
     display_name: 'Email Address',
     field_type: 'email',
-    is_required: false,
     placeholder: 'Enter email address...',
     field_config: {
       auto_lowercase: true,
@@ -80,7 +74,6 @@ const testFields: Field[] = [
     name: 'phone_field',
     display_name: 'Phone Number',
     field_type: 'phone',
-    is_required: false,
     field_config: {
       require_country_code: true,
       default_country: 'US',
@@ -92,7 +85,6 @@ const testFields: Field[] = [
     name: 'select_field', 
     display_name: 'Priority Level',
     field_type: 'select',
-    is_required: true,
     field_config: {
       options: [
         { value: 'low', label: 'Low Priority' },
@@ -107,7 +99,6 @@ const testFields: Field[] = [
     name: 'multiselect_field',
     display_name: 'Multiple Skills',
     field_type: 'multiselect',
-    is_required: false,
     field_config: {
       options: [
         { value: 'javascript', label: 'JavaScript' },
@@ -123,7 +114,6 @@ const testFields: Field[] = [
     name: 'tags_field',
     display_name: 'Tags',
     field_type: 'tags',
-    is_required: false,
     field_config: {
       predefined_tags: ['urgent', 'important', 'followup', 'waiting'],
       allow_custom_tags: true,
@@ -135,7 +125,6 @@ const testFields: Field[] = [
     name: 'date_field',
     display_name: 'Date Field', 
     field_type: 'date',
-    is_required: false,
     field_config: {
       include_time: false,
       date_format: 'MM/DD/YYYY'
@@ -146,7 +135,6 @@ const testFields: Field[] = [
     name: 'datetime_field',
     display_name: 'Date & Time Field', 
     field_type: 'date',
-    is_required: false,
     field_config: {
       include_time: true,
       date_format: 'MM/DD/YYYY',
@@ -158,7 +146,6 @@ const testFields: Field[] = [
     name: 'boolean_field',
     display_name: 'Agreement Checkbox',
     field_type: 'boolean',
-    is_required: false,
     field_config: {}
   },
   {
@@ -166,7 +153,6 @@ const testFields: Field[] = [
     name: 'url_field',
     display_name: 'Website URL',
     field_type: 'url',
-    is_required: false,
     field_config: {
       auto_add_protocol: true,
       open_in_new_tab: true
@@ -177,7 +163,6 @@ const testFields: Field[] = [
     name: 'file_field',
     display_name: 'Upload File',
     field_type: 'file',
-    is_required: false,
     field_config: {
       allowed_types: ['pdf', 'doc', 'docx', 'txt'],
       max_size: 5242880 // 5MB
@@ -188,7 +173,6 @@ const testFields: Field[] = [
     name: 'relation_field',
     display_name: 'Related Record (Test)',
     field_type: 'relation',
-    is_required: false,
     field_config: {
       target_pipeline_id: 1,
       display_field: 'title'
@@ -199,7 +183,6 @@ const testFields: Field[] = [
     name: 'tags_field',
     display_name: 'Tags Field (Test)',
     field_type: 'tags',
-    is_required: false,
     field_config: {
       predefined_tags: ['urgent', 'important', 'follow-up', 'marketing', 'sales'],
       allow_custom_tags: true,

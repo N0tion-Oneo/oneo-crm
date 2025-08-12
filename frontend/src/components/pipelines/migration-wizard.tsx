@@ -783,7 +783,7 @@ export function MigrationWizard({
                         <div className="mt-4">
                           <h5 className="font-medium text-blue-900 dark:text-blue-100 mb-2">Sample Data Transformations</h5>
                           <div className="space-y-2 max-h-32 overflow-y-auto">
-                            {migrationResult.impact_analysis.sample_transformations.slice(0, 3).map((sample, index) => (
+                            {migrationResult.impact_analysis.sample_transformations.slice(0, 3).map((sample: any, index: number) => (
                               <div key={index} className="text-xs bg-white dark:bg-gray-800 rounded p-2">
                                 <div className="flex justify-between items-center">
                                   <span className="font-medium">{sample.record_title}</span>
@@ -810,7 +810,7 @@ export function MigrationWizard({
                     <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4 text-left max-w-2xl mx-auto">
                       <h4 className="font-medium text-blue-900 dark:text-blue-100 mb-3">Sample Data Transformations</h4>
                       <div className="space-y-2 max-h-32 overflow-y-auto">
-                        {migrationResult.data_preview.samples.slice(0, 3).map((sample, index) => (
+                        {migrationResult.data_preview.samples.slice(0, 3).map((sample: any, index: number) => (
                           <div key={index} className="text-xs bg-white dark:bg-gray-800 rounded p-2">
                             <div className="flex justify-between items-center">
                               <span className="font-medium">{sample.record_title}</span>

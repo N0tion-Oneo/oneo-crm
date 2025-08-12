@@ -156,7 +156,7 @@ export function PhoneFieldConfig({
                     <Checkbox
                       id={`country-${country.code}`}
                       checked={(config.allowed_countries || []).includes(country.code)}
-                      onCheckedChange={(checked) => handleCountryToggle(country.code, checked)}
+                      onCheckedChange={(checked) => handleCountryToggle(country.code, checked as boolean)}
                     />
                     <Label htmlFor={`country-${country.code}`} className="text-sm font-normal text-gray-700 dark:text-gray-300">
                       {country.name} ({country.phone_code})

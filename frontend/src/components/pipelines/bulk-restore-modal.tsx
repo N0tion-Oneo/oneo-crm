@@ -365,7 +365,7 @@ export function BulkRestoreModal({
                   Cancel
                 </button>
                 <button
-                  onClick={handleRestore}
+                  onClick={() => handleRestore()}
                   disabled={restoring || selectedFields.length === 0}
                   className="flex items-center space-x-2 px-4 py-2 bg-green-500 text-white rounded-md hover:bg-green-600 disabled:opacity-50 transition-colors"
                 >

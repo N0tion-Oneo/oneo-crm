@@ -15,7 +15,6 @@ export default function PipelineRecordsPage() {
   const pipelineId = params.id as string
 
   const [pipeline, setPipeline] = useState<Pipeline | null>(null)
-  const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [selectedRecord, setSelectedRecord] = useState<Record | null>(null)
   const [showRecordDrawer, setShowRecordDrawer] = useState(false)
@@ -25,7 +24,6 @@ export default function PipelineRecordsPage() {
   useEffect(() => {
     const loadPipeline = async () => {
       try {
-        setLoading(true)
         
         // Load pipeline basic data
         const response = await pipelinesApi.get(pipelineId)
@@ -104,8 +102,6 @@ export default function PipelineRecordsPage() {
         // No fallback - let the error state be handled properly
         console.error('Failed to load pipeline after timeout')
         setError('Failed to load pipeline data')
-      } finally {
-        setLoading(false)
       }
     }
 
@@ -239,37 +235,17 @@ export default function PipelineRecordsPage() {
   }
 
 
-  if (authLoading || loading) {
-    return (
-      <div className="h-screen flex items-center justify-content">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
-          <p className="text-gray-600 dark:text-gray-400">Loading pipeline...</p>
-        </div>
-      </div>
-    )
-  }
+  // Don't show page-level loading - let RecordListView handle its own loading state
 
-  if (!pipeline) {
-    return (
-      <div className="h-screen flex items-center justify-center">
-        <div className="text-center">
-          <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-2">
-            Pipeline Not Found
-          </h2>
-          <p className="text-gray-600 dark:text-gray-400 mb-4">
-            The pipeline you're looking for doesn't exist or you don't have access to it.
-          </p>
-          <button
-            onClick={() => router.push('/pipelines')}
-            className="px-4 py-2 bg-primary text-white rounded-md hover:bg-primary/90"
-          >
-            <ArrowLeft className="w-4 h-4 mr-2 inline" />
-            Back to Pipelines
-          </button>
-        </div>
-      </div>
-    )
+  // Create minimal pipeline object to eliminate sequential loading
+  const minimalPipeline = pipeline || {
+    id: pipelineId,
+    name: 'Loading...',
+    description: '',
+    record_count: 0,
+    fields: [],
+    field_groups: [],
+    stages: []
   }
 
   return (
@@ -286,10 +262,10 @@ export default function PipelineRecordsPage() {
           
           <div>
             <h1 className="text-xl font-semibold text-gray-900 dark:text-white">
-              {pipeline.name}
+              {minimalPipeline.name}
             </h1>
             <p className="text-sm text-gray-500 dark:text-gray-400">
-              {pipeline.record_count} records
+              {minimalPipeline.record_count} records
             </p>
           </div>
         </div>
@@ -325,7 +301,7 @@ export default function PipelineRecordsPage() {
       {/* Record List */}
       <div className="flex-1">
         <RecordListView
-          pipeline={pipeline}
+          pipeline={minimalPipeline}
           onEditRecord={handleEditRecord}
           onCreateRecord={handleCreateRecord}
         />
@@ -334,7 +310,7 @@ export default function PipelineRecordsPage() {
       {/* Record Detail Drawer */}
       <RecordDetailDrawer
         record={selectedRecord}
-        pipeline={pipeline}
+        pipeline={minimalPipeline}
         isOpen={showRecordDrawer}
         onClose={() => {
           setShowRecordDrawer(false)

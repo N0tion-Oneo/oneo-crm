@@ -1,12 +1,13 @@
 // RecordTable - Complete table view with header and rows
 import React from 'react'
-import { Record, RecordField, Sort } from '@/types/records'
+import { Record, RecordField, Sort, FieldGroup } from '@/types/records'
 import { RecordTableHeader } from './RecordTableHeader'
 import { RecordTableRow } from './RecordTableRow'
 
 export interface RecordTableProps {
   records: Record[]
   fields: RecordField[]
+  fieldGroups?: FieldGroup[]
   sort: Sort
   onSort: (fieldName: string) => void
   selectedRecords: Set<string>
@@ -21,6 +22,7 @@ export interface RecordTableProps {
 export function RecordTable({
   records,
   fields,
+  fieldGroups,
   sort,
   onSort,
   selectedRecords,
@@ -35,6 +37,7 @@ export function RecordTable({
     <table className={`w-full ${className}`}>
       <RecordTableHeader
         fields={fields}
+        fieldGroups={fieldGroups}
         sort={sort}
         onSort={onSort}
         selectedRecords={selectedRecords}

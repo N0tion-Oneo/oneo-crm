@@ -6,7 +6,7 @@ from rest_framework.routers import DefaultRouter
 from rest_framework_nested import routers
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView, SpectacularRedocView
 
-from .views.pipelines import PipelineViewSet, FieldViewSet
+from .views.pipelines import PipelineViewSet, FieldViewSet, FieldGroupViewSet
 from .views.records import RecordViewSet, GlobalSearchViewSet
 from .views.relationships import RelationshipViewSet, RelationshipTypeViewSet
 from .views.auth import AuthViewSet
@@ -126,6 +126,7 @@ router.register(r'ai-embeddings', AIEmbeddingViewSet, basename='ai-embedding')
 # Create nested routers for pipeline-specific endpoints
 pipelines_router = routers.NestedDefaultRouter(router, r'pipelines', lookup='pipeline')
 pipelines_router.register(r'fields', FieldViewSet, basename='pipeline-fields')
+pipelines_router.register(r'field-groups', FieldGroupViewSet, basename='pipeline-field-groups')
 pipelines_router.register(r'records', RecordViewSet, basename='pipeline-records')
 pipelines_router.register(r'forms', DynamicFormViewSet, basename='pipeline-forms')
 

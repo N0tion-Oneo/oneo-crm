@@ -26,10 +26,17 @@ export default function PipelineRecordsPage() {
     const loadPipeline = async () => {
       try {
         setLoading(true)
+        
+        // Load pipeline basic data
         const response = await pipelinesApi.get(pipelineId)
+        
+        // Load field groups data
+        const fieldGroupsResponse = await pipelinesApi.getFieldGroups(pipelineId)
+        const fieldGroups = (fieldGroupsResponse.data as any)?.results || (fieldGroupsResponse as any).results || fieldGroupsResponse.data || fieldGroupsResponse || []
         
         // Debug: Log the original field data from backend
         console.log('Original backend field data:', response.data.fields)
+        console.log('Field groups data:', fieldGroups)
         
         // Transform API response to match frontend interface
         const transformedPipeline: Pipeline = {
@@ -52,7 +59,18 @@ export default function PipelineRecordsPage() {
             ai_config: field.ai_config || {}, // AI field configuration
             // Preserve original slug for backend API calls
             original_slug: field.slug,
-            business_rules: field.business_rules || {}
+            business_rules: field.business_rules || {},
+            // Field group assignment
+            field_group: field.field_group?.toString() || null
+          })),
+          field_groups: fieldGroups.map((group: any) => ({
+            id: group.id?.toString() || `group_${Date.now()}`,
+            name: group.name || 'Unknown Group',
+            description: group.description || '',
+            color: group.color || '#3B82F6',
+            icon: group.icon || 'folder',
+            display_order: group.display_order || 0,
+            field_count: group.field_count || 0
           })),
           stages: response.data.stages || []
         }

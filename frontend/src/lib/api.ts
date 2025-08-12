@@ -350,6 +350,28 @@ export const pipelinesApi = {
   validateFieldValue: (pipelineId: string, fieldId: string, value: any, isRequired?: boolean) =>
     api.post(`/api/pipelines/${pipelineId}/fields/${fieldId}/validate_value/`, { value, is_required: isRequired }),
   
+  // Field Groups management
+  getFieldGroups: (pipelineId: string) =>
+    api.get(`/api/pipelines/${pipelineId}/field-groups/`),
+  
+  createFieldGroup: (pipelineId: string, data: any) =>
+    api.post(`/api/pipelines/${pipelineId}/field-groups/`, data),
+  
+  updateFieldGroup: (pipelineId: string, groupId: string, data: any) =>
+    api.patch(`/api/pipelines/${pipelineId}/field-groups/${groupId}/`, data),
+  
+  deleteFieldGroup: (pipelineId: string, groupId: string) =>
+    api.delete(`/api/pipelines/${pipelineId}/field-groups/${groupId}/`),
+  
+  reorderFieldGroups: (pipelineId: string, groupOrders: { id: string; display_order: number }[]) =>
+    api.post(`/api/pipelines/${pipelineId}/field-groups/reorder/`, { group_orders: groupOrders }),
+  
+  assignFieldsToGroup: (pipelineId: string, groupId: string, fieldIds: string[]) =>
+    api.post(`/api/pipelines/${pipelineId}/field-groups/${groupId}/assign_fields/`, { field_ids: fieldIds }),
+  
+  ungroupFields: (pipelineId: string, groupId: string, fieldIds: string[]) =>
+    api.post(`/api/pipelines/${pipelineId}/field-groups/${groupId}/ungroup_fields/`, { field_ids: fieldIds }),
+  
   // Record management
   getRecords: (pipelineId: string, params?: any) =>
     api.get(`/api/pipelines/${pipelineId}/records/`, { params }),

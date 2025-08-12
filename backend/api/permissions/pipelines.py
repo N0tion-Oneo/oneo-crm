@@ -95,6 +95,14 @@ class PipelinePermission(permissions.BasePermission):
                 else:
                     return permission_manager.has_permission('action', 'records', 'create', pipeline_id)
             return False
+        elif view.action in ['assign_fields', 'ungroup_fields', 'reorder_groups']:
+            # Field group management actions require field update permission
+            pipeline_id = view.kwargs.get('pipeline_pk')
+            if pipeline_id:
+                pipeline_access = permission_manager.has_permission('action', 'pipelines', 'read', pipeline_id)
+                field_access = permission_manager.has_permission('action', 'fields', 'update', pipeline_id)
+                return pipeline_access and field_access
+            return False
         
         return False
     
@@ -102,7 +110,15 @@ class PipelinePermission(permissions.BasePermission):
         """Check object-level permissions"""
         permission_manager = PermissionManager(request.user)
         
-        if view.action in ['retrieve', 'analytics', 'export']:
+        if view.action in ['assign_fields', 'ungroup_fields']:
+            # Field group actions - check if user has field update permission for the pipeline
+            if hasattr(obj, 'pipeline'):
+                # This is a field group object
+                pipeline_access = permission_manager.has_permission('action', 'pipelines', 'read', str(obj.pipeline.id))
+                field_access = permission_manager.has_permission('action', 'fields', 'update', str(obj.pipeline.id))
+                return pipeline_access and field_access
+            return False
+        elif view.action in ['retrieve', 'analytics', 'export']:
             # Check if this is a field or pipeline object
             if hasattr(obj, 'pipeline'):
                 # Field object - requires BOTH pipeline read AND field read permission

@@ -1,7 +1,35 @@
 'use client'
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react'
-import { fieldTypesApi, permissionsApi, aiApi } from '@/lib/api'
+import { fieldTypesApi, permissionsApi, aiApi, pipelinesApi } from '@/lib/api'
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  DragEndEvent,
+  DragStartEvent,
+  DragOverEvent,
+  DragOverlay,
+  Active,
+  Over,
+} from '@dnd-kit/core'
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable'
+import {
+  restrictToVerticalAxis,
+  restrictToWindowEdges,
+} from '@dnd-kit/modifiers'
+import {
+  useSortable,
+} from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
 import { FieldConfigurationPanel } from './field-configuration-panel'
 import { ConditionalRulesBuilder } from './conditional-rules-builder'
 import { FieldManagementPanel } from './field-management-panel'
@@ -11,6 +39,7 @@ import {
   Plus, 
   Trash2, 
   Settings,
+  Edit,
   Eye, 
   EyeOff,
   X,
@@ -28,6 +57,7 @@ import {
   Layout,
   Zap,
   Copy,
+  FolderPlus,
   CheckCircle,
   AlertCircle,
   Info,
@@ -44,7 +74,66 @@ import {
   Database,
   User,
   Tag,
+  Check,
+  Users,
+  Building,
+  Heart,
+  Star,
+  Home,
+  Briefcase,
+  Target,
+  TrendingUp,
+  DollarSign,
+  CreditCard,
+  ShoppingCart,
+  Package,
+  Truck,
+  Clock,
+  Bell,
+  MessageCircle,
+  Users2,
+  UserCheck,
+  Crown,
+  Award,
+  Trophy,
+  Lightbulb,
+  BookOpen,
+  GraduationCap,
+  PieChart,
+  BarChart3,
+  Activity,
+  Wifi,
+  Smartphone,
+  Monitor,
+  Camera,
+  Video,
+  Music,
+  Image,
+  Palette,
+  Brush,
+  Code,
+  Terminal,
+  Server,
+  Cloud,
+  Lock,
+  Key,
+  Fingerprint,
 } from 'lucide-react'
+
+// Field group interface
+interface FieldGroup {
+  id: string
+  name: string
+  description?: string
+  color: string
+  icon: string
+  display_order: number
+  field_count: number
+  created_at: string
+  created_by: any
+  updated_at: string
+  updated_by?: any
+}
 
 // Complete field interface matching new architecture
 interface PipelineField {
@@ -73,6 +162,10 @@ interface PipelineField {
   business_rules: Record<string, any>
   ai_config?: Record<string, any>       // For AI fields only
   form_validation_rules?: Record<string, any> // Form validation rules
+  
+  // Field group information
+  field_group?: string | null     // Field group ID
+  field_group_name?: string       // Field group name (read-only)
   
   // Field lifecycle management
   is_deleted?: boolean
@@ -137,12 +230,553 @@ const FIELD_ICONS: Record<string, any> = {
   address: MapPin,
   button: MousePointer,
   user: User,
+  // Group icons
+  folder: Database,
+  group: List,
 }
 
 // Helper function to get field icon component
 const getFieldIcon = (fieldType: string) => {
   const IconComponent = FIELD_ICONS[fieldType] || Type
   return <IconComponent className="w-5 h-5 text-gray-500" />
+}
+
+// Helper function to get group icon component
+const getGroupIcon = (iconValue: string) => {
+  const iconMap: Record<string, any> = {
+    // General/Common
+    'folder': Database,
+    'tag': Tag,
+    'settings': Settings,
+    'star': Star,
+    'heart': Heart,
+    'home': Home,
+    'bell': Bell,
+    'clock': Clock,
+    
+    // People & Users
+    'user': User,
+    'users': Users,
+    'users2': Users2,
+    'usercheck': UserCheck,
+    'crown': Crown,
+    
+    // Business & Finance
+    'briefcase': Briefcase,
+    'building': Building,
+    'dollarsign': DollarSign,
+    'creditcard': CreditCard,
+    'shoppingcart': ShoppingCart,
+    'package': Package,
+    'truck': Truck,
+    'target': Target,
+    
+    // Performance & Analytics
+    'trendingup': TrendingUp,
+    'piechart': PieChart,
+    'barchart3': BarChart3,
+    'activity': Activity,
+    'award': Award,
+    'trophy': Trophy,
+    
+    // Communication & Media
+    'messagecircle': MessageCircle,
+    'mail': Mail,
+    'phone': Phone,
+    'camera': Camera,
+    'video': Video,
+    'music': Music,
+    'image': Image,
+    
+    // Technology & Development
+    'code': Code,
+    'terminal': Terminal,
+    'server': Server,
+    'cloud': Cloud,
+    'wifi': Wifi,
+    'smartphone': Smartphone,
+    'monitor': Monitor,
+    
+    // Security & Access
+    'lock': Lock,
+    'key': Key,
+    'fingerprint': Fingerprint,
+    'shield': Shield,
+    
+    // Education & Knowledge
+    'lightbulb': Lightbulb,
+    'bookopen': BookOpen,
+    'graduationcap': GraduationCap,
+    
+    // Creative & Design
+    'palette': Palette,
+    'brush': Brush,
+    
+    // Miscellaneous
+    'filetext': FileText,
+    'calendar': Calendar,
+    'checksquare': CheckSquare,
+    'mappin': MapPin,
+    'globe': Globe,
+    'link': Link,
+    'bot': Bot,
+    'zap': Zap
+  }
+  
+  const IconComponent = iconMap[iconValue] || Database
+  return IconComponent
+}
+
+
+// Sortable Group Component using dnd-kit
+interface SortableGroupProps {
+  group: FieldGroup
+  isCollapsed: boolean
+  fieldCount: number
+  isEditing: boolean
+  editData: {
+    name: string
+    description: string
+    color: string
+    icon: string
+  } | null
+  onToggleCollapse: (groupId: string) => void
+  onDeleteGroup: (groupId: string) => void
+  onStartEdit: (group: FieldGroup) => void
+  onCancelEdit: () => void
+  onSaveEdit: (groupId: string, updates: Partial<FieldGroup>) => Promise<void>
+  onEditDataChange: (updates: Partial<{ name: string; description: string; color: string; icon: string }>) => void
+  existingGroups: FieldGroup[]
+  children: React.ReactNode
+}
+
+const SortableGroup: React.FC<SortableGroupProps> = ({
+  group,
+  isCollapsed,
+  fieldCount,
+  isEditing,
+  editData,
+  onToggleCollapse,
+  onDeleteGroup,
+  onStartEdit,
+  onCancelEdit,
+  onSaveEdit,
+  onEditDataChange,
+  existingGroups,
+  children,
+}) => {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({
+    id: `group-${group.id}`,
+  })
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  }
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      {...attributes}
+      className="border border-gray-200 dark:border-gray-700 rounded-lg"
+      role="group"
+      aria-label={`Field group: ${group.name}`}
+    >
+      {/* Group Header */}
+      {isEditing ? (
+        // Edit Mode Header
+        <div className="p-3 bg-blue-50 dark:bg-blue-900/20 border-b border-blue-200 dark:border-blue-700">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center space-x-2">
+              <div 
+                className="w-5 h-5 rounded flex items-center justify-center"
+                style={{ backgroundColor: editData?.color || group.color }}
+              >
+                {React.createElement(getGroupIcon((editData?.icon || group.icon) || 'folder'), {
+                  className: "w-3 h-3 text-white"
+                })}
+              </div>
+              <span className="text-sm font-medium text-blue-900 dark:text-blue-100">
+                Edit Group Settings
+              </span>
+            </div>
+            
+            <div className="flex items-center space-x-1">
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  if (editData && editData.name.trim()) {
+                    onSaveEdit(group.id, {
+                      name: editData.name,
+                      description: editData.description,
+                      color: editData.color,
+                      icon: editData.icon
+                    })
+                  }
+                }}
+                className={`p-1 rounded transition-colors ${
+                  editData?.name.trim() 
+                    ? 'text-green-600 hover:text-green-700 cursor-pointer' 
+                    : 'text-gray-400 cursor-not-allowed'
+                }`}
+                title={editData?.name.trim() ? 'Save changes' : 'Enter a group name to save'}
+                disabled={!editData?.name.trim()}
+              >
+                <Check className="w-4 h-4" />
+              </button>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onCancelEdit()
+                }}
+                className="p-1 text-gray-500 hover:text-gray-600 rounded"
+                title="Cancel editing"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+          
+          {/* Edit Form */}
+          <div className="space-y-2">
+            <div>
+              <input
+                type="text"
+                value={editData?.name || ''}
+                onChange={(e) => onEditDataChange({ name: e.target.value })}
+                placeholder="Group name *"
+                className={`w-full px-2 py-1 text-sm border rounded bg-white dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-500 focus:ring-1 ${
+                  !editData?.name.trim() 
+                    ? 'border-red-300 dark:border-red-600 focus:border-red-500 focus:ring-red-500' 
+                    : 'border-gray-200 dark:border-gray-600 focus:border-blue-500 focus:ring-blue-500'
+                }`}
+                autoFocus
+                onKeyDown={(e) => {
+                  e.stopPropagation()
+                  if (e.key === 'Enter' && editData?.name.trim()) {
+                    onSaveEdit(group.id, {
+                      name: editData.name,
+                      description: editData.description,
+                      color: editData.color,
+                      icon: editData.icon
+                    })
+                  }
+                  if (e.key === 'Escape') {
+                    onCancelEdit()
+                  }
+                }}
+              />
+              {!editData?.name.trim() && (
+                <p className="text-xs text-red-600 dark:text-red-400 mt-1">
+                  Group name is required
+                </p>
+              )}
+            </div>
+            <div>
+              <input
+                type="text"
+                value={editData?.description || ''}
+                onChange={(e) => onEditDataChange({ description: e.target.value })}
+                placeholder="Description (optional)"
+                className="w-full px-2 py-1 text-sm border border-gray-200 dark:border-gray-600 rounded bg-white dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-500 focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                onKeyDown={(e) => {
+                  e.stopPropagation()
+                  if (e.key === 'Enter' && editData?.name.trim()) {
+                    onSaveEdit(group.id, {
+                      name: editData.name,
+                      description: editData.description,
+                      color: editData.color,
+                      icon: editData.icon
+                    })
+                  }
+                  if (e.key === 'Escape') {
+                    onCancelEdit()
+                  }
+                }}
+              />
+            </div>
+            
+            {/* Color Selection */}
+            <div>
+              <label className="block text-xs text-gray-600 dark:text-gray-400 mb-1">Color</label>
+              <div className="flex items-center space-x-2">
+                {[
+                  '#3B82F6', // Blue
+                  '#10B981', // Green  
+                  '#F59E0B', // Yellow
+                  '#EF4444', // Red
+                  '#8B5CF6', // Purple
+                  '#F97316', // Orange
+                  '#06B6D4', // Cyan
+                  '#84CC16', // Lime
+                  '#EC4899', // Pink
+                  '#6B7280'  // Gray
+                ].map((color) => (
+                  <button
+                    key={color}
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onEditDataChange({ color })
+                    }}
+                    className={`w-6 h-6 rounded border-2 hover:scale-110 transition-transform ${
+                      editData?.color === color
+                        ? 'border-gray-800 dark:border-white'
+                        : 'border-gray-300 dark:border-gray-600'
+                    }`}
+                    style={{ backgroundColor: color }}
+                    title={color}
+                  />
+                ))}
+              </div>
+            </div>
+            
+            {/* Icon Selection */}
+            <div>
+              <label className="block text-xs text-gray-600 dark:text-gray-400 mb-1">Icon</label>
+              <div className="grid grid-cols-8 gap-1 max-h-32 overflow-y-auto">
+                {[
+                  // General/Common
+                  { value: 'folder', icon: Database, label: 'Folder' },
+                  { value: 'tag', icon: Tag, label: 'Tag' },
+                  { value: 'settings', icon: Settings, label: 'Settings' },
+                  { value: 'star', icon: Star, label: 'Star' },
+                  { value: 'heart', icon: Heart, label: 'Heart' },
+                  { value: 'home', icon: Home, label: 'Home' },
+                  { value: 'bell', icon: Bell, label: 'Bell' },
+                  { value: 'clock', icon: Clock, label: 'Clock' },
+                  
+                  // People & Users
+                  { value: 'user', icon: User, label: 'User' },
+                  { value: 'users', icon: Users, label: 'Users' },
+                  { value: 'users2', icon: Users2, label: 'Team' },
+                  { value: 'usercheck', icon: UserCheck, label: 'User Check' },
+                  { value: 'crown', icon: Crown, label: 'Crown' },
+                  
+                  // Business & Finance
+                  { value: 'briefcase', icon: Briefcase, label: 'Business' },
+                  { value: 'building', icon: Building, label: 'Building' },
+                  { value: 'dollarsign', icon: DollarSign, label: 'Money' },
+                  { value: 'creditcard', icon: CreditCard, label: 'Credit Card' },
+                  { value: 'shoppingcart', icon: ShoppingCart, label: 'Shopping' },
+                  { value: 'package', icon: Package, label: 'Package' },
+                  { value: 'truck', icon: Truck, label: 'Shipping' },
+                  { value: 'target', icon: Target, label: 'Target' },
+                  
+                  // Performance & Analytics
+                  { value: 'trendingup', icon: TrendingUp, label: 'Trending' },
+                  { value: 'piechart', icon: PieChart, label: 'Pie Chart' },
+                  { value: 'barchart3', icon: BarChart3, label: 'Bar Chart' },
+                  { value: 'activity', icon: Activity, label: 'Activity' },
+                  { value: 'award', icon: Award, label: 'Award' },
+                  { value: 'trophy', icon: Trophy, label: 'Trophy' },
+                  
+                  // Communication & Media
+                  { value: 'messagecircle', icon: MessageCircle, label: 'Message' },
+                  { value: 'mail', icon: Mail, label: 'Email' },
+                  { value: 'phone', icon: Phone, label: 'Phone' },
+                  { value: 'camera', icon: Camera, label: 'Camera' },
+                  { value: 'video', icon: Video, label: 'Video' },
+                  { value: 'music', icon: Music, label: 'Music' },
+                  { value: 'image', icon: Image, label: 'Image' },
+                  
+                  // Technology & Development
+                  { value: 'code', icon: Code, label: 'Code' },
+                  { value: 'terminal', icon: Terminal, label: 'Terminal' },
+                  { value: 'server', icon: Server, label: 'Server' },
+                  { value: 'cloud', icon: Cloud, label: 'Cloud' },
+                  { value: 'wifi', icon: Wifi, label: 'WiFi' },
+                  { value: 'smartphone', icon: Smartphone, label: 'Mobile' },
+                  { value: 'monitor', icon: Monitor, label: 'Monitor' },
+                  
+                  // Security & Access
+                  { value: 'lock', icon: Lock, label: 'Lock' },
+                  { value: 'key', icon: Key, label: 'Key' },
+                  { value: 'fingerprint', icon: Fingerprint, label: 'Security' },
+                  { value: 'shield', icon: Shield, label: 'Shield' },
+                  
+                  // Education & Knowledge
+                  { value: 'lightbulb', icon: Lightbulb, label: 'Idea' },
+                  { value: 'bookopen', icon: BookOpen, label: 'Book' },
+                  { value: 'graduationcap', icon: GraduationCap, label: 'Education' },
+                  
+                  // Creative & Design
+                  { value: 'palette', icon: Palette, label: 'Palette' },
+                  { value: 'brush', icon: Brush, label: 'Brush' },
+                  
+                  // Miscellaneous
+                  { value: 'filetext', icon: FileText, label: 'Document' },
+                  { value: 'calendar', icon: Calendar, label: 'Calendar' },
+                  { value: 'checksquare', icon: CheckSquare, label: 'Checkbox' },
+                  { value: 'mappin', icon: MapPin, label: 'Location' },
+                  { value: 'globe', icon: Globe, label: 'Globe' },
+                  { value: 'link', icon: Link, label: 'Link' },
+                  { value: 'bot', icon: Bot, label: 'Bot' },
+                  { value: 'zap', icon: Zap, label: 'Lightning' }
+                ].map((iconOption) => {
+                  const IconComp = iconOption.icon
+                  return (
+                    <button
+                      key={iconOption.value}
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        onEditDataChange({ icon: iconOption.value })
+                      }}
+                      className={`p-1 rounded border-2 transition-all ${
+                        editData?.icon === iconOption.value
+                          ? 'bg-blue-100 border-blue-500 text-blue-700 dark:bg-blue-900/50 dark:border-blue-400 dark:text-blue-300 shadow-md scale-110'
+                          : 'border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700 hover:border-gray-400'
+                      }`}
+                      title={iconOption.label}
+                    >
+                      <IconComp className="w-3 h-3" />
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : (
+        // View Mode Header
+        <div 
+          className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-800/50 border-b border-gray-200 dark:border-gray-700 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700/50"
+          onClick={() => onToggleCollapse(group.id)}
+        >
+          <div className="flex items-center space-x-2">
+            {/* Drag Handle for Group */}
+            <div 
+              className="opacity-0 group-hover:opacity-100 cursor-grab active:cursor-grabbing touch-none mr-2"
+              {...listeners}
+              onClick={(e) => e.stopPropagation()}
+              role="button"
+              aria-label={`Drag to reorder group: ${group.name}`}
+              tabIndex={0}
+            >
+              <GripVertical className="w-4 h-4 text-gray-400 hover:text-gray-600" />
+            </div>
+            <div 
+              className="w-6 h-6 rounded flex items-center justify-center"
+              style={{ backgroundColor: group.color }}
+            >
+              {React.createElement(getGroupIcon(group.icon || 'folder'), {
+                className: "w-3 h-3 text-white"
+              })}
+            </div>
+            <div className="flex flex-col">
+              <span className="font-medium text-sm text-gray-900 dark:text-white">
+                {group.name}
+              </span>
+              {group.description && (
+                <span className="text-xs text-gray-500 dark:text-gray-400">
+                  {group.description}
+                </span>
+              )}
+            </div>
+            <span className="text-xs text-gray-500 dark:text-gray-400">
+              ({fieldCount} fields)
+            </span>
+          </div>
+          <div className="flex items-center space-x-1">
+            <button
+              onClick={(e) => {
+                e.stopPropagation()
+                onStartEdit(group)
+              }}
+              className="p-1 text-gray-400 hover:text-blue-600 rounded"
+              title="Edit group settings"
+            >
+              <Edit className="w-3 h-3" />
+            </button>
+            <button
+              onClick={(e) => {
+                e.stopPropagation()
+                deleteFieldGroup(group.id)
+              }}
+              className="p-1 text-gray-400 hover:text-red-600 rounded"
+              title="Delete group"
+            >
+              <Trash2 className="w-3 h-3" />
+            </button>
+            <ChevronDown 
+              className={`w-4 h-4 text-gray-400 transition-transform ${
+                isCollapsed ? '-rotate-90' : ''
+              }`}
+            />
+          </div>
+        </div>
+      )}
+
+      {children}
+    </div>
+  )
+}
+
+// Sortable Field Component using dnd-kit
+interface SortableFieldProps {
+  field: PipelineField
+  index: number
+  isEditing: boolean
+  fieldTypeInfo?: FieldType
+  availableFieldTypes: FieldType[]
+  fieldGroups: FieldGroup[]
+  onEditClick: (fieldId: string) => void
+  onMoveField: (fieldId: string, direction: 'up' | 'down') => void
+  onToggleVisibility: (fieldId: string, visible: boolean) => void
+  onManageField: (field: PipelineField) => void
+  onDeleteField: (fieldId: string) => void
+  onAssignToGroup: (fieldId: string, groupId: string | null) => void
+  isDragOverlay?: boolean
+}
+
+const SortableField: React.FC<SortableFieldProps> = ({ 
+  field, 
+  isDragOverlay = false, 
+  ...props 
+}) => {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({
+    id: `field-${field.id}`,
+  })
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  }
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      {...attributes}
+      role="listitem"
+      aria-label={`Field: ${field.display_name || field.label || field.name}`}
+    >
+      <FieldItem
+        {...props}
+        field={field}
+        dragHandleProps={listeners}
+        isDragOverlay={isDragOverlay}
+      />
+    </div>
+  )
 }
 
 // Memoized Field Item Component - Two-Line Compact Design with Hidden Tags on Hover
@@ -152,26 +786,50 @@ const FieldItem = React.memo(({
   isEditing, 
   fieldTypeInfo, 
   availableFieldTypes,
+  fieldGroups,
   onEditClick,
   onMoveField,
   onToggleVisibility,
   onManageField,
-  onDeleteField
+  onDeleteField,
+  onAssignToGroup,
+  dragHandleProps,
+  isDragOverlay
 }: {
   field: PipelineField
   index: number
   isEditing: boolean
   fieldTypeInfo?: FieldType
   availableFieldTypes: FieldType[]
+  fieldGroups: FieldGroup[]
   onEditClick: (fieldId: string) => void
   onMoveField: (fieldId: string, direction: 'up' | 'down') => void
   onToggleVisibility: (fieldId: string, visible: boolean) => void
   onManageField: (field: PipelineField) => void
   onDeleteField: (fieldId: string) => void
+  onAssignToGroup: (fieldId: string, groupId: string | null) => void
+  dragHandleProps?: any
+  isDragOverlay?: boolean
 }) => {
+  const [showGroupDropdown, setShowGroupDropdown] = React.useState(false)
+  const dropdownRef = React.useRef<HTMLDivElement>(null)
   const Icon = FIELD_ICONS[field.field_type || field.type || 'text'] || Type
   const requiredStages = getRequiredStages(field)
   const isVisible = field.is_visible_in_list ?? field.visible ?? true
+  
+  // Close dropdown when clicking outside
+  React.useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setShowGroupDropdown(false)
+      }
+    }
+    
+    if (showGroupDropdown) {
+      document.addEventListener('mousedown', handleClickOutside)
+      return () => document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [showGroupDropdown])
   
   return (
     <div
@@ -185,8 +843,14 @@ const FieldItem = React.memo(({
       {/* First Line: Icon + Field Name + Field Type + Drag Handle */}
       <div className="flex items-center mb-2">
         {/* Drag Handle */}
-        <div className="flex items-center mr-2 opacity-0 group-hover:opacity-50 cursor-grab">
-          <GripVertical className="w-4 h-4 text-gray-400" />
+        <div 
+          className="flex items-center mr-2 opacity-0 group-hover:opacity-100 cursor-grab active:cursor-grabbing touch-none"
+          {...dragHandleProps}
+          role="button"
+          aria-label={`Drag to reorder field: ${field.display_name || field.label || field.name}`}
+          tabIndex={0}
+        >
+          <GripVertical className="w-4 h-4 text-gray-400 hover:text-gray-600" />
         </div>
         
         {/* Position and Field Icon */}
@@ -224,9 +888,9 @@ const FieldItem = React.memo(({
       )}
 
       {/* Second Line: Status Badges (hidden on hover) + Actions (shown on hover) */}
-      <div className="flex items-start justify-between min-h-[24px]">
+      <div className="flex items-center justify-between min-h-[24px]">
         {/* Status Badges - Hidden on hover */}
-        <div className="flex flex-wrap items-center gap-1 group-hover:opacity-0 transition-opacity max-w-[70%]">
+        <div className="flex flex-wrap items-center gap-1 group-hover:opacity-0 transition-opacity flex-1 pr-2">
           {/* Deletion Status Badge */}
           {field.deletion_status?.status && field.deletion_status.status !== 'active' && (
             <span className="inline-flex items-center px-2 py-0.5 text-xs font-medium bg-orange-100 text-orange-800 dark:bg-orange-900/20 dark:text-orange-300 rounded-full whitespace-nowrap">
@@ -258,32 +922,59 @@ const FieldItem = React.memo(({
         </div>
         
         {/* Field Actions - Shown on hover */}
-        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-          <button
-            onClick={(e) => {
-              e.stopPropagation()
-              onMoveField(field.id, 'up')
-            }}
-            disabled={index === 0}
-            className="p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-600 rounded disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-            title="Move up"
-          >
-            ↑
-          </button>
-          
-          <button
-            onClick={(e) => {
-              e.stopPropagation()
-              onMoveField(field.id, 'down')
-            }}
-            disabled={index === availableFieldTypes.length - 1}
-            className="p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-600 rounded disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-            title="Move down"
-          >
-            ↓
-          </button>
-          
-          <div className="w-px h-4 bg-gray-300 dark:bg-gray-600 mx-1" />
+        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
+          {/* Group Assignment Dropdown */}
+          <div className="relative" ref={dropdownRef}>
+            <button
+              onClick={(e) => {
+                e.stopPropagation()
+                setShowGroupDropdown(!showGroupDropdown)
+              }}
+              className="p-1 text-gray-400 hover:text-purple-600 dark:hover:text-purple-400 hover:bg-purple-50 dark:hover:bg-purple-900/20 rounded transition-colors"
+              title="Assign to group"
+            >
+              <FolderPlus className="w-3 h-3" />
+            </button>
+            
+            {showGroupDropdown && (
+              <div className="absolute right-0 top-6 w-48 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-lg z-50">
+                <div className="p-1">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onAssignToGroup(field.id, null)
+                      setShowGroupDropdown(false)
+                    }}
+                    className={`w-full text-left px-3 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700 rounded ${
+                      !field.field_group ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-800 dark:text-blue-300' : 'text-gray-700 dark:text-gray-300'
+                    }`}
+                  >
+                    No Group
+                  </button>
+                  
+                  {(Array.isArray(fieldGroups) ? fieldGroups : []).map(group => (
+                    <button
+                      key={group.id}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        onAssignToGroup(field.id, group.id)
+                        setShowGroupDropdown(false)
+                      }}
+                      className={`w-full text-left px-3 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700 rounded flex items-center space-x-2 ${
+                        field.field_group === group.id ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-800 dark:text-blue-300' : 'text-gray-700 dark:text-gray-300'
+                      }`}
+                    >
+                      <div 
+                        className="w-3 h-3 rounded-full" 
+                        style={{ backgroundColor: group.color }}
+                      />
+                      <span className="truncate">{group.name}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
           
           <button
             onClick={(e) => {
@@ -358,6 +1049,42 @@ export function PipelineFieldBuilder({ pipelineId, fields, onFieldsChange, onSav
   const [tenantAiConfig, setTenantAiConfig] = useState<any>(null)
   const [managingField, setManagingField] = useState<PipelineField | null>(null)
   
+  // Field groups state
+  const [fieldGroups, setFieldGroups] = useState<FieldGroup[]>([])
+  const [creatingGroup, setCreatingGroup] = useState(false)
+  const [newGroupName, setNewGroupName] = useState('')
+  
+  // Field groups editing state (legacy - will be replaced by settings panel)
+  const [editingGroup, setEditingGroup] = useState<string | null>(null)
+  const [editGroupData, setEditGroupData] = useState<{
+    name: string
+    description: string
+    color: string
+    icon: string
+  } | null>(null)
+  
+  
+  // Frontend-only collapse state management
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => {
+    if (typeof window !== 'undefined' && pipelineId) {
+      const saved = localStorage.getItem(`collapsed-groups-${pipelineId}`)
+      return saved ? new Set(JSON.parse(saved)) : new Set()
+    }
+    return new Set()
+  })
+  
+  // Save collapse state to localStorage
+  const saveCollapseState = useCallback((newCollapsedGroups: Set<string>) => {
+    if (typeof window !== 'undefined' && pipelineId) {
+      localStorage.setItem(`collapsed-groups-${pipelineId}`, JSON.stringify([...newCollapsedGroups]))
+    }
+  }, [pipelineId])
+  
+  // Drag and drop state
+  const [activeId, setActiveId] = useState<string | null>(null)
+  const [draggedField, setDraggedField] = useState<PipelineField | null>(null)
+  const [draggedGroup, setDraggedGroup] = useState<FieldGroup | null>(null)
+  
   // Load available field types and user types
   useEffect(() => {
     const loadData = async () => {
@@ -420,6 +1147,29 @@ export function PipelineFieldBuilder({ pipelineId, fields, onFieldsChange, onSav
     }
     loadAiConfig()
   }, [])
+
+  // Load field groups for this pipeline
+  useEffect(() => {
+    const loadFieldGroups = async () => {
+      if (!pipelineId) return
+      
+      try {
+        console.log('🔧 Loading field groups for pipeline:', pipelineId)
+        const response = await pipelinesApi.getFieldGroups(pipelineId)
+        console.log('🔧 Field groups API response:', response)
+        
+        // Handle both paginated and direct array responses
+        const groupsData = response.data?.results || response.results || response.data || response || []
+        const validGroupsData = Array.isArray(groupsData) ? groupsData : []
+        console.log('🔧 Setting field groups:', validGroupsData.length, 'groups')
+        setFieldGroups(validGroupsData)
+      } catch (error) {
+        console.error('🔧 Failed to load field groups:', error)
+        setFieldGroups([])
+      }
+    }
+    loadFieldGroups()
+  }, [pipelineId])
   
   // Add new field with new architecture
   const addField = (fieldType: FieldType) => {
@@ -507,6 +1257,216 @@ export function PipelineFieldBuilder({ pipelineId, fields, onFieldsChange, onSav
       setEditingField(null)
     }
   }
+  
+  // Field Groups Management Functions
+  const createFieldGroup = async () => {
+    if (!pipelineId || !newGroupName.trim()) return
+    
+    setCreatingGroup(true)
+    try {
+      const response = await pipelinesApi.createFieldGroup(pipelineId, {
+        name: newGroupName.trim(),
+        description: '',
+        color: '#3B82F6',
+        icon: 'folder',
+        display_order: fieldGroups.length
+      })
+      
+      setFieldGroups([...fieldGroups, response.data])
+      setNewGroupName('')
+    } catch (error) {
+      console.error('Failed to create field group:', error)
+    } finally {
+      setCreatingGroup(false)
+    }
+  }
+  
+  const assignFieldToGroup = async (fieldId: string, groupId: string | null) => {
+    if (!pipelineId) return
+    
+    console.log('🔄 assignFieldToGroup called:', { fieldId, groupId })
+    console.log('🔄 Current fieldGroups state:', fieldGroups)
+    
+    try {
+      if (groupId) {
+        // Assign field to group - convert fieldId to integer
+        const fieldIdInt = parseInt(fieldId, 10)
+        console.log('🔄 Calling pipelinesApi.assignFieldsToGroup:', { pipelineId, groupId, fieldIds: [fieldIdInt], originalFieldId: fieldId })
+        const assignResponse = await pipelinesApi.assignFieldsToGroup(pipelineId, groupId, [fieldIdInt])
+        console.log('✅ Assign response:', assignResponse.data)
+      } else {
+        // Find the field's current group and ungroup it
+        const field = fields.find(f => f.id === fieldId)
+        if (field?.field_group) {
+          const fieldIdInt = parseInt(fieldId, 10)
+          console.log('🔄 Calling pipelinesApi.ungroupFields:', { pipelineId, groupId: field.field_group, fieldIds: [fieldIdInt], originalFieldId: fieldId })
+          await pipelinesApi.ungroupFields(pipelineId, field.field_group, [fieldIdInt])
+        }
+      }
+      
+      // Update field locally after successful API call
+      console.log('🔄 Updating field locally:', { fieldId, field_group: groupId })
+      updateField(fieldId, { field_group: groupId })
+      console.log('🔄 Field updated, current fieldGroups state:', fieldGroups.length, 'groups')
+      
+      // Reload field groups to update field counts (use setTimeout to ensure state updates complete)
+      setTimeout(async () => {
+        try {
+          console.log('🔄 Reloading field groups...')
+          const groupsResponse = await pipelinesApi.getFieldGroups(pipelineId)
+          console.log('🔍 Field groups reload response:', groupsResponse)
+          
+          // Handle both paginated and direct array responses
+          const groupsData = groupsResponse.data?.results || groupsResponse.results || groupsResponse.data || groupsResponse || []
+          const validGroupsData = Array.isArray(groupsData) ? groupsData : []
+          console.log('🔄 Setting field groups (delayed):', validGroupsData.length, 'groups')
+          setFieldGroups(validGroupsData)
+        } catch (reloadError) {
+          console.error('Failed to reload field groups:', reloadError)
+        }
+      }, 100)
+      
+    } catch (error) {
+      console.error('Failed to update field group assignment:', error)
+      // Don't revert since we haven't updated locally yet
+    }
+  }
+  
+  const toggleGroupCollapse = useCallback((groupId: string) => {
+    const newCollapsedGroups = new Set(collapsedGroups)
+    
+    if (collapsedGroups.has(groupId)) {
+      newCollapsedGroups.delete(groupId)
+    } else {
+      newCollapsedGroups.add(groupId)
+    }
+    
+    setCollapsedGroups(newCollapsedGroups)
+    saveCollapseState(newCollapsedGroups)
+  }, [collapsedGroups, saveCollapseState])
+  
+  const deleteFieldGroup = async (groupId: string) => {
+    if (!pipelineId) return
+    
+    if (!confirm('Are you sure you want to delete this field group? Fields in this group will be moved to "Ungrouped Fields".')) {
+      return
+    }
+    
+    try {
+      await pipelinesApi.deleteFieldGroup(pipelineId, groupId)
+      
+      // Remove group from local state
+      setFieldGroups(groups => groups.filter(g => g.id !== groupId))
+      
+      // Update fields that were in this group to be ungrouped
+      onFieldsChange(fields.map(field => 
+        field.field_group === groupId 
+          ? { ...field, field_group: null, field_group_name: undefined }
+          : field
+      ))
+    } catch (error) {
+      console.error('Failed to delete field group:', error)
+    }
+  }
+
+  // Field group editing functions
+  const startEditingGroup = (group: FieldGroup) => {
+    setEditingGroup(group.id)
+    setEditGroupData({
+      name: group.name,
+      description: group.description || '',
+      color: group.color,
+      icon: group.icon || 'folder'
+    })
+  }
+
+  const cancelEditingGroup = () => {
+    setEditingGroup(null)
+    setEditGroupData(null)
+  }
+
+  const updateFieldGroup = async (groupId: string, updates: Partial<FieldGroup>) => {
+    if (!pipelineId || !editGroupData) return
+    
+    // Validation
+    const trimmedName = editGroupData.name.trim()
+    if (!trimmedName) {
+      console.error('Group name is required')
+      return
+    }
+    
+    // Check for duplicate names (excluding current group)
+    const isDuplicate = fieldGroups.some(group => 
+      group.id !== groupId && 
+      group.name.toLowerCase() === trimmedName.toLowerCase()
+    )
+    
+    if (isDuplicate) {
+      console.error('A group with this name already exists')
+      return
+    }
+    
+    try {
+      // Prepare clean updates object
+      const cleanUpdates = {
+        name: trimmedName,
+        description: editGroupData.description.trim(),
+        color: editGroupData.color,
+        icon: editGroupData.icon
+      }
+      
+      // Call API to update group
+      await pipelinesApi.updateFieldGroup(pipelineId, groupId, cleanUpdates)
+      
+      // Update local state
+      setFieldGroups(groups => groups.map(group => 
+        group.id === groupId 
+          ? { ...group, ...cleanUpdates }
+          : group
+      ))
+      
+      // Clear editing state
+      cancelEditingGroup()
+    } catch (error) {
+      console.error('Failed to update field group:', error)
+      // TODO: Show user-friendly error message
+    }
+  }
+
+  const handleEditGroupDataChange = (updates: Partial<{ name: string; description: string; color: string; icon: string }>) => {
+    if (!editGroupData) return
+    setEditGroupData(prev => prev ? { ...prev, ...updates } : null)
+  }
+
+  const confirmDeleteFieldGroup = async () => {
+    if (!pipelineId || !deletionDialogGroup) return
+    
+    setIsDeletingGroup(true)
+    try {
+      await pipelinesApi.deleteFieldGroup(pipelineId, deletionDialogGroup.id)
+      
+      // Remove group from local state
+      setFieldGroups(groups => groups.filter(g => g.id !== deletionDialogGroup.id))
+      
+      // Update fields that were in this group to be ungrouped
+      onFieldsChange(fields.map(field => 
+        field.field_group === deletionDialogGroup.id 
+          ? { ...field, field_group: null, field_group_name: undefined }
+          : field
+      ))
+    } catch (error) {
+      console.error('Failed to delete field group:', error)
+      throw error // Re-throw to let dialog handle the error
+    } finally {
+      setIsDeletingGroup(false)
+    }
+  }
+
+  const closeDeletionDialog = () => {
+    if (!isDeletingGroup) {
+      setDeletionDialogGroup(null)
+    }
+  }
 
   const handleEditClick = useCallback((fieldId: string) => {
     setEditingField(fieldId)
@@ -553,6 +1513,196 @@ export function PipelineFieldBuilder({ pipelineId, fields, onFieldsChange, onSav
     onFieldsChange(newFields)
   }
   
+  // Configure drag and drop sensors
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 8, // 8px movement before drag starts
+      },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  )
+
+  // Drag handlers
+  const handleDragStart = useCallback((event: DragStartEvent) => {
+    const { active } = event
+    setActiveId(String(active.id))
+    
+    // Check if dragging a field or a group
+    if (String(active.id).startsWith('field-')) {
+      const fieldId = String(active.id).replace('field-', '')
+      const field = fields.find(f => f.id === fieldId)
+      setDraggedField(field || null)
+      setDraggedGroup(null)
+    } else if (String(active.id).startsWith('group-')) {
+      const groupId = String(active.id).replace('group-', '')
+      const group = fieldGroups.find(g => g.id === groupId)
+      setDraggedGroup(group || null)
+      setDraggedField(null)
+    }
+  }, [fields, fieldGroups])
+
+  const handleDragOver = useCallback((event: DragOverEvent) => {
+    // Handle drag over logic for cross-container moves
+    // This will be implemented when we add field-to-group dragging
+  }, [])
+
+  const handleDragEnd = useCallback(async (event: DragEndEvent) => {
+    const { active, over } = event
+    
+    setActiveId(null)
+    setDraggedField(null)
+    setDraggedGroup(null)
+    
+    if (!over) return
+    
+    const activeId = String(active.id)
+    const overId = String(over.id)
+    
+    if (activeId === overId) return
+    
+    try {
+      // Handle field reordering
+      if (activeId.startsWith('field-') && overId.startsWith('field-')) {
+        const activeFieldId = activeId.replace('field-', '')
+        const overFieldId = overId.replace('field-', '')
+        
+        const activeField = fields.find(f => f.id === activeFieldId)
+        const overField = fields.find(f => f.id === overFieldId)
+        
+        if (activeField && overField) {
+          // Check if fields are in the same group
+          if (activeField.field_group === overField.field_group) {
+            // Reorder within same group or ungrouped section
+            await handleFieldReorder(activeFieldId, overFieldId)
+          } else {
+            // Move field to different group
+            await assignFieldToGroup(activeFieldId, overField.field_group)
+          }
+        }
+      }
+      // Handle group reordering
+      else if (activeId.startsWith('group-') && overId.startsWith('group-')) {
+        const activeGroupId = activeId.replace('group-', '')
+        const overGroupId = overId.replace('group-', '')
+        await handleGroupReorder(activeGroupId, overGroupId)
+      }
+      // Handle field dropped on group
+      else if (activeId.startsWith('field-') && overId.startsWith('group-')) {
+        const fieldId = activeId.replace('field-', '')
+        const groupId = overId.replace('group-', '')
+        await assignFieldToGroup(fieldId, groupId)
+      }
+      // Handle field dropped on ungrouped section
+      else if (activeId.startsWith('field-') && overId === 'ungrouped') {
+        const fieldId = activeId.replace('field-', '')
+        await assignFieldToGroup(fieldId, null)
+      }
+    } catch (error) {
+      console.error('Drag operation failed:', error)
+      // TODO: Show error toast
+    }
+  }, [fields, fieldGroups, assignFieldToGroup])
+
+  // Helper functions for drag operations
+  const handleFieldReorder = useCallback(async (activeFieldId: string, overFieldId: string) => {
+    const activeField = fields.find(f => f.id === activeFieldId)
+    const overField = fields.find(f => f.id === overFieldId)
+    
+    if (!activeField || !overField) return
+    
+    // Get all fields in the same group (or ungrouped)
+    const groupFields = fields.filter(f => f.field_group === activeField.field_group)
+    const sortedGroupFields = groupFields.sort((a, b) => a.display_order - b.display_order)
+    
+    const oldIndex = sortedGroupFields.findIndex(f => f.id === activeFieldId)
+    const newIndex = sortedGroupFields.findIndex(f => f.id === overFieldId)
+    
+    if (oldIndex !== -1 && newIndex !== -1) {
+      const reorderedFields = arrayMove(sortedGroupFields, oldIndex, newIndex)
+      
+      // Update display orders
+      reorderedFields.forEach((field, index) => {
+        field.display_order = index
+      })
+      
+      // Update the main fields array
+      const updatedFields = [...fields]
+      reorderedFields.forEach(reorderedField => {
+        const fieldIndex = updatedFields.findIndex(f => f.id === reorderedField.id)
+        if (fieldIndex !== -1) {
+          updatedFields[fieldIndex] = reorderedField
+        }
+      })
+      
+      onFieldsChange(updatedFields)
+    }
+  }, [fields, onFieldsChange])
+
+  const handleGroupReorder = useCallback(async (activeGroupId: string, overGroupId: string) => {
+    const oldIndex = fieldGroups.findIndex(g => g.id === activeGroupId)
+    const newIndex = fieldGroups.findIndex(g => g.id === overGroupId)
+    
+    if (oldIndex !== -1 && newIndex !== -1) {
+      const reorderedGroups = arrayMove(fieldGroups, oldIndex, newIndex)
+      
+      // Update display orders
+      reorderedGroups.forEach((group, index) => {
+        group.display_order = index
+      })
+      
+      setFieldGroups(reorderedGroups)
+      
+      // Call API to update group order
+      const groupOrders = reorderedGroups.map((group, index) => ({
+        id: group.id,
+        display_order: index
+      }))
+      
+      if (pipelineId) {
+        await pipelinesApi.reorderFieldGroups(pipelineId, groupOrders)
+      }
+    }
+  }, [fieldGroups, pipelineId])
+
+  // Helper function to organize fields by groups - MUST be before any conditional returns
+  const organizedFields = useMemo(() => {
+    const ungroupedFields = fields.filter(field => !field.field_group)
+    const groupedFields: Record<string, PipelineField[]> = {}
+    
+    console.log('🔍 Organizing fields:', fields.length, 'total fields')
+    console.log('🔍 Fields data:', fields.map(f => ({ id: f.id, name: f.name, field_group: f.field_group, field_group_type: typeof f.field_group })))
+    
+    // Check if any fields have field_group values
+    const fieldsWithGroups = fields.filter(f => f.field_group != null)
+    console.log('🔍 Fields WITH groups on page load:', fieldsWithGroups.length, 'out of', fields.length, 'total')
+    console.log('🔍 Fields with groups details:', fieldsWithGroups.map(f => ({ id: f.id, name: f.name, field_group: f.field_group })))
+    
+    // Group fields by their field_group
+    fields.forEach(field => {
+      if (field.field_group) {
+        const groupId = String(field.field_group) // Ensure string key
+        if (!groupedFields[groupId]) {
+          groupedFields[groupId] = []
+        }
+        groupedFields[groupId].push(field)
+        console.log('🔍 Added field to group:', { fieldName: field.name, fieldId: field.id, groupId, groupIdType: typeof groupId })
+      }
+    })
+    
+    console.log('🔍 Grouped fields:', groupedFields)
+    console.log('🔍 Ungrouped fields:', ungroupedFields.length, 'fields')
+    
+    // Sort fields within each group by display_order
+    Object.keys(groupedFields).forEach(groupId => {
+      groupedFields[groupId].sort((a, b) => a.display_order - b.display_order)
+    })
+    
+    return { ungroupedFields, groupedFields }
+  }, [fields])
+  
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -560,7 +1710,7 @@ export function PipelineFieldBuilder({ pipelineId, fields, onFieldsChange, onSav
       </div>
     )
   }
-  
+
   return (
     <div className="h-full flex">
       {/* Fields List */}
@@ -585,8 +1735,63 @@ export function PipelineFieldBuilder({ pipelineId, fields, onFieldsChange, onSav
           </div>
         </div>
         
-        <div className="flex-1 overflow-y-auto min-h-0">
-          {fields.length === 0 ? (
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCenter}
+          onDragStart={handleDragStart}
+          onDragOver={handleDragOver}
+          onDragEnd={handleDragEnd}
+          modifiers={[restrictToVerticalAxis, restrictToWindowEdges]}
+          accessibility={{
+            announcements: {
+              onDragStart({active}) {
+                const activeId = String(active.id)
+                if (activeId.startsWith('field-')) {
+                  const fieldId = activeId.replace('field-', '')
+                  const field = fields.find(f => f.id === fieldId)
+                  return `Started dragging field ${field?.display_name || field?.label || field?.name}`
+                } else if (activeId.startsWith('group-')) {
+                  const groupId = activeId.replace('group-', '')
+                  const group = fieldGroups.find(g => g.id === groupId)
+                  return `Started dragging field group ${group?.name}`
+                }
+                return 'Started dragging'
+              },
+              onDragOver({active, over}) {
+                if (over) {
+                  const overId = String(over.id)
+                  if (overId.startsWith('group-')) {
+                    const groupId = overId.replace('group-', '')
+                    const group = fieldGroups.find(g => g.id === groupId)
+                    return `Dragging over field group ${group?.name}`
+                  }
+                }
+                return 'Dragging'
+              },
+              onDragEnd({active, over}) {
+                const activeId = String(active.id)
+                if (over) {
+                  const overId = String(over.id)
+                  if (activeId.startsWith('field-') && overId.startsWith('group-')) {
+                    const groupId = overId.replace('group-', '')
+                    const group = fieldGroups.find(g => g.id === groupId)
+                    return `Field moved to group ${group?.name}`
+                  } else if (activeId.startsWith('group-') && overId.startsWith('group-')) {
+                    return `Field group reordered`
+                  }
+                  return 'Item moved'
+                } else {
+                  return 'Item returned to original position'
+                }
+              },
+              onDragCancel() {
+                return 'Dragging cancelled'
+              },
+            },
+          }}
+        >
+          <div className="flex-1 overflow-y-auto min-h-0">
+            {fields.length === 0 ? (
             <div className="p-8 text-center">
               <div className="w-20 h-20 bg-gradient-to-br from-blue-50 to-indigo-50 dark:from-blue-900/20 dark:to-indigo-900/20 rounded-2xl flex items-center justify-center mx-auto mb-6">
                 <Type className="w-10 h-10 text-blue-500" />
@@ -627,30 +1832,205 @@ export function PipelineFieldBuilder({ pipelineId, fields, onFieldsChange, onSav
               </div>
             </div>
           ) : (
-            <div className="p-3 space-y-2">
-              {fields.map((field, index) => {
-                const isEditing = editingField === field.id
-                const fieldTypeInfo = availableFieldTypes.find(t => t.key === (field.field_type || field.type))
-                
-                return (
-                  <FieldItem
-                    key={field.id}
-                    field={field}
-                    index={index}
-                    isEditing={isEditing}
-                    fieldTypeInfo={fieldTypeInfo}
-                    availableFieldTypes={availableFieldTypes}
-                    onEditClick={handleEditClick}
-                    onMoveField={handleMoveField}
-                    onToggleVisibility={handleToggleVisibility}
-                    onManageField={handleManageField}
-                    onDeleteField={handleDeleteField}
-                  />
-                )
-              })}
+            <div className="p-3 space-y-4">
+              {/* Inline Group Creation */}
+              <div className="border-2 border-dashed border-gray-200 dark:border-gray-700 rounded-lg p-3">
+                {!creatingGroup ? (
+                  <button
+                    onClick={() => setCreatingGroup(true)}
+                    className="w-full text-left text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 transition-colors flex items-center space-x-2"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>Add Field Group</span>
+                  </button>
+                ) : (
+                  <div className="space-y-2">
+                    <input
+                      type="text"
+                      value={newGroupName}
+                      onChange={(e) => setNewGroupName(e.target.value)}
+                      placeholder="Group name"
+                      className="w-full px-2 py-1 text-sm border border-gray-200 dark:border-gray-600 rounded bg-white dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-500"
+                      autoFocus
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') createFieldGroup()
+                        if (e.key === 'Escape') {
+                          setCreatingGroup(false)
+                          setNewGroupName('')
+                        }
+                      }}
+                    />
+                    <div className="flex space-x-2">
+                      <button
+                        onClick={createFieldGroup}
+                        disabled={!newGroupName.trim()}
+                        className="px-2 py-1 text-xs bg-primary text-white rounded hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        Create
+                      </button>
+                      <button
+                        onClick={() => {
+                          setCreatingGroup(false)
+                          setNewGroupName('')
+                        }}
+                        className="px-2 py-1 text-xs bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-300 rounded hover:bg-gray-300 dark:hover:bg-gray-500"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Field Groups */}
+              <SortableContext
+                items={(Array.isArray(fieldGroups) ? fieldGroups : []).map(group => `group-${group.id}`)}
+                strategy={verticalListSortingStrategy}
+              >
+                {(Array.isArray(fieldGroups) ? fieldGroups : []).map(group => {
+                  const groupIdStr = String(group.id) // Ensure string key for lookup
+                  const fieldsInGroup = organizedFields.groupedFields[groupIdStr] || []
+                  console.log('🔍 Rendering group:', { groupId: group.id, groupIdStr, groupIdType: typeof group.id, fieldsInGroup: fieldsInGroup.length, groupName: group.name })
+                  console.log('🔧 Group object:', group)
+                  
+                  return (
+                    <SortableGroup
+                      key={group.id}
+                      group={group}
+                      isCollapsed={collapsedGroups.has(group.id)}
+                      fieldCount={fieldsInGroup.length}
+                      isEditing={editingGroup === group.id}
+                      editData={editingGroup === group.id ? editGroupData : null}
+                      onToggleCollapse={toggleGroupCollapse}
+                      onDeleteGroup={deleteFieldGroup}
+                      onStartEdit={startEditingGroup}
+                      onCancelEdit={cancelEditingGroup}
+                      onSaveEdit={updateFieldGroup}
+                      onEditDataChange={handleEditGroupDataChange}
+                      existingGroups={fieldGroups}
+                    >
+                    {/* Group Fields */}
+                    {!collapsedGroups.has(group.id) && (
+                    <SortableContext
+                      items={fieldsInGroup.map(field => `field-${field.id}`)}
+                      strategy={verticalListSortingStrategy}
+                    >
+                      <div 
+                        className="p-2 space-y-1"
+                        role="list"
+                        aria-label={`Fields in ${group.name} group`}
+                      >
+                        {fieldsInGroup.map((field, index) => {
+                        const isEditing = editingField === field.id
+                        const fieldTypeInfo = availableFieldTypes.find(t => t.key === (field.field_type || field.type))
+                        
+                        return (
+                          <SortableField
+                            key={field.id}
+                            field={field}
+                            index={index}
+                            isEditing={isEditing}
+                            fieldTypeInfo={fieldTypeInfo}
+                            availableFieldTypes={availableFieldTypes}
+                            fieldGroups={fieldGroups}
+                            onEditClick={handleEditClick}
+                            onMoveField={handleMoveField}
+                            onToggleVisibility={handleToggleVisibility}
+                            onManageField={handleManageField}
+                            onDeleteField={handleDeleteField}
+                            onAssignToGroup={assignFieldToGroup}
+                          />
+                        )
+                      })}
+                      
+                      {/* Empty group message */}
+                      {fieldsInGroup.length === 0 && (
+                        <div className="text-center py-4 text-sm text-gray-500 dark:text-gray-400">
+                          No fields in this group yet
+                        </div>
+                      )}
+                      </div>
+                    </SortableContext>
+                  )}
+                    </SortableGroup>
+                  )
+                })}
+              </SortableContext>
+
+              {/* Ungrouped Fields */}
+              {organizedFields.ungroupedFields.length > 0 && (
+                <div className="space-y-2">
+                  <div className="flex items-center space-x-2 px-1">
+                    <div className="w-3 h-3 bg-gray-400 rounded-full" />
+                    <span className="text-sm font-medium text-gray-600 dark:text-gray-400">
+                      Ungrouped Fields ({organizedFields.ungroupedFields.length})
+                    </span>
+                  </div>
+                  
+                  <SortableContext
+                    items={organizedFields.ungroupedFields.map(field => `field-${field.id}`)}
+                    strategy={verticalListSortingStrategy}
+                  >
+                    <div role="list" aria-label="Ungrouped fields">
+                      {organizedFields.ungroupedFields.map((field, index) => {
+                    const isEditing = editingField === field.id
+                    const fieldTypeInfo = availableFieldTypes.find(t => t.key === (field.field_type || field.type))
+                    
+                    return (
+                      <SortableField
+                        key={field.id}
+                        field={field}
+                        index={index}
+                        isEditing={isEditing}
+                        fieldTypeInfo={fieldTypeInfo}
+                        availableFieldTypes={availableFieldTypes}
+                        fieldGroups={fieldGroups}
+                        onEditClick={handleEditClick}
+                        onMoveField={handleMoveField}
+                        onToggleVisibility={handleToggleVisibility}
+                        onManageField={handleManageField}
+                        onDeleteField={handleDeleteField}
+                        onAssignToGroup={assignFieldToGroup}
+                      />
+                    )
+                  })}
+                    </div>
+                  </SortableContext>
+                </div>
+              )}
             </div>
           )}
-        </div>
+          </div>
+          
+          <DragOverlay>
+            {draggedField ? (
+              <div className="p-3 bg-white dark:bg-gray-800 border border-gray-300 rounded-lg shadow-lg opacity-90">
+                <div className="flex items-center space-x-2">
+                  <div className="w-6 h-6 bg-primary/10 rounded flex items-center justify-center">
+                    {React.createElement(FIELD_ICONS[draggedField.field_type || draggedField.type || 'text'] || Type, {
+                      className: "w-3 h-3 text-primary"
+                    })}
+                  </div>
+                  <span className="text-sm font-medium text-gray-900 dark:text-white">
+                    {draggedField.display_name || draggedField.label || draggedField.name}
+                  </span>
+                </div>
+              </div>
+            ) : draggedGroup ? (
+              <div className="p-3 bg-white dark:bg-gray-800 border border-gray-300 rounded-lg shadow-lg opacity-90">
+                <div className="flex items-center space-x-2">
+                  <div 
+                    className="w-3 h-3 rounded-full"
+                    style={{ backgroundColor: draggedGroup.color }}
+                  />
+                  <span className="text-sm font-medium text-gray-900 dark:text-white">
+                    {draggedGroup.name}
+                  </span>
+                </div>
+              </div>
+            ) : null}
+          </DragOverlay>
+        </DndContext>
       </div>
       
       {/* Field Configuration */}
@@ -966,6 +2346,7 @@ function AddFieldModal({
           ))}
         </div>
       </div>
+
     </div>
   )
 }

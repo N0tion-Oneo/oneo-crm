@@ -14,6 +14,7 @@ export interface RecordField {
   display_order: number
   field_config?: { [key: string]: any }
   config?: { [key: string]: any } // Legacy support
+  field_group?: string | null // Field group ID for organization
   business_rules?: {
     stage_requirements?: {[key: string]: { 
       required: boolean
@@ -40,11 +41,22 @@ export interface Record {
   }
 }
 
+export interface FieldGroup {
+  id: string
+  name: string
+  description?: string
+  color: string
+  icon: string
+  display_order: number
+  field_count: number
+}
+
 export interface Pipeline {
   id: string
   name: string
   description: string
   fields: RecordField[]
+  field_groups?: FieldGroup[]
   stages?: string[]
   record_count: number
 }

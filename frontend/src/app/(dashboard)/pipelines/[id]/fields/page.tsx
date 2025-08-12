@@ -35,6 +35,9 @@ interface PipelineField {
   business_rules: Record<string, any>
   ai_config?: Record<string, any>       // For AI fields only
   
+  // Field group assignment
+  field_group?: number | string | null  // Field group ID
+  
   // Field lifecycle management
   is_deleted?: boolean
   deleted_at?: string
@@ -91,13 +94,23 @@ export default function PipelineFieldsPage() {
         setLoading(true)
         setError(null)
         
-        const response = await pipelinesApi.get(pipelineId)
+        // Load pipeline metadata
+        const pipelineResponse = await pipelinesApi.get(pipelineId)
+        
+        // Load fields separately to get field_group data
+        const fieldsResponse = await pipelinesApi.getFields(pipelineId)
+        console.log('🔍 Raw fields API response:', fieldsResponse)
+        
+        // Handle both paginated and direct array responses
+        const fieldsData = (fieldsResponse.data as any)?.results || (fieldsResponse as any).results || fieldsResponse.data || fieldsResponse || []
+        console.log('🔍 Fields from API with groups:', fieldsData.length, 'fields')
+        console.log('🔍 Fields with field_group:', fieldsData.filter((f: any) => f.field_group != null).length, 'fields')
         
         const pipelineData: Pipeline = {
-          id: response.data.id?.toString() || pipelineId,
-          name: response.data.name || 'Unknown Pipeline',
-          description: response.data.description || '',
-          fields: (response.data.fields || []).map((field: any, index: number) => ({
+          id: pipelineResponse.data.id?.toString() || pipelineId,
+          name: pipelineResponse.data.name || 'Unknown Pipeline',
+          description: pipelineResponse.data.description || '',
+          fields: (fieldsData || []).map((field: any, index: number) => ({
             id: field.id?.toString() || `field_${index}`,
             name: field.slug || field.name || `field_${index}`,
             display_name: field.display_name || field.name || field.slug,
@@ -116,6 +129,9 @@ export default function PipelineFieldsPage() {
             storage_constraints: field.storage_constraints || {},
             business_rules: field.business_rules || {},
             ai_config: field.ai_config || {},
+            
+            // Field group assignment - CRITICAL for field groups to work
+            field_group: field.field_group || null,
             
             // Field lifecycle management
             is_deleted: field.is_deleted || false,
@@ -227,9 +243,11 @@ export default function PipelineFieldsPage() {
     // Refresh active fields list
     if (pipelineId && isAuthenticated) {
       try {
-        const response = await pipelinesApi.get(pipelineId)
-        const pipelineData = response.data
-        const activeFieldsData = (pipelineData.fields || []).map((field: any, index: number) => ({
+        // Load fields separately to get field_group data
+        const fieldsResponse = await pipelinesApi.getFields(pipelineId)
+        const fieldsData = (fieldsResponse.data as any)?.results || (fieldsResponse as any).results || fieldsResponse.data || fieldsResponse || []
+        
+        const activeFieldsData = (fieldsData || []).map((field: any, index: number) => ({
           id: field.id?.toString() || `field_${index}`,
           name: field.slug || field.name || `field_${index}`,
           display_name: field.display_name || field.name || field.slug,
@@ -248,6 +266,10 @@ export default function PipelineFieldsPage() {
           storage_constraints: field.storage_constraints || {},
           business_rules: field.business_rules || {},
           ai_config: field.ai_config || {},
+          
+          // Field group assignment - CRITICAL for field groups to work
+          field_group: field.field_group || null,
+          
           is_deleted: field.is_deleted || false,
           deleted_at: field.deleted_at,
           deleted_by: field.deleted_by,

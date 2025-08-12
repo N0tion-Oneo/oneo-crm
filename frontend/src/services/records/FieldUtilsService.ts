@@ -1,6 +1,6 @@
 // FieldUtilsService - Field formatting, validation, and utility functions
 import React from 'react'
-import { RecordField, Record } from '@/types/records'
+import { RecordField, Record, FieldGroup } from '@/types/records'
 import { Field } from '@/lib/field-system/types'
 import { FieldResolver } from '@/lib/field-system/field-registry'
 
@@ -186,6 +186,61 @@ export class FieldUtilsService {
     return fields
       .filter(field => visibleFields.has(field.name))
       .sort((a, b) => (a.display_order || 0) - (b.display_order || 0))
+  }
+
+  /**
+   * Get visible fields sorted by field groups, then by display order within each group
+   */
+  static getVisibleFieldsGroupSorted(
+    fields: RecordField[], 
+    visibleFields: Set<string>,
+    fieldGroups: FieldGroup[] = []
+  ): RecordField[] {
+    const visibleFieldsList = fields.filter(field => visibleFields.has(field.name))
+    
+    // If no field groups, fallback to regular sorting
+    if (fieldGroups.length === 0) {
+      return this.getVisibleFieldsSorted(fields, visibleFields)
+    }
+
+    // Group fields by field_group
+    const groups = new Map<string | null, RecordField[]>()
+    
+    // Organize visible fields by group
+    visibleFieldsList.forEach(field => {
+      // Normalize field group ID to string for consistent comparison
+      const groupId = field.field_group ? String(field.field_group) : null
+      if (!groups.has(groupId)) {
+        groups.set(groupId, [])
+      }
+      groups.get(groupId)!.push(field)
+    })
+    
+    // Sort fields within each group by display_order
+    groups.forEach(groupFields => {
+      groupFields.sort((a, b) => (a.display_order || 0) - (b.display_order || 0))
+    })
+    
+    // Sort groups by display order and flatten
+    const sortedFields: RecordField[] = []
+    
+    // Process defined field groups first (sorted by display_order)
+    const sortedFieldGroups = [...fieldGroups].sort((a, b) => a.display_order - b.display_order)
+    
+    sortedFieldGroups.forEach(group => {
+      const groupFields = groups.get(String(group.id))
+      if (groupFields && groupFields.length > 0) {
+        sortedFields.push(...groupFields)
+      }
+    })
+    
+    // Add ungrouped fields last
+    const ungroupedFields = groups.get(null)
+    if (ungroupedFields && ungroupedFields.length > 0) {
+      sortedFields.push(...ungroupedFields)
+    }
+    
+    return sortedFields
   }
 
   /**

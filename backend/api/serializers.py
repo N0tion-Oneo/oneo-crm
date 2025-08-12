@@ -4,7 +4,7 @@ API serializers for all models
 from rest_framework import serializers
 from rest_framework.fields import empty
 from django.contrib.auth import get_user_model
-from pipelines.models import Pipeline, Field, Record
+from pipelines.models import Pipeline, Field, Record, FieldGroup
 from relationships.models import RelationshipType, Relationship
 from authentication.models import UserType
 from authentication.permissions import SyncPermissionManager
@@ -103,6 +103,13 @@ class UserTypeSerializer(serializers.ModelSerializer):
 
 class FieldSerializer(serializers.ModelSerializer):
     """Pipeline field serializer"""
+    field_group = serializers.PrimaryKeyRelatedField(
+        queryset=FieldGroup.objects.all(),
+        allow_null=True,
+        required=False,
+        help_text="Field group this field belongs to"
+    )
+    field_group_name = serializers.CharField(source='field_group.name', read_only=True)
     
     class Meta:
         model = Field
@@ -112,6 +119,7 @@ class FieldSerializer(serializers.ModelSerializer):
             'enforce_uniqueness', 'create_index', 'is_searchable',
             'is_ai_field', 'display_order', 'is_visible_in_list',
             'is_visible_in_detail', 'is_visible_in_public_forms', 'ai_config', 
+            'field_group', 'field_group_name',
             'created_at', 'updated_at'
         ]
 
@@ -1113,3 +1121,25 @@ class URLExtractionTestSerializer(serializers.Serializer):
         if not value:
             raise serializers.ValidationError("At least one test URL is required")
         return value
+
+
+class FieldGroupSerializer(serializers.ModelSerializer):
+    """Serializer for field groups"""
+    field_count = serializers.ReadOnlyField()
+    
+    class Meta:
+        model = FieldGroup
+        fields = [
+            'id', 'name', 'description', 'color', 'icon',
+            'display_order', 'field_count',
+            'created_at', 'created_by', 'updated_at', 'updated_by'
+        ]
+        read_only_fields = ['id', 'created_at', 'created_by', 'updated_at', 'updated_by']
+    
+    def create(self, validated_data):
+        validated_data['created_by'] = self.context['request'].user
+        return super().create(validated_data)
+    
+    def update(self, instance, validated_data):
+        validated_data['updated_by'] = self.context['request'].user
+        return super().update(instance, validated_data)

@@ -14,10 +14,10 @@ import csv
 import io
 import json
 
-from pipelines.models import Pipeline, Field, Record
+from pipelines.models import Pipeline, Field, Record, FieldGroup
 from api.serializers import (
     PipelineSerializer, PipelineListSerializer, FieldSerializer,
-    RecordSerializer, DynamicRecordSerializer
+    RecordSerializer, DynamicRecordSerializer, FieldGroupSerializer
 )
 from pipelines.serializers import FieldManagementActionSerializer
 from api.filters import PipelineFilter
@@ -1174,3 +1174,144 @@ class FieldViewSet(viewsets.ModelViewSet):
                 'error': f'Migration failed: {str(e)}',
                 'field_id': field.id
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class FieldGroupViewSet(viewsets.ModelViewSet):
+    """
+    Field group management API for organizing fields within pipelines
+    """
+    serializer_class = FieldGroupSerializer
+    permission_classes = [PipelinePermission]
+    filter_backends = [DjangoFilterBackend]
+    ordering = ['display_order', 'name']
+    
+    def get_queryset(self):
+        """Get field groups for a specific pipeline"""
+        pipeline_pk = self.kwargs.get('pipeline_pk')
+        if pipeline_pk:
+            return FieldGroup.objects.filter(
+                pipeline_id=pipeline_pk
+            ).select_related('pipeline', 'created_by')
+        return FieldGroup.objects.none()
+    
+    def perform_create(self, serializer):
+        """Create field group for the current pipeline"""
+        pipeline_pk = self.kwargs.get('pipeline_pk')
+        pipeline = Pipeline.objects.get(id=pipeline_pk)
+        serializer.save(pipeline=pipeline)
+    
+    @extend_schema(
+        summary="Reorder field groups",
+        description="Update the display order of multiple field groups",
+        request={
+            "type": "object",
+            "properties": {
+                "group_orders": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "integer"},
+                            "display_order": {"type": "integer"}
+                        }
+                    }
+                }
+            }
+        }
+    )
+    @action(detail=False, methods=['post'])
+    def reorder(self, request, pipeline_pk=None):
+        """Reorder field groups"""
+        group_orders = request.data.get('group_orders', [])
+        
+        updated_count = 0
+        for item in group_orders:
+            group_id = item.get('id')
+            new_order = item.get('display_order')
+            
+            if group_id and new_order is not None:
+                FieldGroup.objects.filter(
+                    id=group_id,
+                    pipeline_id=pipeline_pk
+                ).update(display_order=new_order)
+                updated_count += 1
+        
+        return Response({
+            'updated_count': updated_count,
+            'message': f'Updated display order for {updated_count} groups'
+        })
+    
+    @extend_schema(
+        summary="Assign fields to group",
+        description="Assign multiple fields to a field group",
+        request={
+            "type": "object",
+            "properties": {
+                "field_ids": {
+                    "type": "array",
+                    "items": {"type": "integer"},
+                    "description": "List of field IDs to assign to this group"
+                }
+            }
+        }
+    )
+    @action(detail=True, methods=['post'])
+    def assign_fields(self, request, pk=None, pipeline_pk=None):
+        """Assign multiple fields to this group"""
+        group = self.get_object()
+        field_ids = request.data.get('field_ids', [])
+        
+        if not field_ids:
+            return Response({
+                'error': 'No field IDs provided'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Update fields to assign them to this group
+        updated_count = Field.objects.filter(
+            id__in=field_ids,
+            pipeline_id=pipeline_pk,
+            is_deleted=False
+        ).update(field_group=group)
+        
+        return Response({
+            'assigned_count': updated_count,
+            'message': f'Assigned {updated_count} fields to group "{group.name}"'
+        })
+    
+    @extend_schema(
+        summary="Ungroup fields",
+        description="Remove fields from this group (ungroup them)",
+        request={
+            "type": "object",
+            "properties": {
+                "field_ids": {
+                    "type": "array",
+                    "items": {"type": "integer"},
+                    "description": "List of field IDs to ungroup (remove from this group)"
+                }
+            }
+        }
+    )
+    @action(detail=True, methods=['post'])
+    def ungroup_fields(self, request, pk=None, pipeline_pk=None):
+        """Remove fields from this group"""
+        group = self.get_object()
+        field_ids = request.data.get('field_ids', [])
+        
+        if not field_ids:
+            return Response({
+                'error': 'No field IDs provided'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Update fields to remove them from this group
+        updated_count = Field.objects.filter(
+            id__in=field_ids,
+            field_group=group,
+            pipeline_id=pipeline_pk
+        ).update(field_group=None)
+        
+        return Response({
+            'ungrouped_count': updated_count,
+            'message': f'Ungrouped {updated_count} fields from "{group.name}"'
+        })
+    

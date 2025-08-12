@@ -733,6 +733,7 @@ class Pipeline(models.Model):
 class Field(models.Model):
     """Field definition for pipelines"""
     pipeline = models.ForeignKey(Pipeline, on_delete=models.CASCADE, related_name='fields')
+    field_group = models.ForeignKey('FieldGroup', on_delete=models.SET_NULL, null=True, blank=True, related_name='fields')
     
     # Field identification
     name = models.CharField(max_length=255)
@@ -1066,6 +1067,91 @@ class Field(models.Model):
             impact['risk_level'] = 'low'
         
         return impact
+
+
+class FieldGroup(models.Model):
+    """
+    Field grouping for organizing fields within pipelines
+    """
+    pipeline = models.ForeignKey(Pipeline, on_delete=models.CASCADE, related_name='field_groups')
+    
+    # Group identification
+    name = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
+    
+    # Visual customization
+    color = models.CharField(max_length=7, default='#3B82F6', help_text='Hex color code')
+    icon = models.CharField(max_length=50, default='folder', help_text='Icon identifier')
+    
+    # Display configuration
+    display_order = models.IntegerField(default=0)
+    
+    # Audit fields
+    created_at = models.DateTimeField(auto_now_add=True)
+    created_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name='created_field_groups')
+    updated_at = models.DateTimeField(auto_now=True)
+    updated_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='updated_field_groups')
+    
+    # Soft delete functionality
+    is_deleted = models.BooleanField(default=False)
+    deleted_at = models.DateTimeField(null=True, blank=True)
+    deleted_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='deleted_field_groups')
+    
+    # Custom manager to handle soft delete
+    objects = FieldManager()  # Active records only
+    all_objects = models.Manager()  # All records including soft-deleted
+    
+    class Meta:
+        db_table = 'pipelines_fieldgroup'
+        indexes = [
+            models.Index(fields=['pipeline']),
+            models.Index(fields=['display_order']),
+            models.Index(fields=['is_deleted']),
+            models.Index(fields=['pipeline', 'display_order'], condition=models.Q(is_deleted=False), name='idx_fieldgroup_pipe_order'),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['pipeline', 'name'], 
+                condition=models.Q(is_deleted=False),
+                name='unique_fieldgroup_name_per_pipeline'
+            )
+        ]
+        ordering = ['display_order', 'name']
+    
+    def __str__(self):
+        return f"{self.pipeline.name} - {self.name}"
+    
+    def soft_delete(self, deleted_by: User):
+        """Soft delete the field group and ungroup all fields"""
+        from django.utils import timezone
+        
+        # Ungroup all fields in this group
+        self.fields.update(field_group=None)
+        
+        # Mark group as deleted
+        self.is_deleted = True
+        self.deleted_at = timezone.now()
+        self.deleted_by = deleted_by
+        self.save(update_fields=['is_deleted', 'deleted_at', 'deleted_by'])
+    
+    def restore(self):
+        """Restore soft-deleted field group"""
+        self.is_deleted = False
+        self.deleted_at = None
+        self.deleted_by = None
+        self.save(update_fields=['is_deleted', 'deleted_at', 'deleted_by'])
+    
+    @property
+    def field_count(self):
+        """Get count of active fields in this group"""
+        return self.fields.filter(is_deleted=False).count()
+    
+    def get_fields(self, include_deleted=False):
+        """Get fields in this group"""
+        queryset = self.fields.all()
+        if not include_deleted:
+            queryset = queryset.filter(is_deleted=False)
+        return queryset.order_by('display_order', 'name')
 
 
 class Record(models.Model):

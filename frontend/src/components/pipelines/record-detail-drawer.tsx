@@ -3,14 +3,13 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
 import { pipelinesApi, recordsApi } from '@/lib/api'
 import { useDocumentSubscription } from '@/hooks/use-websocket-subscription'
-import { type RealtimeMessage, type UserPresence, type FieldLock } from '@/contexts/websocket-context'
+import { type RealtimeMessage, type UserPresence } from '@/contexts/websocket-context'
 import { useAuth } from '@/features/auth/context'
 import { evaluateFieldPermissions, evaluateConditionalRules, type FieldWithPermissions, type FieldPermissionResult } from '@/utils/field-permissions'
-import { FieldRenderer, FieldDisplay, validateFieldValue, getFieldDefaultValue, normalizeRecordData, normalizeFieldValue } from '@/lib/field-system/field-renderer'
+import { FieldRenderer, validateFieldValue, getFieldDefaultValue, normalizeFieldValue } from '@/lib/field-system/field-renderer'
 import { Field } from '@/lib/field-system/types'
-import { FieldResolver } from '@/lib/field-system/field-registry'
-import { FieldSaveService, getSaveStrategy } from '@/lib/field-system/field-save-service'
-import { parseValidationError, formatErrorForDebug, logValidationError, getCleanErrorMessage } from '@/utils/validation-helpers'
+import { FieldSaveService } from '@/lib/field-system/field-save-service'
+import { logValidationError, getCleanErrorMessage } from '@/utils/validation-helpers'
 // Import field system to ensure initialization
 import '@/lib/field-system'
 import { 
@@ -22,7 +21,6 @@ import {
   Tag, 
   User, 
   Calendar, 
-  AlertCircle,
   CheckCircle,
   Clock,
   RefreshCw,
@@ -31,30 +29,69 @@ import {
   Link,
   FileText,
   Image,
-  Upload,
-  Eye,
-  EyeOff,
   Lock,
-  Unlock,
   Type,
   Hash,
   Mail,
   Phone,
   CheckSquare,
-  Square,
   Bot,
   Share2,
   AlignLeft,
   Calculator,
   Globe,
   ChevronDown,
+  ChevronRight,
+  Database,
+  Users,
+  Building,
+  Heart,
+  Star,
+  Home,
+  Briefcase,
+  Target,
+  TrendingUp,
+  DollarSign,
+  CreditCard,
+  ShoppingCart,
+  Package,
+  Truck,
+  Bell,
+  MessageCircle,
+  Users2,
+  UserCheck,
+  Crown,
+  Award,
+  Trophy,
+  Lightbulb,
+  BookOpen,
+  GraduationCap,
+  PieChart,
+  BarChart3,
+  Activity,
+  Wifi,
+  Smartphone,
+  Monitor,
+  Camera,
+  Video,
+  Music,
+  Key,
+  Fingerprint,
+  Palette,
+  Brush,
+  MapPin,
+  Zap,
   List,
   ToggleLeft,
   GitBranch,
-  MapPin,
   MousePointer,
-  Database,
-  HelpCircle
+  HelpCircle,
+  Code,
+  Terminal,
+  Server,
+  Cloud,
+  Shield,
+  Settings
 } from 'lucide-react'
 
 // Import tooltip components
@@ -65,6 +102,8 @@ interface RecordField extends FieldWithPermissions {
   config?: { [key: string]: any } // Legacy support
   ai_config?: { [key: string]: any } // AI field configuration
   original_slug?: string // Preserve original backend slug for API calls
+  field_group?: string | null // Field group ID for organization
+  help_text?: string // Help text for the field
 }
 
 // Convert RecordField to Field type for field registry
@@ -75,11 +114,8 @@ const convertToFieldType = (recordField: RecordField): Field => ({
   field_type: recordField.field_type,
   field_config: recordField.field_config,
   config: recordField.config, // Legacy support
-  is_required: recordField.is_required,
   original_slug: recordField.original_slug, // ⭐ CRITICAL: Include backend slug for FieldSaveService
-  is_readonly: false, // RecordField doesn't have is_readonly
-  help_text: undefined, // RecordField doesn't have help_text
-  placeholder: undefined, // RecordField doesn't have placeholder
+  help_text: recordField.help_text,
   // Pass through AI config for AI fields
   ...(recordField.ai_config && { ai_config: recordField.ai_config })
 } as Field)
@@ -126,7 +162,7 @@ const getFallbackDefaultValue = (fieldType: string): any => {
   }
 }
 
-interface Record {
+interface RecordData {
   id: string
   data: { [key: string]: any }
   stage?: string
@@ -141,11 +177,22 @@ interface Record {
   }
 }
 
+interface FieldGroup {
+  id: string
+  name: string
+  description?: string
+  color: string
+  icon: string
+  display_order: number
+  field_count: number
+}
+
 interface Pipeline {
   id: string
   name: string
   description: string
   fields: RecordField[]
+  field_groups?: FieldGroup[]
   stages?: string[]
 }
 
@@ -170,7 +217,7 @@ interface Activity {
 }
 
 export interface RecordDetailDrawerProps {
-  record: Record | null
+  record: RecordData | null
   pipeline: Pipeline
   isOpen: boolean
   onClose: () => void
@@ -229,6 +276,164 @@ const formatFieldName = (field: RecordField): string => {
   return 'Unnamed Field'
 }
 
+// Helper function to get group icon component (same as in field builder)
+const getGroupIcon = (iconValue: string) => {
+  const iconMap: Record<string, any> = {
+    // General/Common
+    'folder': Database,
+    'tag': Tag,
+    'settings': Settings,
+    'star': Star,
+    'heart': Heart,
+    'home': Home,
+    'bell': Bell,
+    'clock': Clock,
+    
+    // People & Users
+    'user': User,
+    'users': Users,
+    'users2': Users2,
+    'usercheck': UserCheck,
+    'crown': Crown,
+    
+    // Business & Finance
+    'briefcase': Briefcase,
+    'building': Building,
+    'dollarsign': DollarSign,
+    'creditcard': CreditCard,
+    'shoppingcart': ShoppingCart,
+    'package': Package,
+    'truck': Truck,
+    'target': Target,
+    
+    // Performance & Analytics
+    'trendingup': TrendingUp,
+    'piechart': PieChart,
+    'barchart3': BarChart3,
+    'activity': Activity,
+    'award': Award,
+    'trophy': Trophy,
+    
+    // Communication & Media
+    'messagecircle': MessageCircle,
+    'mail': Mail,
+    'phone': Phone,
+    'camera': Camera,
+    'video': Video,
+    'music': Music,
+    'image': Image,
+    
+    // Technology & Development
+    'code': Code,
+    'terminal': Terminal,
+    'server': Server,
+    'cloud': Cloud,
+    'wifi': Wifi,
+    'smartphone': Smartphone,
+    'monitor': Monitor,
+    
+    // Security & Access
+    'lock': Lock,
+    'key': Key,
+    'fingerprint': Fingerprint,
+    'shield': Shield,
+    
+    // Education & Knowledge
+    'lightbulb': Lightbulb,
+    'bookopen': BookOpen,
+    'graduationcap': GraduationCap,
+    
+    // Creative & Design
+    'palette': Palette,
+    'brush': Brush,
+    
+    // Miscellaneous
+    'filetext': FileText,
+    'calendar': Calendar,
+    'checksquare': CheckSquare,
+    'mappin': MapPin,
+    'globe': Globe,
+    'link': Link,
+    'bot': Bot,
+    'zap': Zap
+  }
+  
+  const IconComponent = iconMap[iconValue] || Database
+  return IconComponent
+}
+
+// FieldGroupSection component for organizing fields by groups
+const FieldGroupSection: React.FC<{
+  group: FieldGroup | null
+  isExpanded: boolean
+  onToggle: () => void
+  children: React.ReactNode
+}> = ({ group, isExpanded, onToggle, children }) => {
+  if (!group) {
+    // Ungrouped fields section
+    return (
+      <div className="mb-6">
+        <div 
+          className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg cursor-pointer mb-4"
+          onClick={onToggle}
+        >
+          <div className="flex items-center space-x-3">
+            <div className="w-5 h-5 rounded bg-gray-400 flex items-center justify-center">
+              <List className="w-3 h-3 text-white" />
+            </div>
+            <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+              Other Fields
+            </span>
+          </div>
+          <ChevronRight className={`w-4 h-4 text-gray-400 transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
+        </div>
+        {isExpanded && (
+          <div className="space-y-4">
+            {children}
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  const IconComponent = getGroupIcon(group.icon)
+
+  return (
+    <div className="mb-6">
+      <div 
+        className="flex items-center justify-between p-3 border border-gray-200 dark:border-gray-700 rounded-lg cursor-pointer mb-4"
+        style={{ backgroundColor: group.color + '10' }}
+        onClick={onToggle}
+      >
+        <div className="flex items-center space-x-3">
+          <div 
+            className="w-5 h-5 rounded flex items-center justify-center"
+            style={{ backgroundColor: group.color }}
+          >
+            <IconComponent className="w-3 h-3 text-white" />
+          </div>
+          <div className="flex flex-col">
+            <span className="text-sm font-medium text-gray-900 dark:text-white">
+              {group.name}
+            </span>
+            {group.description && (
+              <span className="text-xs text-gray-500 dark:text-gray-400">
+                {group.description}
+              </span>
+            )}
+          </div>
+        </div>
+        <ChevronRight className={`w-4 h-4 text-gray-400 transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
+      </div>
+      {isExpanded && (
+        <div className="space-y-4">
+          {children}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function RecordDetailDrawer({ 
   record, 
   pipeline, 
@@ -239,7 +444,6 @@ export function RecordDetailDrawer({
 }: RecordDetailDrawerProps) {
   const { user } = useAuth()
   const [formData, setFormData] = useState<{ [key: string]: any }>({})
-  const [originalData, setOriginalData] = useState<{ [key: string]: any }>({})
   const [activeTab, setActiveTab] = useState<'details' | 'activity' | 'communications'>('details')
   
   const [fieldErrors, setFieldErrors] = useState<{[key: string]: string}>({})
@@ -280,6 +484,74 @@ export function RecordDetailDrawer({
       .sort((a, b) => (a.display_order || 0) - (b.display_order || 0))
   }, [pipeline.fields, formData, user?.userType?.slug])
 
+  // Group fields by field_group and organize them
+  const groupedFields = useMemo(() => {
+    const groups = new Map<string | null, RecordField[]>()
+    
+    // Organize visible fields by group
+    visibleFields.forEach(field => {
+      // Normalize field group ID to string for consistent comparison
+      const groupId = field.field_group ? String(field.field_group) : null
+      if (!groups.has(groupId)) {
+        groups.set(groupId, [])
+      }
+      groups.get(groupId)!.push(field)
+    })
+    
+    // Sort groups by display order
+    const sortedGroups: { group: FieldGroup | null; fields: RecordField[] }[] = []
+    
+    // Process defined field groups first
+    if (pipeline.field_groups) {
+      const sortedFieldGroups = [...pipeline.field_groups].sort((a, b) => a.display_order - b.display_order)
+      
+      sortedFieldGroups.forEach(group => {
+        // Use string version of group ID for lookup
+        const groupFields = groups.get(String(group.id))
+        if (groupFields && groupFields.length > 0) {
+          sortedGroups.push({ group, fields: groupFields })
+        }
+      })
+    }
+    
+    // Add ungrouped fields last
+    const ungroupedFields = groups.get(null)
+    if (ungroupedFields && ungroupedFields.length > 0) {
+      sortedGroups.push({ group: null, fields: ungroupedFields })
+    }
+    
+    return sortedGroups
+  }, [visibleFields, pipeline.field_groups])
+
+  // State for collapsible field groups
+  const [expandedGroups, setExpandedGroups] = useState<Set<string | null>>(new Set())
+  
+  // Initialize with all groups expanded
+  useEffect(() => {
+    const groupIds = new Set<string | null>()
+    if (pipeline.field_groups) {
+      pipeline.field_groups.forEach(group => groupIds.add(String(group.id)))
+    }
+    // Add null for ungrouped fields if they exist
+    if (visibleFields.some(field => !field.field_group)) {
+      groupIds.add(null)
+    }
+    setExpandedGroups(groupIds)
+  }, [pipeline.field_groups, visibleFields])
+
+  // Toggle group expansion
+  const toggleGroupExpansion = (groupId: string | null) => {
+    setExpandedGroups(prev => {
+      const newSet = new Set(prev)
+      if (newSet.has(groupId)) {
+        newSet.delete(groupId)
+      } else {
+        newSet.add(groupId)
+      }
+      return newSet
+    })
+  }
+
   // Real-time collaboration
   // Subscribe to document updates for collaborative editing
   const { isConnected } = useDocumentSubscription(
@@ -308,14 +580,6 @@ export function RecordDetailDrawer({
 
   // Simplified collaborative editing (advanced features disabled for now)
   const activeUsers: UserPresence[] = []
-  const fieldLocks: FieldLock[] = []
-  const lockField = (recordId: string, fieldName: string) => {}
-  const unlockField = (recordId: string, fieldName: string) => {}
-  const broadcastRecordUpdate = (recordId: string, fieldName: string, value: any) => {
-    // TODO: Implement real-time broadcasting
-  }
-  const isFieldLocked = (recordId: string, fieldName: string) => false
-  const getFieldLock = (recordId: string, fieldName: string): FieldLock | null => null
 
   // Initialize form data when record ID changes (not on every record update)
   useEffect(() => {
@@ -339,9 +603,10 @@ export function RecordDetailDrawer({
           backendValue = record.data?.[field.name]
         }
         
-        if (backendValue === undefined && field.original_slug) {
+        if (backendValue === undefined && field.original_slug && field.display_name) {
           // Try with display_name or slug transformations
-          backendValue = record.data?.[field.display_name?.toLowerCase().replace(/\s+/g, '_')]
+          const displayNameSlug = field.display_name.toLowerCase().replace(/\s+/g, '_')
+          backendValue = record.data?.[displayNameSlug]
         }
         
         // Always try to map the value, even if it's empty string, 0, false, etc.
@@ -361,7 +626,6 @@ export function RecordDetailDrawer({
       
       
       setFormData(formData)
-      setOriginalData(formData)
       loadActivities(record.id)
     } else {
       // New record - initialize ALL fields with appropriate defaults
@@ -384,7 +648,6 @@ export function RecordDetailDrawer({
       
 
       setFormData(defaultData)
-      setOriginalData({})
       setActivities([])
     }
     
@@ -467,10 +730,13 @@ export function RecordDetailDrawer({
       // Use field registry validation with permission awareness
       const fieldType = convertToFieldType(field)
       
-      // Override required status based on permissions
-      fieldType.is_required = permissions.required
+      // Create a modified field type with required status based on permissions
+      const fieldTypeWithPermissions = {
+        ...fieldType,
+        is_required: permissions.required
+      } as Field
       
-      const validationResult = validateFieldValue(fieldType, value)
+      const validationResult = validateFieldValue(fieldTypeWithPermissions, value)
       
       if (!validationResult.isValid && validationResult.error) {
         // Log validation error with source tracking for debugging
@@ -521,7 +787,6 @@ export function RecordDetailDrawer({
         const transformedData = transformFormDataForBackend(formData)
         const response = await pipelinesApi.createRecord(pipeline.id, { data: transformedData })
         const newRecord = response.data
-        setOriginalData({ ...formData })
         setLastSaved(new Date())
         
         // Call parent onSave with new record ID
@@ -532,6 +797,7 @@ export function RecordDetailDrawer({
       }
     } catch (error: any) {
       console.error('Create record failed:', error)
+      // TODO: Show error to user
     } finally {
       setIsAutoSaving(false)
     }
@@ -611,7 +877,7 @@ export function RecordDetailDrawer({
           const normalizedValue = normalizeFieldValue(fieldType, result.savedValue)
           setFormData(prev => ({ ...prev, [field.name]: normalizedValue }))
         }
-      }).catch((error) => {
+      }).catch((_error) => {
         // Error already handled by FieldSaveService toast
       }).finally(() => {
         isSavingRef.current = false
@@ -629,8 +895,8 @@ export function RecordDetailDrawer({
           error={fieldError}
           autoFocus={false}
           context="drawer"
-          pipeline_id={pipeline?.id}
-          record_id={record?.id}
+          pipeline_id={pipeline?.id ? parseInt(pipeline.id, 10) : undefined}
+          record_id={record?.id ? parseInt(record.id, 10) : undefined}
         />
       </div>
     )
@@ -767,47 +1033,73 @@ export function RecordDetailDrawer({
         <div className="flex-1 overflow-y-auto">
           {activeTab === 'details' && (
             <div className="p-6 space-y-6">
-              {/* Fields (including tags fields handled by field system) */}
-              <div className="space-y-4">
-                {visibleFields.map((field) => {
-                  const permissions = getFieldPermissions(field)
-                  const IconComponent = getFieldIcon(field.field_type)
-                  const fieldName = formatFieldName(field)
-                  const hasHelpText = field.help_text?.trim()
+              {/* Fields organized by field groups */}
+              <div className="space-y-6">
+                {groupedFields.map(({ group, fields }) => {
+                  const groupKey = group?.id || 'ungrouped'
+                  const groupId = group ? String(group.id) : null
+                  const isExpanded = expandedGroups.has(groupId)
                   
                   return (
-                    <TooltipProvider key={field.name}>
-                      <div>
-                        <div className="flex items-center mb-2">
-                          {/* Field Icon */}
-                          <IconComponent className="w-4 h-4 mr-2 text-gray-500 dark:text-gray-400 flex-shrink-0" />
-                          
-                          {/* Field Label */}
-                          <label className="block text-sm font-bold text-gray-900 dark:text-white flex-grow">
-                            {fieldName}
-                            {permissions.required && <span className="text-red-500 ml-1">*</span>}
-                            {permissions.readonly && <span className="text-gray-500 ml-1 font-normal">(read-only)</span>}
-                          </label>
-                          
-                          {/* Help Text Tooltip */}
-                          {hasHelpText && (
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <HelpCircle className="w-4 h-4 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 cursor-help ml-1 flex-shrink-0" />
-                              </TooltipTrigger>
-                              <TooltipContent>
-                                <p className="max-w-xs">{field.help_text}</p>
-                              </TooltipContent>
-                            </Tooltip>
-                          )}
-                        </div>
+                    <FieldGroupSection
+                      key={groupKey}
+                      group={group}
+                      isExpanded={isExpanded}
+                      onToggle={() => toggleGroupExpansion(groupId)}
+                    >
+                      {fields.map((field) => {
+                        const permissions = getFieldPermissions(field)
+                        const IconComponent = getFieldIcon(field.field_type)
+                        const fieldName = formatFieldName(field)
+                        const hasHelpText = field.help_text?.trim()
                         
-                        {/* Field Input */}
-                        {renderFieldInput(field)}
-                      </div>
-                    </TooltipProvider>
+                        return (
+                          <TooltipProvider key={field.name}>
+                            <div>
+                              <div className="flex items-center mb-2">
+                                {/* Field Icon */}
+                                <IconComponent className="w-4 h-4 mr-2 text-gray-500 dark:text-gray-400 flex-shrink-0" />
+                                
+                                {/* Field Label */}
+                                <label className="block text-sm font-bold text-gray-900 dark:text-white flex-grow">
+                                  {fieldName}
+                                  {permissions.required && <span className="text-red-500 ml-1">*</span>}
+                                  {permissions.readonly && <span className="text-gray-500 ml-1 font-normal">(read-only)</span>}
+                                </label>
+                                
+                                {/* Help Text Tooltip */}
+                                {hasHelpText && (
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <HelpCircle className="w-4 h-4 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 cursor-help ml-1 flex-shrink-0" />
+                                    </TooltipTrigger>
+                                    <TooltipContent>
+                                      <p className="max-w-xs">{field.help_text}</p>
+                                    </TooltipContent>
+                                  </Tooltip>
+                                )}
+                              </div>
+                              
+                              {/* Field Input */}
+                              {renderFieldInput(field)}
+                            </div>
+                          </TooltipProvider>
+                        )
+                      })}
+                    </FieldGroupSection>
                   )
                 })}
+                
+                {/* Show message if no fields are visible */}
+                {groupedFields.length === 0 && (
+                  <div className="text-center py-8">
+                    <Database className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+                    <p className="text-gray-500 dark:text-gray-400">No fields available</p>
+                    <p className="text-sm text-gray-400 mt-2">
+                      This record has no visible fields or all fields are hidden by conditional rules.
+                    </p>
+                  </div>
+                )}
               </div>
             </div>
           )}

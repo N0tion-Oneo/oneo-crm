@@ -116,10 +116,53 @@ export function RecordListView({ pipeline, onEditRecord, onCreateRecord }: Recor
   })
 
   // Memoized field computations (must come before useEffects that use them)
-  const visibleFieldsList = useMemo(() => 
-    FieldUtilsService.getVisibleFieldsSorted(pipeline.fields, visibleFields),
-    [pipeline.fields, visibleFields]
-  )
+  const visibleFieldsList = useMemo(() => {
+    const visibleFieldsArray = pipeline.fields.filter(field => visibleFields.has(field.name))
+    
+    // If no field groups, fallback to regular sorting
+    if (!pipeline.field_groups || pipeline.field_groups.length === 0) {
+      return visibleFieldsArray.sort((a, b) => (a.display_order || 0) - (b.display_order || 0))
+    }
+
+    // Group fields by field_group
+    const groups = new Map<string | null, RecordField[]>()
+    
+    // Organize visible fields by group
+    visibleFieldsArray.forEach(field => {
+      // Normalize field group ID to string for consistent comparison
+      const groupId = field.field_group ? String(field.field_group) : null
+      if (!groups.has(groupId)) {
+        groups.set(groupId, [])
+      }
+      groups.get(groupId)!.push(field)
+    })
+    
+    // Sort fields within each group by display_order
+    groups.forEach(groupFields => {
+      groupFields.sort((a, b) => (a.display_order || 0) - (b.display_order || 0))
+    })
+    
+    // Sort groups by display order and flatten
+    const sortedFields: RecordField[] = []
+    
+    // Process defined field groups first (sorted by display_order)
+    const sortedFieldGroups = [...pipeline.field_groups].sort((a, b) => a.display_order - b.display_order)
+    
+    sortedFieldGroups.forEach(group => {
+      const groupFields = groups.get(String(group.id))
+      if (groupFields && groupFields.length > 0) {
+        sortedFields.push(...groupFields)
+      }
+    })
+    
+    // Add ungrouped fields last
+    const ungroupedFields = groups.get(null)
+    if (ungroupedFields && ungroupedFields.length > 0) {
+      sortedFields.push(...ungroupedFields)
+    }
+    
+    return sortedFields
+  }, [pipeline.fields, visibleFields, pipeline.field_groups])
 
   const selectFields = useMemo(() => 
     FieldUtilsService.getSelectFields(pipeline.fields),
@@ -353,6 +396,7 @@ export function RecordListView({ pipeline, onEditRecord, onCreateRecord }: Recor
           <RecordTable
             records={records}
             fields={visibleFieldsList}
+            fieldGroups={pipeline.field_groups}
             sort={sort}
             onSort={handleSort}
             selectedRecords={selectedRecords}

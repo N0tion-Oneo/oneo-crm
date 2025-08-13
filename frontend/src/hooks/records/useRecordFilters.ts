@@ -102,14 +102,14 @@ export function useRecordFilters(): UseRecordFiltersReturn {
     setAppliedFilters([])
   }, [])
 
-  // // Automatically apply filters when boolean query changes (matching original behavior)
-  // React.useEffect(() => {
-  //   const allFilters: Filter[] = []
-  //   booleanQuery.groups.forEach(group => {
-  //     allFilters.push(...group.filters)
-  //   })
-  //   setAppliedFilters(allFilters)
-  // }, [booleanQuery])
+  // Automatically apply filters when boolean query changes (matching original behavior)
+  React.useEffect(() => {
+    const allFilters: Filter[] = []
+    booleanQuery.groups.forEach(group => {
+      allFilters.push(...group.filters)
+    })
+    setAppliedFilters(allFilters)
+  }, [booleanQuery])
 
   // Applied filters management
   const applyFilters = useCallback(() => {

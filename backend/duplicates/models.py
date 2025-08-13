@@ -37,6 +37,7 @@ class URLExtractionRule(models.Model):
     remove_www = models.BooleanField(default=True)
     remove_query_params = models.BooleanField(default=True)
     remove_fragments = models.BooleanField(default=True)
+    strip_subdomains = models.BooleanField(default=False, help_text="Strip all subdomains to keep only main domain (e.g., blog.apple.com → apple.com)")
     normalization_steps = models.JSONField(
         default=list, 
         blank=True,
@@ -70,9 +71,8 @@ class DuplicateRule(models.Model):
     """Duplicate detection rule with AND/OR logic"""
     
     ACTION_CHOICES = [
-        ('warn', 'Show Warning'),
-        ('block', 'Block Creation'),
-        ('merge_prompt', 'Prompt to Merge'),
+        ('detect_only', 'Detect and Store Matches'),
+        ('disabled', 'Disable Detection'),
     ]
     
     # Multi-tenant isolation
@@ -96,7 +96,7 @@ class DuplicateRule(models.Model):
     action_on_duplicate = models.CharField(
         max_length=50, 
         choices=ACTION_CHOICES,
-        default='warn',
+        default='detect_only',
         help_text="Action to take when duplicates are detected"
     )
     
@@ -186,11 +186,10 @@ class DuplicateMatch(models.Model):
     
     STATUS_CHOICES = [
         ('pending', 'Pending Review'),
-        ('confirmed', 'Confirmed Duplicate'),
-        ('false_positive', 'False Positive'),
         ('merged', 'Records Merged'),
-        ('ignored', 'Ignored'),
-        ('auto_resolved', 'Auto-Resolved'),
+        ('kept_both', 'Kept Both Records'),
+        ('ignored', 'Marked as False Positive'),
+        ('needs_review', 'Flagged for Team Review'),
         ('resolved', 'Resolved'),
     ]
     
@@ -256,6 +255,7 @@ class DuplicateResolution(models.Model):
         ('keep_both', 'Keep Both Records'),
         ('ignore', 'Mark as False Positive'),
         ('manual_review', 'Requires Manual Review'),
+        ('rollback', 'Rollback Resolution'),
     ]
     
     # Multi-tenant isolation

@@ -375,7 +375,6 @@ export function PipelineDuplicateSettings({
           onClose={() => setShowRuleBuilder(false)}
           onSave={handleRuleBuilderSave}
           pipelineId={pipelineId}
-          pipeline={pipeline}
           editingRule={duplicateRule}
         />
       )}

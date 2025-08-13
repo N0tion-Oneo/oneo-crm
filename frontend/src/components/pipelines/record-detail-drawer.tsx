@@ -12,6 +12,7 @@ import { FieldSaveService } from '@/lib/field-system/field-save-service'
 import { logValidationError, getCleanErrorMessage } from '@/utils/validation-helpers'
 // Import field system to ensure initialization
 import '@/lib/field-system'
+import { DuplicateIndicator } from '@/components/duplicates/duplicate-indicator'
 import { 
   X, 
   Save, 
@@ -1033,6 +1034,17 @@ export function RecordDetailDrawer({
         <div className="flex-1 overflow-y-auto">
           {activeTab === 'details' && (
             <div className="p-6 space-y-6">
+              {/* Duplicate Indicator */}
+              {record && pipeline && (
+                <DuplicateIndicator 
+                  recordId={record.id} 
+                  pipelineId={pipeline.id}
+                  onNavigateToDuplicates={() => {
+                    window.open(`/pipelines/${pipeline.id}/duplicates?tab=matches&record=${record.id}`, '_blank')
+                  }}
+                />
+              )}
+              
               {/* Fields organized by field groups */}
               <div className="space-y-6">
                 {groupedFields.map(({ group, fields }) => {

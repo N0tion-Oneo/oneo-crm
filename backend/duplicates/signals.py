@@ -67,11 +67,12 @@ def check_duplicates_on_record_save(sender, instance, **kwargs):
         logger.error(f"Error getting tenant context: {str(e)}")
         return
     
-    # Get all active duplicate rules for this pipeline
+    # Get all active duplicate rules for this pipeline that are set to detect
     rules = DuplicateRule.objects.filter(
         tenant=tenant,
         pipeline=pipeline,
-        is_active=True
+        is_active=True,
+        action_on_duplicate='detect_only'  # Only process rules that are set to detect
     ).prefetch_related('duplicate_test_cases')
     
     logger.info(f"🔍 DUPLICATE SIGNAL: Found {rules.count()} active rules for pipeline {pipeline.name}")
@@ -117,16 +118,15 @@ def check_duplicates_on_record_save(sender, instance, **kwargs):
                     detected_duplicates.append(duplicate_info)
                     logger.info(f"Duplicate detected: Record matches existing record {existing_record.id} via rule '{rule.name}'")
                     
-                    # Handle based on rule action
-                    if rule.action_on_duplicate == 'block':
-                        raise DuplicateDetectionError(
-                            f"Record creation blocked: Duplicate found matching rule '{rule.name}'",
-                            duplicates=detected_duplicates
-                        )
-                    elif rule.action_on_duplicate == 'merge_prompt':
-                        # Store the duplicate for later handling by frontend
+                    # Handle based on rule action - no blocking, just detection
+                    if rule.action_on_duplicate == 'detect_only':
+                        # Store the duplicate for post-save processing
                         instance._detected_duplicates = detected_duplicates
-                        # Don't block, but flag for frontend handling
+                        logger.info(f"Duplicate detected for later processing: Rule '{rule.name}', confidence {duplicate_info['confidence_score']}")
+                    elif rule.action_on_duplicate == 'disabled':
+                        # Skip this rule entirely
+                        logger.debug(f"Skipping disabled duplicate rule: '{rule.name}'")
+                        continue
                         
             except Exception as e:
                 logger.error(f"Error evaluating rule {rule.name}: {str(e)}")

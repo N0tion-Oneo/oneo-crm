@@ -899,7 +899,7 @@ class URLExtractionRuleSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'name', 'description', 'domain_patterns', 'extraction_pattern',
             'extraction_format', 'case_sensitive', 'remove_protocol', 'remove_www',
-            'remove_query_params', 'remove_fragments', 'normalization_steps', 
+            'remove_query_params', 'remove_fragments', 'strip_subdomains', 'normalization_steps', 
             'template_type', 'is_active', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']

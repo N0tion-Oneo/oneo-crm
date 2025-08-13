@@ -69,7 +69,7 @@ export function DuplicateRuleBuilder({
   // Rule form state
   const [ruleName, setRuleName] = useState('')
   const [ruleDescription, setRuleDescription] = useState('')
-  const [actionOnDuplicate, setActionOnDuplicate] = useState<'warn' | 'block' | 'merge_prompt'>('warn')
+  const [actionOnDuplicate, setActionOnDuplicate] = useState<'detect_only' | 'disabled'>('detect_only')
   const [isActive, setIsActive] = useState(true)
   const [logic, setLogic] = useState<RuleLogic>({
     operator: 'AND',
@@ -97,7 +97,7 @@ export function DuplicateRuleBuilder({
       // Reset form for new rule
       setRuleName('')
       setRuleDescription('')
-      setActionOnDuplicate('warn')
+      setActionOnDuplicate('detect_only')
       setIsActive(true)
       setLogic({ operator: 'AND', fields: [] })
     }
@@ -339,10 +339,8 @@ export function DuplicateRuleBuilder({
                       onChange={(e) => setActionOnDuplicate(e.target.value as any)}
                       className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
                     >
-                      <option value="warn">Warn Only</option>
-                      <option value="prevent">Prevent Creation</option>
-                      <option value="merge">Suggest Merge</option>
-                      <option value="flag">Flag for Review</option>
+                      <option value="detect_only">Detect and Store Matches</option>
+                      <option value="disabled">Disable Detection</option>
                     </select>
                   </div>
                 </div>

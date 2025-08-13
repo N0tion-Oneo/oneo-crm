@@ -6,7 +6,7 @@ export interface DuplicateRule {
   description?: string
   pipeline: number | string // Can be ID or slug
   logic: any // JSON field for AND/OR logic structure
-  action_on_duplicate: 'warn' | 'block' | 'merge_prompt'
+  action_on_duplicate: 'detect_only' | 'disabled'
   is_active: boolean
   created_at: string
   updated_at: string
@@ -41,7 +41,7 @@ export interface DuplicateMatch {
   detected_at: string
   reviewed_by?: number
   reviewed_at?: string
-  status: 'pending' | 'confirmed' | 'false_positive' | 'merged' | 'ignored' | 'auto_resolved' | 'resolved'
+  status: 'pending' | 'merged' | 'kept_both' | 'ignored' | 'needs_review' | 'resolved'
   resolution_notes?: string
   auto_resolution_reason?: string
   tenant?: number
@@ -111,7 +111,7 @@ export interface DuplicateRuleBuilderRequest {
   description?: string
   pipeline: number
   logic: any // JSON field for AND/OR logic structure
-  action_on_duplicate?: 'warn' | 'block' | 'merge_prompt'
+  action_on_duplicate?: 'detect_only' | 'disabled'
   is_active?: boolean
 }
 
@@ -134,4 +134,22 @@ export interface DuplicateStatistics {
   processing_time_stats: Record<string, any>
   top_performing_rules: any[]
   field_performance: Record<string, any>
+}
+
+export interface MergeDecision {
+  source: 'left' | 'right' | 'custom'
+  value?: any
+}
+
+export interface MergeRequest {
+  match_id: number
+  primary_record_id: number
+  field_decisions: Record<string, MergeDecision>
+  notes?: string
+}
+
+export interface DuplicateCountResponse {
+  record_id: string
+  duplicate_count: number
+  has_duplicates: boolean
 }

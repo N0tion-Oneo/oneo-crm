@@ -877,73 +877,73 @@ export default function PermissionsPage() {
 
           {/* Enhanced Permission Matrix */}
           <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden shadow-sm">
-            {/* Matrix Header with User Type Cards */}
-            <div className="border-b border-gray-200 dark:border-gray-700 bg-gradient-to-r from-gray-50 to-gray-100 dark:from-gray-700 dark:to-gray-800">
-              <div className="overflow-x-auto">
-                <div className="min-w-full">
-                  <div className="flex">
-                    {/* Permission column header */}
-                    <div className="flex-none w-80 px-6 py-4">
-                      <div className="flex items-center justify-between">
-                        <h4 className="text-sm font-semibold text-gray-900 dark:text-white">
-                          Static Permissions
-                        </h4>
-                        <div className="flex items-center space-x-2">
-                          <button 
-                            type="button"
-                            onClick={expandAllCategories}
-                            className="text-xs text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 px-2 py-1 rounded border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
-                          >
-                            Expand All
-                          </button>
-                          <button 
-                            type="button"
-                            onClick={collapseAllCategories}
-                            className="text-xs text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 px-2 py-1 rounded border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
-                          >
-                            Collapse All
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                    
-                    {/* User type columns */}
-                    <div className="flex flex-1 min-w-0">
-                      {userTypes.map((userType) => (
-                        <div key={userType.id} className="flex-1 min-w-32 px-4 py-4 border-l border-gray-200 dark:border-gray-600">
-                          <div className="text-center">
-                            <div className="flex items-center justify-center mb-2">
-                              <div className={`w-8 h-8 rounded-full flex items-center justify-center text-white text-sm font-medium ${getRoleColor(userType.slug || userType.name.toLowerCase()).replace('bg-', 'bg-').replace('-100', '-500').replace('-900', '-600')}`}>
-                                {userType.name.charAt(0)}
-                              </div>
-                            </div>
-                            <div className="text-sm font-medium text-gray-900 dark:text-white mb-1">
-                              {userType.name}
-                            </div>
-                            <div className={`inline-flex px-2 py-1 text-xs font-medium rounded-full ${getRoleColor(userType.slug || userType.name.toLowerCase())}`}>
-                              {userType.slug || userType.name.toLowerCase()}
-                            </div>
-                            <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                              {userType.user_count || 0} users
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
+            {/* Controls Header */}
+            <div className="border-b border-gray-200 dark:border-gray-700 bg-gradient-to-r from-gray-50 to-gray-100 dark:from-gray-700 dark:to-gray-800 px-6 py-4">
+              <div className="flex items-center justify-between">
+                <h4 className="text-sm font-semibold text-gray-900 dark:text-white">
+                  Static Permissions Matrix
+                </h4>
+                <div className="flex items-center space-x-2">
+                  <button 
+                    type="button"
+                    onClick={expandAllCategories}
+                    className="text-xs text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 px-2 py-1 rounded border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+                  >
+                    Expand All
+                  </button>
+                  <button 
+                    type="button"
+                    onClick={collapseAllCategories}
+                    className="text-xs text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 px-2 py-1 rounded border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+                  >
+                    Collapse All
+                  </button>
                 </div>
               </div>
             </div>
 
-            {/* Permission Matrix Body */}
-            <div className="overflow-x-auto max-h-96 overflow-y-auto">
-              <div className="min-w-full">
-                {Object.entries(permissionsByCategory).map(([category, categoryPermissions]) => (
-                  <div key={`category-group-${category}`} className="border-b border-gray-100 dark:border-gray-700 last:border-b-0">
-                    {/* Enhanced Category header */}
-                    <div className="bg-gray-50 dark:bg-gray-750 border-b border-gray-200 dark:border-gray-600">
-                      <div className="flex">
-                        <div className="flex-none w-80 px-6 py-3">
+            {/* Permission Matrix Table */}
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                {/* Table Header */}
+                <thead className="bg-gradient-to-r from-gray-50 to-gray-100 dark:from-gray-700 dark:to-gray-800 sticky top-0 z-10">
+                  <tr>
+                    <th className="px-6 py-4 text-left border-r border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-700 sticky left-0 z-20 w-72">
+                      <div className="text-sm font-semibold text-gray-900 dark:text-white">
+                        Permissions
+                      </div>
+                      <div className="text-xs text-gray-500 dark:text-gray-400">
+                        {filteredPermissions.length} total
+                      </div>
+                    </th>
+                    {userTypes.map((userType) => (
+                      <th key={userType.id} className="px-3 py-4 text-center border-l border-gray-200 dark:border-gray-600 w-24">
+                        <div className="flex flex-col items-center space-y-2">
+                          <div className={`w-8 h-8 rounded-full flex items-center justify-center text-white text-sm font-medium ${getRoleColor(userType.slug || userType.name.toLowerCase()).replace('bg-', 'bg-').replace('-100', '-500').replace('-900', '-600')}`}>
+                            {userType.name.charAt(0)}
+                          </div>
+                          <div className="text-sm font-medium text-gray-900 dark:text-white">
+                            {userType.name}
+                          </div>
+                          <div className={`inline-flex px-2 py-1 text-xs font-medium rounded-full ${getRoleColor(userType.slug || userType.name.toLowerCase())}`}>
+                            {userType.slug || userType.name.toLowerCase()}
+                          </div>
+                          <div className="text-xs text-gray-500 dark:text-gray-400">
+                            {userType.user_count || 0} users
+                          </div>
+                        </div>
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+
+                {/* Table Body */}
+                <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
+                  {Object.entries(permissionsByCategory).map(([category, categoryPermissions]) => (
+                    <React.Fragment key={`category-group-${category}`}>
+                      {/* Category Header Row */}
+                      <tr className="bg-gray-50 dark:bg-gray-700/50 border-t border-gray-200 dark:border-gray-600">
+                        <td className="px-6 py-3 border-r border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-700 sticky left-0 z-10 w-72">
                           <button
                             type="button"
                             onClick={(e) => {
@@ -971,70 +971,66 @@ export default function PermissionsPage() {
                               </div>
                             </div>
                           </button>
-                        </div>
+                        </td>
                         
                         {/* Category-level bulk actions */}
-                        <div className="flex flex-1 min-w-0">
-                          {userTypes.map((userType) => {
-                            const allGranted = categoryPermissions.every(permission => 
-                              permissionMatrix[userType.name]?.[permission.name] === true
-                            )
-                            const someGranted = categoryPermissions.some(permission => 
-                              permissionMatrix[userType.name]?.[permission.name] === true
-                            )
-                            
-                            return (
-                              <div key={userType.id} className="flex-1 min-w-32 px-4 py-3 border-l border-gray-200 dark:border-gray-600 flex items-center justify-center">
-                                <button 
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.preventDefault()
-                                    e.stopPropagation()
-                                    toggleCategoryPermissions(category, userType.name)
-                                  }}
-                                  className={`text-xs px-2 py-1 rounded transition-colors ${
-                                    allGranted 
-                                      ? 'bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300 hover:bg-green-200 dark:hover:bg-green-800'
-                                      : someGranted
-                                      ? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-300 hover:bg-yellow-200 dark:hover:bg-yellow-800'
-                                      : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-600'
-                                  }`}
-                                  title={`Toggle all ${category} permissions for ${userType.name} (${allGranted ? 'All granted' : someGranted ? 'Partially granted' : 'None granted'})`}
-                                >
-                                  {allGranted ? '✓ All' : someGranted ? '◐ Some' : 'None'}
-                                </button>
-                              </div>
-                            )
-                          })}
-                        </div>
-                      </div>
-                    </div>
-                    
-                    {/* Permission rows for this category - only show if expanded */}
-                    {expandedCategories.has(category) && categoryPermissions.map((permission, index) => (
-                      <div key={`permission-${permission.id}`} className={`flex hover:bg-gray-50 dark:hover:bg-gray-700/50 ${index !== categoryPermissions.length - 1 ? 'border-b border-gray-100 dark:border-gray-700' : ''}`}>
-                        <div className="flex-none w-80 px-6 py-4">
-                          <div className="flex items-start">
-                            <div className="flex-1">
-                              <div className="text-sm font-medium text-gray-900 dark:text-white">
-                                {permission.name}
-                              </div>
-                              <div className="text-xs text-gray-500 dark:text-gray-400 mt-1 leading-relaxed">
-                                {permission.description}
-                              </div>
-                              {permission.is_system && (
-                                <div className="mt-2">
-                                  <span className="inline-flex items-center px-2 py-1 text-xs bg-yellow-100 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-200 rounded-full">
-                                    <Lock className="w-3 h-3 mr-1" />
-                                    System
-                                  </span>
+                        {userTypes.map((userType) => {
+                          const allGranted = categoryPermissions.every(permission => 
+                            permissionMatrix[userType.name]?.[permission.name] === true
+                          )
+                          const someGranted = categoryPermissions.some(permission => 
+                            permissionMatrix[userType.name]?.[permission.name] === true
+                          )
+                          
+                          return (
+                            <td key={userType.id} className="px-3 py-3 text-center border-l border-gray-200 dark:border-gray-600 w-24">
+                              <button 
+                                type="button"
+                                onClick={(e) => {
+                                  e.preventDefault()
+                                  e.stopPropagation()
+                                  toggleCategoryPermissions(category, userType.name)
+                                }}
+                                className={`text-xs px-2 py-1 rounded transition-colors ${
+                                  allGranted 
+                                    ? 'bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300 hover:bg-green-200 dark:hover:bg-green-800'
+                                    : someGranted
+                                    ? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-300 hover:bg-yellow-200 dark:hover:bg-yellow-800'
+                                    : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-600'
+                                }`}
+                                title={`Toggle all ${category} permissions for ${userType.name} (${allGranted ? 'All granted' : someGranted ? 'Partially granted' : 'None granted'})`}
+                              >
+                                {allGranted ? '✓ All' : someGranted ? '◐ Some' : 'None'}
+                              </button>
+                            </td>
+                          )
+                        })}
+                      </tr>
+                      
+                      {/* Permission rows for this category - only show if expanded */}
+                      {expandedCategories.has(category) && categoryPermissions.map((permission, index) => (
+                        <tr key={`permission-${permission.id}`} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
+                          <td className="px-6 py-4 border-r border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 sticky left-0 z-10 w-72">
+                            <div className="flex items-start">
+                              <div className="flex-1">
+                                <div className="text-sm font-medium text-gray-900 dark:text-white">
+                                  {permission.name}
                                 </div>
-                              )}
+                                <div className="text-xs text-gray-500 dark:text-gray-400 mt-1 leading-relaxed">
+                                  {permission.description}
+                                </div>
+                                {permission.is_system && (
+                                  <div className="mt-2">
+                                    <span className="inline-flex items-center px-2 py-1 text-xs bg-yellow-100 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-200 rounded-full">
+                                      <Lock className="w-3 h-3 mr-1" />
+                                      System
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
                             </div>
-                          </div>
-                        </div>
-                        
-                        <div className="flex flex-1 min-w-0">
+                          </td>
+                          
                           {userTypes.map((userType) => {
                             const hasPermission = permissionMatrix[userType.name]?.[permission.name]
                             
@@ -1054,7 +1050,7 @@ export default function PermissionsPage() {
                             // Special handling for "Access Pipelines" permission - show multiselect instead of checkbox
                             if (permission.name === 'Access Pipelines') {
                               return (
-                                <div key={`permission-${permission.id}-usertype-${userType.id}`} className="flex-1 min-w-32 px-4 py-4 border-l border-gray-200 dark:border-gray-600 flex items-center justify-center">
+                                <td key={`permission-${permission.id}-usertype-${userType.id}`} className="px-3 py-4 text-center border-l border-gray-200 dark:border-gray-600 w-24">
                                   <div className="w-full">
                                     {pipelines.length === 0 ? (
                                       <div className="text-center">
@@ -1111,7 +1107,7 @@ export default function PermissionsPage() {
                                       {getSelectedPipelineCount(userType.id)} of {pipelines.length} selected
                                     </div>
                                   </div>
-                                </div>
+                                </td>
                               )
                             }
                             
@@ -1131,8 +1127,9 @@ export default function PermissionsPage() {
                             const actionIcon = getActionIcon(extractedAction || 'circle')
                             
                             return (
-                              <div key={`permission-${permission.id}-usertype-${userType.id}`} className="flex-1 min-w-32 px-4 py-4 border-l border-gray-200 dark:border-gray-600 flex items-center justify-center">
-                                <div className="relative group">
+                              <td key={`permission-${permission.id}-usertype-${userType.id}`} className="px-3 py-4 border-l border-gray-200 dark:border-gray-600 w-24">
+                                <div className="flex items-center justify-center">
+                                  <div className="relative group">
                                   <button
                                     type="button"
                                     onClick={(e) => {
@@ -1203,18 +1200,19 @@ export default function PermissionsPage() {
                                   </div>
                                 </div>
                               </div>
+                              </td>
                             )
                           })}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                ))}
-              </div>
+                        </tr>
+                      ))}
+                    </React.Fragment>
+                  ))}
+                </tbody>
+              </table>
             </div>
             
             {/* Enhanced Matrix Footer with Rich Data Summary */}
-            <div className="border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-750 px-6 py-3">
+            <div className="border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-700/50 px-6 py-3">
               <div className="flex items-center justify-between text-sm text-gray-600 dark:text-gray-400">
                 <div>
                   <strong>Static Permissions:</strong> Showing {filteredPermissions.length} of {permissions.length} platform-wide permissions
@@ -1437,7 +1435,7 @@ export default function PermissionsPage() {
 
               {/* Dynamic Resource Access Summary */}
               {items.length > 0 && (
-              <div className="border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-700/30 px-6 py-4">
+              <div className="border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-700/50 px-6 py-4">
                 <div className="flex items-center justify-between text-sm">
                   <div className="flex items-center space-x-6">
                     <span className="text-gray-500 dark:text-gray-400">

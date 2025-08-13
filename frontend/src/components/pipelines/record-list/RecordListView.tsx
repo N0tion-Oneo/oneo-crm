@@ -260,10 +260,7 @@ export function RecordListView({ pipeline: initialPipeline, onEditRecord, onCrea
   // Event handlers  
   const handleBooleanQueryChange = (newQuery: typeof booleanQuery) => {
     updateBooleanQuery(newQuery)
-    // Auto-apply filters when query changes to maintain UX expectations
-    setTimeout(() => {
-      applyFilters()
-    }, 0)
+    // Filters are now automatically applied via useEffect in useRecordFilters hook
   }
 
   const handleBulkUpdate = async () => {

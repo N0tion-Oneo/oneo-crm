@@ -9,12 +9,29 @@ from pipelines.models import Pipeline, Field, Record
 User = get_user_model()
 
 
+class RecordForDuplicatesSerializer(serializers.ModelSerializer):
+    """Lightweight serializer for records in duplicate comparisons"""
+    
+    class Meta:
+        model = Record
+        fields = ['id', 'title', 'data']
+        
+
+class DuplicateRuleForMatchesSerializer(serializers.ModelSerializer):
+    """Lightweight serializer for rules in duplicate matches"""
+    
+    class Meta:
+        model = DuplicateRule
+        fields = ['id', 'name']
+
+
 class DuplicateMatchSerializer(serializers.ModelSerializer):
     """Serializer for duplicate matches"""
-    rule = serializers.StringRelatedField(read_only=True)
-    record1 = serializers.StringRelatedField(read_only=True)
-    record2 = serializers.StringRelatedField(read_only=True)
+    rule = DuplicateRuleForMatchesSerializer(read_only=True)
+    record1 = RecordForDuplicatesSerializer(read_only=True)
+    record2 = RecordForDuplicatesSerializer(read_only=True)
     reviewed_by = serializers.StringRelatedField(read_only=True)
+    latest_resolution = serializers.SerializerMethodField()
     
     class Meta:
         model = DuplicateMatch
@@ -22,12 +39,27 @@ class DuplicateMatchSerializer(serializers.ModelSerializer):
             'id', 'rule', 'record1', 'record2', 'confidence_score',
             'field_scores', 'matched_fields', 'detection_method',
             'detected_at', 'reviewed_by', 'reviewed_at', 'status',
-            'resolution_notes', 'auto_resolution_reason'
+            'resolution_notes', 'auto_resolution_reason', 'latest_resolution'
         ]
         read_only_fields = [
             'id', 'detected_at', 'field_scores', 'matched_fields',
             'detection_method', 'confidence_score'
         ]
+    
+    def get_latest_resolution(self, obj):
+        """Get the latest resolution for this duplicate match"""
+        if obj.status != 'pending':
+            # Get the most recent resolution (excluding rollback actions)
+            latest_resolution = obj.resolutions.exclude(action_taken='rollback').order_by('-resolved_at').first()
+            if latest_resolution:
+                return {
+                    'id': latest_resolution.id,
+                    'action_taken': latest_resolution.action_taken,
+                    'resolved_by': latest_resolution.resolved_by.username if latest_resolution.resolved_by else None,
+                    'resolved_at': latest_resolution.resolved_at.isoformat() if latest_resolution.resolved_at else None,
+                    'notes': latest_resolution.notes
+                }
+        return None
 
 
 class DuplicateResolutionSerializer(serializers.ModelSerializer):

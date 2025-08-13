@@ -545,6 +545,17 @@ export const duplicatesApi = {
   // Smart URL processor - live testing
   liveTestUrls: (data: any) => api.post('/api/v1/url-extraction-rules/live_test/', data),
   
+  // Get duplicate count for record
+  getRecordDuplicateCount: (recordId: string) => {
+    return api.get(`/api/v1/duplicate-rules/record_duplicate_count/?record_id=${recordId}`)
+  },
+  
+  // Merge records with field-level control
+  mergeRecords: (data: any) => api.post('/api/v1/duplicate-matches/merge_records/', data),
+  
+  // Rollback resolution
+  rollbackResolution: (data: any) => api.post('/api/v1/duplicate-matches/rollback_resolution/', data),
+  
   // Duplicate matches (pipeline-scoped)
   getDuplicateMatches: (pipelineId?: string) => {
     const url = pipelineId ? `/api/v1/pipelines/${pipelineId}/duplicate-matches/` : '/api/v1/duplicate-matches/'

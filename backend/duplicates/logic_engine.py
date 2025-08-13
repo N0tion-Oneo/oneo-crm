@@ -185,6 +185,10 @@ class FieldMatcher:
             parsed = urlparse(url)
             domain = parsed.netloc.lower()
             
+            # Apply subdomain stripping if enabled
+            if rule.strip_subdomains:
+                domain = self._strip_subdomains(domain)
+            
             # Check if domain matches rule patterns
             for pattern in rule.domain_patterns:
                 if pattern == domain or (pattern.startswith('*.') and domain.endswith(pattern[2:])):
@@ -230,6 +234,32 @@ class FieldMatcher:
                 return float(value1) == float(value2)
         except (ValueError, TypeError):
             return False
+    
+    def _strip_subdomains(self, domain: str) -> str:
+        """Strip subdomains to keep only the main domain"""
+        if not domain:
+            return domain
+        
+        # Split domain into parts
+        parts = domain.split('.')
+        
+        # Need at least 2 parts for a valid domain (domain.tld)
+        if len(parts) < 2:
+            return domain
+        
+        # Handle common TLD patterns
+        # For .co.uk, .com.au, etc., keep 3 parts (domain.co.uk)
+        common_two_part_tlds = ['co.uk', 'com.au', 'co.nz', 'co.za', 'com.br', 'co.jp', 'co.in']
+        
+        # Check if domain ends with a two-part TLD
+        if len(parts) >= 3:
+            potential_tld = '.'.join(parts[-2:])
+            if potential_tld in common_two_part_tlds:
+                # Keep domain.co.uk format - take last 3 parts
+                return '.'.join(parts[-3:])
+        
+        # For regular TLDs (.com, .org, .net), keep last 2 parts
+        return '.'.join(parts[-2:])
 
 
 class DuplicateLogicEngine:

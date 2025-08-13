@@ -175,6 +175,8 @@ export default function SmartURLBuilder({
       remove_subdomains: [],
       remove_params: ['utm_source', 'utm_medium', 'utm_campaign'],
       remove_trailing_slash: true,
+      remove_query_params: true,
+      remove_fragments: true,
       case_sensitive: false,
       strip_whitespace: true
     },
@@ -194,6 +196,8 @@ export default function SmartURLBuilder({
           remove_subdomains: [],
           remove_params: ['utm_source', 'utm_medium', 'utm_campaign'],
           remove_trailing_slash: true,
+          remove_query_params: true,
+          remove_fragments: true,
           case_sensitive: false,
           strip_whitespace: true,
           normalize_separators: false
@@ -210,6 +214,8 @@ export default function SmartURLBuilder({
           remove_subdomains: [],
           remove_params: [],
           remove_trailing_slash: true,
+          remove_query_params: true,
+          remove_fragments: true,
           case_sensitive: false,
           strip_whitespace: true,
           normalize_separators: false,
@@ -227,6 +233,8 @@ export default function SmartURLBuilder({
           remove_subdomains: ['za', 'uk', 'au', 'ca', 'de', 'fr', 'es', 'it', 'nl', 'br'],
           remove_params: ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'trk', 'originalSubdomain', 'original_referer', '_l'],
           remove_trailing_slash: true,
+          remove_query_params: true,
+          remove_fragments: true,
           case_sensitive: false,
           strip_whitespace: true,
           normalize_separators: false  // FIXED: Disable separator normalization for LinkedIn
@@ -259,6 +267,8 @@ export default function SmartURLBuilder({
           remove_subdomains: ['mobile', 'm'],
           remove_params: ['s', 't', 'utm_source', 'utm_medium', 'ref_src', 'ref_url'],
           remove_trailing_slash: true,
+          remove_query_params: true,
+          remove_fragments: true,
           case_sensitive: false,
           strip_whitespace: true,
           normalize_separators: false
@@ -275,6 +285,8 @@ export default function SmartURLBuilder({
           remove_subdomains: ['m', 'help'],
           remove_params: ['hl', 'igshid', 'utm_source', 'utm_medium'],
           remove_trailing_slash: true,
+          remove_query_params: true,
+          remove_fragments: true,
           case_sensitive: false,
           strip_whitespace: true,
           normalize_separators: false
@@ -291,6 +303,8 @@ export default function SmartURLBuilder({
           remove_subdomains: ['m', 'mobile', 'touch'],
           remove_params: ['fref', 'ref', 'utm_source', 'utm_medium', '__tn__', '__xts__'],
           remove_trailing_slash: true,
+          remove_query_params: true,
+          remove_fragments: true,
           case_sensitive: false,
           strip_whitespace: true,
           normalize_separators: false
@@ -462,11 +476,11 @@ export default function SmartURLBuilder({
   }
   
   const updateTestUrl = (index: number, value: string) => {
-    setTestUrls(prev => prev.map((url, i) => i === index ? value : url))
+    setTestUrls(prev => prev.map((url: string, i: number) => i === index ? value : url))
   }
   
   const removeTestUrl = (index: number) => {
-    setTestUrls(prev => prev.filter((_, i) => i !== index))
+    setTestUrls(prev => prev.filter((_: string, i: number) => i !== index))
   }
   
   const addDomainPattern = () => {
@@ -479,7 +493,7 @@ export default function SmartURLBuilder({
   const updateDomainPattern = (index: number, value: string) => {
     setCustomTemplate(prev => ({
       ...prev,
-      domains: prev.domains.map((domain, i) => i === index ? value : domain)
+      domains: prev.domains.map((domain: string, i: number) => i === index ? value : domain)
     }))
   }
   
@@ -493,7 +507,7 @@ export default function SmartURLBuilder({
   const updatePathPattern = (index: number, value: string) => {
     setCustomTemplate(prev => ({
       ...prev,
-      path_patterns: prev.path_patterns.map((pattern, i) => i === index ? value : pattern)
+      path_patterns: prev.path_patterns.map((pattern: string, i: number) => i === index ? value : pattern)
     }))
   }
   
@@ -586,7 +600,7 @@ export default function SmartURLBuilder({
       ...prev,
       [templateName]: {
         ...prev[templateName],
-        domains: prev[templateName].domains.map((domain, i) => i === index ? value : domain)
+        domains: prev[templateName].domains.map((domain: string, i: number) => i === index ? value : domain)
       }
     }))
   }
@@ -606,7 +620,7 @@ export default function SmartURLBuilder({
       ...prev,
       [templateName]: {
         ...prev[templateName],
-        domains: prev[templateName].domains.filter((_, i) => i !== index)
+        domains: prev[templateName].domains.filter((_: string, i: number) => i !== index)
       }
     }))
   }
@@ -616,7 +630,7 @@ export default function SmartURLBuilder({
       ...prev,
       [templateName]: {
         ...prev[templateName],
-        path_patterns: prev[templateName].path_patterns.map((pattern, i) => i === index ? value : pattern)
+        path_patterns: prev[templateName].path_patterns.map((pattern: string, i: number) => i === index ? value : pattern)
       }
     }))
   }
@@ -636,7 +650,7 @@ export default function SmartURLBuilder({
       ...prev,
       [templateName]: {
         ...prev[templateName],
-        path_patterns: prev[templateName].path_patterns.filter((_, i) => i !== index)
+        path_patterns: prev[templateName].path_patterns.filter((_: string, i: number) => i !== index)
       }
     }))
   }
@@ -674,7 +688,7 @@ export default function SmartURLBuilder({
         ...prev[templateName],
         normalization_rules: {
           ...prev[templateName].normalization_rules,
-          remove_params: params.map((param, i) => i === index ? value : param)
+          remove_params: params.map((param: string, i: number) => i === index ? value : param)
         }
       }
     }))
@@ -706,7 +720,7 @@ export default function SmartURLBuilder({
         ...prev[templateName],
         normalization_rules: {
           ...prev[templateName].normalization_rules,
-          remove_params: params.filter((_, i) => i !== index)
+          remove_params: params.filter((_: string, i: number) => i !== index)
         }
       }
     }))
@@ -744,6 +758,8 @@ export default function SmartURLBuilder({
           remove_subdomains: [],
           remove_params: [],
           remove_trailing_slash: true,
+          remove_query_params: true,
+          remove_fragments: true,
           case_sensitive: false,
           strip_whitespace: true,
           normalize_separators: false,
@@ -761,6 +777,8 @@ export default function SmartURLBuilder({
           remove_subdomains: ['za', 'uk', 'au', 'ca', 'de', 'fr', 'es', 'it', 'nl', 'br'],
           remove_params: ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'trk', 'originalSubdomain', 'original_referer', '_l'],
           remove_trailing_slash: true,
+          remove_query_params: true,
+          remove_fragments: true,
           case_sensitive: false,
           strip_whitespace: true,
           normalize_separators: false  // FIXED: Disable separator normalization for LinkedIn
@@ -793,6 +811,8 @@ export default function SmartURLBuilder({
           remove_subdomains: ['mobile', 'm'],
           remove_params: ['s', 't', 'utm_source', 'utm_medium', 'ref_src', 'ref_url'],
           remove_trailing_slash: true,
+          remove_query_params: true,
+          remove_fragments: true,
           case_sensitive: false,
           strip_whitespace: true,
           normalize_separators: false
@@ -809,6 +829,8 @@ export default function SmartURLBuilder({
           remove_subdomains: ['m', 'help'],
           remove_params: ['hl', 'igshid', 'utm_source', 'utm_medium'],
           remove_trailing_slash: true,
+          remove_query_params: true,
+          remove_fragments: true,
           case_sensitive: false,
           strip_whitespace: true,
           normalize_separators: false
@@ -825,6 +847,8 @@ export default function SmartURLBuilder({
           remove_subdomains: ['m', 'mobile', 'touch'],
           remove_params: ['fref', 'ref', 'utm_source', 'utm_medium', '__tn__', '__xts__'],
           remove_trailing_slash: true,
+          remove_query_params: true,
+          remove_fragments: true,
           case_sensitive: false,
           strip_whitespace: true,
           normalize_separators: false
@@ -987,7 +1011,7 @@ export default function SmartURLBuilder({
                         {/* Domain Patterns */}
                         <div>
                           <Label>Domain Patterns</Label>
-                          {getTemplateConfig(selectedTemplate).domains.map((domain, index) => (
+                          {getTemplateConfig(selectedTemplate).domains.map((domain: string, index: number) => (
                             <div key={index} className="flex items-center gap-2 mt-2">
                               <Input
                                 value={domain}
@@ -1022,7 +1046,7 @@ export default function SmartURLBuilder({
                         <div>
                           <Label>Path Patterns</Label>
                           <p className="text-sm text-gray-500 mb-2">Use {`{username}`} as placeholder for the identifier</p>
-                          {getTemplateConfig(selectedTemplate).path_patterns.map((pattern, index) => (
+                          {getTemplateConfig(selectedTemplate).path_patterns.map((pattern: string, index: number) => (
                             <div key={index} className="flex items-center gap-2 mt-2">
                               <Input
                                 value={pattern}
@@ -1099,6 +1123,20 @@ export default function SmartURLBuilder({
                             </div>
                             <div className="flex items-center space-x-2">
                               <Switch
+                                checked={getTemplateConfig(selectedTemplate).normalization_rules?.remove_query_params || false}
+                                onCheckedChange={(checked) => updateTemplateNormalization(selectedTemplate, 'remove_query_params', checked)}
+                              />
+                              <Label className="text-sm">Remove Query Parameters</Label>
+                            </div>
+                            <div className="flex items-center space-x-2">
+                              <Switch
+                                checked={getTemplateConfig(selectedTemplate).normalization_rules?.remove_fragments || false}
+                                onCheckedChange={(checked) => updateTemplateNormalization(selectedTemplate, 'remove_fragments', checked)}
+                              />
+                              <Label className="text-sm">Remove Fragments</Label>
+                            </div>
+                            <div className="flex items-center space-x-2">
+                              <Switch
                                 checked={getTemplateConfig(selectedTemplate).normalization_rules?.strip_whitespace || false}
                                 onCheckedChange={(checked) => updateTemplateNormalization(selectedTemplate, 'strip_whitespace', checked)}
                               />
@@ -1130,7 +1168,7 @@ export default function SmartURLBuilder({
                         <div>
                           <Label>URL Parameters to Remove</Label>
                           <p className="text-sm text-gray-500 mb-2">Common tracking parameters that should be removed</p>
-                          {getTemplateConfig(selectedTemplate).normalization_rules.remove_params?.map((param, index) => (
+                          {getTemplateConfig(selectedTemplate).normalization_rules.remove_params?.map((param: string, index: number) => (
                             <div key={index} className="flex items-center gap-2 mt-2">
                               <Input
                                 value={param}
@@ -1202,7 +1240,7 @@ export default function SmartURLBuilder({
                           size="sm"
                           onClick={() => setCustomTemplate(prev => ({
                             ...prev,
-                            domains: prev.domains.filter((_, i) => i !== index)
+                            domains: prev.domains.filter((_: string, i: number) => i !== index)
                           }))}
                         >
                           <Trash2 className="w-4 h-4" />
@@ -1241,7 +1279,7 @@ export default function SmartURLBuilder({
                           size="sm"
                           onClick={() => setCustomTemplate(prev => ({
                             ...prev,
-                            path_patterns: prev.path_patterns.filter((_, i) => i !== index)
+                            path_patterns: prev.path_patterns.filter((_: string, i: number) => i !== index)
                           }))}
                         >
                           <Trash2 className="w-4 h-4" />

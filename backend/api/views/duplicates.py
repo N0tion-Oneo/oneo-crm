@@ -282,6 +282,46 @@ class DuplicateRuleViewSet(viewsets.ModelViewSet):
             )
     
     @extend_schema(
+        summary="Get duplicate count for record",
+        description="Get count of unresolved duplicate matches for a specific record",
+        parameters=[
+            OpenApiParameter('record_id', int, description='Record ID to check duplicates for')
+        ]
+    )
+    @action(detail=False, methods=['GET'])
+    def record_duplicate_count(self, request):
+        """Get duplicate count for a specific record"""
+        record_id = request.query_params.get('record_id')
+        
+        if not record_id:
+            return Response(
+                {'error': 'record_id is required'}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            # Get unresolved duplicate matches for this record
+            matches_count = DuplicateMatch.objects.filter(
+                tenant=request.tenant,
+                status='pending'
+            ).filter(
+                Q(record1_id=record_id) | Q(record2_id=record_id)
+            ).count()
+            
+            return Response({
+                'record_id': record_id,
+                'duplicate_count': matches_count,
+                'has_duplicates': matches_count > 0
+            })
+            
+        except Exception as e:
+            logger.error(f"Error getting duplicate count for record {record_id}: {e}", exc_info=True)
+            return Response(
+                {'error': f'Failed to get duplicate count: {str(e)}'}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @extend_schema(
         summary="Validate rule logic",
         description="Validate rule logic structure without saving"
     )
@@ -718,6 +758,287 @@ class DuplicateMatchViewSet(viewsets.ModelViewSet):
             logger.error(f"Bulk resolution error: {e}", exc_info=True)
             return Response(
                 {'error': f'Bulk resolution failed: {str(e)}'}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @extend_schema(
+        summary="Merge records with field-level control",
+        description="Merge two records with granular field-level decisions",
+        request={
+            'type': 'object',
+            'properties': {
+                'match_id': {'type': 'integer', 'description': 'Duplicate match ID'},
+                'primary_record_id': {'type': 'integer', 'description': 'Record to keep as primary'},
+                'field_decisions': {
+                    'type': 'object',
+                    'description': 'Field-level merge decisions',
+                    'additionalProperties': {
+                        'type': 'object',
+                        'properties': {
+                            'source': {'type': 'string', 'enum': ['left', 'right', 'custom']},
+                            'value': {'description': 'Custom value if source is custom'}
+                        }
+                    }
+                },
+                'notes': {'type': 'string', 'description': 'Merge notes'}
+            },
+            'required': ['match_id', 'primary_record_id', 'field_decisions']
+        }
+    )
+    @action(detail=False, methods=['POST'])
+    def merge_records(self, request):
+        """Merge records with field-level control"""
+        try:
+            match_id = request.data.get('match_id')
+            primary_record_id = request.data.get('primary_record_id')
+            field_decisions = request.data.get('field_decisions', {})
+            notes = request.data.get('notes', '')
+            
+            if not match_id or not primary_record_id:
+                return Response(
+                    {'error': 'match_id and primary_record_id are required'}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Get the duplicate match
+            try:
+                match = DuplicateMatch.objects.get(
+                    id=match_id,
+                    tenant=request.tenant,
+                    status='pending'
+                )
+            except DuplicateMatch.DoesNotExist:
+                return Response(
+                    {'error': 'Duplicate match not found or already resolved'}, 
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Determine primary and secondary records
+            if primary_record_id == match.record1.id:
+                primary_record = match.record1
+                secondary_record = match.record2
+            elif primary_record_id == match.record2.id:
+                primary_record = match.record2
+                secondary_record = match.record1
+            else:
+                return Response(
+                    {'error': 'primary_record_id must match one of the records in the duplicate match'}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            with transaction.atomic():
+                # Apply field-level merge decisions
+                merged_data = primary_record.data.copy()
+                merge_audit = {
+                    'original_primary_data': primary_record.data.copy(),
+                    'original_secondary_data': secondary_record.data.copy(),
+                    'field_decisions': field_decisions,
+                    'merge_timestamp': timezone.now().isoformat()
+                }
+                
+                for field_name, decision in field_decisions.items():
+                    source = decision.get('source', 'left')
+                    
+                    if source == 'left':
+                        # Keep primary record's value (already in merged_data)
+                        pass
+                    elif source == 'right':
+                        # Use secondary record's value
+                        if field_name in secondary_record.data:
+                            merged_data[field_name] = secondary_record.data[field_name]
+                    elif source == 'custom':
+                        # Use custom value
+                        merged_data[field_name] = decision.get('value')
+                
+                # Update primary record with merged data
+                primary_record.data = merged_data
+                primary_record.save()
+                
+                # Soft delete secondary record
+                secondary_record.is_deleted = True
+                secondary_record.save()
+                
+                # Create resolution record
+                resolution = DuplicateResolution.objects.create(
+                    tenant=request.tenant,
+                    duplicate_match=match,
+                    action_taken='merge',
+                    resolved_by=request.user,
+                    notes=notes,
+                    primary_record=primary_record,
+                    merged_record=secondary_record,
+                    data_changes={
+                        'action': 'field_level_merge',
+                        'primary_record_id': str(primary_record.id),
+                        'merged_record_id': str(secondary_record.id),
+                        'merge_audit': merge_audit
+                    }
+                )
+                
+                # Update match status
+                match.status = 'merged'
+                match.reviewed_by = request.user
+                match.reviewed_at = timezone.now()
+                match.resolution_notes = f"Merged with field-level control. {notes}".strip()
+                match.save()
+                
+                return Response({
+                    'success': True,
+                    'merged_record_id': str(primary_record.id),
+                    'deleted_record_id': str(secondary_record.id),
+                    'resolution_id': resolution.id,
+                    'merge_summary': {
+                        'fields_merged': len(field_decisions),
+                        'primary_record': str(primary_record.id),
+                        'secondary_record': str(secondary_record.id)
+                    }
+                })
+                
+        except Exception as e:
+            logger.error(f"Record merge error: {e}", exc_info=True)
+            return Response(
+                {'error': f'Record merge failed: {str(e)}'}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @extend_schema(
+        summary="Rollback a resolved duplicate match",
+        description="Undo a duplicate resolution and restore original state",
+        request={
+            'type': 'object',
+            'properties': {
+                'resolution_id': {'type': 'integer', 'description': 'Resolution ID to rollback'},
+                'notes': {'type': 'string', 'description': 'Rollback reason/notes'}
+            },
+            'required': ['resolution_id']
+        }
+    )
+    @action(detail=False, methods=['POST'])
+    def rollback_resolution(self, request):
+        """Rollback a duplicate match resolution"""
+        try:
+            resolution_id = request.data.get('resolution_id')
+            rollback_notes = request.data.get('notes', '')
+            
+            if not resolution_id:
+                return Response(
+                    {'error': 'resolution_id is required'}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Get the resolution
+            try:
+                from duplicates.models import DuplicateResolution
+                resolution = DuplicateResolution.objects.get(
+                    id=resolution_id,
+                    tenant=request.tenant
+                )
+            except DuplicateResolution.DoesNotExist:
+                return Response(
+                    {'error': 'Resolution not found'}, 
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            match = resolution.duplicate_match
+            
+            # Check if match can be rolled back
+            if match.status == 'pending':
+                return Response(
+                    {'error': 'Match is already in pending state'}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            with transaction.atomic():
+                rollback_successful = False
+                rollback_details = {
+                    'original_action': resolution.action_taken,
+                    'rollback_timestamp': timezone.now().isoformat(),
+                    'rollback_by': request.user.username
+                }
+                
+                # Rollback based on the original action
+                if resolution.action_taken == 'merge':
+                    # Restore the merged/deleted record
+                    if resolution.merged_record and resolution.merged_record.is_deleted:
+                        # Get the merge audit data to restore original state
+                        merge_audit = resolution.data_changes.get('merge_audit', {})
+                        
+                        # Restore the deleted record
+                        resolution.merged_record.is_deleted = False
+                        resolution.merged_record.save()
+                        
+                        # Restore primary record's original data if we have it
+                        if 'original_primary_data' in merge_audit and resolution.primary_record:
+                            resolution.primary_record.data = merge_audit['original_primary_data']
+                            resolution.primary_record.save()
+                        
+                        rollback_details['restored_record_id'] = str(resolution.merged_record.id)
+                        rollback_details['primary_record_restored'] = 'original_primary_data' in merge_audit
+                        rollback_successful = True
+                    
+                elif resolution.action_taken == 'ignore':
+                    # Remove exclusion if it exists
+                    from duplicates.models import DuplicateExclusion
+                    exclusions = DuplicateExclusion.objects.filter(
+                        tenant=request.tenant,
+                        record1=match.record1,
+                        record2=match.record2
+                    )
+                    exclusion_count = exclusions.count()
+                    exclusions.delete()
+                    
+                    rollback_details['exclusions_removed'] = exclusion_count
+                    rollback_successful = True
+                    
+                elif resolution.action_taken == 'keep_both':
+                    # Just reset to pending state
+                    rollback_successful = True
+                
+                if rollback_successful:
+                    # Reset the match to pending state
+                    match.status = 'pending'
+                    match.reviewed_by = None
+                    match.reviewed_at = None
+                    match.resolution_notes = f"Rolled back by {request.user.username}. {rollback_notes}".strip()
+                    match.save()
+                    
+                    # Update resolution record with rollback info
+                    resolution.data_changes['rollback'] = rollback_details
+                    resolution.notes = f"{resolution.notes}\n\nROLLBACK: {rollback_notes}".strip()
+                    resolution.save()
+                    
+                    # Create a new resolution record for the rollback
+                    rollback_resolution = DuplicateResolution.objects.create(
+                        tenant=request.tenant,
+                        duplicate_match=match,
+                        action_taken='rollback',
+                        resolved_by=request.user,
+                        notes=f"Rollback of {resolution.action_taken} action. {rollback_notes}".strip(),
+                        data_changes={
+                            'action': 'rollback',
+                            'original_resolution_id': resolution.id,
+                            'rollback_details': rollback_details
+                        }
+                    )
+                    
+                    return Response({
+                        'success': True,
+                        'match_id': str(match.id),
+                        'original_action': resolution.action_taken,
+                        'rollback_resolution_id': rollback_resolution.id,
+                        'rollback_details': rollback_details,
+                        'message': f'Successfully rolled back {resolution.action_taken} action'
+                    })
+                else:
+                    return Response(
+                        {'error': f'Unable to rollback {resolution.action_taken} action'}, 
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                
+        except Exception as e:
+            logger.error(f"Rollback error: {e}", exc_info=True)
+            return Response(
+                {'error': f'Rollback failed: {str(e)}'}, 
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 

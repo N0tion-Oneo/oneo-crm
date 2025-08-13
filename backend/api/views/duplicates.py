@@ -657,6 +657,13 @@ class DuplicateMatchViewSet(viewsets.ModelViewSet):
         if pipeline_pk:
             queryset = queryset.filter(rule__pipeline_id=pipeline_pk)
         
+        # Filter by record_id if provided (for duplicate indicator checking)
+        record_id = self.request.query_params.get('record_id')
+        if record_id:
+            queryset = queryset.filter(
+                Q(record1_id=record_id) | Q(record2_id=record_id)
+            )
+        
         return queryset
     
     @extend_schema(

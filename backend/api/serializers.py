@@ -110,6 +110,7 @@ class FieldSerializer(serializers.ModelSerializer):
         help_text="Field group this field belongs to"
     )
     field_group_name = serializers.CharField(source='field_group.name', read_only=True)
+    field_group_details = serializers.SerializerMethodField()
     
     class Meta:
         model = Field
@@ -119,9 +120,22 @@ class FieldSerializer(serializers.ModelSerializer):
             'enforce_uniqueness', 'create_index', 'is_searchable',
             'is_ai_field', 'display_order', 'is_visible_in_list',
             'is_visible_in_detail', 'is_visible_in_public_forms', 'ai_config', 
-            'field_group', 'field_group_name',
+            'field_group', 'field_group_name', 'field_group_details',
             'created_at', 'updated_at'
         ]
+    
+    def get_field_group_details(self, obj):
+        """Get complete field group details for this field"""
+        if obj.field_group:
+            return {
+                'id': obj.field_group.id,
+                'name': obj.field_group.name,
+                'description': obj.field_group.description,
+                'color': obj.field_group.color,
+                'icon': obj.field_group.icon,
+                'display_order': obj.field_group.display_order
+            }
+        return None
 
 
 class PipelineSerializer(serializers.ModelSerializer):

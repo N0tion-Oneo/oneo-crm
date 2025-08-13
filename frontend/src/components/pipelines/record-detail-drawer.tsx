@@ -13,6 +13,7 @@ import { logValidationError, getCleanErrorMessage } from '@/utils/validation-hel
 // Import field system to ensure initialization
 import '@/lib/field-system'
 import { DuplicateIndicator } from '@/components/duplicates/duplicate-indicator'
+import { UnifiedRecordSharing } from './UnifiedRecordSharing'
 import { 
   X, 
   Save, 
@@ -1186,19 +1187,15 @@ export function RecordDetailDrawer({
           
           <div className="flex items-center space-x-3">
             {record && (
-              <button
-                onClick={() => {
-                  // TODO: Implement record sharing in Phase 6
-                  const shareUrl = `${window.location.origin}/forms/shared/${pipeline.id}/${record.id}?token=sharing_token_here`
-                  navigator.clipboard.writeText(shareUrl)
-                  alert('Share link copied to clipboard! (Full sharing system coming in Phase 6)')
-                }}
-                className="px-4 py-2 text-blue-600 hover:text-blue-700 border border-blue-300 hover:border-blue-400 rounded-md hover:bg-blue-50 dark:hover:bg-blue-900/20"
-                title="Share record (Phase 6 feature preview)"
-              >
-                <Share2 className="w-4 h-4 mr-2 inline" />
-                Share
-              </button>
+              <>
+                <UnifiedRecordSharing
+                  pipelineId={pipeline.id}
+                  recordId={record.id}
+                  pipelineName={pipeline.name}
+                  variant="outline"
+                  size="default"
+                />
+              </>
             )}
             
             {record && onDelete && (

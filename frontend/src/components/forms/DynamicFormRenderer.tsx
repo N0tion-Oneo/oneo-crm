@@ -59,10 +59,12 @@ interface DynamicFormRendererProps {
   stage?: string
   recordId?: string
   recordData?: Record<string, any>
+  encryptedToken?: string  // For shared records
   onSubmit?: (data: Record<string, any>) => void
   onError?: (error: string) => void
   embedMode?: boolean
   className?: string
+  readOnly?: boolean
 }
 
 export function DynamicFormRenderer({
@@ -72,10 +74,12 @@ export function DynamicFormRenderer({
   stage,
   recordId,
   recordData,
+  encryptedToken,
   onSubmit,
   onError,
   embedMode = false,
-  className = ''
+  className = '',
+  readOnly = false
 }: DynamicFormRendererProps) {
   const { user } = useAuth()
   const [formSchema, setFormSchema] = useState<DynamicFormSchema | null>(null)
@@ -90,7 +94,7 @@ export function DynamicFormRenderer({
   // Load form schema
   useEffect(() => {
     loadFormSchema()
-  }, [pipelineId, pipelineSlug, formType, stage, recordId])
+  }, [pipelineId, pipelineSlug, formType, stage, recordId, encryptedToken])
 
   // Initialize form data from schema
   useEffect(() => {
@@ -197,7 +201,10 @@ export function DynamicFormRenderer({
           endpoint = `/api/public-forms/${pipelineSlug || pipelineId}/stage/${stage}/`
           break
         case 'shared_record':
-          endpoint = `/api/pipelines/${pipelineId}/records/${recordId}/share/`
+          if (!encryptedToken) {
+            throw new Error('encryptedToken is required for shared_record formType')
+          }
+          endpoint = `/api/v1/shared-records/${encryptedToken}/form/`
           break
       }
       
@@ -398,7 +405,7 @@ export function DynamicFormRenderer({
         value={value}
         onChange={(newValue) => handleFieldChange(field.slug, newValue)}
         onBlur={() => {}}
-        disabled={field.is_readonly}
+        disabled={field.is_readonly || readOnly}
         error={error?.message}
         autoFocus={false}
         context="form"
@@ -528,22 +535,24 @@ export function DynamicFormRenderer({
             )
           })}
 
-        <div className="pt-6 border-t border-gray-200 dark:border-gray-700">
-          <button
-            type="submit"
-            disabled={submitting || validationErrors.length > 0}
-            className={`w-full inline-flex items-center justify-center px-6 py-3 border border-transparent text-sm font-medium rounded-lg shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 ${
-              submitting || validationErrors.length > 0
-                ? 'text-gray-500 bg-gray-100 dark:bg-gray-700 dark:text-gray-400 cursor-not-allowed'
-                : 'text-white bg-blue-600 hover:bg-blue-700 hover:shadow-lg transform hover:-translate-y-0.5'
-            }`}
-          >
-            {submitting && (
-              <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
-            )}
-            {submitting ? 'Submitting...' : recordId ? 'Update Record' : 'Submit Form'}
-          </button>
-        </div>
+        {!readOnly && (
+          <div className="pt-6 border-t border-gray-200 dark:border-gray-700">
+            <button
+              type="submit"
+              disabled={submitting || validationErrors.length > 0}
+              className={`w-full inline-flex items-center justify-center px-6 py-3 border border-transparent text-sm font-medium rounded-lg shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 ${
+                submitting || validationErrors.length > 0
+                  ? 'text-gray-500 bg-gray-100 dark:bg-gray-700 dark:text-gray-400 cursor-not-allowed'
+                  : 'text-white bg-blue-600 hover:bg-blue-700 hover:shadow-lg transform hover:-translate-y-0.5'
+              }`}
+            >
+              {submitting && (
+                <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+              )}
+              {submitting ? 'Submitting...' : recordId ? 'Update Record' : 'Submit Form'}
+            </button>
+          </div>
+        )}
       </form>
     </div>
   )

@@ -1,18 +1,25 @@
 """
 Dynamic forms API views for pipeline-based form generation
 """
+import time
+import logging
+from datetime import datetime
 from typing import Optional, Dict, Any
+from django.utils import timezone
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django.shortcuts import get_object_or_404
 from django.http import Http404
+from django.core.cache import cache
 from drf_spectacular.utils import extend_schema, OpenApiParameter
 from drf_spectacular.types import OpenApiTypes
 
 from pipelines.models import Pipeline, Record
 from pipelines.form_generation import DynamicFormGenerator, generate_pipeline_form
 from ..permissions import PipelinePermission, RecordPermission
+
+logger = logging.getLogger(__name__)
 
 
 class DynamicFormViewSet(viewsets.ViewSet):
@@ -429,10 +436,464 @@ class PublicFormViewSet(viewsets.ViewSet):
 
 class SharedRecordViewSet(viewsets.ViewSet):
     """
-    Shared record access via tokens
+    Encrypted shared record access with 5 working day expiry
     """
-    permission_classes = []  # Token-based access
+    permission_classes = []  # No authentication - encrypted token validates access
     
-    # TODO: Implement token-based record sharing
-    # This will be implemented in Phase 6
-    pass
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        from utils.encryption import ShareLinkEncryption
+        self.encryption = ShareLinkEncryption()
+    
+    def get_client_ip(self, request):
+        """Extract client IP for access tracking"""
+        x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
+        if x_forwarded_for:
+            return x_forwarded_for.split(',')[0].strip()
+        return request.META.get('REMOTE_ADDR', 'unknown')
+    
+    def get_access_count(self, encrypted_token):
+        """Get access count from cache"""
+        cache_key = f"shared_access:{encrypted_token[:16]}"
+        access_data = cache.get(cache_key, {'count': 0})
+        return access_data.get('count', 0)
+    
+    def track_access(self, encrypted_token, request):
+        """Track access for analytics using cache"""
+        client_ip = self.get_client_ip(request)
+        
+        # Use cache to track access without database
+        cache_key = f"shared_access:{encrypted_token[:16]}"  # Truncated for cache key
+        access_data = cache.get(cache_key, {'count': 0, 'ips': []})
+        
+        access_data['count'] += 1
+        access_data['last_access'] = int(time.time())
+        if client_ip and client_ip not in access_data['ips']:
+            access_data['ips'].append(client_ip)
+        
+        # Store for 7 days (longer than share expiry for analytics)
+        cache.set(cache_key, access_data, timeout=604800)
+    
+    @extend_schema(
+        summary="Access shared record with encrypted token",
+        description="Get shared record data using encrypted access token",
+        parameters=[
+            OpenApiParameter(
+                name='encrypted_token',
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.PATH,
+                description='Encrypted access token containing record ID, user ID, and expiry'
+            )
+        ]
+    )
+    def retrieve(self, request, pk=None):
+        """Access shared record with encrypted token"""
+        # URL: /api/v1/shared-records/{encrypted_token}/
+        encrypted_token = pk  # The entire path parameter is the encrypted token
+        
+        if not encrypted_token:
+            return Response(
+                {'error': 'Encrypted token is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Validate required accessor information
+        accessor_name = request.data.get('accessor_name') or request.query_params.get('accessor_name')
+        accessor_email = request.data.get('accessor_email') or request.query_params.get('accessor_email')
+        
+        if not accessor_name or not accessor_email:
+            return Response(
+                {
+                    'error': 'Accessor name and email are required',
+                    'required_fields': ['accessor_name', 'accessor_email']
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Validate email format
+        from django.core.validators import validate_email
+        from django.core.exceptions import ValidationError
+        try:
+            validate_email(accessor_email)
+        except ValidationError:
+            return Response(
+                {'error': 'Invalid email format'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Validate name (minimum length)
+        if len(accessor_name.strip()) < 2:
+            return Response(
+                {'error': 'Accessor name must be at least 2 characters'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Get SharedRecord from database
+        try:
+            from sharing.models import SharedRecord
+            shared_record = SharedRecord.objects.select_related(
+                'record__pipeline', 'shared_by'
+            ).get(encrypted_token=encrypted_token)
+        except SharedRecord.DoesNotExist:
+            return Response(
+                {'error': 'Invalid or expired share link'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Check if share is still valid
+        if not shared_record.is_valid:
+            status_msg = {
+                'expired': 'Share link has expired',
+                'revoked': 'Share link has been revoked',
+                'inactive': 'Share link is no longer active'
+            }.get(shared_record.status, 'Share link is not valid')
+            
+            return Response(
+                {'error': status_msg},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # SECURITY: Validate that accessor email matches intended recipient
+        if accessor_email.lower() != shared_record.intended_recipient_email.lower():
+            return Response(
+                {
+                    'error': 'Access denied. This share link is restricted to a specific email address.',
+                    'help': 'Please ensure you are using the correct email address that this link was shared with.'
+                },
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Track access
+        client_ip = self.get_client_ip(request)
+        shared_record.track_access(client_ip)
+        
+        # Also create detailed access log with user information
+        from sharing.models import SharedRecordAccess
+        SharedRecordAccess.objects.create(
+            shared_record=shared_record,
+            ip_address=client_ip,
+            user_agent=request.META.get('HTTP_USER_AGENT', '')[:500],  # Truncate long user agents
+            accessor_name=accessor_name.strip(),
+            accessor_email=accessor_email.strip().lower()
+        )
+        
+        # Generate form schema with populated data
+        try:
+            from pipelines.form_generation import generate_pipeline_form
+            form_schema = generate_pipeline_form(
+                pipeline_id=shared_record.record.pipeline.id,
+                mode='shared_record',
+                record_data=shared_record.record.data
+            )
+        except Exception as e:
+            return Response(
+                {'error': f'Failed to generate form schema: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+        
+        # Calculate time remaining
+        from django.utils import timezone
+        time_remaining = shared_record.time_remaining_seconds
+        
+        return Response({
+            'record': {
+                'id': shared_record.record.id,
+                'pipeline': {
+                    'id': shared_record.record.pipeline.id,
+                    'name': shared_record.record.pipeline.name,
+                    'slug': shared_record.record.pipeline.slug
+                },
+                'created_at': shared_record.record.created_at,
+                'updated_at': shared_record.record.updated_at
+            },
+            'form_schema': form_schema,
+            'shared_by': shared_record.shared_by.get_full_name() or shared_record.shared_by.email,
+            'expires_at': int(shared_record.expires_at.timestamp()),
+            'expires_datetime': shared_record.expires_at.isoformat(),
+            'time_remaining_seconds': time_remaining,
+            'access_mode': shared_record.access_mode,
+            'access_info': {
+                'created_at': int(shared_record.created_at.timestamp()),
+                'access_count': shared_record.access_count,
+                'last_accessed_at': shared_record.last_accessed_at.isoformat() if shared_record.last_accessed_at else None,
+                'shared_record_id': str(shared_record.id)
+            },
+            'accessor_info': {
+                'name': accessor_name.strip(),
+                'email': accessor_email.strip().lower()
+            }
+        })
+    
+    @extend_schema(
+        summary="Get form schema for shared record",
+        description="Get form schema for shared record using encrypted token (for DynamicFormRenderer)",
+        parameters=[
+            OpenApiParameter(
+                name='encrypted_token',
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.PATH,
+                description='Encrypted access token'
+            )
+        ]
+    )
+    @action(detail=True, methods=['get'], url_path='form')
+    def form_schema(self, request, pk=None):
+        """Get form schema for shared record (for DynamicFormRenderer)"""
+        encrypted_token = pk
+        
+        # Get SharedRecord from database
+        try:
+            from sharing.models import SharedRecord
+            shared_record = SharedRecord.objects.select_related(
+                'record__pipeline'
+            ).get(encrypted_token=encrypted_token)
+        except SharedRecord.DoesNotExist:
+            return Response(
+                {'error': 'Invalid or expired share link'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Check if share is still valid
+        if not shared_record.is_valid:
+            status_msg = {
+                'expired': 'Share link has expired',
+                'revoked': 'Share link has been revoked',
+                'inactive': 'Share link is no longer active'
+            }.get(shared_record.status, 'Share link is not valid')
+            
+            return Response(
+                {'error': status_msg},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Generate form schema with populated data
+        try:
+            from pipelines.form_generation import generate_pipeline_form
+            form_schema = generate_pipeline_form(
+                pipeline_id=shared_record.record.pipeline.id,
+                mode='shared_record',
+                record_data=shared_record.record.data
+            )
+            
+            # Apply access mode restrictions
+            if shared_record.access_mode == 'readonly':
+                # Make all fields readonly
+                for field in form_schema.get('fields', []):
+                    field['is_readonly'] = True
+            
+            return Response(form_schema)
+            
+        except Exception as e:
+            return Response(
+                {'error': f'Failed to generate form schema: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @extend_schema(
+        summary="Get access analytics for shared record",
+        description="Get access statistics for the shared record (for debugging)",
+        parameters=[
+            OpenApiParameter(
+                name='encrypted_token',
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.PATH,
+                description='Encrypted access token'
+            )
+        ]
+    )
+    @action(detail=True, methods=['get'])
+    def analytics(self, request, pk=None):
+        """Get access analytics for shared record"""
+        encrypted_token = pk
+        
+        if not encrypted_token:
+            return Response(
+                {'error': 'Encrypted token is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Validate token first
+        payload, error = self.encryption.decrypt_share_data(encrypted_token)
+        if not payload:
+            return Response(
+                {'error': error or 'Invalid share link'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Get analytics from cache
+        cache_key = f"shared_access:{encrypted_token[:16]}"
+        access_data = cache.get(cache_key, {'count': 0, 'ips': []})
+        
+        return Response({
+            'record_id': payload['record_id'],
+            'access_count': access_data.get('count', 0),
+            'unique_ips': len(access_data.get('ips', [])),
+            'last_access': access_data.get('last_access'),
+            'created_at': payload['created'],
+            'expires_at': payload['expires'],
+            'is_expired': time.time() > payload['expires']
+        })
+    
+    @extend_schema(
+        summary="Update shared record data",
+        description="Update record data through shared link (for editable shares only)",
+        parameters=[
+            OpenApiParameter(
+                name='encrypted_token',
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.PATH,
+                description='Encrypted access token'
+            )
+        ]
+    )
+    def update(self, request, pk=None):
+        """Update shared record data (for editable shares only)"""
+        encrypted_token = pk
+        
+        if not encrypted_token:
+            return Response(
+                {'error': 'Encrypted token is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Validate required accessor information
+        accessor_name = request.data.get('accessor_name')
+        accessor_email = request.data.get('accessor_email')
+        form_data = request.data.get('data', {})
+        
+        if not accessor_name or not accessor_email:
+            return Response(
+                {
+                    'error': 'Accessor name and email are required',
+                    'required_fields': ['accessor_name', 'accessor_email']
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        if not form_data:
+            return Response(
+                {'error': 'No data provided for update'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Validate email format
+        from django.core.validators import validate_email
+        from django.core.exceptions import ValidationError
+        try:
+            validate_email(accessor_email)
+        except ValidationError:
+            return Response(
+                {'error': 'Invalid email format'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Get SharedRecord from database
+        try:
+            from sharing.models import SharedRecord, SharedRecordAccess
+            shared_record = SharedRecord.objects.select_related(
+                'record__pipeline'
+            ).get(encrypted_token=encrypted_token)
+        except SharedRecord.DoesNotExist:
+            return Response(
+                {'error': 'Invalid or expired share link'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Check if share is still valid
+        if not shared_record.is_valid:
+            status_msg = {
+                'expired': 'Share link has expired',
+                'revoked': 'Share link has been revoked',
+                'inactive': 'Share link is no longer active'
+            }.get(shared_record.status, 'Share link is not valid')
+            
+            return Response(
+                {'error': status_msg},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # SECURITY: Validate that accessor email matches intended recipient
+        if accessor_email.lower() != shared_record.intended_recipient_email.lower():
+            return Response(
+                {
+                    'error': 'Access denied. This share link is restricted to a specific email address.',
+                    'help': 'Please ensure you are using the correct email address that this link was shared with.'
+                },
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Check if share is editable
+        if shared_record.access_mode != 'editable':
+            return Response(
+                {'error': 'This shared record is read-only and cannot be edited'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Get the record and store original data for audit logging
+        record = shared_record.record
+        original_data = record.data.copy()
+        
+        try:
+            # Update the record data
+            record.data.update(form_data)
+            record.updated_at = timezone.now()
+            record.save()
+            
+            # Create access log for this edit
+            client_ip = self.get_client_ip(request)
+            user_agent = request.META.get('HTTP_USER_AGENT', '')
+            
+            SharedRecordAccess.objects.create(
+                shared_record=shared_record,
+                accessor_name=accessor_name.strip(),
+                accessor_email=accessor_email.strip().lower(),
+                ip_address=client_ip,
+                user_agent=user_agent
+            )
+            
+            # Log the edit in audit logs
+            from sharing.signals import log_shared_record_edit
+            
+            # Calculate field changes for audit log
+            field_changes = {}
+            for field_key, new_value in form_data.items():
+                old_value = original_data.get(field_key)
+                if old_value != new_value:
+                    field_changes[field_key] = {
+                        'old': old_value,
+                        'new': new_value
+                    }
+            
+            # Log the edit with accessor information
+            if field_changes:
+                log_shared_record_edit(
+                    user=None,  # External user
+                    record=record,
+                    field_changes=field_changes,
+                    accessor_info={
+                        'accessor_name': accessor_name.strip(),
+                        'accessor_email': accessor_email.strip().lower(),
+                        'ip_address': client_ip
+                    }
+                )
+            
+            # Track the access
+            shared_record.track_access(client_ip)
+            
+            return Response({
+                'success': True,
+                'message': 'Record updated successfully',
+                'record_id': record.id,
+                'changes_count': len(field_changes),
+                'accessor_info': {
+                    'name': accessor_name.strip(),
+                    'email': accessor_email.strip().lower()
+                }
+            })
+            
+        except Exception as e:
+            logger.error(f"Failed to update shared record {record.id}: {e}")
+            return Response(
+                {'error': f'Failed to update record: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )

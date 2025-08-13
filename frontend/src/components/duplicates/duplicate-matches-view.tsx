@@ -584,10 +584,35 @@ export function DuplicateMatchesView({ pipelineId }: DuplicateMatchesViewProps) 
       fields.sort((a, b) => a.displayOrder - b.displayOrder)
     })
     
-    // Get group definitions for headers
+    // Get group definitions for headers and sort by display_order, then by name for ties
     const fieldGroups = pipelineFields
       .map(f => f.field_group_details)
       .filter((group, index, arr) => group && arr.findIndex(g => g?.id === group.id) === index)
+      .sort((a, b) => {
+        const orderA = a?.display_order ?? 999
+        const orderB = b?.display_order ?? 999
+        
+        // Primary sort: display_order
+        if (orderA !== orderB) {
+          return orderA - orderB
+        }
+        
+        // Secondary sort: name (for stable sorting when display_order is the same)
+        return (a?.name || '').localeCompare(b?.name || '')
+      })
+    
+    console.log('🔍 Field Groups Debug:', {
+      pipelineFieldsCount: pipelineFields.length,
+      fieldsWithGroups: pipelineFields.filter(f => f.field_group_details).length,
+      uniqueGroups: fieldGroups.length,
+      groupDetails: fieldGroups.map(g => ({ id: g?.id, name: g?.name, color: g?.color, display_order: g?.display_order })),
+      renderOrder: fieldGroups.map(g => `${g?.display_order}: ${g?.name}`),
+      beforeSort: pipelineFields
+        .map(f => f.field_group_details)
+        .filter((group, index, arr) => group && arr.findIndex(g => g?.id === group.id) === index)
+        .map(g => `${g?.display_order}: ${g?.name}`),
+      afterSort: fieldGroups.map(g => `${g?.display_order}: ${g?.name}`)
+    })
 
     return (
       <div className="overflow-hidden">
@@ -716,9 +741,12 @@ export function DuplicateMatchesView({ pipelineId }: DuplicateMatchesViewProps) 
             </div>
           </div>
 
-          {/* Field groups */}
-          {Array.from(groupedFields.entries()).map(([groupId, fields]) => {
-            const groupDef = fieldGroups.find(g => g && String(g.id) === groupId)
+          {/* Field groups - sorted by display_order */}
+          {fieldGroups.map(groupDef => {
+            const groupId = String(groupDef.id)
+            const fields = groupedFields.get(groupId) || []
+            
+            if (fields.length === 0) return null
             
             return (
               <div key={groupId || 'ungrouped'} className="border-t border-gray-200 dark:border-gray-600">
@@ -822,6 +850,90 @@ export function DuplicateMatchesView({ pipelineId }: DuplicateMatchesViewProps) 
               </div>
             )
           })}
+          
+          {/* Ungrouped fields */}
+          {(() => {
+            const ungroupedFields = groupedFields.get(null) || []
+            if (ungroupedFields.length === 0) return null
+            
+            return (
+              <div key="ungrouped" className="border-t border-gray-200 dark:border-gray-600">
+                {/* Group header for ungrouped fields */}
+                <div className="px-6 py-3 bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-600">
+                  <div className="flex items-center space-x-2">
+                    <div className="w-4 h-4 rounded bg-gray-400 flex items-center justify-center">
+                      <div className="w-2 h-2 bg-white rounded-full" />
+                    </div>
+                    <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-300">
+                      Other Fields
+                    </h4>
+                  </div>
+                </div>
+
+                {/* Fields in ungrouped section */}
+                <div className="divide-y divide-gray-100 dark:divide-gray-700">
+                  {ungroupedFields.map(field => (
+                    <div
+                      key={field.name}
+                      className={`grid grid-cols-1 lg:grid-cols-3 divide-x divide-gray-100 dark:divide-gray-700 ${
+                        field.isMatched ? 'bg-orange-50 dark:bg-orange-900/10' : ''
+                      }`}
+                    >
+                      {/* Record A Value */}
+                      <div className="p-4">
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="text-xs font-medium text-gray-500 dark:text-gray-400 flex items-center">
+                            {field.definition?.display_name || field.name}
+                            {field.isMatched && (
+                              <CheckCircle className="w-3 h-3 ml-1 text-orange-500" />
+                            )}
+                          </div>
+                        </div>
+                        <div className="text-sm text-gray-900 dark:text-white font-medium break-words">
+                          {formatFieldValue(field.value1, field.name)}
+                        </div>
+                      </div>
+
+                      {/* Match indicator (desktop only) */}
+                      <div className="hidden lg:flex items-center justify-center p-2">
+                        {field.isMatched ? (
+                          <div className="flex items-center space-x-1 text-orange-600 dark:text-orange-400">
+                            <CheckCircle className="w-4 h-4" />
+                            <span className="text-xs font-medium">MATCH</span>
+                          </div>
+                        ) : field.value1 !== field.value2 ? (
+                          <div className="flex items-center space-x-1 text-gray-400">
+                            <X className="w-4 h-4" />
+                            <span className="text-xs">DIFF</span>
+                          </div>
+                        ) : (
+                          <div className="flex items-center space-x-1 text-green-500">
+                            <CheckCircle className="w-4 h-4" />
+                            <span className="text-xs font-medium">SAME</span>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Record B Value */}
+                      <div className="p-4">
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="text-xs font-medium text-gray-500 dark:text-gray-400 flex items-center">
+                            {field.definition?.display_name || field.name}
+                            {field.isMatched && (
+                              <CheckCircle className="w-3 h-3 ml-1 text-orange-500" />
+                            )}
+                          </div>
+                        </div>
+                        <div className="text-sm text-gray-900 dark:text-white font-medium break-words">
+                          {formatFieldValue(field.value2, field.name)}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )
+          })()}
         </div>
 
         {/* Resolution Notes */}

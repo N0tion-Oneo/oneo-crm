@@ -117,6 +117,10 @@ router.register(r'response-tracking', ResponseTrackingViewSet, basename='respons
 router.register(r'campaign-tracking', CampaignTrackingViewSet, basename='campaign-tracking')
 router.register(r'performance-metrics', PerformanceMetricsViewSet, basename='performance-metrics')
 
+# Sharing endpoints (centralized in api app)
+from .views.sharing import SharedRecordHistoryViewSet
+router.register(r'shared-record-history', SharedRecordHistoryViewSet, basename='shared-record-history')
+
 # AI endpoints (tenant-isolated)
 router.register(r'ai-jobs', AIJobViewSet, basename='ai-job')
 router.register(r'ai-usage-analytics', AIUsageAnalyticsViewSet, basename='ai-usage-analytics')
@@ -135,6 +139,11 @@ pipelines_router.register(r'duplicate-rules', DuplicateRuleViewSet, basename='pi
 pipelines_router.register(r'url-extraction-rules', URLExtractionRuleViewSet, basename='pipeline-url-extraction-rules')
 pipelines_router.register(r'duplicate-matches', DuplicateMatchViewSet, basename='pipeline-duplicate-matches')
 
+# Record-specific endpoints
+records_router = routers.NestedDefaultRouter(pipelines_router, r'records', lookup='record')
+from .views.sharing import RecordSharingHistoryViewSet
+records_router.register(r'sharing-history', RecordSharingHistoryViewSet, basename='record-sharing-history')
+
 app_name = 'api'
 
 # API URL patterns
@@ -142,6 +151,7 @@ api_patterns = [
     # Main API routes
     path('', include(router.urls)),
     path('', include(pipelines_router.urls)),
+    path('', include(records_router.urls)),
     
     # Workflow endpoints (non-ViewSet)
     path('workflows/webhook/<uuid:workflow_id>/', webhook_endpoint, name='workflow-webhook'),

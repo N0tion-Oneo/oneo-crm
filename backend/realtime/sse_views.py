@@ -444,6 +444,45 @@ def _format_audit_changes_for_activity_feed(changes, action):
     elif action == 'deleted':
         return f"Record deleted from {changes.get('pipeline_name', 'Unknown')} pipeline"
     
+    # Sharing-related actions with rich descriptions
+    elif action == 'shared_record':
+        primary = changes.get('primary_message', 'Shared record with external users')
+        secondary = changes.get('secondary_message', '')
+        if secondary:
+            return f"{primary}\n{secondary}"
+        return primary
+    
+    elif action == 'external_access':
+        # Always show it's an external user
+        primary = changes.get('primary_message', 'External user accessed record')
+        secondary = changes.get('secondary_message', '')
+        if secondary:
+            return f"🌐 {primary}\n{secondary}"
+        return f"🌐 {primary}"
+    
+    elif action == 'external_edit':
+        # Always show it's an external user
+        primary = changes.get('primary_message', 'External user edited record')
+        secondary = changes.get('secondary_message', '')
+        # Show field changes if available
+        if 'changes_detailed' in changes and changes['changes_detailed']:
+            changes_text = '\n'.join(changes['changes_detailed'][:3])  # Show first 3 changes
+            if len(changes['changes_detailed']) > 3:
+                changes_text += f"\n... and {len(changes['changes_detailed']) - 3} more"
+            return f"🌐 {primary}\n{secondary}\n\nChanges:\n{changes_text}"
+        elif secondary:
+            return f"🌐 {primary}\n{secondary}"
+        return f"🌐 {primary}"
+    
+    elif action == 'share_revoked':
+        revoked_by = changes.get('revoked_by', 'Unknown')
+        access_count = changes.get('access_count', 0)
+        return f"Share link revoked by {revoked_by}\nHad {access_count} access{'es' if access_count != 1 else ''}"
+    
+    elif action == 'share_deleted':
+        access_count = changes.get('access_count', 0)
+        return f"Share link deleted\nHad {access_count} access{'es' if access_count != 1 else ''}"
+    
     return f"Record {action}"
 
 

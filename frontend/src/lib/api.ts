@@ -445,6 +445,41 @@ export const recordsApi = {
   
   createRecordRelationship: (pipelineId: string, recordId: string, data: any) =>
     api.post(`/api/pipelines/${pipelineId}/records/${recordId}/relationships/`, data),
+  
+  // Share link generation (encrypted sharing)
+  generateShareLink: (pipelineId: string, recordId: string, data?: { 
+    access_mode?: 'readonly' | 'editable'
+    intended_recipient_email?: string 
+  }) =>
+    api.post(`/api/pipelines/${pipelineId}/records/${recordId}/generate_share_link/`, data || {}),
+  
+  previewSharedForm: (pipelineId: string, recordId: string) =>
+    api.get(`/api/pipelines/${pipelineId}/records/${recordId}/preview_shared_form/`),
+  
+  // Sharing history and management
+  getSharingHistory: (pipelineId: string, recordId: string) =>
+    api.get(`/api/pipelines/${pipelineId}/records/${recordId}/sharing-history/`),
+  
+  getShareAccessLogs: (shareId: string) =>
+    api.get(`/api/shared-record-history/${shareId}/access_logs/`),
+  
+  revokeShare: (shareId: string, data?: { reason?: string }) =>
+    api.post(`/api/shared-record-history/${shareId}/revoke/`, data || {}),
+  
+  // Global sharing analytics
+  getSharingAnalytics: () =>
+    api.get('/api/shared-record-history/analytics/'),
+}
+
+// Shared Records API (no authentication required)
+export const sharedRecordsApi = {
+  // Access shared record via encrypted token
+  getSharedRecord: (encryptedToken: string) =>
+    api.get(`/api/v1/shared-records/${encryptedToken}/`),
+  
+  // Get analytics for shared record access
+  getSharedRecordAnalytics: (encryptedToken: string) =>
+    api.get(`/api/v1/shared-records/${encryptedToken}/analytics/`),
 }
 
 // Field Types API
@@ -545,9 +580,9 @@ export const duplicatesApi = {
   // Smart URL processor - live testing
   liveTestUrls: (data: any) => api.post('/api/v1/url-extraction-rules/live_test/', data),
   
-  // Get duplicate count for record
-  getRecordDuplicateCount: (recordId: string) => {
-    return api.get(`/api/v1/duplicate-rules/record_duplicate_count/?record_id=${recordId}`)
+  // Get duplicate count for record using duplicate-matches endpoint
+  getRecordDuplicateCount: (recordId: string, pipelineId: string) => {
+    return api.get(`/api/v1/pipelines/${pipelineId}/duplicate-matches/?record_id=${recordId}`)
   },
   
   // Merge records with field-level control

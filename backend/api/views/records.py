@@ -1008,6 +1008,169 @@ class RecordViewSet(viewsets.ModelViewSet):
         }
         
         return Response({'suggestions': suggestions})
+    
+    @extend_schema(
+        summary="Generate encrypted share link for record",
+        description="Generate a secure, time-limited share link for external access to the record",
+        request={
+            'application/json': {
+                'type': 'object',
+                'properties': {
+                    'access_mode': {
+                        'type': 'string',
+                        'enum': ['readonly', 'editable'],
+                        'default': 'editable',
+                        'description': 'Access mode for the shared record'
+                    }
+                }
+            }
+        }
+    )
+    @action(detail=True, methods=['post'])
+    def generate_share_link(self, request, pipeline_pk=None, pk=None):
+        """Generate encrypted share link for record"""
+        record = self.get_object()
+        
+        # Get access mode from request, default to editable
+        access_mode = request.data.get('access_mode', 'editable')
+        if access_mode not in ['readonly', 'editable']:
+            return Response(
+                {'error': 'access_mode must be either "readonly" or "editable"'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # SECURITY: Require intended recipient email
+        intended_recipient_email = request.data.get('intended_recipient_email')
+        if not intended_recipient_email:
+            return Response(
+                {'error': 'intended_recipient_email is required for security'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Validate email format
+        from django.core.validators import validate_email
+        from django.core.exceptions import ValidationError
+        try:
+            validate_email(intended_recipient_email)
+        except ValidationError:
+            return Response(
+                {'error': 'Invalid email format for intended_recipient_email'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            from utils.encryption import ShareLinkEncryption
+            from sharing.models import SharedRecord
+            from django.utils import timezone
+            from datetime import datetime
+            
+            encryption = ShareLinkEncryption()
+            
+            # Calculate 5 working day expiry
+            expires_timestamp = encryption.generate_working_day_expiry(working_days=5)
+            expires_datetime = datetime.fromtimestamp(expires_timestamp)
+            
+            # Create encrypted token with all data embedded
+            encrypted_token = encryption.encrypt_share_data(
+                record_id=record.id,
+                user_id=request.user.id,
+                expires_timestamp=expires_timestamp,
+                access_mode=access_mode
+            )
+            
+            # Create SharedRecord database entry for history tracking
+            shared_record = SharedRecord.objects.create(
+                encrypted_token=encrypted_token,
+                record=record,
+                shared_by=request.user,
+                access_mode=access_mode,
+                expires_at=expires_datetime,
+                intended_recipient_email=intended_recipient_email
+            )
+            
+            # Build clean share URL
+            share_url = request.build_absolute_uri(
+                f'/api/v1/shared-records/{encrypted_token}/'
+            )
+            
+            # Calculate working days remaining
+            working_days_remaining = encryption.calculate_working_days_remaining(expires_timestamp)
+            
+            return Response({
+                'share_url': share_url,
+                'encrypted_token': encrypted_token,
+                'shared_record_id': str(shared_record.id),
+                'expires_at': expires_timestamp,
+                'expires_datetime': timezone.datetime.fromtimestamp(expires_timestamp).isoformat(),
+                'record_id': record.id,
+                'pipeline_id': record.pipeline.id,
+                'access_mode': access_mode,
+                'working_days': 5,
+                'working_days_remaining': working_days_remaining,
+                'sharing_enabled': True,
+                'security_note': 'Encrypted share link with embedded expiry and database tracking',
+                'access_note': f'Link will expire in {working_days_remaining} working days (Mon-Fri)'
+            })
+            
+        except Exception as e:
+            return Response(
+                {'error': f'Failed to generate share link: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @extend_schema(
+        summary="Preview shared record form",
+        description="Preview what the shared record form will look like to external users"
+    )
+    @action(detail=True, methods=['get'])
+    def preview_shared_form(self, request, pipeline_pk=None, pk=None):
+        """Preview what the shared record form will look like"""
+        record = self.get_object()
+        
+        try:
+            # Generate form schema (same as what shared link will show)
+            from pipelines.form_generation import generate_pipeline_form
+            
+            form_schema = generate_pipeline_form(
+                pipeline_id=record.pipeline.id,
+                mode='shared_record',
+                record_data=record.data
+            )
+            
+            # Get visible fields info
+            visible_fields = [
+                {
+                    'field_slug': field.field_slug,
+                    'field_name': field.field_name,
+                    'field_type': field.field_type,
+                    'display_name': field.display_name,
+                    'current_value': field.current_value,
+                    'is_visible': field.is_visible
+                }
+                for field in form_schema.fields
+            ]
+            
+            return Response({
+                'preview': form_schema.to_dict(),
+                'visible_fields_count': len([f for f in form_schema.fields if f.is_visible]),
+                'total_fields_count': len(record.pipeline.fields.all()),
+                'visible_fields': visible_fields,
+                'record_info': {
+                    'id': record.id,
+                    'title': getattr(record, 'title', 'Untitled Record'),
+                    'pipeline': record.pipeline.name,
+                    'created_at': record.created_at,
+                    'updated_at': record.updated_at
+                },
+                'sharing_note': 'This preview shows what external users will see with the share link',
+                'field_visibility_note': 'Only fields marked as "visible in public forms" are shown'
+            })
+            
+        except Exception as e:
+            return Response(
+                {'error': f'Failed to generate preview: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 class GlobalSearchViewSet(viewsets.ReadOnlyModelViewSet):
@@ -1115,3 +1278,166 @@ class GlobalSearchViewSet(viewsets.ReadOnlyModelViewSet):
         }
         
         return Response({'suggestions': suggestions})
+    
+    @extend_schema(
+        summary="Generate encrypted share link for record",
+        description="Generate a secure, time-limited share link for external access to the record",
+        request={
+            'application/json': {
+                'type': 'object',
+                'properties': {
+                    'access_mode': {
+                        'type': 'string',
+                        'enum': ['readonly', 'editable'],
+                        'default': 'editable',
+                        'description': 'Access mode for the shared record'
+                    }
+                }
+            }
+        }
+    )
+    @action(detail=True, methods=['post'])
+    def generate_share_link(self, request, pipeline_pk=None, pk=None):
+        """Generate encrypted share link for record"""
+        record = self.get_object()
+        
+        # Get access mode from request, default to editable
+        access_mode = request.data.get('access_mode', 'editable')
+        if access_mode not in ['readonly', 'editable']:
+            return Response(
+                {'error': 'access_mode must be either "readonly" or "editable"'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # SECURITY: Require intended recipient email
+        intended_recipient_email = request.data.get('intended_recipient_email')
+        if not intended_recipient_email:
+            return Response(
+                {'error': 'intended_recipient_email is required for security'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Validate email format
+        from django.core.validators import validate_email
+        from django.core.exceptions import ValidationError
+        try:
+            validate_email(intended_recipient_email)
+        except ValidationError:
+            return Response(
+                {'error': 'Invalid email format for intended_recipient_email'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            from utils.encryption import ShareLinkEncryption
+            from sharing.models import SharedRecord
+            from django.utils import timezone
+            from datetime import datetime
+            
+            encryption = ShareLinkEncryption()
+            
+            # Calculate 5 working day expiry
+            expires_timestamp = encryption.generate_working_day_expiry(working_days=5)
+            expires_datetime = datetime.fromtimestamp(expires_timestamp)
+            
+            # Create encrypted token with all data embedded
+            encrypted_token = encryption.encrypt_share_data(
+                record_id=record.id,
+                user_id=request.user.id,
+                expires_timestamp=expires_timestamp,
+                access_mode=access_mode
+            )
+            
+            # Create SharedRecord database entry for history tracking
+            shared_record = SharedRecord.objects.create(
+                encrypted_token=encrypted_token,
+                record=record,
+                shared_by=request.user,
+                access_mode=access_mode,
+                expires_at=expires_datetime,
+                intended_recipient_email=intended_recipient_email
+            )
+            
+            # Build clean share URL
+            share_url = request.build_absolute_uri(
+                f'/api/v1/shared-records/{encrypted_token}/'
+            )
+            
+            # Calculate working days remaining
+            working_days_remaining = encryption.calculate_working_days_remaining(expires_timestamp)
+            
+            return Response({
+                'share_url': share_url,
+                'encrypted_token': encrypted_token,
+                'shared_record_id': str(shared_record.id),
+                'expires_at': expires_timestamp,
+                'expires_datetime': timezone.datetime.fromtimestamp(expires_timestamp).isoformat(),
+                'record_id': record.id,
+                'pipeline_id': record.pipeline.id,
+                'access_mode': access_mode,
+                'working_days': 5,
+                'working_days_remaining': working_days_remaining,
+                'sharing_enabled': True,
+                'security_note': 'Encrypted share link with embedded expiry and database tracking',
+                'access_note': f'Link will expire in {working_days_remaining} working days (Mon-Fri)'
+            })
+            
+        except Exception as e:
+            return Response(
+                {'error': f'Failed to generate share link: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @extend_schema(
+        summary="Preview shared record form",
+        description="Preview what the shared record form will look like to external users"
+    )
+    @action(detail=True, methods=['get'])
+    def preview_shared_form(self, request, pipeline_pk=None, pk=None):
+        """Preview what the shared record form will look like"""
+        record = self.get_object()
+        
+        try:
+            # Generate form schema (same as what shared link will show)
+            from pipelines.form_generation import generate_pipeline_form
+            
+            form_schema = generate_pipeline_form(
+                pipeline_id=record.pipeline.id,
+                mode='shared_record',
+                record_data=record.data
+            )
+            
+            # Get visible fields info
+            visible_fields = [
+                {
+                    'field_slug': field.field_slug,
+                    'field_name': field.field_name,
+                    'field_type': field.field_type,
+                    'display_name': field.display_name,
+                    'current_value': field.current_value,
+                    'is_visible': field.is_visible
+                }
+                for field in form_schema.fields
+            ]
+            
+            return Response({
+                'preview': form_schema.to_dict(),
+                'visible_fields_count': len([f for f in form_schema.fields if f.is_visible]),
+                'total_fields_count': len(record.pipeline.fields.all()),
+                'visible_fields': visible_fields,
+                'record_info': {
+                    'id': record.id,
+                    'title': getattr(record, 'title', 'Untitled Record'),
+                    'pipeline': record.pipeline.name,
+                    'created_at': record.created_at,
+                    'updated_at': record.updated_at
+                },
+                'sharing_note': 'This preview shows what external users will see with the share link',
+                'field_visibility_note': 'Only fields marked as "visible in public forms" are shown'
+            })
+            
+        except Exception as e:
+            return Response(
+                {'error': f'Failed to generate preview: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )

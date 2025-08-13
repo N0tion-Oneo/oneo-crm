@@ -244,6 +244,10 @@ class RecordPermission(permissions.BasePermission):
             if pipeline_id:
                 return permission_manager.has_permission('action', 'records', 'read', pipeline_id)
             return False
+        elif view.action in ['generate_share_link', 'preview_shared_form']:
+            # Share link generation requires read permission for the pipeline
+            # Users can share records they can read
+            return True  # Object-level check in has_object_permission
         
         return False
     
@@ -261,5 +265,8 @@ class RecordPermission(permissions.BasePermission):
         elif view.action == 'restore':
             # Restore requires delete permission (ability to manage deleted records)
             return permission_manager.has_permission('action', 'records', 'delete', pipeline_id)
+        elif view.action in ['generate_share_link', 'preview_shared_form']:
+            # Share link generation requires read permission for the record's pipeline
+            return permission_manager.has_permission('action', 'records', 'read', pipeline_id)
         
         return False

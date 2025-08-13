@@ -28,6 +28,12 @@ from .duplicates import (
     DuplicatePermission,
 )
 
+# Sharing permissions
+from .sharing import (
+    SharedRecordPermission,
+    RecordSharingPermission,
+)
+
 # Workflow permissions
 from .workflows import (
     WorkflowPermission,
@@ -85,6 +91,10 @@ __all__ = [
     
     # Duplicate permissions
     'DuplicatePermission',
+    
+    # Sharing permissions
+    'SharedRecordPermission',
+    'RecordSharingPermission',
     
     # Workflow permissions
     'WorkflowPermission',

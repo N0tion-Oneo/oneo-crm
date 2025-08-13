@@ -139,6 +139,7 @@ TENANT_APPS = [
     'communications',  # Phase 08 - Communication Layer
     'duplicates',  # Duplicate detection system
     'ai',  # Phase 09 - AI Integration & Intelligent Workflows
+    'sharing',  # Record sharing system
 ]
 
 # Combine apps (avoid duplicates)

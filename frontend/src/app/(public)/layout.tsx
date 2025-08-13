@@ -1,5 +1,4 @@
 import type { Metadata } from 'next'
-import '../globals.css'
 
 export const metadata: Metadata = {
   title: 'Public Forms - Oneo CRM',
@@ -13,10 +12,8 @@ export default function PublicLayout({
   children: React.ReactNode
 }) {
   return (
-    <html lang="en" suppressHydrationWarning>
-      <body className="bg-gray-50 antialiased" suppressHydrationWarning>
-        {children}
-      </body>
-    </html>
+    <div className="bg-gray-50 min-h-screen antialiased">
+      {children}
+    </div>
   )
 }

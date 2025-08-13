@@ -489,8 +489,8 @@ def _format_audit_changes_for_realtime(changes, action):
         primary = changes.get('primary_message', 'Shared record with external users')
         secondary = changes.get('secondary_message', '')
         if secondary:
-            return f"{primary}\n{secondary}"
-        return primary
+            return f"🔗 {primary}\n{secondary}"
+        return f"🔗 {primary}"
     
     elif action == 'external_access':
         # Always show it's an external user

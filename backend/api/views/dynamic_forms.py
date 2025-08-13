@@ -569,12 +569,19 @@ class SharedRecordViewSet(viewsets.ViewSet):
         
         # Also create detailed access log with user information
         from sharing.models import SharedRecordAccess
+        from utils.geolocation import get_location_from_ip
+        
+        # Get location data from IP address
+        location_data = get_location_from_ip(client_ip) if client_ip else {}
+        
         SharedRecordAccess.objects.create(
             shared_record=shared_record,
             ip_address=client_ip,
             user_agent=request.META.get('HTTP_USER_AGENT', '')[:500],  # Truncate long user agents
             accessor_name=accessor_name.strip(),
-            accessor_email=accessor_email.strip().lower()
+            accessor_email=accessor_email.strip().lower(),
+            city=location_data.get('city', ''),
+            country=location_data.get('country', '')
         )
         
         # Generate form schema with populated data
@@ -834,21 +841,40 @@ class SharedRecordViewSet(viewsets.ViewSet):
         original_data = record.data.copy()
         
         try:
+            # Add context flag for external shared record update
+            # This will modify how the pipeline signal creates audit logs
+            record._is_shared_record_update = True
+            record._external_accessor_info = {
+                'accessor_name': accessor_name.strip(),
+                'accessor_email': accessor_email.strip().lower(),
+                'ip_address': self.get_client_ip(request)
+            }
+            
             # Update the record data
             record.data.update(form_data)
             record.updated_at = timezone.now()
+            # Use the original sharer as updated_by to satisfy database constraint
+            # The external user context is tracked via the context flags for audit logging
+            record.updated_by = shared_record.shared_by
+            
             record.save()
             
             # Create access log for this edit
             client_ip = self.get_client_ip(request)
             user_agent = request.META.get('HTTP_USER_AGENT', '')
             
+            # Get location data from IP address
+            from utils.geolocation import get_location_from_ip
+            location_data = get_location_from_ip(client_ip) if client_ip else {}
+            
             SharedRecordAccess.objects.create(
                 shared_record=shared_record,
                 accessor_name=accessor_name.strip(),
                 accessor_email=accessor_email.strip().lower(),
                 ip_address=client_ip,
-                user_agent=user_agent
+                user_agent=user_agent,
+                city=location_data.get('city', ''),
+                country=location_data.get('country', '')
             )
             
             # Log the edit in audit logs

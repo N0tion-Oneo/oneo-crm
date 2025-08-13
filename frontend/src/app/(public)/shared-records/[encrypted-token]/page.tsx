@@ -126,16 +126,52 @@ export default function SharedRecordPage() {
     }
   }
 
-  const handleFormSubmit = (data: Record<string, any>) => {
+  const handleFormSubmit = async (data: Record<string, any>) => {
     if (sharedData?.access_mode === 'readonly') {
       // Read-only mode - should not allow submissions
       console.log('Shared record viewed (read-only):', { recordId: sharedData?.record.id, data })
       alert('Record information viewed successfully!')
-    } else {
-      // Editable mode - handle record updates
-      console.log('Shared record updated:', { recordId: sharedData?.record.id, data })
-      // TODO: Implement record update API call for shared records
+      return
+    }
+
+    if (!accessorInfo) {
+      setError('Accessor information is required')
+      return
+    }
+
+    try {
+      // Editable mode - handle record updates via SharedRecordViewSet
+      const baseUrl = window.location.hostname.includes('localhost') 
+        ? `http://${window.location.hostname}:8000`
+        : `${window.location.protocol}//${window.location.hostname}`
+      
+      const response = await fetch(`${baseUrl}/api/v1/shared-records/${encryptedToken}/`, {
+        method: 'PUT',  // Use PUT for updates in the SharedRecordViewSet
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          accessor_name: accessorInfo.name,
+          accessor_email: accessorInfo.email,
+          data: data
+        })
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}))
+        throw new Error(errorData.error || `Failed to update record: ${response.status}`)
+      }
+
+      const result = await response.json()
+      console.log('Shared record updated successfully:', result)
       alert('Record updated successfully!')
+      
+      // Refresh the shared record data to show updated values
+      await fetchSharedRecord(accessorInfo.name, accessorInfo.email)
+      
+    } catch (error: any) {
+      console.error('Failed to update shared record:', error)
+      setError(error.message || 'Failed to update record. Please try again.')
     }
   }
 

@@ -126,7 +126,13 @@ def handle_shared_record_access(sender, instance, created, **kwargs):
             location_parts.append(instance.city)
         if instance.country:
             location_parts.append(instance.country)
-        location_str = ', '.join(location_parts) if location_parts else 'Unknown location'
+        
+        if location_parts:
+            location_str = ', '.join(location_parts)
+        elif instance.ip_address:
+            location_str = f"IP: {instance.ip_address}"
+        else:
+            location_str = 'Unknown location'
         
         # Get shared by name
         shared_by_name = instance.shared_record.shared_by.get_full_name() or instance.shared_record.shared_by.email

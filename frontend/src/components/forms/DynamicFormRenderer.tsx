@@ -352,13 +352,23 @@ export function DynamicFormRenderer({
       }
       
       let endpoint = ''
+      let response
+      
       if (formType.includes('public')) {
         endpoint = `/api/public-forms/${pipelineSlug || pipelineId}/submit/`
+        response = await api.post(endpoint, submitData)
+      } else if (formType === 'shared_record') {
+        // For shared records, don't make an API call here - let the parent component handle it
+        // This allows the parent to use the correct SharedRecordViewSet endpoint with accessor info
+        if (onSubmit) {
+          onSubmit(formData)
+        }
+        setSubmitted(true)
+        return
       } else {
         endpoint = `/api/pipelines/${pipelineId}/forms/submit/`
+        response = await api.post(endpoint, submitData)
       }
-      
-      const response = await api.post(endpoint, submitData)
       
       setSubmitted(true)
       if (onSubmit) {

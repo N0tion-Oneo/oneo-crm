@@ -121,9 +121,47 @@ def handle_record_save(sender, instance, created, **kwargs):
             
             # Only create audit log if there are actual changes
             if changes:
-                # ✅ Validate user context before creating audit log
+                # ✅ Handle external shared record updates with accessor context
+                if hasattr(instance, '_is_shared_record_update') and instance._is_shared_record_update:
+                    external_info = getattr(instance, '_external_accessor_info', {})
+                    
+                    logger.info(f"SIGNAL_EXTERNAL: Creating external update audit log for record {instance.id}")
+                    
+                    # Create audit log with external accessor information
+                    audit_log = AuditLog.objects.create(
+                        user=None,  # No authenticated user for external access
+                        action='external_edit',
+                        model_name='Record',
+                        object_id=str(instance.id),
+                        changes={
+                            'record_title': instance.title,
+                            'pipeline_name': instance.pipeline.name,
+                            'pipeline_id': str(instance.pipeline.id),
+                            'total_changes': len(changes),
+                            'changes_summary': field_changes_summary,
+                            'field_changes': changes,
+                            'action_type': 'sharing_activity',
+                            'sharing_type': 'external_user',
+                            'external_user': True,
+                            'accessor_name': external_info.get('accessor_name', 'Unknown'),
+                            'accessor_email': external_info.get('accessor_email', 'unknown@external.user'),
+                            'ip_address': external_info.get('ip_address'),
+                            'edit_source': 'shared_record_form',
+                            'edit_time_formatted': timezone.now().strftime('%B %d, %Y at %I:%M %p'),
+                            'primary_message': f'External user {external_info.get("accessor_name", "Unknown")} edited shared record',
+                            'secondary_message': f'{external_info.get("accessor_email", "unknown@external.user")} • {len(changes)} field{"s" if len(changes) != 1 else ""} changed • {timezone.now().strftime("%B %d, %Y at %I:%M %p")}',
+                            'action_icon': 'edit',
+                            'action_color': 'orange'
+                        },
+                        ip_address=external_info.get('ip_address')
+                    )
+                    
+                    logger.info(f"AUDIT_LOG_EXTERNAL: Created external edit audit log {audit_log.id} for record {instance.id}")
+                    return
+                
+                # ✅ Validate user context before creating audit log for internal updates
                 if not instance.updated_by:
-                    logger.error(f"SIGNAL_ERROR: No updated_by user for record {instance.id}")
+                    logger.info(f"SIGNAL_SKIP: No updated_by user for record {instance.id}")
                     return
                 
                 if not hasattr(instance.updated_by, 'id') or not instance.updated_by.id:

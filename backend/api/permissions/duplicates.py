@@ -29,6 +29,9 @@ class DuplicatePermission(permissions.BasePermission):
             return permission_manager.has_permission('action', 'duplicates', 'resolve')
         elif view.action in ['builder_config', 'validate_logic', 'clone']:
             return permission_manager.has_permission('action', 'duplicates', 'create')
+        elif view.action == 'live_test':
+            # Live testing doesn't store data, allow for users with basic duplicate read access
+            return permission_manager.has_permission('action', 'duplicates', 'read')
         
         return False
     

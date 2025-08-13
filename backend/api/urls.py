@@ -130,6 +130,11 @@ pipelines_router.register(r'field-groups', FieldGroupViewSet, basename='pipeline
 pipelines_router.register(r'records', RecordViewSet, basename='pipeline-records')
 pipelines_router.register(r'forms', DynamicFormViewSet, basename='pipeline-forms')
 
+# Pipeline-specific duplicate management
+pipelines_router.register(r'duplicate-rules', DuplicateRuleViewSet, basename='pipeline-duplicate-rules')
+pipelines_router.register(r'url-extraction-rules', URLExtractionRuleViewSet, basename='pipeline-url-extraction-rules')
+pipelines_router.register(r'duplicate-matches', DuplicateMatchViewSet, basename='pipeline-duplicate-matches')
+
 app_name = 'api'
 
 # API URL patterns

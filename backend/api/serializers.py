@@ -899,15 +899,42 @@ class URLExtractionRuleSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'name', 'description', 'domain_patterns', 'extraction_pattern',
             'extraction_format', 'case_sensitive', 'remove_protocol', 'remove_www',
-            'remove_query_params', 'remove_fragments', 'is_active', 'created_at',
-            'updated_at'
+            'remove_query_params', 'remove_fragments', 'normalization_steps', 
+            'template_type', 'is_active', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
     
     def create(self, validated_data):
+        from django.db import IntegrityError
         validated_data['tenant'] = self.context['request'].tenant
         validated_data['created_by'] = self.context['request'].user
-        return super().create(validated_data)
+        try:
+            return super().create(validated_data)
+        except IntegrityError as e:
+            if 'unique_together' in str(e) or 'duplicate key' in str(e):
+                raise serializers.ValidationError({
+                    'name': 'A URL extraction rule with this name already exists for this tenant.'
+                })
+            raise
+    
+    def validate_name(self, value):
+        """Validate rule name uniqueness within tenant"""
+        request = self.context.get('request')
+        if not request or not hasattr(request, 'tenant'):
+            return value
+        
+        # Check for existing rule with same name in tenant
+        existing = URLExtractionRule.objects.filter(
+            tenant=request.tenant,
+            name=value
+        ).exclude(pk=self.instance.pk if self.instance else None)
+        
+        if existing.exists():
+            raise serializers.ValidationError(
+                "A URL extraction rule with this name already exists for this tenant."
+            )
+        
+        return value
 
 
 class DuplicateRuleSerializer(serializers.ModelSerializer):
@@ -925,9 +952,17 @@ class DuplicateRuleSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'created_at', 'updated_at', 'pipeline_name', 'created_by_name']
     
     def create(self, validated_data):
+        from django.db import IntegrityError
         validated_data['tenant'] = self.context['request'].tenant
         validated_data['created_by'] = self.context['request'].user
-        return super().create(validated_data)
+        try:
+            return super().create(validated_data)
+        except IntegrityError as e:
+            if 'unique_together' in str(e) or 'duplicate key' in str(e):
+                raise serializers.ValidationError({
+                    'name': 'A duplicate rule with this name already exists for this tenant.'
+                })
+            raise
     
     def validate_logic(self, value):
         """Validate the logic structure"""
@@ -985,10 +1020,29 @@ class DuplicateRuleSerializer(serializers.ModelSerializer):
             )
     
     def validate_pipeline(self, value):
-        """Validate pipeline belongs to tenant"""
+        """Validate pipeline exists and is accessible to the current tenant"""
+        # In multi-tenant architecture with schema isolation,
+        # if the pipeline was retrieved successfully, it belongs to the current tenant
+        # No additional tenant validation needed since django-tenants handles schema isolation
+        return value
+    
+    def validate_name(self, value):
+        """Validate rule name uniqueness within tenant"""
         request = self.context.get('request')
-        if hasattr(request, 'tenant') and value.tenant != request.tenant:
-            raise serializers.ValidationError("Pipeline not found")
+        if not request or not hasattr(request, 'tenant'):
+            return value
+        
+        # Check for existing rule with same name in tenant
+        existing = DuplicateRule.objects.filter(
+            tenant=request.tenant,
+            name=value
+        ).exclude(pk=self.instance.pk if self.instance else None)
+        
+        if existing.exists():
+            raise serializers.ValidationError(
+                "A duplicate rule with this name already exists for this tenant."
+            )
+        
         return value
 
 

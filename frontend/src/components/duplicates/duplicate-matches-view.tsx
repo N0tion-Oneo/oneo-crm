@@ -22,6 +22,10 @@ import { duplicatesApi } from '@/lib/api'
 
 interface DuplicateMatch {
   id: string
+  rule: {
+    id: string
+    name: string
+  }
   record1: {
     id: string
     data: { [key: string]: any }
@@ -32,9 +36,8 @@ interface DuplicateMatch {
   }
   confidence_score: number
   matched_fields: string[]
-  detection_rule: string
-  status: 'pending' | 'resolved' | 'false_positive'
-  requires_review: boolean
+  detection_method: string
+  status: 'pending' | 'confirmed' | 'false_positive' | 'merged' | 'ignored' | 'auto_resolved' | 'resolved'
   detected_at: string
   reviewed_by?: {
     id: string
@@ -43,7 +46,7 @@ interface DuplicateMatch {
   }
   reviewed_at?: string
   resolution_notes?: string
-  match_details?: any
+  field_scores?: any
 }
 
 interface DuplicateMatchesViewProps {
@@ -67,7 +70,7 @@ export function DuplicateMatchesView({ pipelineId }: DuplicateMatchesViewProps) 
   const loadDuplicateMatches = async () => {
     try {
       setLoading(true)
-      const response = await duplicatesApi.getDuplicateMatches()
+      const response = await duplicatesApi.getDuplicateMatches(pipelineId)
       
       // Transform and filter matches
       const transformedMatches: DuplicateMatch[] = (response.data.results || [])
@@ -80,18 +83,18 @@ export function DuplicateMatchesView({ pipelineId }: DuplicateMatchesViewProps) 
         })
         .map((match: any) => ({
           id: match.id?.toString() || '',
+          rule: match.rule || { id: '', name: 'Unknown Rule' },
           record1: match.record1 || { id: '', data: {} },
           record2: match.record2 || { id: '', data: {} },
           confidence_score: match.confidence_score || 0,
           matched_fields: match.matched_fields || [],
-          detection_rule: match.detection_rule || '',
+          detection_method: match.detection_method || '',
           status: match.status || 'pending',
-          requires_review: match.requires_review || false,
           detected_at: match.detected_at || new Date().toISOString(),
           reviewed_by: match.reviewed_by,
           reviewed_at: match.reviewed_at,
           resolution_notes: match.resolution_notes,
-          match_details: match.match_details
+          field_scores: match.field_scores
         }))
       
       setMatches(transformedMatches)
@@ -130,7 +133,7 @@ export function DuplicateMatchesView({ pipelineId }: DuplicateMatchesViewProps) 
         match_ids: selectedMatches,
         action,
         notes: `Bulk ${action} action`
-      })
+      }, pipelineId)
       
       // Refresh matches
       await loadDuplicateMatches()
@@ -143,17 +146,13 @@ export function DuplicateMatchesView({ pipelineId }: DuplicateMatchesViewProps) 
     }
   }
 
-  const getStatusBadge = (status: string, requiresReview: boolean) => {
+  const getStatusBadge = (status: string) => {
     switch (status) {
       case 'pending':
         return (
-          <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
-            requiresReview 
-              ? 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400'
-              : 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400'
-          }`}>
+          <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400">
             <Clock className="w-3 h-3 mr-1" />
-            {requiresReview ? 'Needs Review' : 'Pending'}
+            Pending
           </span>
         )
       case 'resolved':
@@ -341,13 +340,13 @@ export function DuplicateMatchesView({ pipelineId }: DuplicateMatchesViewProps) 
                       )}
                       <div>
                         <div className="flex items-center space-x-2 mb-1">
-                          {getStatusBadge(match.status, match.requires_review)}
+                          {getStatusBadge(match.status)}
                           <span className={`text-sm font-semibold ${getConfidenceColor(match.confidence_score)}`}>
                             {Math.round(match.confidence_score * 100)}% confidence
                           </span>
                         </div>
                         <p className="text-sm text-gray-600 dark:text-gray-400">
-                          Detected by rule: <span className="font-medium">{match.detection_rule}</span>
+                          Detected by rule: <span className="font-medium">{match.rule.name}</span>
                         </p>
                         <p className="text-xs text-gray-500 dark:text-gray-500 mt-1">
                           Found on {new Date(match.detected_at).toLocaleDateString()}

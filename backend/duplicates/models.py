@@ -13,6 +13,7 @@ class URLExtractionRule(models.Model):
     """Configurable URL extraction patterns for duplicate detection"""
     
     tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name='duplicate_url_extraction_rules')
+    pipeline = models.ForeignKey(Pipeline, on_delete=models.CASCADE, related_name='url_extraction_rules', help_text="Pipeline this URL extraction rule applies to")
     name = models.CharField(max_length=255, help_text="Human-readable name (e.g., 'LinkedIn Profile')")
     description = models.TextField(blank=True, help_text="Description of what this rule extracts")
     
@@ -36,6 +37,17 @@ class URLExtractionRule(models.Model):
     remove_www = models.BooleanField(default=True)
     remove_query_params = models.BooleanField(default=True)
     remove_fragments = models.BooleanField(default=True)
+    normalization_steps = models.JSONField(
+        default=list, 
+        blank=True,
+        help_text="Visual normalization steps configuration"
+    )
+    template_type = models.CharField(
+        max_length=50,
+        blank=True,
+        null=True,
+        help_text="Template type used to create this rule (e.g., 'linkedin', 'domain', 'custom')"
+    )
     
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -43,14 +55,15 @@ class URLExtractionRule(models.Model):
     created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
     
     class Meta:
-        unique_together = ['tenant', 'name']
+        unique_together = ['pipeline', 'name']
         ordering = ['name']
         indexes = [
-            models.Index(fields=['tenant', 'is_active']),
+            models.Index(fields=['tenant', 'pipeline']),
+            models.Index(fields=['pipeline', 'is_active']),
         ]
     
     def __str__(self):
-        return f"{self.tenant.name} - {self.name}"
+        return f"{self.pipeline.name} - {self.name}"
 
 
 class DuplicateRule(models.Model):

@@ -47,17 +47,37 @@ class DuplicateRuleViewSet(viewsets.ModelViewSet):
     ordering = ['-created_at']
     
     def get_queryset(self):
-        """Get duplicate rules filtered by tenant"""
-        return DuplicateRule.objects.filter(
+        """Get duplicate rules filtered by tenant and pipeline if accessed via nested route"""
+        queryset = DuplicateRule.objects.filter(
             tenant=self.request.tenant
         ).select_related('pipeline', 'created_by').prefetch_related('duplicate_test_cases').order_by('-created_at')
+        
+        # If accessed via nested pipeline route, filter by pipeline
+        pipeline_pk = self.kwargs.get('pipeline_pk')
+        if pipeline_pk:
+            queryset = queryset.filter(pipeline_id=pipeline_pk)
+        
+        return queryset
     
     def perform_create(self, serializer):
-        """Set tenant and user when creating duplicate rule"""
-        serializer.save(
-            tenant=self.request.tenant,
-            created_by=self.request.user
-        )
+        """Set tenant, user, and pipeline when creating duplicate rule"""
+        try:
+            save_kwargs = {
+                'tenant': self.request.tenant,
+                'created_by': self.request.user
+            }
+            
+            # If accessed via nested pipeline route, auto-set pipeline
+            pipeline_pk = self.kwargs.get('pipeline_pk')
+            if pipeline_pk:
+                from pipelines.models import Pipeline
+                pipeline = Pipeline.objects.get(id=pipeline_pk)
+                save_kwargs['pipeline'] = pipeline
+            
+            serializer.save(**save_kwargs)
+        except Exception as e:
+            logger.error(f"Failed to create duplicate rule: {e}", exc_info=True)
+            raise
     
     @extend_schema(
         summary="Get rule builder configuration",
@@ -93,7 +113,7 @@ class DuplicateRuleViewSet(viewsets.ModelViewSet):
         request=RuleTestRequestSerializer
     )
     @action(detail=True, methods=['POST'])
-    def test_rule(self, request, pk=None):
+    def test_rule(self, request, pk=None, pipeline_pk=None):
         """Test duplicate rule against sample data"""
         rule = self.get_object()
         serializer = RuleTestRequestSerializer(data=request.data)
@@ -106,7 +126,10 @@ class DuplicateRuleViewSet(viewsets.ModelViewSet):
             record2_data = serializer.validated_data['record2_data']
             
             # Initialize logic engine
-            engine = DuplicateLogicEngine(request.tenant.id)
+            # In multi-tenant architecture, tenant context is managed by schema
+            tenant_id = getattr(request, 'tenant', None)
+            tenant_id = getattr(tenant_id, 'id', None) if tenant_id else None
+            engine = DuplicateLogicEngine(tenant_id)
             
             # Get detailed evaluation
             detailed_result = engine._detailed_evaluate_rule(rule, record1_data, record2_data)
@@ -123,8 +146,12 @@ class DuplicateRuleViewSet(viewsets.ModelViewSet):
             
         except Exception as e:
             logger.error(f"Rule test error: {e}", exc_info=True)
+            logger.error(f"Rule data: {rule}")
+            logger.error(f"Record 1 data: {record1_data}")
+            logger.error(f"Record 2 data: {record2_data}")
+            logger.error(f"Rule logic: {getattr(rule, 'logic', None)}")
             return Response(
-                {'error': f'Test failed: {str(e)}'}, 
+                {'error': f'Test failed: {str(e)}', 'debug_info': str(e)}, 
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
@@ -134,7 +161,7 @@ class DuplicateRuleViewSet(viewsets.ModelViewSet):
         request=RuleTestRequestSerializer
     )
     @action(detail=True, methods=['POST'])
-    def detect_duplicates(self, request, pk=None):
+    def detect_duplicates(self, request, pk=None, pipeline_pk=None):
         """Detect duplicates using this rule against all records in pipeline"""
         rule = self.get_object()
         serializer = RuleTestRequestSerializer(data=request.data)
@@ -156,7 +183,10 @@ class DuplicateRuleViewSet(viewsets.ModelViewSet):
                 records = records.exclude(id=exclude_record_id)
             
             # Initialize logic engine
-            engine = DuplicateLogicEngine(request.tenant.id)
+            # In multi-tenant architecture, tenant context is managed by schema
+            tenant_id = getattr(request, 'tenant', None)
+            tenant_id = getattr(tenant_id, 'id', None) if tenant_id else None
+            engine = DuplicateLogicEngine(tenant_id)
             
             potential_duplicates = []
             
@@ -199,7 +229,7 @@ class DuplicateRuleViewSet(viewsets.ModelViewSet):
         description="Clone an existing duplicate rule to a new pipeline"
     )
     @action(detail=True, methods=['POST'])
-    def clone(self, request, pk=None):
+    def clone(self, request, pk=None, pipeline_pk=None):
         """Clone duplicate rule to another pipeline"""
         source_rule = self.get_object()
         
@@ -323,17 +353,37 @@ class URLExtractionRuleViewSet(viewsets.ModelViewSet):
     ordering = ['-created_at']
     
     def get_queryset(self):
-        """Get URL extraction rules filtered by tenant"""
-        return URLExtractionRule.objects.filter(
+        """Get URL extraction rules filtered by tenant and pipeline if accessed via nested route"""
+        queryset = URLExtractionRule.objects.filter(
             tenant=self.request.tenant
         ).order_by('-created_at')
+        
+        # If accessed via nested pipeline route, filter by pipeline
+        pipeline_pk = self.kwargs.get('pipeline_pk')
+        if pipeline_pk:
+            queryset = queryset.filter(pipeline_id=pipeline_pk)
+        
+        return queryset
     
     def perform_create(self, serializer):
-        """Set tenant and user when creating URL extraction rule"""
-        serializer.save(
-            tenant=self.request.tenant,
-            created_by=self.request.user
-        )
+        """Set tenant, user, and pipeline when creating URL extraction rule"""
+        try:
+            save_kwargs = {
+                'tenant': self.request.tenant,
+                'created_by': self.request.user
+            }
+            
+            # If accessed via nested pipeline route, auto-set pipeline
+            pipeline_pk = self.kwargs.get('pipeline_pk')
+            if pipeline_pk:
+                from pipelines.models import Pipeline
+                pipeline = Pipeline.objects.get(id=pipeline_pk)
+                save_kwargs['pipeline'] = pipeline
+            
+            serializer.save(**save_kwargs)
+        except Exception as e:
+            logger.error(f"Failed to create URL extraction rule: {e}", exc_info=True)
+            raise
     
     @extend_schema(
         summary="Test URL extraction rule",
@@ -342,7 +392,7 @@ class URLExtractionRuleViewSet(viewsets.ModelViewSet):
         responses={200: {"description": "Test results"}}
     )
     @action(detail=True, methods=['POST'])
-    def test_extraction(self, request, pk=None):
+    def test_extraction(self, request, pk=None, pipeline_pk=None):
         """Test URL extraction rule against sample URLs"""
         rule = self.get_object()
         serializer = URLExtractionTestSerializer(data=request.data)
@@ -354,7 +404,10 @@ class URLExtractionRuleViewSet(viewsets.ModelViewSet):
         
         try:
             from duplicates.logic_engine import FieldMatcher
-            field_matcher = FieldMatcher(request.tenant.id)
+            # In multi-tenant architecture, tenant context is managed by schema
+            tenant_id = getattr(request, 'tenant', None)
+            tenant_id = getattr(tenant_id, 'id', None) if tenant_id else None
+            field_matcher = FieldMatcher(tenant_id)
             
             results = []
             for url in test_urls:
@@ -387,6 +440,93 @@ class URLExtractionRuleViewSet(viewsets.ModelViewSet):
                 {'error': f'Test failed: {str(e)}'}, 
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+    
+    @extend_schema(
+        summary="Live URL testing with Smart URL Processor",
+        description="Test URLs in real-time using intelligent URL processor without database storage",
+        request={
+            "type": "object", 
+            "properties": {
+                "test_urls": {"type": "array", "items": {"type": "string"}},
+                "template_name": {"type": "string", "required": False},
+                "custom_template": {"type": "object", "required": False}
+            },
+            "required": ["test_urls"]
+        },
+        responses={200: {"description": "Live test results with processing steps"}}
+    )
+    @action(detail=False, methods=['POST'])
+    def live_test(self, request):
+        """Live URL testing with Smart URL Processor - no database storage"""
+        try:
+            test_urls = request.data.get('test_urls', [])
+            template_name = request.data.get('template_name')
+            custom_template_data = request.data.get('custom_template')
+            
+            if not test_urls:
+                return Response(
+                    {'error': 'test_urls is required'}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Initialize Smart URL Processor
+            from duplicates.smart_url_processor import SmartURLProcessor, URLTemplate
+            processor = SmartURLProcessor()
+            
+            # Handle custom template if provided
+            custom_template = None
+            if custom_template_data:
+                try:
+                    custom_template = URLTemplate(
+                        name=custom_template_data.get('name', 'Custom Template'),
+                        domains=custom_template_data.get('domains', []),
+                        path_patterns=custom_template_data.get('path_patterns', []),
+                        identifier_regex=custom_template_data.get('identifier_regex', '([^/]+)'),
+                        normalization_rules=custom_template_data.get('normalization_rules', {}),
+                        mobile_schemes=custom_template_data.get('mobile_schemes', [])
+                    )
+                except Exception as e:
+                    return Response(
+                        {'error': f'Invalid custom template: {str(e)}'}, 
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+            
+            # Process all URLs using smart processor
+            if len(test_urls) > 1:
+                # Bulk testing
+                results = processor.test_urls(test_urls, template_name, custom_template)
+            else:
+                # Single URL processing with detailed steps
+                result = processor.normalize_url(test_urls[0], template_name, custom_template)
+                results = {
+                    'success_rate': 1.0 if result.success else 0.0,
+                    'total_tested': 1,
+                    'successful': 1 if result.success else 0,
+                    'failed': 0 if result.success else 1,
+                    'results': [result._asdict()],
+                    'template_used': template_name or 'custom_template'
+                }
+            
+            # Add available templates for frontend
+            available_templates = list(processor.templates.keys())
+            
+            return Response({
+                'processing_results': results,
+                'available_templates': available_templates,
+                'test_metadata': {
+                    'total_urls': len(test_urls),
+                    'template_used': template_name or 'custom_template',
+                    'custom_template_provided': custom_template is not None,
+                    'timestamp': timezone.now().isoformat()
+                }
+            })
+            
+        except Exception as e:
+            logger.error(f"Live URL test error: {e}", exc_info=True)
+            return Response(
+                {'error': f'Live test failed: {str(e)}'}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 class DuplicateRuleTestViewSet(viewsets.ModelViewSet):
@@ -410,13 +550,16 @@ class DuplicateRuleTestViewSet(viewsets.ModelViewSet):
         description="Execute a test case against its associated rule"
     )
     @action(detail=True, methods=['POST'])
-    def run_test(self, request, pk=None):
+    def run_test(self, request, pk=None, pipeline_pk=None):
         """Run a specific test case"""
         test_case = self.get_object()
         
         try:
             # Initialize logic engine
-            engine = DuplicateLogicEngine(request.tenant.id)
+            # In multi-tenant architecture, tenant context is managed by schema
+            tenant_id = getattr(request, 'tenant', None)
+            tenant_id = getattr(tenant_id, 'id', None) if tenant_id else None
+            engine = DuplicateLogicEngine(tenant_id)
             
             # Run the test - get detailed results
             detailed_result = engine._detailed_evaluate_rule(
@@ -464,10 +607,17 @@ class DuplicateMatchViewSet(viewsets.ModelViewSet):
     ordering = ['-detected_at']
     
     def get_queryset(self):
-        """Get duplicate matches filtered by tenant"""
-        return DuplicateMatch.objects.filter(
+        """Get duplicate matches filtered by tenant and pipeline if accessed via nested route"""
+        queryset = DuplicateMatch.objects.filter(
             tenant=self.request.tenant
         ).order_by('-detected_at')
+        
+        # If accessed via nested pipeline route, filter by pipeline via rule relationship
+        pipeline_pk = self.kwargs.get('pipeline_pk')
+        if pipeline_pk:
+            queryset = queryset.filter(rule__pipeline_id=pipeline_pk)
+        
+        return queryset
     
     @extend_schema(
         summary="Resolve duplicate matches",
@@ -615,7 +765,7 @@ class DuplicateAnalyticsViewSet(viewsets.ReadOnlyModelViewSet):
             # Rule filtering
             rule_filter = Q()
             if 'rule_id' in request.query_params:
-                rule_filter = Q(detection_rule__id=request.query_params['rule_id'])
+                rule_filter = Q(rule__id=request.query_params['rule_id'])
             
             # Basic statistics - updated for simplified system
             total_rules = DuplicateRule.objects.filter(

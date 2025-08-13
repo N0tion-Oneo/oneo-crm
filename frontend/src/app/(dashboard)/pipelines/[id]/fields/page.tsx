@@ -588,7 +588,7 @@ export default function PipelineFieldsPage() {
           {activeTab === 'active' ? (
             <PipelineFieldBuilder
               pipelineId={pipelineId}
-              fields={fields}
+            fields={fields}
               onFieldsChange={handleFieldsChange}
               onSave={saveFields}
             />

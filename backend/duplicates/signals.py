@@ -72,7 +72,7 @@ def check_duplicates_on_record_save(sender, instance, **kwargs):
         tenant=tenant,
         pipeline=pipeline,
         is_active=True
-    ).prefetch_related('test_cases')
+    ).prefetch_related('duplicate_test_cases')
     
     logger.info(f"🔍 DUPLICATE SIGNAL: Found {rules.count()} active rules for pipeline {pipeline.name}")
     
@@ -209,19 +209,19 @@ def handle_duplicates_after_record_save(sender, instance, created, **kwargs):
                 # Create new duplicate match
                 duplicate_match = DuplicateMatch.objects.create(
                     tenant=tenant,
+                    rule=duplicate_info['rule'],  # Use ForeignKey relationship
                     record1=instance,
                     record2=duplicate_info['existing_record'],
                     confidence_score=duplicate_info['confidence'],
                     matched_fields=duplicate_info['matched_fields'],
-                    detection_rule=duplicate_info['rule'].name,
-                    match_details={
+                    field_scores={  # Use existing JSONField for additional details
                         'rule_id': duplicate_info['rule'].id,
                         'rule_name': duplicate_info['rule'].name,
                         'detection_timestamp': timezone.now().isoformat(),
                         'record_operation': 'create' if created else 'update'
                     },
-                    status='pending',
-                    requires_review=duplicate_info['rule'].action_on_duplicate == 'merge_prompt'
+                    detection_method='signal_detection',  # Use existing CharField
+                    status='pending'
                 )
                 
                 logger.info(f"Created duplicate match: {duplicate_match.id}")
@@ -274,9 +274,8 @@ def run_bulk_duplicate_detection(pipeline, tenant=None, dry_run=False):
     if not rules:
         return {'error': 'No active duplicate rules found for this pipeline'}
     
-    # Get all records for this pipeline
+    # Get all records for this pipeline (tenant isolation via schema context)
     records = Record.objects.filter(
-        tenant=tenant,
         pipeline=pipeline,
         is_deleted=False
     ).order_by('created_at')
@@ -335,18 +334,18 @@ def run_bulk_duplicate_detection(pipeline, tenant=None, dry_run=False):
                             if not existing_match:
                                 DuplicateMatch.objects.create(
                                     tenant=tenant,
+                                    rule=rule,  # Use ForeignKey relationship
                                     record1=record1,
                                     record2=record2,
                                     confidence_score=0.90,  # Bulk detection confidence
                                     matched_fields=engine.get_matched_fields(rule, record1.data, record2.data),
-                                    detection_rule=rule.name,
-                                    match_details={
+                                    field_scores={  # Use existing JSONField
                                         'rule_id': rule.id,
                                         'detection_method': 'bulk_analysis',
                                         'detection_timestamp': timezone.now().isoformat()
                                     },
-                                    status='pending',
-                                    requires_review=True
+                                    detection_method='bulk_analysis',  # Use existing CharField
+                                    status='pending'
                                 )
                                 matches_created += 1
                         

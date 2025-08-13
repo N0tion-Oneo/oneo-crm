@@ -19,7 +19,7 @@ class FieldMatcher:
         self.tenant_id = tenant_id
         self._url_extraction_cache = {}
     
-    def match_field(self, field: Field, value1: Any, value2: Any, match_type: str) -> bool:
+    def match_field(self, field: Field, value1: Any, value2: Any, match_type: str, url_extraction_rules: Optional[List[int]] = None) -> bool:
         """
         Match two field values using specified match type and field configuration
         
@@ -28,6 +28,7 @@ class FieldMatcher:
             value1: First value to compare
             value2: Second value to compare  
             match_type: Type of matching to perform
+            url_extraction_rules: Optional list of specific URL extraction rule IDs to use (for url_normalized match_type)
             
         Returns:
             bool: True if values match according to the rule
@@ -50,7 +51,7 @@ class FieldMatcher:
                 return self._match_phone_normalized(value1, value2, field.field_config)
             
             elif match_type == 'url_normalized':
-                return self._match_url_normalized(value1, value2, field.field_config)
+                return self._match_url_normalized(value1, value2, field.field_config, url_extraction_rules)
             
             elif match_type == 'fuzzy':
                 return self._match_fuzzy(value1, value2)
@@ -99,13 +100,13 @@ class FieldMatcher:
         
         return digits_only
     
-    def _match_url_normalized(self, value1: Any, value2: Any, field_config: Dict) -> bool:
+    def _match_url_normalized(self, value1: Any, value2: Any, field_config: Dict, url_extraction_rules: Optional[List[int]] = None) -> bool:
         """URL matching with configurable extraction"""
-        url1 = self._normalize_url(str(value1), field_config)
-        url2 = self._normalize_url(str(value2), field_config)
+        url1 = self._normalize_url(str(value1), field_config, url_extraction_rules)
+        url2 = self._normalize_url(str(value2), field_config, url_extraction_rules)
         return url1 == url2
     
-    def _normalize_url(self, url: str, field_config: Dict) -> str:
+    def _normalize_url(self, url: str, field_config: Dict, url_extraction_rules: Optional[List[int]] = None) -> str:
         """Normalize URL using field config and extraction rules"""
         if not url:
             return ""
@@ -121,11 +122,15 @@ class FieldMatcher:
         
         # Try URL extraction rules for this tenant
         if self.tenant_id:
-            extraction_rules = self._get_url_extraction_rules()
-            for rule in extraction_rules:
-                extracted = self._apply_url_extraction_rule(normalized, rule)
-                if extracted:
-                    return extracted
+            try:
+                extraction_rules = self._get_field_specific_extraction_rules(url_extraction_rules)
+                for rule in extraction_rules:
+                    extracted = self._apply_url_extraction_rule(normalized, rule)
+                    if extracted:
+                        return extracted
+            except Exception as e:
+                logger.error(f"Error processing URL extraction rules: {e}")
+                # Continue with fallback normalization
         
         # Fallback: basic domain + path normalization
         try:
@@ -143,14 +148,36 @@ class FieldMatcher:
     
     def _get_url_extraction_rules(self) -> List[URLExtractionRule]:
         """Get cached URL extraction rules for tenant"""
+        if not self.tenant_id:
+            return []
+            
         if self.tenant_id not in self._url_extraction_cache:
+            # Load rules that are active and belong to this tenant
+            # Note: URLExtractionRule now has both tenant and pipeline fields
             self._url_extraction_cache[self.tenant_id] = list(
                 URLExtractionRule.objects.filter(
                     tenant_id=self.tenant_id,
                     is_active=True
-                )
+                ).select_related('pipeline')
             )
         return self._url_extraction_cache[self.tenant_id]
+    
+    def _get_field_specific_extraction_rules(self, url_extraction_rules: Optional[List[int]] = None) -> List[URLExtractionRule]:
+        """Get field-specific URL extraction rules or all rules if none specified"""
+        if url_extraction_rules is None:
+            # Default behavior: use all tenant rules
+            return self._get_url_extraction_rules()
+        elif url_extraction_rules == "all":
+            # Explicit "all" mode: use all tenant rules  
+            return self._get_url_extraction_rules()
+        elif isinstance(url_extraction_rules, list):
+            # Specific rules mode: filter to only specified rule IDs
+            all_rules = self._get_url_extraction_rules()
+            return [rule for rule in all_rules if rule.id in url_extraction_rules]
+        else:
+            # Invalid format: fallback to all rules
+            logger.warning(f"Invalid url_extraction_rules format: {url_extraction_rules}")
+            return self._get_url_extraction_rules()
     
     def _apply_url_extraction_rule(self, url: str, rule: URLExtractionRule) -> Optional[str]:
         """Apply URL extraction rule to extract identifier"""
@@ -267,17 +294,29 @@ class DuplicateLogicEngine:
         for field_config in fields:
             field_name = field_config.get('field')
             match_type = field_config.get('match_type', 'exact')
+            url_extraction_rules = field_config.get('url_extraction_rules')
             
             try:
-                # Get field object
-                field = pipeline.fields.get(name=field_name)
+                # Get field object - handle case where field doesn't exist
+                try:
+                    field = pipeline.fields.get(name=field_name)
+                except Exception as field_error:
+                    logger.error(f"Field '{field_name}' not found in pipeline '{pipeline.name}' (ID: {pipeline.id}): {field_error}")
+                    # Create a minimal field object for basic matching
+                    from pipelines.models import Field
+                    field = Field(
+                        name=field_name,
+                        field_type='text',
+                        field_config={},
+                        pipeline=pipeline
+                    )
                 
                 # Get field values
                 value1 = record1_data.get(field_name)
                 value2 = record2_data.get(field_name)
                 
                 # Evaluate field match
-                field_matches = self.field_matcher.match_field(field, value1, value2, match_type)
+                field_matches = self.field_matcher.match_field(field, value1, value2, match_type, url_extraction_rules)
                 
                 # Store field match result
                 result['field_matches'][field_name] = {
@@ -298,7 +337,15 @@ class DuplicateLogicEngine:
                     break  # Short-circuit for AND
                     
             except Exception as e:
-                logger.error(f"Error evaluating field {field_name}: {e}")
+                logger.error(f"Error evaluating field {field_name}: {e}", exc_info=True)
+                # Store error in result for debugging
+                result['field_matches'][field_name] = {
+                    'match': False,
+                    'match_type': match_type,
+                    'value1': record1_data.get(field_name),
+                    'value2': record2_data.get(field_name),
+                    'error': str(e)
+                }
                 all_match = False
                 break
         

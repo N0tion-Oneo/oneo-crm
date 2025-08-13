@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { useAuth } from '@/features/auth/context'
 import { ArrowLeft, Copy, ChevronRight, Database, Settings, Plus, Search, Filter, AlertTriangle } from 'lucide-react'
-import { DuplicateRulesManager } from '@/components/duplicates/duplicate-rules-manager'
+import { PipelineDuplicateSettings } from '@/components/duplicates/pipeline-duplicate-settings'
 import { DuplicateMatchesView } from '@/components/duplicates/duplicate-matches-view'
 import { DuplicateAnalyticsView } from '@/components/duplicates/duplicate-analytics-view'
 import URLExtractionManager from '@/components/duplicates/url-extraction-manager'
@@ -27,7 +27,7 @@ export default function DuplicateManagementPage() {
   const pipelineId = params.id as string
 
   const [pipeline, setPipeline] = useState<Pipeline | null>(null)
-  const [activeTab, setActiveTab] = useState<'rules' | 'matches' | 'analytics' | 'url-extraction'>('rules')
+  const [activeTab, setActiveTab] = useState<'settings' | 'matches' | 'analytics' | 'url-extraction'>('settings')
 
   // Load pipeline data for header display
   useEffect(() => {
@@ -116,15 +116,15 @@ export default function DuplicateManagementPage() {
             {/* Tab Navigation */}
             <div className="flex bg-gray-100 dark:bg-gray-700 rounded-lg p-1">
               <button
-                onClick={() => setActiveTab('rules')}
+                onClick={() => setActiveTab('settings')}
                 className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${
-                  activeTab === 'rules'
+                  activeTab === 'settings'
                     ? 'bg-white dark:bg-gray-800 text-gray-900 dark:text-white shadow-sm'
                     : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
                 }`}
               >
                 <Settings className="w-4 h-4 mr-2 inline" />
-                Rules
+                Settings
               </button>
               <button
                 onClick={() => setActiveTab('matches')}
@@ -168,11 +168,14 @@ export default function DuplicateManagementPage() {
       <div className="flex-1 overflow-hidden p-6">
         <div className="h-full bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700">
           <div className="p-6 h-full overflow-y-auto">
-            {activeTab === 'rules' && (
-              <DuplicateRulesManager 
+            {activeTab === 'settings' && (
+              <PipelineDuplicateSettings 
                 pipelineId={pipelineId}
                 pipeline={pipeline}
-                onPipelineChange={setPipeline}
+                onSettingsChange={(settings) => {
+                  // Optional: Update parent state when settings change
+                  console.log('Duplicate settings updated:', settings)
+                }}
               />
             )}
             {activeTab === 'matches' && (

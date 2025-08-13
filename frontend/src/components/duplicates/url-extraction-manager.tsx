@@ -5,12 +5,12 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
 import { Label } from '../ui/label'
-import { Textarea } from '../ui/textarea'
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '../ui/dialog'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../ui/dialog'
 import { Badge } from '../ui/badge'
 import { Switch } from '../ui/switch'
-import { Plus, Edit, Trash2, TestTube, Play } from 'lucide-react'
-import { api } from '@/lib/api'
+import { Plus, Edit, Trash2, TestTube, Play, Wand2 } from 'lucide-react'
+import { duplicatesApi } from '@/lib/api'
+import SmartURLBuilder from './smart-url-builder'
 
 interface URLExtractionRule {
   id: number
@@ -24,6 +24,8 @@ interface URLExtractionRule {
   remove_www: boolean
   remove_query_params: boolean
   remove_fragments: boolean
+  normalization_steps: any[]
+  template_type: string | null
   is_active: boolean
   created_at: string
   updated_at: string
@@ -37,26 +39,11 @@ export default function URLExtractionManager({ pipelineId }: URLExtractionManage
   const [rules, setRules] = useState<URLExtractionRule[]>([])
   const [loading, setLoading] = useState(true)
   const [selectedRule, setSelectedRule] = useState<URLExtractionRule | null>(null)
-  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false)
-  const [isEditModalOpen, setIsEditModalOpen] = useState(false)
+  const [isSmartBuilderOpen, setIsSmartBuilderOpen] = useState(false)
+  const [builderMode, setBuilderMode] = useState<'create' | 'edit'>('create')
   const [isTestModalOpen, setIsTestModalOpen] = useState(false)
 
-  // Form state
-  const [formData, setFormData] = useState({
-    name: '',
-    description: '',
-    domain_patterns: [''],
-    extraction_pattern: '',
-    extraction_format: '',
-    case_sensitive: false,
-    remove_protocol: true,
-    remove_www: true,
-    remove_query_params: true,
-    remove_fragments: true,
-    is_active: true
-  })
-
-  // Test state
+  // Test state for existing rules
   const [testUrls, setTestUrls] = useState([''])
   const [testResults, setTestResults] = useState<any>(null)
   const [testing, setTesting] = useState(false)
@@ -68,7 +55,7 @@ export default function URLExtractionManager({ pipelineId }: URLExtractionManage
   const fetchRules = async () => {
     try {
       setLoading(true)
-      const response = await api.get('/url-extraction-rules/')
+      const response = await duplicatesApi.getUrlExtractionRules(pipelineId)
       setRules(response.data.results || response.data)
     } catch (error) {
       console.error('Failed to fetch URL extraction rules:', error)
@@ -77,54 +64,122 @@ export default function URLExtractionManager({ pipelineId }: URLExtractionManage
     }
   }
 
-  const resetForm = () => {
-    setFormData({
-      name: '',
-      description: '',
-      domain_patterns: [''],
-      extraction_pattern: '',
-      extraction_format: '',
-      case_sensitive: false,
-      remove_protocol: true,
-      remove_www: true,
-      remove_query_params: true,
-      remove_fragments: true,
-      is_active: true
-    })
-  }
-
-  const handleCreate = async () => {
-    try {
-      const payload = {
-        ...formData,
-        domain_patterns: formData.domain_patterns.filter(p => p.trim())
+  const convertSmartBuilderConfigToRule = (config: any, name: string, description: string = '') => {
+    // Convert SmartURLBuilder config to database URLExtractionRule format
+    if (config.template_name) {
+      // Template-based rule - use template settings
+      const templateDefaults = getTemplateDefaults(config.template_name)
+      return {
+        name,
+        description: description || `Auto-generated rule for ${config.template_name} URLs`,
+        domain_patterns: templateDefaults.domains,
+        extraction_pattern: templateDefaults.extraction_pattern,
+        extraction_format: templateDefaults.extraction_format,
+        case_sensitive: templateDefaults.case_sensitive,
+        remove_protocol: templateDefaults.remove_protocol,
+        remove_www: templateDefaults.remove_www,
+        remove_query_params: templateDefaults.remove_query_params,
+        remove_fragments: templateDefaults.remove_fragments,
+        normalization_steps: [],
+        template_type: config.template_name,
+        is_active: true
       }
-      
-      await api.post('/url-extraction-rules/', payload)
-      await fetchRules()
-      setIsCreateModalOpen(false)
-      resetForm()
-    } catch (error) {
-      console.error('Failed to create URL extraction rule:', error)
+    } else if (config.custom_template) {
+      // Custom template rule
+      const custom = config.custom_template
+      return {
+        name,
+        description: description || custom.name,
+        domain_patterns: custom.domains,
+        extraction_pattern: custom.identifier_regex,
+        extraction_format: '{0}', // Default format
+        case_sensitive: custom.normalization_rules?.case_sensitive ?? false,
+        remove_protocol: custom.normalization_rules?.remove_protocol ?? true,
+        remove_www: custom.normalization_rules?.remove_www ?? true,
+        remove_query_params: true, // Default
+        remove_fragments: true, // Default
+        normalization_steps: [],
+        template_type: 'custom',
+        is_active: true
+      }
     }
+    throw new Error('Invalid SmartURLBuilder configuration')
   }
 
-  const handleEdit = async () => {
-    if (!selectedRule) return
+  const getTemplateDefaults = (templateName: string) => {
+    // Template defaults based on Smart URL Processor templates
+    const templates: Record<string, any> = {
+      domain: {
+        domains: ['*'],
+        extraction_pattern: '([a-zA-Z0-9\\-\\.]+)',
+        extraction_format: '{0}',
+        case_sensitive: false,
+        remove_protocol: true,
+        remove_www: true,
+        remove_query_params: false,
+        remove_fragments: true
+      },
+      linkedin: {
+        domains: ['linkedin.com', '*.linkedin.com'],
+        extraction_pattern: 'linkedin\\.com/in/([a-zA-Z0-9\\-\\.]+)(?:/|$)',
+        extraction_format: '{0}',
+        case_sensitive: false,
+        remove_protocol: true,
+        remove_www: true,
+        remove_query_params: true,
+        remove_fragments: true
+      },
+      'linkedin-company': {
+        domains: ['linkedin.com', '*.linkedin.com'],
+        extraction_pattern: 'linkedin\\.com/(?:company|school|organization)/([a-zA-Z0-9\\-\\.]+)(?:/|$)',
+        extraction_format: '{0}',
+        case_sensitive: false,
+        remove_protocol: true,
+        remove_www: true,
+        remove_query_params: true,
+        remove_fragments: true
+      },
+      github: {
+        domains: ['github.com'],
+        extraction_pattern: 'github\\.com/(?!(?:marketplace|pricing|features|enterprise|collections|about|contact|security|orgs|organizations)(?:/|$))([a-zA-Z0-9\\-\\_]+)(?:/?)$',
+        extraction_format: '{0}',
+        case_sensitive: true,
+        remove_protocol: true,
+        remove_www: true,
+        remove_query_params: true,
+        remove_fragments: true
+      },
+      twitter: {
+        domains: ['twitter.com', 'x.com'],
+        extraction_pattern: '(?:twitter|x)\\.com/(?!(?:i|search|hashtag|explore|settings|privacy|help|support|tos|login)(?:/|$))([a-zA-Z0-9_]+)(?:/(?:status/\\d+|following|followers)?/?)?$',
+        extraction_format: '{0}',
+        case_sensitive: false,
+        remove_protocol: true,
+        remove_www: true,
+        remove_query_params: true,
+        remove_fragments: true
+      }
+    }
     
+    return templates[templateName] || templates.linkedin
+  }
+
+  const handleSmartBuilderSave = async (config: any, metadata: { name: string; description?: string }) => {
     try {
-      const payload = {
-        ...formData,
-        domain_patterns: formData.domain_patterns.filter(p => p.trim())
+      const ruleData = convertSmartBuilderConfigToRule(config, metadata.name, metadata.description)
+      
+      if (builderMode === 'create') {
+        await duplicatesApi.createUrlExtractionRule(ruleData, pipelineId)
+      } else if (builderMode === 'edit' && selectedRule) {
+        await duplicatesApi.updateUrlExtractionRule(selectedRule.id.toString(), ruleData, pipelineId)
       }
       
-      await api.put(`/url-extraction-rules/${selectedRule.id}/`, payload)
       await fetchRules()
-      setIsEditModalOpen(false)
+      setIsSmartBuilderOpen(false)
       setSelectedRule(null)
-      resetForm()
     } catch (error) {
-      console.error('Failed to update URL extraction rule:', error)
+      console.error('Failed to save URL extraction rule:', error)
+      throw error // Let SmartURLBuilder handle the error display
     }
   }
 
@@ -132,7 +187,7 @@ export default function URLExtractionManager({ pipelineId }: URLExtractionManage
     if (!confirm('Are you sure you want to delete this URL extraction rule?')) return
     
     try {
-      await api.delete(`/url-extraction-rules/${ruleId}/`)
+      await duplicatesApi.deleteUrlExtractionRule(ruleId.toString(), pipelineId)
       await fetchRules()
     } catch (error) {
       console.error('Failed to delete URL extraction rule:', error)
@@ -141,9 +196,9 @@ export default function URLExtractionManager({ pipelineId }: URLExtractionManage
 
   const handleToggleActive = async (rule: URLExtractionRule) => {
     try {
-      await api.patch(`/url-extraction-rules/${rule.id}/`, {
+      await duplicatesApi.updateUrlExtractionRule(rule.id.toString(), {
         is_active: !rule.is_active
-      })
+      }, pipelineId)
       await fetchRules()
     } catch (error) {
       console.error('Failed to toggle rule status:', error)
@@ -151,26 +206,60 @@ export default function URLExtractionManager({ pipelineId }: URLExtractionManage
   }
 
   const openCreateModal = () => {
-    resetForm()
-    setIsCreateModalOpen(true)
+    setBuilderMode('create')
+    setSelectedRule(null)
+    setIsSmartBuilderOpen(true)
   }
 
   const openEditModal = (rule: URLExtractionRule) => {
+    setBuilderMode('edit')
     setSelectedRule(rule)
-    setFormData({
-      name: rule.name,
-      description: rule.description,
-      domain_patterns: rule.domain_patterns.length > 0 ? rule.domain_patterns : [''],
-      extraction_pattern: rule.extraction_pattern,
-      extraction_format: rule.extraction_format,
-      case_sensitive: rule.case_sensitive,
-      remove_protocol: rule.remove_protocol,
-      remove_www: rule.remove_www,
-      remove_query_params: rule.remove_query_params,
-      remove_fragments: rule.remove_fragments,
-      is_active: rule.is_active
-    })
-    setIsEditModalOpen(true)
+    setIsSmartBuilderOpen(true)
+  }
+  
+  const getTemplateInfo = (templateType: string | null): { type: string; displayName: string; description: string } => {
+    // Just return the template type as the display name - no custom mapping
+    if (templateType && templateType !== 'custom') {
+      return {
+        type: templateType,
+        displayName: templateType,
+        description: `${templateType} URL extraction template`
+      }
+    }
+
+    return {
+      type: 'custom',
+      displayName: 'custom',
+      description: 'Custom URL extraction pattern with user-defined rules'
+    }
+  }
+
+  const convertRuleToSmartBuilderConfig = (rule: URLExtractionRule) => {
+    // Simple: if it has a template_type, use that. Otherwise, treat as custom
+    if (rule.template_type && rule.template_type !== 'custom') {
+      return {
+        template_name: rule.template_type
+      }
+    }
+    
+    // For custom templates, use custom_template format
+    return {
+      custom_template: {
+        name: rule.name,
+        domains: rule.domain_patterns,
+        path_patterns: ['/{username}'], // Default pattern
+        identifier_regex: rule.extraction_pattern,
+        normalization_rules: {
+          remove_protocol: rule.remove_protocol,
+          remove_www: rule.remove_www,
+          case_sensitive: rule.case_sensitive,
+          remove_query_params: rule.remove_query_params,
+          remove_fragments: rule.remove_fragments,
+          strip_whitespace: true,
+          remove_trailing_slash: true
+        }
+      }
+    }
   }
 
   const openTestModal = (rule: URLExtractionRule) => {
@@ -183,38 +272,54 @@ export default function URLExtractionManager({ pipelineId }: URLExtractionManage
   const handleTestRule = async () => {
     if (!selectedRule) return
     
+    // Validate URLs before sending
+    const validUrls = testUrls
+      .filter(url => url.trim())
+      .filter(url => {
+        try {
+          // Basic URL validation
+          new URL(url.startsWith('http') ? url : `https://${url}`)
+          return true
+        } catch {
+          return false
+        }
+      })
+    
+    if (validUrls.length === 0) {
+      alert('Please enter at least one valid URL to test.')
+      return
+    }
+    
     try {
       setTesting(true)
-      const response = await api.post(`/url-extraction-rules/${selectedRule.id}/test_extraction/`, {
-        test_urls: testUrls.filter(url => url.trim())
+      
+      // Convert database rule to SmartURLBuilder format for testing
+      const ruleConfig = convertRuleToSmartBuilderConfig(selectedRule)
+      
+      // Use live testing API with Smart URL Processor
+      const response = await duplicatesApi.liveTestUrls({
+        test_urls: validUrls,
+        custom_template: ruleConfig.custom_template
       })
-      setTestResults(response.data)
-    } catch (error) {
+      
+      // Convert Smart URL Processor results to expected format
+      const convertedResults = {
+        test_results: response.data.processing_results.results.map((result: any) => ({
+          original_url: result.original,
+          extracted_value: result.extracted,
+          success: result.success,
+          error: result.error
+        })),
+        success_rate: response.data.processing_results.success_rate
+      }
+      
+      setTestResults(convertedResults)
+    } catch (error: any) {
       console.error('Failed to test URL extraction rule:', error)
+      alert(`Test failed: ${error?.response?.data?.error || error?.message || 'Please check the URLs and try again.'}`)
     } finally {
       setTesting(false)
     }
-  }
-
-  const addDomainPattern = () => {
-    setFormData(prev => ({
-      ...prev,
-      domain_patterns: [...prev.domain_patterns, '']
-    }))
-  }
-
-  const updateDomainPattern = (index: number, value: string) => {
-    setFormData(prev => ({
-      ...prev,
-      domain_patterns: prev.domain_patterns.map((p, i) => i === index ? value : p)
-    }))
-  }
-
-  const removeDomainPattern = (index: number) => {
-    setFormData(prev => ({
-      ...prev,
-      domain_patterns: prev.domain_patterns.filter((_, i) => i !== index)
-    }))
   }
 
   const addTestUrl = () => {
@@ -250,163 +355,10 @@ export default function URLExtractionManager({ pipelineId }: URLExtractionManage
               Configure patterns to extract standardized identifiers from URLs for duplicate detection
             </CardDescription>
           </div>
-          <Dialog open={isCreateModalOpen} onOpenChange={setIsCreateModalOpen}>
-            <DialogTrigger asChild>
-              <Button onClick={openCreateModal}>
-                <Plus className="w-4 h-4 mr-2" />
-                Create Rule
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
-              <DialogHeader>
-                <DialogTitle>Create URL Extraction Rule</DialogTitle>
-                <DialogDescription>
-                  Create a new rule to extract identifiers from URLs
-                </DialogDescription>
-              </DialogHeader>
-              
-              <div className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <Label htmlFor="name">Name *</Label>
-                    <Input
-                      id="name"
-                      value={formData.name}
-                      onChange={(e) => setFormData(prev => ({...prev, name: e.target.value}))}
-                      placeholder="e.g., LinkedIn Profile"
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="extraction_format">Extraction Format *</Label>
-                    <Input
-                      id="extraction_format"
-                      value={formData.extraction_format}
-                      onChange={(e) => setFormData(prev => ({...prev, extraction_format: e.target.value}))}
-                      placeholder="e.g., linkedin:{}"
-                    />
-                  </div>
-                </div>
-                
-                <div>
-                  <Label htmlFor="description">Description</Label>
-                  <Textarea
-                    id="description"
-                    value={formData.description}
-                    onChange={(e) => setFormData(prev => ({...prev, description: e.target.value}))}
-                    placeholder="Describe what this rule extracts"
-                  />
-                </div>
-                
-                <div>
-                  <Label>Domain Patterns *</Label>
-                  {formData.domain_patterns.map((pattern, index) => (
-                    <div key={index} className="flex items-center gap-2 mt-2">
-                      <Input
-                        value={pattern}
-                        onChange={(e) => updateDomainPattern(index, e.target.value)}
-                        placeholder="e.g., linkedin.com or *.linkedin.com"
-                      />
-                      {formData.domain_patterns.length > 1 && (
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={() => removeDomainPattern(index)}
-                        >
-                          Remove
-                        </Button>
-                      )}
-                    </div>
-                  ))}
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={addDomainPattern}
-                    className="mt-2"
-                  >
-                    Add Pattern
-                  </Button>
-                </div>
-                
-                <div>
-                  <Label htmlFor="extraction_pattern">Extraction Pattern (Regex) *</Label>
-                  <Input
-                    id="extraction_pattern"
-                    value={formData.extraction_pattern}
-                    onChange={(e) => setFormData(prev => ({...prev, extraction_pattern: e.target.value}))}
-                    placeholder="e.g., /in/([^/]+)"
-                  />
-                </div>
-                
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="flex items-center space-x-2">
-                    <Switch
-                      id="case_sensitive"
-                      checked={formData.case_sensitive}
-                      onCheckedChange={(checked) => setFormData(prev => ({...prev, case_sensitive: checked}))}
-                    />
-                    <Label htmlFor="case_sensitive">Case Sensitive</Label>
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    <Switch
-                      id="is_active"
-                      checked={formData.is_active}
-                      onCheckedChange={(checked) => setFormData(prev => ({...prev, is_active: checked}))}
-                    />
-                    <Label htmlFor="is_active">Active</Label>
-                  </div>
-                </div>
-                
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="flex items-center space-x-2">
-                    <Switch
-                      id="remove_protocol"
-                      checked={formData.remove_protocol}
-                      onCheckedChange={(checked) => setFormData(prev => ({...prev, remove_protocol: checked}))}
-                    />
-                    <Label htmlFor="remove_protocol">Remove Protocol</Label>
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    <Switch
-                      id="remove_www"
-                      checked={formData.remove_www}
-                      onCheckedChange={(checked) => setFormData(prev => ({...prev, remove_www: checked}))}
-                    />
-                    <Label htmlFor="remove_www">Remove WWW</Label>
-                  </div>
-                </div>
-                
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="flex items-center space-x-2">
-                    <Switch
-                      id="remove_query_params"
-                      checked={formData.remove_query_params}
-                      onCheckedChange={(checked) => setFormData(prev => ({...prev, remove_query_params: checked}))}
-                    />
-                    <Label htmlFor="remove_query_params">Remove Query Params</Label>
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    <Switch
-                      id="remove_fragments"
-                      checked={formData.remove_fragments}
-                      onCheckedChange={(checked) => setFormData(prev => ({...prev, remove_fragments: checked}))}
-                    />
-                    <Label htmlFor="remove_fragments">Remove Fragments</Label>
-                  </div>
-                </div>
-                
-                <div className="flex justify-end space-x-2">
-                  <Button variant="outline" onClick={() => setIsCreateModalOpen(false)}>
-                    Cancel
-                  </Button>
-                  <Button onClick={handleCreate}>
-                    Create Rule
-                  </Button>
-                </div>
-              </div>
-            </DialogContent>
-          </Dialog>
+          <Button onClick={openCreateModal}>
+            <Wand2 className="w-4 h-4 mr-2" />
+            Create Smart Rule
+          </Button>
         </CardHeader>
         <CardContent>
           {rules.length === 0 ? (
@@ -429,33 +381,117 @@ export default function URLExtractionManager({ pipelineId }: URLExtractionManage
                         <Badge variant={rule.is_active ? 'default' : 'secondary'}>
                           {rule.is_active ? 'Active' : 'Inactive'}
                         </Badge>
+                        {(() => {
+                          const templateInfo = getTemplateInfo(rule.template_type);
+                          const variantMap: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
+                            'domain': 'outline',
+                            'linkedin': 'default', 
+                            'linkedin-company': 'default',
+                            'github': 'secondary',
+                            'twitter': 'secondary',
+                            'custom': 'outline'
+                          };
+                          return (
+                            <Badge variant={variantMap[templateInfo.type] || 'outline'}>
+                              {templateInfo.displayName}
+                            </Badge>
+                          );
+                        })()}
                       </div>
-                      <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">
-                        {rule.description}
+                      <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">
+                        {rule.description || getTemplateInfo(rule.template_type).description}
                       </p>
-                      <div className="grid grid-cols-2 gap-4 text-sm">
+                      
+                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 text-sm">
                         <div>
-                          <span className="font-medium">Domain Patterns:</span>
-                          <div className="mt-1">
+                          <span className="font-medium text-gray-700 dark:text-gray-300">Domains:</span>
+                          <div className="mt-1 flex flex-wrap gap-1">
                             {rule.domain_patterns.map((pattern, index) => (
-                              <Badge key={index} variant="outline" className="mr-1 mb-1">
+                              <Badge key={index} variant="outline" className="text-xs">
                                 {pattern}
                               </Badge>
                             ))}
                           </div>
                         </div>
+                        
                         <div>
-                          <span className="font-medium">Extraction Format:</span>
-                          <code className="ml-2 px-2 py-1 bg-gray-100 dark:bg-gray-800 rounded text-xs">
-                            {rule.extraction_format}
-                          </code>
+                          <span className="font-medium text-gray-700 dark:text-gray-300">Output Format:</span>
+                          <div className="mt-1">
+                            <code className="px-2 py-1 bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded text-xs">
+                              {rule.extraction_format}
+                            </code>
+                          </div>
                         </div>
-                        <div>
-                          <span className="font-medium">Pattern:</span>
-                          <code className="ml-2 px-2 py-1 bg-gray-100 dark:bg-gray-800 rounded text-xs">
-                            {rule.extraction_pattern}
-                          </code>
+                        
+                        <div className="lg:col-span-2">
+                          <span className="font-medium text-gray-700 dark:text-gray-300">Extraction Pattern:</span>
+                          <div className="mt-1">
+                            <code className="block px-2 py-1 bg-gray-50 dark:bg-gray-800 text-gray-700 dark:text-gray-300 rounded text-xs break-all">
+                              {rule.extraction_pattern}
+                            </code>
+                          </div>
                         </div>
+                        
+                        {/* Normalization Options */}
+                        <div className="lg:col-span-2">
+                          <span className="font-medium text-gray-700 dark:text-gray-300">Normalization:</span>
+                          <div className="mt-1 flex flex-wrap gap-1">
+                            {rule.remove_protocol && (
+                              <Badge variant="outline" className="text-xs bg-green-50 dark:bg-green-900/30">
+                                Remove Protocol
+                              </Badge>
+                            )}
+                            {rule.remove_www && (
+                              <Badge variant="outline" className="text-xs bg-green-50 dark:bg-green-900/30">
+                                Remove WWW
+                              </Badge>
+                            )}
+                            {rule.remove_query_params && (
+                              <Badge variant="outline" className="text-xs bg-green-50 dark:bg-green-900/30">
+                                Remove Params
+                              </Badge>
+                            )}
+                            {rule.remove_fragments && (
+                              <Badge variant="outline" className="text-xs bg-green-50 dark:bg-green-900/30">
+                                Remove Fragments
+                              </Badge>
+                            )}
+                            {rule.case_sensitive && (
+                              <Badge variant="outline" className="text-xs bg-yellow-50 dark:bg-yellow-900/30">
+                                Case Sensitive
+                              </Badge>
+                            )}
+                          </div>
+                        </div>
+                        
+                        {/* Example URLs for this template */}
+                        {(() => {
+                          const templateInfo = getTemplateInfo(rule.template_type);
+                          const examples: Record<string, string[]> = {
+                            'domain': ['https://example.com/path → example.com', 'https://www.subdomain.site.co.uk → site.co.uk'],
+                            'linkedin': ['https://linkedin.com/in/johndoe → johndoe', 'https://www.linkedin.com/in/jane-smith/ → jane-smith'],
+                            'linkedin-company': ['https://linkedin.com/company/acme-corp → acme-corp', 'https://linkedin.com/school/stanford-university → stanford-university'],
+                            'github': ['https://github.com/username → username', 'https://github.com/company/repo → company'],
+                            'twitter': ['https://twitter.com/username → username', 'https://x.com/handle → handle'],
+                            'custom': ['Custom pattern matching based on your configuration']
+                          };
+                          
+                          if (examples[templateInfo.type]) {
+                            return (
+                              <div className="lg:col-span-2">
+                                <span className="font-medium text-gray-700 dark:text-gray-300">Examples:</span>
+                                <div className="mt-1 space-y-1">
+                                  {examples[templateInfo.type].map((example, index) => (
+                                    <div key={index} className="text-xs text-gray-500 dark:text-gray-400 font-mono bg-gray-50 dark:bg-gray-800 px-2 py-1 rounded">
+                                      {example}
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            );
+                          }
+                          return null;
+                        })()}
                       </div>
                     </div>
                     <div className="flex items-center gap-2 ml-4">
@@ -493,135 +529,41 @@ export default function URLExtractionManager({ pipelineId }: URLExtractionManage
         </CardContent>
       </Card>
 
-      {/* Edit Modal */}
-      <Dialog open={isEditModalOpen} onOpenChange={setIsEditModalOpen}>
-        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+      {/* Smart URL Builder Modal */}
+      <Dialog open={isSmartBuilderOpen} onOpenChange={setIsSmartBuilderOpen}>
+        <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Edit URL Extraction Rule</DialogTitle>
-            <DialogDescription>
-              Update the URL extraction rule configuration
-            </DialogDescription>
+            <DialogTitle>
+              {builderMode === 'create' ? 'Create Smart URL Rule' : 'Edit URL Rule'}
+            </DialogTitle>
           </DialogHeader>
           
-          {/* Same form as create modal */}
-          <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label htmlFor="edit_name">Name *</Label>
-                <Input
-                  id="edit_name"
-                  value={formData.name}
-                  onChange={(e) => setFormData(prev => ({...prev, name: e.target.value}))}
-                  placeholder="e.g., LinkedIn Profile"
-                />
-              </div>
-              <div>
-                <Label htmlFor="edit_extraction_format">Extraction Format *</Label>
-                <Input
-                  id="edit_extraction_format"
-                  value={formData.extraction_format}
-                  onChange={(e) => setFormData(prev => ({...prev, extraction_format: e.target.value}))}
-                  placeholder="e.g., linkedin:{}"
-                />
-              </div>
-            </div>
-            
-            <div>
-              <Label htmlFor="edit_description">Description</Label>
-              <Textarea
-                id="edit_description"
-                value={formData.description}
-                onChange={(e) => setFormData(prev => ({...prev, description: e.target.value}))}
-                placeholder="Describe what this rule extracts"
-              />
-            </div>
-            
-            <div>
-              <Label>Domain Patterns *</Label>
-              {formData.domain_patterns.map((pattern, index) => (
-                <div key={index} className="flex items-center gap-2 mt-2">
-                  <Input
-                    value={pattern}
-                    onChange={(e) => updateDomainPattern(index, e.target.value)}
-                    placeholder="e.g., linkedin.com or *.linkedin.com"
-                  />
-                  {formData.domain_patterns.length > 1 && (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => removeDomainPattern(index)}
-                    >
-                      Remove
-                    </Button>
-                  )}
-                </div>
-              ))}
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={addDomainPattern}
-                className="mt-2"
-              >
-                Add Pattern
-              </Button>
-            </div>
-            
-            <div>
-              <Label htmlFor="edit_extraction_pattern">Extraction Pattern (Regex) *</Label>
-              <Input
-                id="edit_extraction_pattern"
-                value={formData.extraction_pattern}
-                onChange={(e) => setFormData(prev => ({...prev, extraction_pattern: e.target.value}))}
-                placeholder="e.g., /in/([^/]+)"
-              />
-            </div>
-            
-            <div className="grid grid-cols-2 gap-4">
-              <div className="flex items-center space-x-2">
-                <Switch
-                  id="edit_case_sensitive"
-                  checked={formData.case_sensitive}
-                  onCheckedChange={(checked) => setFormData(prev => ({...prev, case_sensitive: checked}))}
-                />
-                <Label htmlFor="edit_case_sensitive">Case Sensitive</Label>
-              </div>
-              <div className="flex items-center space-x-2">
-                <Switch
-                  id="edit_is_active"
-                  checked={formData.is_active}
-                  onCheckedChange={(checked) => setFormData(prev => ({...prev, is_active: checked}))}
-                />
-                <Label htmlFor="edit_is_active">Active</Label>
-              </div>
-            </div>
-            
-            <div className="flex justify-end space-x-2">
-              <Button variant="outline" onClick={() => setIsEditModalOpen(false)}>
-                Cancel
-              </Button>
-              <Button onClick={handleEdit}>
-                Update Rule
-              </Button>
-            </div>
-          </div>
+          <SmartURLBuilder
+            onSave={handleSmartBuilderSave}
+            onCancel={() => setIsSmartBuilderOpen(false)}
+            initialConfig={selectedRule ? convertRuleToSmartBuilderConfig(selectedRule) : undefined}
+            initialMetadata={{
+              name: selectedRule?.name || '',
+              description: selectedRule?.description || ''
+            }}
+            mode={builderMode}
+          />
         </DialogContent>
       </Dialog>
 
-      {/* Test Modal */}
+      {/* Test Modal for Existing Rules */}
       <Dialog open={isTestModalOpen} onOpenChange={setIsTestModalOpen}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle>Test URL Extraction Rule</DialogTitle>
-            <DialogDescription>
-              Test the rule against sample URLs to verify extraction works correctly
-            </DialogDescription>
           </DialogHeader>
           
           <div className="space-y-4">
             <div>
               <Label>Test URLs</Label>
+              <p className="text-sm text-gray-500 mb-2">
+                Test the saved rule against sample URLs to verify it works correctly.
+              </p>
               {testUrls.map((url, index) => (
                 <div key={index} className="flex items-center gap-2 mt-2">
                   <Input
@@ -648,6 +590,7 @@ export default function URLExtractionManager({ pipelineId }: URLExtractionManage
                 onClick={addTestUrl}
                 className="mt-2"
               >
+                <Plus className="w-4 h-4 mr-1" />
                 Add URL
               </Button>
             </div>

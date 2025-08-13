@@ -5,48 +5,46 @@ export interface DuplicateRule {
   name: string
   description?: string
   pipeline: number | string // Can be ID or slug
+  logic: any // JSON field for AND/OR logic structure
+  action_on_duplicate: 'warn' | 'block' | 'merge_prompt'
   is_active: boolean
-  action_on_duplicate: 'block' | 'warn' | 'merge_prompt' | 'auto_merge' | 'allow'
-  confidence_threshold: number
-  auto_merge_threshold: number
-  enable_fuzzy_matching: boolean
-  enable_phonetic_matching: boolean
-  ignore_case: boolean
-  normalize_whitespace: boolean
-  field_rules?: DuplicateFieldRule[]
   created_at: string
   updated_at: string
+  created_by?: number
+  tenant?: number
 }
 
 export interface DuplicateFieldRule {
   id: number
   duplicate_rule: number
   field: number | string // Can be ID or slug
-  match_type: 'exact' | 'case_insensitive' | 'fuzzy' | 'soundex' | 'metaphone' | 'levenshtein' | 'jaro_winkler' | 'email_domain' | 'phone_normalized' | 'partial' | 'regex' | 'cosine' | 'jaccard'
+  match_type: 'exact' | 'case_insensitive' | 'fuzzy' | 'soundex' | 'metaphone' | 'levenshtein' | 'jaro_winkler' | 'email_domain' | 'phone_normalized' | 'partial' | 'regex' | 'cosine' | 'jaccard' | 'url_normalized'
   match_threshold: number
   weight: number
   is_required: boolean
   preprocessing_rules: Record<string, any>
   custom_regex?: string
+  url_extraction_rules?: 'all' | number[] // Field-specific URL extraction rules
   is_active: boolean
   created_at: string
 }
 
 export interface DuplicateMatch {
   id: number
-  rule: DuplicateRule
+  rule: DuplicateRule | number // Can be full object or just ID
   record1: number | string
   record2: number | string
   confidence_score: number
-  field_scores: Record<string, any>
+  field_scores: Record<string, any> // JSON field for detailed match info
   matched_fields: string[]
   detection_method: string
   detected_at: string
   reviewed_by?: number
   reviewed_at?: string
-  status: 'pending' | 'confirmed' | 'false_positive' | 'merged' | 'ignored' | 'auto_resolved'
+  status: 'pending' | 'confirmed' | 'false_positive' | 'merged' | 'ignored' | 'auto_resolved' | 'resolved'
   resolution_notes?: string
   auto_resolution_reason?: string
+  tenant?: number
 }
 
 export interface DuplicateResolution {
@@ -111,12 +109,10 @@ export interface DuplicateBulkResolutionRequest {
 export interface DuplicateRuleBuilderRequest {
   name: string
   description?: string
-  pipeline_id: number
-  confidence_threshold?: number
-  action_on_duplicate?: 'block' | 'warn' | 'merge_prompt' | 'auto_merge' | 'allow'
-  enable_fuzzy_matching?: boolean
-  enable_phonetic_matching?: boolean
-  field_rules: Omit<DuplicateFieldRule, 'id' | 'duplicate_rule' | 'created_at'>[]
+  pipeline: number
+  logic: any // JSON field for AND/OR logic structure
+  action_on_duplicate?: 'warn' | 'block' | 'merge_prompt'
+  is_active?: boolean
 }
 
 export interface DuplicateMatchResult {

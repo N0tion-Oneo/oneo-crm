@@ -198,12 +198,12 @@ export function useRecordData(options: UseRecordDataOptions): UseRecordDataRetur
     setTotalRecords(prev => Math.max(0, prev - 1))
   }, [])
 
-  // Auto-fetch when dependencies change
+  // Auto-fetch when dependencies change - FIXED: Remove fetchRecords from dependencies to prevent infinite loop
   useEffect(() => {
     if (autoFetch && pipeline?.id) {
       fetchRecords()
     }
-  }, [fetchRecords, autoFetch, pipeline?.id])
+  }, [autoFetch, pipeline?.id, currentPage, recordsPerPage, stableSearchQuery, stableFilters, sort, fieldTypes])
 
   // Reset page when search/filters change - but only if not on page 1 already to prevent unnecessary re-fetch
   useEffect(() => {

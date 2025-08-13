@@ -488,21 +488,80 @@ export const relationshipsApi = {
     api.delete(`/api/relationships/${id}/`),
 }
 
-// Duplicates API - New unified endpoints
+// Duplicates API - Pipeline-scoped endpoints
 export const duplicatesApi = {
-  // Duplicate rules
-  getDuplicateRules: () => api.get('/api/v1/duplicate-rules/'),
-  getDuplicateRule: (id: string) => api.get(`/api/v1/duplicate-rules/${id}/`),
-  createDuplicateRule: (data: any) => api.post('/api/v1/duplicate-rules/', data),
-  updateDuplicateRule: (id: string, data: any) => api.patch(`/api/v1/duplicate-rules/${id}/`, data),
-  deleteDuplicateRule: (id: string) => api.delete(`/api/v1/duplicate-rules/${id}/`),
-  testDuplicateRule: (id: string, data: any) => api.post(`/api/v1/duplicate-rules/${id}/detect/`, data),
+  // Duplicate rules (pipeline-scoped)
+  getDuplicateRules: (pipelineId?: string) => {
+    const url = pipelineId ? `/api/v1/pipelines/${pipelineId}/duplicate-rules/` : '/api/v1/duplicate-rules/'
+    return api.get(url)
+  },
+  getDuplicateRule: (id: string, pipelineId?: string) => {
+    const url = pipelineId ? `/api/v1/pipelines/${pipelineId}/duplicate-rules/${id}/` : `/api/v1/duplicate-rules/${id}/`
+    return api.get(url)
+  },
+  createDuplicateRule: (data: any, pipelineId?: string) => {
+    const url = pipelineId ? `/api/v1/pipelines/${pipelineId}/duplicate-rules/` : '/api/v1/duplicate-rules/'
+    return api.post(url, data)
+  },
+  updateDuplicateRule: (id: string, data: any, pipelineId?: string) => {
+    const url = pipelineId ? `/api/v1/pipelines/${pipelineId}/duplicate-rules/${id}/` : `/api/v1/duplicate-rules/${id}/`
+    return api.patch(url, data)
+  },
+  deleteDuplicateRule: (id: string, pipelineId?: string) => {
+    const url = pipelineId ? `/api/v1/pipelines/${pipelineId}/duplicate-rules/${id}/` : `/api/v1/duplicate-rules/${id}/`
+    return api.delete(url)
+  },
+  testDuplicateRule: (id: string, data: any, pipelineId?: string) => {
+    const url = pipelineId ? `/api/v1/pipelines/${pipelineId}/duplicate-rules/${id}/test_rule/` : `/api/v1/duplicate-rules/${id}/test_rule/`
+    return api.post(url, data)
+  },
   
-  // Duplicate matches
-  getDuplicateMatches: () => api.get('/api/v1/duplicate-matches/'),
-  getDuplicateMatch: (id: string) => api.get(`/api/v1/duplicate-matches/${id}/`),
-  resolveDuplicateMatch: (id: string, data: any) => api.post(`/api/v1/duplicate-matches/${id}/resolve/`, data),
-  bulkResolveDuplicates: (data: any) => api.post('/api/v1/duplicate-matches/bulk_resolve/', data),
+  // URL extraction rules (pipeline-scoped)
+  getUrlExtractionRules: (pipelineId?: string) => {
+    const url = pipelineId ? `/api/v1/pipelines/${pipelineId}/url-extraction-rules/` : '/api/v1/url-extraction-rules/'
+    return api.get(url)
+  },
+  getUrlExtractionRule: (id: string, pipelineId?: string) => {
+    const url = pipelineId ? `/api/v1/pipelines/${pipelineId}/url-extraction-rules/${id}/` : `/api/v1/url-extraction-rules/${id}/`
+    return api.get(url)
+  },
+  createUrlExtractionRule: (data: any, pipelineId?: string) => {
+    const url = pipelineId ? `/api/v1/pipelines/${pipelineId}/url-extraction-rules/` : '/api/v1/url-extraction-rules/'
+    return api.post(url, data)
+  },
+  updateUrlExtractionRule: (id: string, data: any, pipelineId?: string) => {
+    const url = pipelineId ? `/api/v1/pipelines/${pipelineId}/url-extraction-rules/${id}/` : `/api/v1/url-extraction-rules/${id}/`
+    return api.patch(url, data)
+  },
+  deleteUrlExtractionRule: (id: string, pipelineId?: string) => {
+    const url = pipelineId ? `/api/v1/pipelines/${pipelineId}/url-extraction-rules/${id}/` : `/api/v1/url-extraction-rules/${id}/`
+    return api.delete(url)
+  },
+  testUrlExtractionRule: (id: string, data: any, pipelineId?: string) => {
+    const url = pipelineId ? `/api/v1/pipelines/${pipelineId}/url-extraction-rules/${id}/test_extraction/` : `/api/v1/url-extraction-rules/${id}/test_extraction/`
+    return api.post(url, data)
+  },
+  
+  // Smart URL processor - live testing
+  liveTestUrls: (data: any) => api.post('/api/v1/url-extraction-rules/live_test/', data),
+  
+  // Duplicate matches (pipeline-scoped)
+  getDuplicateMatches: (pipelineId?: string) => {
+    const url = pipelineId ? `/api/v1/pipelines/${pipelineId}/duplicate-matches/` : '/api/v1/duplicate-matches/'
+    return api.get(url)
+  },
+  getDuplicateMatch: (id: string, pipelineId?: string) => {
+    const url = pipelineId ? `/api/v1/pipelines/${pipelineId}/duplicate-matches/${id}/` : `/api/v1/duplicate-matches/${id}/`
+    return api.get(url)
+  },
+  resolveDuplicateMatch: (id: string, data: any, pipelineId?: string) => {
+    const url = pipelineId ? `/api/v1/pipelines/${pipelineId}/duplicate-matches/${id}/resolve/` : `/api/v1/duplicate-matches/${id}/resolve/`
+    return api.post(url, data)
+  },
+  bulkResolveDuplicates: (data: any, pipelineId?: string) => {
+    const url = pipelineId ? `/api/v1/pipelines/${pipelineId}/duplicate-matches/bulk_resolve/` : '/api/v1/duplicate-matches/bulk_resolve/'
+    return api.post(url, data)
+  },
   
   // Duplicate analytics
   getDuplicateAnalytics: () => api.get('/api/v1/duplicate-analytics/'),

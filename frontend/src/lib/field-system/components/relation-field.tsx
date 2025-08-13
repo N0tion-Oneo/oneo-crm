@@ -4,10 +4,11 @@ import { getFieldConfig } from '../field-registry'
 import { pipelinesApi, relationshipsApi } from '../../api'
 import { X, Plus, Link, Settings } from 'lucide-react'
 
-// Cache for relation lookups to avoid repeated API calls
+// Global cache for relation lookups to avoid repeated API calls
 const relationCache = new Map<string, string>()
+const pendingRequests = new Map<string, Promise<string>>()
 
-// Function to lookup relation display value
+// Function to lookup relation display value with request deduplication
 const lookupRelationValue = async (
   value: any, 
   targetPipelineId: number, 
@@ -17,27 +18,52 @@ const lookupRelationValue = async (
   
   // Check cache first
   if (relationCache.has(cacheKey)) {
+    console.log(`🟢 CACHE HIT: Record ${value} from cache`)
     return relationCache.get(cacheKey)!
   }
   
-  try {
-    const response = await pipelinesApi.getRecord(targetPipelineId.toString(), value.toString())
-    
-    if (response.data) {
-      const recordDisplayValue = getDisplayValue(response.data, displayField)
-      
-      // Cache the result
-      relationCache.set(cacheKey, recordDisplayValue)
-      return recordDisplayValue
-    }
-  } catch (error) {
-    console.error(`❌ Failed to load relation record ${value}:`, error)
+  // Check if request is already pending to avoid duplicate API calls
+  if (pendingRequests.has(cacheKey)) {
+    console.log(`🟡 REQUEST PENDING: Waiting for existing request for record ${value}`)
+    return pendingRequests.get(cacheKey)!
   }
   
-  // Fallback to Record #ID
-  const fallback = `Record #${value}`
-  relationCache.set(cacheKey, fallback)
-  return fallback
+  console.log(`🔴 CACHE MISS: Fetching record ${value} from API`)
+  
+  // Create the promise and store it to prevent duplicate requests
+  const requestPromise = (async () => {
+    try {
+      const response = await pipelinesApi.getRecord(targetPipelineId.toString(), value.toString())
+    
+      if (response.data) {
+        const recordDisplayValue = getDisplayValue(response.data, displayField)
+        
+        // Cache the result
+        relationCache.set(cacheKey, recordDisplayValue)
+        console.log(`✅ CACHED: Record ${value} cached as "${recordDisplayValue}"`)
+        return recordDisplayValue
+      }
+    } catch (error) {
+      console.error(`❌ Failed to load relation record ${value}:`, error)
+    }
+    
+    // Fallback to Record #ID
+    const fallback = `Record #${value}`
+    relationCache.set(cacheKey, fallback)
+    console.log(`⚠️ FALLBACK: Record ${value} cached as fallback "${fallback}"`)
+    return fallback
+  })()
+  
+  // Store the promise to prevent duplicate requests
+  pendingRequests.set(cacheKey, requestPromise)
+  
+  try {
+    const result = await requestPromise
+    return result
+  } finally {
+    // Clean up the pending request
+    pendingRequests.delete(cacheKey)
+  }
 }
 
 // Component for displaying relation values with proper record lookup

@@ -22,23 +22,28 @@ interface Field {
   field_type: string
 }
 
+interface URLExtractionRule {
+  id: number
+  name: string
+  description: string
+  extraction_format: string
+}
+
 interface Pipeline {
   id: string
   name: string
   fields: Field[]
 }
 
-interface LogicCondition {
+interface FieldCondition {
   field: string
-  operator: 'exact_match' | 'fuzzy_match' | 'contains' | 'starts_with' | 'ends_with' | 'regex'
-  threshold?: number
-  value?: string
-  weight?: number
+  match_type: 'exact' | 'case_insensitive' | 'fuzzy' | 'email_normalized' | 'phone_normalized' | 'url_normalized'
+  url_extraction_rules?: 'all' | number[] // 'all' for all rules, array of rule IDs for specific rules
 }
 
 interface RuleLogic {
   operator: 'AND' | 'OR'
-  conditions: LogicCondition[]
+  fields: FieldCondition[]
 }
 
 interface DuplicateRuleBuilderProps {
@@ -57,17 +62,18 @@ export function DuplicateRuleBuilder({
   editingRule 
 }: DuplicateRuleBuilderProps) {
   const [pipeline, setPipeline] = useState<Pipeline | null>(null)
+  const [urlExtractionRules, setUrlExtractionRules] = useState<URLExtractionRule[]>([])
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   
   // Rule form state
   const [ruleName, setRuleName] = useState('')
   const [ruleDescription, setRuleDescription] = useState('')
-  const [actionOnDuplicate, setActionOnDuplicate] = useState<'warn' | 'prevent' | 'merge' | 'flag'>('warn')
+  const [actionOnDuplicate, setActionOnDuplicate] = useState<'warn' | 'block' | 'merge_prompt'>('warn')
   const [isActive, setIsActive] = useState(true)
   const [logic, setLogic] = useState<RuleLogic>({
     operator: 'AND',
-    conditions: []
+    fields: []
   })
   
   const [errors, setErrors] = useState<{ [key: string]: string }>({})
@@ -93,7 +99,7 @@ export function DuplicateRuleBuilder({
       setRuleDescription('')
       setActionOnDuplicate('warn')
       setIsActive(true)
-      setLogic({ operator: 'AND', conditions: [] })
+      setLogic({ operator: 'AND', fields: [] })
     }
     setErrors({})
   }, [editingRule, isOpen])
@@ -101,12 +107,14 @@ export function DuplicateRuleBuilder({
   const loadPipelineData = async () => {
     try {
       setLoading(true)
-      const response = await pipelinesApi.get(pipelineId)
+      
+      // Load pipeline data
+      const pipelineResponse = await pipelinesApi.get(pipelineId)
       
       const transformedPipeline: Pipeline = {
-        id: response.data.id?.toString() || pipelineId,
-        name: response.data.name || 'Unknown Pipeline',
-        fields: (response.data.fields || []).map((field: any) => ({
+        id: pipelineResponse.data.id?.toString() || pipelineId,
+        name: pipelineResponse.data.name || 'Unknown Pipeline',
+        fields: (pipelineResponse.data.fields || []).map((field: any) => ({
           id: field.id?.toString() || '',
           name: field.slug || field.name?.toLowerCase().replace(/\s+/g, '_'),
           display_name: field.name || field.display_name || field.slug || 'Unknown Field',
@@ -115,6 +123,15 @@ export function DuplicateRuleBuilder({
       }
       
       setPipeline(transformedPipeline)
+      
+      // Load URL extraction rules from API
+      try {
+        const rulesResponse = await duplicatesApi.getUrlExtractionRules(pipelineId)
+        setUrlExtractionRules(rulesResponse.data.results || rulesResponse.data || [])
+      } catch (configError) {
+        console.error('Failed to load URL extraction rules:', configError)
+        setUrlExtractionRules([])
+      }
     } catch (error) {
       console.error('Failed to load pipeline data:', error)
     } finally {
@@ -123,30 +140,30 @@ export function DuplicateRuleBuilder({
   }
 
   const addCondition = () => {
-    const newCondition: LogicCondition = {
+    const newCondition: FieldCondition = {
       field: '',
-      operator: 'exact_match',
-      weight: 1.0
+      match_type: 'exact',
+      url_extraction_rules: 'all' // Default to using all rules
     }
     setLogic({
       ...logic,
-      conditions: [...logic.conditions, newCondition]
+      fields: [...logic.fields, newCondition]
     })
   }
 
-  const updateCondition = (index: number, updates: Partial<LogicCondition>) => {
-    const newConditions = [...logic.conditions]
-    newConditions[index] = { ...newConditions[index], ...updates }
+  const updateCondition = (index: number, updates: Partial<FieldCondition>) => {
+    const newFields = [...logic.fields]
+    newFields[index] = { ...newFields[index], ...updates }
     setLogic({
       ...logic,
-      conditions: newConditions
+      fields: newFields
     })
   }
 
   const removeCondition = (index: number) => {
     setLogic({
       ...logic,
-      conditions: logic.conditions.filter((_, i) => i !== index)
+      fields: logic.fields.filter((_, i) => i !== index)
     })
   }
 
@@ -157,19 +174,22 @@ export function DuplicateRuleBuilder({
       newErrors.ruleName = 'Rule name is required'
     }
 
-    if (logic.conditions.length === 0) {
-      newErrors.conditions = 'At least one condition is required'
+    if (logic.fields.length === 0) {
+      newErrors.fields = 'At least one field condition is required'
     }
 
-    logic.conditions.forEach((condition, index) => {
-      if (!condition.field) {
-        newErrors[`condition_${index}_field`] = 'Field is required'
+    logic.fields.forEach((fieldCondition, index) => {
+      if (!fieldCondition.field) {
+        newErrors[`field_${index}_field`] = 'Field is required'
       }
-      if (condition.operator === 'fuzzy_match' && (!condition.threshold || condition.threshold < 0 || condition.threshold > 1)) {
-        newErrors[`condition_${index}_threshold`] = 'Threshold must be between 0 and 1'
+      if (!fieldCondition.match_type) {
+        newErrors[`field_${index}_match_type`] = 'Match type is required'
       }
-      if (['contains', 'starts_with', 'ends_with', 'regex'].includes(condition.operator) && !condition.value) {
-        newErrors[`condition_${index}_value`] = 'Value is required for this operator'
+      // Validate URL extraction rules for url_normalized match type
+      if (fieldCondition.match_type === 'url_normalized') {
+        if (Array.isArray(fieldCondition.url_extraction_rules) && fieldCondition.url_extraction_rules.length === 0) {
+          newErrors[`field_${index}_url_rules`] = 'At least one URL extraction rule must be selected when using specific rules'
+        }
       }
     })
 
@@ -196,18 +216,35 @@ export function DuplicateRuleBuilder({
 
       let savedRule
       if (editingRule) {
-        savedRule = await duplicatesApi.updateDuplicateRule(editingRule.id, ruleData)
+        savedRule = await duplicatesApi.updateDuplicateRule(editingRule.id, ruleData, pipelineId)
       } else {
-        savedRule = await duplicatesApi.createDuplicateRule(ruleData)
+        savedRule = await duplicatesApi.createDuplicateRule(ruleData, pipelineId)
       }
 
       onSave(savedRule.data)
       onClose()
     } catch (error: any) {
       console.error('Failed to save rule:', error)
-      setErrors({
-        save: error?.response?.data?.detail || error?.message || 'Failed to save rule'
-      })
+      
+      // Enhanced error handling with specific error messages
+      if (error.response?.status === 400) {
+        const errorData = error.response.data
+        if (errorData.logic) {
+          setErrors({ save: `Invalid rule logic: ${errorData.logic.join(', ')}` })
+        } else if (errorData.name) {
+          setErrors({ save: `Rule name error: ${errorData.name.join(', ')}` })
+        } else {
+          setErrors({ save: errorData.detail || 'Invalid rule data. Please check all fields and try again.' })
+        }
+      } else if (error.response?.status === 401) {
+        setErrors({ save: 'Authentication required. Please login and try again.' })
+      } else if (error.response?.status === 403) {
+        setErrors({ save: 'You do not have permission to create duplicate rules.' })
+      } else if (error.response?.status >= 500) {
+        setErrors({ save: 'Server error. Please try again later.' })
+      } else {
+        setErrors({ save: error?.response?.data?.detail || error?.message || 'Failed to save rule. Please check your connection and try again.' })
+      }
     } finally {
       setSaving(false)
     }
@@ -376,9 +413,9 @@ export function DuplicateRuleBuilder({
                   </div>
                 </div>
 
-                {/* Conditions */}
+                {/* Field Conditions */}
                 <div className="space-y-3">
-                  {logic.conditions.map((condition, index) => (
+                  {logic.fields.map((condition, index) => (
                     <div key={index} className="bg-gray-50 dark:bg-gray-700 rounded-lg p-4">
                       <div className="flex items-center justify-between mb-3">
                         <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
@@ -392,7 +429,7 @@ export function DuplicateRuleBuilder({
                         </button>
                       </div>
 
-                      <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                         {/* Field Selection */}
                         <div>
                           <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
@@ -414,92 +451,117 @@ export function DuplicateRuleBuilder({
                               </option>
                             ))}
                           </select>
-                          {errors[`condition_${index}_field`] && (
-                            <p className="text-xs text-red-500 mt-1">{errors[`condition_${index}_field`]}</p>
+                          {errors[`field_${index}_field`] && (
+                            <p className="text-xs text-red-500 mt-1">{errors[`field_${index}_field`]}</p>
                           )}
                         </div>
 
-                        {/* Operator Selection */}
+                        {/* Match Type Selection */}
                         <div>
                           <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
-                            Operator
+                            Match Type
                           </label>
                           <select
-                            value={condition.operator}
-                            onChange={(e) => updateCondition(index, { operator: e.target.value as any })}
+                            value={condition.match_type}
+                            onChange={(e) => updateCondition(index, { match_type: e.target.value as any })}
                             className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md focus:ring-2 focus:ring-orange-500 focus:border-orange-500 bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
                           >
-                            <option value="exact_match">Exact Match</option>
-                            <option value="fuzzy_match">Fuzzy Match</option>
-                            <option value="contains">Contains</option>
-                            <option value="starts_with">Starts With</option>
-                            <option value="ends_with">Ends With</option>
-                            <option value="regex">Regular Expression</option>
+                            <option value="exact">Exact Match</option>
+                            <option value="case_insensitive">Case Insensitive</option>
+                            <option value="fuzzy">Fuzzy Match</option>
+                            <option value="email_normalized">Email Normalized</option>
+                            <option value="phone_normalized">Phone Normalized</option>
+                            <option value="url_normalized">URL Normalized</option>
                           </select>
                         </div>
-
-                        {/* Threshold (for fuzzy match) */}
-                        {condition.operator === 'fuzzy_match' && (
-                          <div>
-                            <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
-                              Threshold (0-1)
-                            </label>
-                            <input
-                              type="number"
-                              min="0"
-                              max="1"
-                              step="0.1"
-                              value={condition.threshold || 0.8}
-                              onChange={(e) => updateCondition(index, { threshold: parseFloat(e.target.value) })}
-                              className={`w-full px-3 py-2 text-sm border rounded-md focus:ring-2 focus:ring-orange-500 focus:border-orange-500 ${
-                                errors[`condition_${index}_threshold`] 
-                                  ? 'border-red-500 dark:border-red-400' 
-                                  : 'border-gray-300 dark:border-gray-600'
-                              } bg-white dark:bg-gray-800 text-gray-900 dark:text-white`}
-                            />
-                            {errors[`condition_${index}_threshold`] && (
-                              <p className="text-xs text-red-500 mt-1">{errors[`condition_${index}_threshold`]}</p>
-                            )}
-                          </div>
-                        )}
-
-                        {/* Value (for specific operators) */}
-                        {['contains', 'starts_with', 'ends_with', 'regex'].includes(condition.operator) && (
-                          <div>
-                            <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
-                              Value *
-                            </label>
-                            <input
-                              type="text"
-                              value={condition.value || ''}
-                              onChange={(e) => updateCondition(index, { value: e.target.value })}
-                              placeholder={condition.operator === 'regex' ? 'Enter regex pattern' : 'Enter value'}
-                              className={`w-full px-3 py-2 text-sm border rounded-md focus:ring-2 focus:ring-orange-500 focus:border-orange-500 ${
-                                errors[`condition_${index}_value`] 
-                                  ? 'border-red-500 dark:border-red-400' 
-                                  : 'border-gray-300 dark:border-gray-600'
-                              } bg-white dark:bg-gray-800 text-gray-900 dark:text-white`}
-                            />
-                            {errors[`condition_${index}_value`] && (
-                              <p className="text-xs text-red-500 mt-1">{errors[`condition_${index}_value`]}</p>
-                            )}
-                          </div>
-                        )}
                       </div>
+
+                      {/* URL Extraction Rules Selection (only show for url_normalized) */}
+                      {condition.match_type === 'url_normalized' && (
+                        <div className="mt-3">
+                          <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-2">
+                            URL Extraction Rules
+                          </label>
+                          <div className="space-y-2">
+                            <div className="flex items-center space-x-2">
+                              <input
+                                type="radio"
+                                id={`all-rules-${index}`}
+                                name={`url-rules-${index}`}
+                                checked={condition.url_extraction_rules === 'all'}
+                                onChange={() => updateCondition(index, { url_extraction_rules: 'all' })}
+                                className="w-4 h-4 text-orange-600 bg-gray-100 border-gray-300 focus:ring-orange-500"
+                              />
+                              <label htmlFor={`all-rules-${index}`} className="text-sm text-gray-700 dark:text-gray-300">
+                                Use All Rules ({urlExtractionRules.length} available)
+                              </label>
+                            </div>
+                            <div className="flex items-center space-x-2">
+                              <input
+                                type="radio"
+                                id={`specific-rules-${index}`}
+                                name={`url-rules-${index}`}
+                                checked={Array.isArray(condition.url_extraction_rules)}
+                                onChange={() => updateCondition(index, { url_extraction_rules: [] })}
+                                className="w-4 h-4 text-orange-600 bg-gray-100 border-gray-300 focus:ring-orange-500"
+                              />
+                              <label htmlFor={`specific-rules-${index}`} className="text-sm text-gray-700 dark:text-gray-300">
+                                Select Specific Rules
+                              </label>
+                            </div>
+                            
+                            {/* Rule selection checkboxes */}
+                            {Array.isArray(condition.url_extraction_rules) && (
+                              <div className="ml-6 mt-2 space-y-1 max-h-40 overflow-y-auto border border-gray-200 dark:border-gray-600 rounded-md p-3">
+                                {urlExtractionRules.map((rule) => (
+                                  <div key={rule.id} className="flex items-center space-x-2">
+                                    <input
+                                      type="checkbox"
+                                      id={`rule-${index}-${rule.id}`}
+                                      checked={Array.isArray(condition.url_extraction_rules) && condition.url_extraction_rules.includes(rule.id)}
+                                      onChange={(e) => {
+                                        const currentRules = Array.isArray(condition.url_extraction_rules) ? condition.url_extraction_rules : []
+                                        const newRules = e.target.checked
+                                          ? [...currentRules, rule.id]
+                                          : currentRules.filter(id => id !== rule.id)
+                                        updateCondition(index, { url_extraction_rules: newRules })
+                                      }}
+                                      className="w-4 h-4 text-orange-600 bg-gray-100 border-gray-300 rounded focus:ring-orange-500"
+                                    />
+                                    <label htmlFor={`rule-${index}-${rule.id}`} className="text-xs text-gray-600 dark:text-gray-400">
+                                      <span className="font-medium">{rule.name}</span>
+                                      {rule.description && <span className="text-gray-500"> - {rule.description}</span>}
+                                    </label>
+                                  </div>
+                                ))}
+                                {urlExtractionRules.length === 0 && (
+                                  <p className="text-xs text-gray-500 dark:text-gray-400">
+                                    No URL extraction rules available. Create some in the URL Extraction Rules section.
+                                  </p>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                          {errors[`field_${index}_url_rules`] && (
+                            <p className="text-xs text-red-500 mt-1">{errors[`field_${index}_url_rules`]}</p>
+                          )}
+                        </div>
+                      )}
                     </div>
                   ))}
 
                   {/* Add Condition Button */}
                   <button
                     onClick={addCondition}
-                    className="w-full py-3 border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-lg hover:border-orange-500 hover:bg-orange-50 dark:hover:bg-orange-900/20 flex items-center justify-center space-x-2 text-gray-600 dark:text-gray-400 hover:text-orange-600 dark:hover:text-orange-400"
+                    disabled={!pipeline || loading}
+                    className="w-full py-3 border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-lg hover:border-orange-500 hover:bg-orange-50 dark:hover:bg-orange-900/20 flex items-center justify-center space-x-2 text-gray-600 dark:text-gray-400 hover:text-orange-600 dark:hover:text-orange-400 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     <Plus className="w-4 h-4" />
-                    <span>Add Condition</span>
+                    <span>Add Field Condition</span>
                   </button>
 
-                  {errors.conditions && (
-                    <p className="text-sm text-red-500">{errors.conditions}</p>
+                  {errors.fields && (
+                    <p className="text-sm text-red-500">{errors.fields}</p>
                   )}
                 </div>
               </div>

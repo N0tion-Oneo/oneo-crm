@@ -65,7 +65,7 @@ export function DuplicateRulesManager({
     const loadDuplicateRules = async () => {
       try {
         setLoading(true)
-        const response = await duplicatesApi.getDuplicateRules()
+        const response = await duplicatesApi.getDuplicateRules(pipelineId)
         
         // Transform API response to match our interface
         const transformedRules: DuplicateRule[] = (response.data.results || []).map((rule: any) => ({
@@ -319,7 +319,7 @@ export function DuplicateRulesManager({
                       try {
                         const updatedRule = await duplicatesApi.updateDuplicateRule(rule.id, {
                           is_active: !rule.is_active
-                        })
+                        }, pipelineId)
                         
                         // Update local state
                         setRules(rules.map(r => 
@@ -382,6 +382,7 @@ export function DuplicateRulesManager({
           onClose={() => setTestingRule(null)}
           rule={testingRule}
           pipelineFields={pipeline?.fields || []}
+          pipelineId={pipelineId}
         />
       )}
     </div>

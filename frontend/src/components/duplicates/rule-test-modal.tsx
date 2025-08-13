@@ -9,9 +9,10 @@ interface RuleTestModalProps {
   onClose: () => void
   rule: any
   pipelineFields: Array<{ name: string; display_name: string; field_type: string }>
+  pipelineId: string
 }
 
-export function RuleTestModal({ isOpen, onClose, rule, pipelineFields }: RuleTestModalProps) {
+export function RuleTestModal({ isOpen, onClose, rule, pipelineFields, pipelineId }: RuleTestModalProps) {
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<any>(null)
   const [record1Data, setRecord1Data] = useState<{ [key: string]: string }>({})
@@ -25,7 +26,7 @@ export function RuleTestModal({ isOpen, onClose, rule, pipelineFields }: RuleTes
       const response = await duplicatesApi.testDuplicateRule(rule.id, {
         record1_data: record1Data,
         record2_data: record2Data
-      })
+      }, pipelineId)
 
       setTestResult(response.data)
     } catch (error: any) {
@@ -100,20 +101,31 @@ export function RuleTestModal({ isOpen, onClose, rule, pipelineFields }: RuleTes
                 Record A (Test Data)
               </h4>
               <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-4 space-y-3">
-                {pipelineFields.slice(0, 6).map((field) => (
-                  <div key={field.name}>
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                      {field.display_name} ({field.field_type})
-                    </label>
-                    <input
-                      type="text"
-                      value={record1Data[field.name] || ''}
-                      onChange={(e) => updateRecord1Field(field.name, e.target.value)}
-                      placeholder={`Enter ${field.display_name.toLowerCase()}...`}
-                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:ring-2 focus:ring-orange-500 focus:border-orange-500 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm"
-                    />
-                  </div>
-                ))}
+                {(rule.logic?.fields || []).map((ruleField: any, index: number) => {
+                  // Find the pipeline field info for this rule field
+                  const pipelineField = pipelineFields.find(f => f.name === ruleField.field) || {
+                    name: ruleField.field,
+                    display_name: ruleField.field,
+                    field_type: 'unknown'
+                  }
+                  return (
+                    <div key={index}>
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                        {pipelineField.display_name} ({pipelineField.field_type})
+                        <span className="ml-2 px-2 py-1 text-xs bg-blue-100 text-blue-800 rounded-full">
+                          {ruleField.match_type}
+                        </span>
+                      </label>
+                      <input
+                        type="text"
+                        value={record1Data[ruleField.field] || ''}
+                        onChange={(e) => updateRecord1Field(ruleField.field, e.target.value)}
+                        placeholder={`Enter ${pipelineField.display_name.toLowerCase()}...`}
+                        className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:ring-2 focus:ring-orange-500 focus:border-orange-500 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm"
+                      />
+                    </div>
+                  )
+                })}
               </div>
             </div>
 
@@ -123,20 +135,31 @@ export function RuleTestModal({ isOpen, onClose, rule, pipelineFields }: RuleTes
                 Record B (Test Data)
               </h4>
               <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-4 space-y-3">
-                {pipelineFields.slice(0, 6).map((field) => (
-                  <div key={field.name}>
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                      {field.display_name} ({field.field_type})
-                    </label>
-                    <input
-                      type="text"
-                      value={record2Data[field.name] || ''}
-                      onChange={(e) => updateRecord2Field(field.name, e.target.value)}
-                      placeholder={`Enter ${field.display_name.toLowerCase()}...`}
-                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:ring-2 focus:ring-orange-500 focus:border-orange-500 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm"
-                    />
-                  </div>
-                ))}
+                {(rule.logic?.fields || []).map((ruleField: any, index: number) => {
+                  // Find the pipeline field info for this rule field
+                  const pipelineField = pipelineFields.find(f => f.name === ruleField.field) || {
+                    name: ruleField.field,
+                    display_name: ruleField.field,
+                    field_type: 'unknown'
+                  }
+                  return (
+                    <div key={index}>
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                        {pipelineField.display_name} ({pipelineField.field_type})
+                        <span className="ml-2 px-2 py-1 text-xs bg-blue-100 text-blue-800 rounded-full">
+                          {ruleField.match_type}
+                        </span>
+                      </label>
+                      <input
+                        type="text"
+                        value={record2Data[ruleField.field] || ''}
+                        onChange={(e) => updateRecord2Field(ruleField.field, e.target.value)}
+                        placeholder={`Enter ${pipelineField.display_name.toLowerCase()}...`}
+                        className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:ring-2 focus:ring-orange-500 focus:border-orange-500 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm"
+                      />
+                    </div>
+                  )
+                })}
               </div>
             </div>
           </div>

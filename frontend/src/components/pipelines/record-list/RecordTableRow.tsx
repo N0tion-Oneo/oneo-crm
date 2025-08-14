@@ -1,9 +1,9 @@
 // RecordTableRow - Individual record row with field rendering
-import React from 'react'
+import React, { useState, useEffect } from 'react'
 import { CheckSquare, Square, Edit, Eye, Trash2 } from 'lucide-react'
 import { Record, RecordField } from '@/types/records'
 import { FieldUtilsService } from '@/services/records'
-import { FieldResolver } from '@/lib/field-system/field-registry'
+import { FieldResolver, getFieldConfig } from '@/lib/field-system/field-registry'
 import { pipelinesApi } from '@/lib/api'
 
 export interface RecordTableRowProps {
@@ -32,6 +32,108 @@ const formatSystemTimestamp = (timestamp: string): string => {
   if (diffHours < 24) return `${diffHours}h ago`
   if (diffDays < 7) return `${diffDays}d ago`
   return date.toLocaleDateString()
+}
+
+// Simplified relation value component for table chips
+const RelationChip: React.FC<{
+  recordId: string
+  field: RecordField
+  onClick: () => void
+}> = ({ recordId, field, onClick }) => {
+  const [displayText, setDisplayText] = useState<string>(`Record #${recordId}`)
+  
+  useEffect(() => {
+    const fetchRecordName = async () => {
+      try {
+        // Convert RecordField to Field type for getFieldConfig
+        const fieldForConfig = FieldUtilsService.convertToFieldType(field)
+        
+        const targetPipelineId = getFieldConfig(fieldForConfig, 'target_pipeline_id')
+        const displayField = getFieldConfig(fieldForConfig, 'display_field', 'title')
+        
+        console.log('🔍 RelationChip Debug:', {
+          fieldName: field.name,
+          fieldConfig: field.field_config,
+          targetPipelineId,
+          displayField,
+          recordId
+        })
+        
+        if (!targetPipelineId) {
+          console.warn('🔍 No target pipeline ID found')
+          return
+        }
+        
+        const response = await pipelinesApi.getRecord(targetPipelineId.toString(), recordId)
+        console.log('🔍 API Response:', response.data)
+        
+        if (response.data) {
+          let recordName = `Record #${recordId}` // Default fallback
+          
+          console.log('🔍 Available fields in response.data.data:', Object.keys(response.data.data))
+          
+          // First priority: Use the configured display field (try exact match first)
+          if (displayField && response.data.data && response.data.data[displayField] !== undefined && response.data.data[displayField] !== null && response.data.data[displayField] !== '') {
+            recordName = String(response.data.data[displayField])
+            console.log('🔍 Using display field (exact):', displayField, '=', recordName)
+          }
+          // Try slugified version of display field (convert "Email 2" to "email_2")
+          else if (displayField && response.data.data) {
+            const slugifiedDisplayField = displayField.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '')
+            if (response.data.data[slugifiedDisplayField] !== undefined && response.data.data[slugifiedDisplayField] !== null && response.data.data[slugifiedDisplayField] !== '') {
+              recordName = String(response.data.data[slugifiedDisplayField])
+              console.log('🔍 Using display field (slugified):', slugifiedDisplayField, '=', recordName)
+            }
+            // Try partial match - look for field that contains the display field name
+            else {
+              const partialMatch = Object.keys(response.data.data).find(key => {
+                const keyNormalized = key.toLowerCase().replace(/_/g, ' ')
+                const displayNormalized = displayField.toLowerCase()
+                return keyNormalized.includes(displayNormalized) || displayNormalized.includes(keyNormalized)
+              })
+              if (partialMatch && response.data.data[partialMatch] !== undefined && response.data.data[partialMatch] !== null && response.data.data[partialMatch] !== '') {
+                recordName = String(response.data.data[partialMatch])
+                console.log('🔍 Using display field (partial match):', partialMatch, '=', recordName)
+              }
+            }
+          }
+          
+          // Second priority: Try common fallback fields like title, name
+          if (recordName === `Record #${recordId}` && response.data.data) {
+            const fallbackFields = ['title', 'name', 'display_name', 'label', 'test']
+            for (const fallbackField of fallbackFields) {
+              if (response.data.data[fallbackField] !== undefined && response.data.data[fallbackField] !== null && response.data.data[fallbackField] !== '') {
+                recordName = String(response.data.data[fallbackField])
+                console.log('🔍 Using fallback field:', fallbackField, '=', recordName)
+                break
+              }
+            }
+          }
+          
+          console.log('🔍 Final record name:', recordName)
+          setDisplayText(recordName)
+        }
+      } catch (error) {
+        console.error(`Failed to load relation record ${recordId}:`, error)
+        // Keep the fallback display text
+      }
+    }
+    
+    fetchRecordName()
+  }, [recordId, field])
+  
+  return (
+    <button
+      onClick={(e) => {
+        e.stopPropagation()
+        onClick()
+      }}
+      className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-200 hover:bg-emerald-200 dark:hover:bg-emerald-800 cursor-pointer transition-colors"
+      title="Click to view related record"
+    >
+      {displayText}
+    </button>
+  )
 }
 
 export function RecordTableRow({
@@ -122,99 +224,46 @@ export function RecordTableRow({
     }
 
     if (field.field_type === 'relation') {
-      const formattedValue = FieldUtilsService.formatFieldValue(field, value)
-      
       if (!value || !onOpenRelatedRecord) {
-        console.log('🔗 Relation field skipped:', { 
-          fieldName: field.name, 
-          hasValue: !!value, 
-          hasCallback: !!onOpenRelatedRecord 
-        })
+        const formattedValue = FieldUtilsService.formatFieldValue(field, value)
         return formattedValue
       }
 
       // Extract target pipeline ID from field configuration
       const targetPipelineId = field.field_config?.target_pipeline_id || field.field_config?.target_pipeline
       
-      console.log('🔗 Relation field config:', {
-        fieldName: field.name,
-        value,
-        fieldConfig: field.field_config,
-        targetPipelineId,
-        formattedValue
-      })
-      
       if (!targetPipelineId) {
-        console.warn('🔗 No target pipeline ID found for relation field:', field.name)
+        const formattedValue = FieldUtilsService.formatFieldValue(field, value)
         return formattedValue
       }
 
-      // Create a wrapper component to add click handlers to the formatted relation value
-      const RelationWrapper: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-        const handleClick = (e: React.MouseEvent, recordId: string) => {
-          e.stopPropagation()
-          console.log('🔗 Relation field clicked:', { 
-            fieldName: field.name,
-            targetPipelineId: targetPipelineId.toString(), 
-            recordId: recordId
-          })
-          onOpenRelatedRecord(targetPipelineId.toString(), recordId)
-        }
+      // Handle multiple record IDs (array or comma-separated) vs single record ID
+      const recordIds = Array.isArray(value) 
+        ? value.map(v => (typeof v === 'object' && v.record_id) ? v.record_id.toString() : v.toString())
+        : value.toString().includes(',') 
+          ? value.toString().split(',').map(id => id.trim())
+          : [value.toString()]
 
-        // Extract record IDs from the value to handle click events
-        const recordIds = Array.isArray(value) 
-          ? value.map(v => (typeof v === 'object' && v.record_id) ? v.record_id.toString() : v.toString())
-          : value.toString().includes(',') 
-            ? value.toString().split(',').map(id => id.trim())
-            : [value.toString()]
-
-        // Clone the formatted component and add click handlers
-        const addClickHandlersToElement = (element: React.ReactElement, recordIndex: number = 0): React.ReactElement => {
-          if (!React.isValidElement(element)) return element
-
-          // If it's a div with space-y-1 (multiple relations), add click handlers to children
-          if (element.props.className?.includes('space-y-1') && element.props.children) {
-            return React.cloneElement(element, {
-              children: React.Children.map(element.props.children, (child, index) => {
-                if (React.isValidElement(child) && recordIds[index]) {
-                  return addClickHandlersToElement(child, index)
-                }
-                return child
-              })
-            })
-          }
-
-          // Add click handler to the element
-          const recordId = recordIds[recordIndex] || recordIds[0]
-          return React.cloneElement(element, {
-            onClick: (e: React.MouseEvent) => handleClick(e, recordId),
-            style: { 
-              cursor: 'pointer',
-              ...element.props.style
-            },
-            className: `${element.props.className || ''} hover:underline`,
-            title: "Click to view related record"
-          })
-        }
-
-        if (React.isValidElement(children)) {
-          return addClickHandlersToElement(children)
-        }
-
-        // Fallback for non-React elements
-        const recordId = recordIds[0]
-        return (
-          <button
-            onClick={(e) => handleClick(e, recordId)}
-            className="text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 hover:underline cursor-pointer transition-colors text-left"
-            title="Click to view related record"
-          >
-            {children}
-          </button>
-        )
-      }
-
-      return <RelationWrapper>{formattedValue}</RelationWrapper>
+      // Display as chips like user fields - with emerald color for relations
+      return (
+        <div className="flex items-center gap-1 flex-wrap">
+          {recordIds.map((recordId, index) => (
+            <RelationChip
+              key={`${recordId}-${index}`}
+              recordId={recordId}
+              field={field}
+              onClick={() => {
+                console.log('🔗 Relation chip clicked:', { 
+                  fieldName: field.name,
+                  targetPipelineId: targetPipelineId.toString(), 
+                  recordId: recordId
+                })
+                onOpenRelatedRecord(targetPipelineId.toString(), recordId)
+              }}
+            />
+          ))}
+        </div>
+      )
     }
 
     return FieldUtilsService.formatFieldValue(field, value)

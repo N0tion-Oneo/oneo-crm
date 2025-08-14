@@ -115,6 +115,10 @@ export function RecordListView({ pipeline: initialPipeline, onEditRecord, onCrea
   const [kanbanField, setKanbanField] = useState<string>('')
   const [calendarField, setCalendarField] = useState<string>('')
   const [searchQuery, setSearchQuery] = useState('')
+  
+  // Track currently applied saved filter
+  const [currentSavedFilter, setCurrentSavedFilter] = useState<any>(null)
+  const [isFilterModified, setIsFilterModified] = useState(false)
 
   // Initialize sorting
   const { sort, handleSort } = useRecordSorting({ field: 'updated_at', direction: 'desc' })
@@ -266,8 +270,42 @@ export function RecordListView({ pipeline: initialPipeline, onEditRecord, onCrea
 
   // Event handlers  
   const handleBooleanQueryChange = (newQuery: typeof booleanQuery) => {
+    // Mark filter as modified when user manually changes filters
+    if (currentSavedFilter && !isFilterModified) {
+      setIsFilterModified(true)
+    }
     updateBooleanQuery(newQuery)
     // Filters are now automatically applied via useEffect in useRecordFilters hook
+  }
+
+  // Wrapper for view mode changes to mark filter as modified
+  const handleViewModeChange = (newViewMode: ViewMode) => {
+    if (currentSavedFilter && !isFilterModified && newViewMode !== currentSavedFilter.view_mode) {
+      setIsFilterModified(true)
+    }
+    setViewMode(newViewMode)
+  }
+
+  // Wrapper for visible fields changes to mark filter as modified
+  const handleVisibleFieldsChange = (newVisibleFields: Set<string>) => {
+    if (currentSavedFilter && !isFilterModified) {
+      // Check if visible fields have changed from saved filter
+      const savedFields = new Set(currentSavedFilter.visible_fields || [])
+      const hasChanges = newVisibleFields.size !== savedFields.size || 
+        [...newVisibleFields].some(field => !savedFields.has(field))
+      
+      if (hasChanges) {
+        setIsFilterModified(true)
+      }
+    }
+    setVisibleFields(newVisibleFields)
+  }
+
+
+  // Handler to clear saved filter context
+  const handleClearSavedFilter = () => {
+    setCurrentSavedFilter(null)
+    setIsFilterModified(false)
   }
 
   // Saved filters handlers
@@ -277,19 +315,23 @@ export function RecordListView({ pipeline: initialPipeline, onEditRecord, onCrea
     console.log('📋 Filter view mode:', filter.view_mode)
     console.log('📋 Filter visible fields:', filter.visible_fields)
     
+    // Track the currently applied saved filter and reset modified state
+    setCurrentSavedFilter(filter)
+    setIsFilterModified(false)
+    
     // Apply the saved filter configuration
     updateBooleanQuery(filter.filter_config)
     
     // Update view mode if specified
     if (filter.view_mode && filter.view_mode !== viewMode) {
       console.log('📋 Updating view mode from', viewMode, 'to', filter.view_mode)
-      setViewMode(filter.view_mode)
+      setViewMode(filter.view_mode) // Direct call is OK here since we're applying a saved filter
     }
     
     // Update visible fields if specified
     if (filter.visible_fields && filter.visible_fields.length > 0) {
       console.log('📋 Updating visible fields:', filter.visible_fields)
-      setVisibleFields(new Set(filter.visible_fields))
+      setVisibleFields(new Set(filter.visible_fields)) // Direct call is OK here since we're applying a saved filter
     }
     
     // FilterPanel will handle closing its own dropdown
@@ -468,7 +510,7 @@ export function RecordListView({ pipeline: initialPipeline, onEditRecord, onCrea
           <div className="flex items-center space-x-4">
             <ViewModeToggle
               viewMode={viewMode}
-              onViewModeChange={setViewMode}
+              onViewModeChange={handleViewModeChange}
               selectFields={selectFields}
               dateFields={dateFields}
             />
@@ -498,7 +540,7 @@ export function RecordListView({ pipeline: initialPipeline, onEditRecord, onCrea
             <FieldColumnManager
               fields={pipeline.fields}
               visibleFields={visibleFields}
-              onVisibleFieldsChange={setVisibleFields}
+              onVisibleFieldsChange={handleVisibleFieldsChange}
             />
           </div>
 
@@ -526,6 +568,9 @@ export function RecordListView({ pipeline: initialPipeline, onEditRecord, onCrea
           visibleFields={Array.from(visibleFields)}
           sortConfig={sort}
           onFilterSelect={handleFilterSelect}
+          currentSavedFilter={currentSavedFilter}
+          isFilterModified={isFilterModified}
+          onClearSavedFilter={handleClearSavedFilter}
         />
       )}
 
@@ -635,6 +680,7 @@ export function RecordListView({ pipeline: initialPipeline, onEditRecord, onCrea
           />
         </div>
       )}
+
     </div>
   )
 }

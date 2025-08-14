@@ -10,12 +10,34 @@ import {
   MoreVertical, 
   Calendar,
   Clock,
-  Users
+  Users,
+  Lock,
+  Building,
+  Globe,
+  Settings
 } from 'lucide-react'
 import { savedFiltersApi } from '@/lib/api'
 import { BooleanQuery } from '@/types/records'
 import { ShareFilterButton } from './ShareFilterButton'
 import { SharedFilterHistory } from './SharedFilterHistory'
+import { PermissionGuard, PermissionButton } from '@/components/permissions/PermissionGuard'
+import { useAuth } from '@/features/auth/context'
+
+// Access level configuration
+const accessLevelConfig = {
+  private: {
+    label: 'Private',
+    icon: Lock,
+    color: 'text-gray-600 bg-gray-50 border-gray-200',
+    description: 'Only you can use this filter'
+  },
+  pipeline_users: {
+    label: 'Pipeline Users',
+    icon: Building,
+    color: 'text-blue-600 bg-blue-50 border-blue-200',
+    description: 'All users with pipeline access can use this filter'
+  }
+}
 
 export interface SavedFilter {
   id: string
@@ -33,8 +55,9 @@ export interface SavedFilter {
   view_mode: 'table' | 'kanban' | 'calendar'
   visible_fields: string[]
   sort_config: any
+  access_level: 'private' | 'pipeline_users'
   is_shareable: boolean
-  share_access_level: 'readonly' | 'filtered_edit'
+  share_access_level: 'view_only' | 'filtered_edit' | 'comment' | 'export'
   is_default: boolean
   usage_count: number
   last_used_at: string | null
@@ -63,6 +86,22 @@ export function SavedFiltersList({
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [actionMenuOpen, setActionMenuOpen] = useState<string | null>(null)
+  const { hasPermission } = useAuth()
+  
+  // Helper function to get access level badge
+  const getAccessLevelBadge = (accessLevel: string) => {
+    const config = accessLevelConfig[accessLevel as keyof typeof accessLevelConfig]
+    if (!config) return null
+
+    const IconComponent = config.icon
+    
+    return (
+      <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium border ${config.color}`}>
+        <IconComponent className="w-3 h-3 mr-1" />
+        {config.label}
+      </span>
+    )
+  }
 
   useEffect(() => {
     loadFilters()
@@ -233,10 +272,11 @@ export function SavedFiltersList({
             >
               <div className="flex items-start justify-between">
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center space-x-2 mb-1">
+                  <div className="flex items-center flex-wrap gap-2 mb-1">
                     <h4 className="text-sm font-medium text-gray-900 dark:text-white truncate">
                       {filter.name}
                     </h4>
+                    {getAccessLevelBadge(filter.access_level)}
                     {filter.is_default && (
                       <Star className="w-4 h-4 text-yellow-500" />
                     )}
@@ -278,23 +318,35 @@ export function SavedFiltersList({
                 {/* Action Buttons */}
                 <div className="flex items-center space-x-2">
                   {/* Share Button */}
-                  {filter.can_share?.allowed ? (
-                    <div 
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      <ShareFilterButton
-                        filter={filter}
-                        variant="ghost"
-                        size="sm"
-                      />
-                    </div>
-                  ) : (
-                    <div className="opacity-0 group-hover:opacity-100 transition-opacity">
-                      <span className="text-xs text-gray-400 px-2 py-1 bg-gray-100 dark:bg-gray-700 rounded" title={`Cannot share: ${filter.can_share?.reason || 'Unknown reason'}`}>
-                        No share
-                      </span>
-                    </div>
-                  )}
+                  <PermissionGuard 
+                    category="sharing" 
+                    action="create_shared_views"
+                    fallback={
+                      <div className="opacity-0 group-hover:opacity-100 transition-opacity">
+                        <span className="text-xs text-gray-400 px-2 py-1 bg-gray-100 dark:bg-gray-700 rounded" title="You don't have permission to share filters">
+                          No permission
+                        </span>
+                      </div>
+                    }
+                  >
+                    {filter.can_share?.allowed ? (
+                      <div 
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <ShareFilterButton
+                          filter={filter}
+                          variant="ghost"
+                          size="sm"
+                        />
+                      </div>
+                    ) : (
+                      <div className="opacity-0 group-hover:opacity-100 transition-opacity">
+                        <span className="text-xs text-gray-400 px-2 py-1 bg-gray-100 dark:bg-gray-700 rounded" title={`Cannot share: ${filter.can_share?.reason || 'Unknown reason'}`}>
+                          No share
+                        </span>
+                      </div>
+                    )}
+                  </PermissionGuard>
 
                   {/* Action Menu */}
                   <div className="relative">
@@ -336,13 +388,24 @@ export function SavedFiltersList({
                           </div>
                         )}
                         
-                        <button
-                          onClick={() => handleDeleteFilter(filter)}
-                          className="w-full text-left px-4 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center space-x-2"
+                        <PermissionGuard 
+                          category="filters" 
+                          action="delete_filters"
+                          fallback={
+                            <div className="w-full text-left px-4 py-2 text-sm text-gray-400 flex items-center space-x-2">
+                              <Trash2 className="w-4 h-4" />
+                              <span>Delete (No permission)</span>
+                            </div>
+                          }
                         >
-                          <Trash2 className="w-4 h-4" />
-                          <span>Delete</span>
-                        </button>
+                          <button
+                            onClick={() => handleDeleteFilter(filter)}
+                            className="w-full text-left px-4 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center space-x-2"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                            <span>Delete</span>
+                          </button>
+                        </PermissionGuard>
                       </div>
                     </div>
                   )}

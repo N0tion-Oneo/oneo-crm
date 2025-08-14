@@ -22,7 +22,7 @@ PERMISSION_CATEGORIES = {
         'category_display': 'System Administration'
     },
     'users': {
-        'actions': ['create', 'read', 'update', 'delete', 'impersonate', 'assign_roles'],
+        'actions': ['create', 'read', 'update', 'delete', 'impersonate', 'assign_roles', 'read_all'],
         'description': 'User account management and role assignment',
         'category_display': 'User Management'
     },
@@ -32,12 +32,12 @@ PERMISSION_CATEGORIES = {
         'category_display': 'User Type Management'
     },
     'pipelines': {
-        'actions': ['access', 'create', 'read', 'update', 'delete', 'clone', 'export', 'import'],
+        'actions': ['access', 'create', 'read', 'update', 'delete', 'clone', 'export', 'import', 'read_all'],
         'description': 'Pipeline management and configuration',
         'category_display': 'Pipeline Management'
     },
     'records': {
-        'actions': ['create', 'read', 'update', 'delete', 'export', 'import'],
+        'actions': ['create', 'read', 'update', 'delete', 'export', 'import', 'read_all'],
         'description': 'Record data management and operations',
         'category_display': 'Record Management'
     },
@@ -77,7 +77,7 @@ PERMISSION_CATEGORIES = {
         'category_display': 'System Monitoring'
     },
     'ai_features': {
-        'actions': ['create', 'read', 'update', 'delete', 'configure'],
+        'actions': ['create', 'read', 'update', 'delete', 'configure', 'read_all'],
         'description': 'AI features and configuration management',
         'category_display': 'AI Features'
     },
@@ -97,8 +97,23 @@ PERMISSION_CATEGORIES = {
         'description': 'Duplicate detection and resolution',
         'category_display': 'Duplicate Management'
     },
+    'filters': {
+        'actions': ['create_filters', 'edit_filters', 'delete_filters'],
+        'description': 'Saved filter creation and management',
+        'category_display': 'Filter Management'
+    },
+    'sharing': {
+        'actions': ['create_shared_views', 'create_shared_forms', 'configure_shared_views_forms', 'revoke_shared_views_forms'],
+        'description': 'External sharing and collaboration features',
+        'category_display': 'Sharing & Collaboration'
+    },
+    'forms': {
+        'actions': ['create', 'read', 'update', 'delete', 'submit', 'configure'],
+        'description': 'Form creation and management system',
+        'category_display': 'Forms Management'
+    },
     'permissions': {
-        'actions': ['read', 'update'],
+        'actions': ['read', 'update', 'grant', 'revoke', 'assign', 'manage_roles'],
         'description': 'Permission management and role assignment',
         'category_display': 'Permission Management'
     }
@@ -126,6 +141,24 @@ ACTION_DESCRIPTIONS = {
     'migrate': 'Migrate data structure and schema',
     'resolve': 'Resolve conflicts and duplicates',
     'detect': 'Detect patterns and anomalies',
+    # Administrative permissions
+    'access': 'Access and view specific resources',
+    'read_all': 'Read all items regardless of ownership or restrictions',
+    'submit': 'Submit forms and applications',
+    # Filter permissions
+    'create_filters': 'Create and save new filters',
+    'edit_filters': 'Modify existing filters',
+    'delete_filters': 'Remove filters permanently',
+    # Sharing permissions
+    'create_shared_views': 'Create external shared views',
+    'create_shared_forms': 'Create external shared forms',
+    'configure_shared_views_forms': 'Configure sharing settings and permissions',
+    'revoke_shared_views_forms': 'Revoke and manage external shares',
+    # Permission management actions
+    'grant': 'Grant permissions to users or roles',
+    'revoke': 'Revoke permissions from users or roles',
+    'assign': 'Assign roles and permissions to users',
+    'manage_roles': 'Create, modify, and delete user roles',
 }
 
 
@@ -222,10 +255,10 @@ def get_default_permissions_for_role(role_level: str) -> Dict[str, List[str]]:
     elif role_level == 'manager':
         # Manager gets most permissions except system and delete operations
         return {
-            'users': ['create', 'read', 'update', 'assign_roles'],
+            'users': ['create', 'read', 'update', 'assign_roles', 'read_all'],
             'user_types': ['read'],
-            'pipelines': ['create', 'read', 'update', 'clone', 'export'],
-            'records': ['create', 'read', 'update', 'export'],
+            'pipelines': ['access', 'create', 'read', 'update', 'clone', 'export', 'read_all'],
+            'records': ['create', 'read', 'update', 'export', 'read_all'],
             'fields': ['create', 'read', 'update', 'recover'],
             'relationships': ['create', 'read', 'update', 'traverse'],
             'workflows': ['create', 'read', 'update', 'execute', 'clone', 'export'],
@@ -233,11 +266,14 @@ def get_default_permissions_for_role(role_level: str) -> Dict[str, List[str]]:
             'communications': ['create', 'read', 'update', 'send'],
             'settings': ['read'],
             'monitoring': ['read'],
-            'ai_features': ['create', 'read', 'update', 'configure'],
+            'ai_features': ['create', 'read', 'update', 'configure', 'read_all'],
             'reports': ['create', 'read', 'update', 'export'],
             'api_access': ['read', 'write'],
             'duplicates': ['create', 'read', 'update', 'resolve', 'detect'],
-            'permissions': ['read', 'update', 'grant', 'revoke']
+            'filters': ['create_filters', 'edit_filters', 'delete_filters'],
+            'sharing': ['create_shared_views', 'create_shared_forms', 'configure_shared_views_forms', 'revoke_shared_views_forms'],
+            'forms': ['create', 'read', 'update', 'delete', 'configure'],
+            'permissions': ['read', 'update', 'grant', 'revoke', 'assign', 'manage_roles']
         }
     
     elif role_level == 'user':
@@ -245,7 +281,7 @@ def get_default_permissions_for_role(role_level: str) -> Dict[str, List[str]]:
         return {
             'users': ['read'],
             'user_types': ['read'],
-            'pipelines': ['read', 'update'],
+            'pipelines': ['access', 'read', 'update'],
             'records': ['create', 'read', 'update', 'export'],
             'fields': ['read', 'update'],
             'relationships': ['create', 'read', 'update', 'traverse'],
@@ -257,6 +293,9 @@ def get_default_permissions_for_role(role_level: str) -> Dict[str, List[str]]:
             'reports': ['read', 'export'],
             'api_access': ['read', 'write'],
             'duplicates': ['read', 'detect'],
+            'filters': ['create_filters', 'edit_filters'],
+            'sharing': ['create_shared_views'],
+            'forms': ['read', 'submit'],
             'permissions': ['read']
         }
     
@@ -265,7 +304,7 @@ def get_default_permissions_for_role(role_level: str) -> Dict[str, List[str]]:
         return {
             'users': ['read'],
             'user_types': ['read'],
-            'pipelines': ['read'],
+            'pipelines': ['access', 'read'],
             'records': ['read', 'export'],
             'fields': ['read'],
             'relationships': ['read'],
@@ -277,6 +316,9 @@ def get_default_permissions_for_role(role_level: str) -> Dict[str, List[str]]:
             'reports': ['read', 'export'],
             'api_access': ['read'],
             'duplicates': ['read'],
+            'filters': [],  # Viewers cannot create or edit filters
+            'sharing': [],  # Viewers cannot share
+            'forms': ['read'],  # Viewers can only read forms
             'permissions': ['read']
         }
     
@@ -284,11 +326,15 @@ def get_default_permissions_for_role(role_level: str) -> Dict[str, List[str]]:
         # Custom role - minimal default permissions
         return {
             'users': ['read'],
-            'pipelines': ['read'],
+            'pipelines': ['access', 'read'],
             'records': ['read'],
             'business_rules': ['read'],
             'api_access': ['read'],
-            'duplicates': ['read']
+            'duplicates': ['read'],
+            'filters': [],
+            'sharing': [],
+            'forms': ['read'],
+            'permissions': ['read']
         }
 
 

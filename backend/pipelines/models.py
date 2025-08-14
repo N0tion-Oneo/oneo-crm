@@ -205,6 +205,12 @@ class Pipeline(models.Model):
     access_level = models.CharField(max_length=20, choices=ACCESS_LEVELS, default='internal')
     permission_config = models.JSONField(default=dict)
     
+    # Filter Management Settings
+    filter_management_settings = models.JSONField(
+        default=dict,
+        help_text="Settings for filter management in this pipeline"
+    )
+    
     # Status and metadata
     is_active = models.BooleanField(default=True)
     is_system = models.BooleanField(default=False)
@@ -1288,6 +1294,18 @@ class SavedFilter(models.Model):
     pipeline = models.ForeignKey(Pipeline, on_delete=models.CASCADE, related_name='saved_filters')
     created_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name='created_saved_filters')
     
+    # Access Control
+    ACCESS_LEVELS = [
+        ('private', 'Private'),
+        ('pipeline_users', 'Pipeline Users')
+    ]
+    access_level = models.CharField(
+        max_length=20,
+        choices=ACCESS_LEVELS,
+        default='private',
+        help_text="Who can access this filter"
+    )
+    
     # Filter Configuration (leverages existing BooleanQuery structure)
     filter_config = models.JSONField(
         default=dict, 
@@ -1382,6 +1400,7 @@ class SavedFilter(models.Model):
     
     def can_be_shared(self):
         """Check if this filter can be shared based on field visibility"""
+        # Both private and pipeline_users filters can be shared externally
         if not self.is_shareable:
             return False, "Filter is not marked as shareable"
         
@@ -1402,3 +1421,23 @@ class SavedFilter(models.Model):
             slug__in=self.visible_fields,
             is_visible_in_shared_list_and_detail_views=True
         ).values_list('slug', flat=True)
+    
+    def can_user_access(self, user):
+        """Check if user can access this filter based on access level"""
+        from authentication.permissions import SyncPermissionManager
+        
+        # Owner always has access
+        if self.created_by == user:
+            return True
+        
+        # Check access level
+        if self.access_level == 'private':
+            # Only owner + users with edit_filters permission can access private filters
+            permission_manager = SyncPermissionManager(user)
+            return permission_manager.has_permission('action', 'filters', 'edit_filters')
+        elif self.access_level == 'pipeline_users':
+            # All users with pipeline access can use
+            permission_manager = SyncPermissionManager(user)
+            return permission_manager.has_permission('action', 'pipelines', 'access', self.pipeline.id)
+        
+        return False

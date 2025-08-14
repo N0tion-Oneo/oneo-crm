@@ -25,7 +25,7 @@ class SavedFilterSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'name', 'description', 'pipeline', 'pipeline_name', 'pipeline_slug',
             'created_by', 'filter_config', 'view_mode', 'visible_fields', 'sort_config',
-            'is_shareable', 'share_access_level', 'is_default', 'usage_count', 
+            'access_level', 'is_shareable', 'share_access_level', 'is_default', 'usage_count', 
             'last_used_at', 'can_share', 'shareable_fields', 'share_count',
             'created_at', 'updated_at'
         ]
@@ -112,7 +112,7 @@ class SavedFilterListSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'name', 'description', 'pipeline', 'pipeline_name',
             'created_by', 'filter_config', 'view_mode', 'visible_fields', 'sort_config',
-            'is_shareable', 'is_default', 'usage_count', 'last_used_at', 
+            'access_level', 'is_shareable', 'share_access_level', 'is_default', 'usage_count', 'last_used_at', 
             'can_share', 'shareable_fields', 'share_count', 'created_at'
         ]
     

@@ -172,14 +172,16 @@ class SharedFilter(models.Model):
         help_text="Email address of the intended recipient who can access this share"
     )
     
-    # Access control (same as SharedRecord)
+    # Access control - Enhanced options
     access_mode = models.CharField(
-        max_length=15, 
+        max_length=20, 
         choices=[
-            ('readonly', 'Read-only'), 
-            ('filtered_edit', 'Filtered Edit')
+            ('view_only', 'View Only'),
+            ('filtered_edit', 'Filtered Edit'),
+            ('comment', 'View + Comment'),
+            ('export', 'View + Export')
         ],
-        default='readonly'
+        default='view_only'
     )
     
     # Specific fields to share (subset of saved_filter.visible_fields)
@@ -287,3 +289,15 @@ class SharedFilter(models.Model):
         self.revoked_at = timezone.now()
         self.revoked_by = revoked_by
         self.save(update_fields=['is_active', 'revoked_at', 'revoked_by'])
+    
+    def can_user_revoke(self, user):
+        """Check if user can revoke this share"""
+        from authentication.permissions import SyncPermissionManager
+        
+        # Owner can always revoke
+        if self.shared_by == user:
+            return True
+        
+        # Users with revoke permission can revoke others' shares
+        permission_manager = SyncPermissionManager(user)
+        return permission_manager.has_permission('action', 'sharing', 'revoke_shared_views_forms')

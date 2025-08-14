@@ -283,6 +283,7 @@ export default function PipelineRecordsPage() {
 
         <div className="flex items-center space-x-2">
           
+          
           <button
             onClick={() => router.push(`/pipelines/${pipelineId}/business-rules`)}
             className="px-3 py-1.5 text-sm bg-purple-500 text-white rounded-md hover:bg-purple-600 flex items-center"

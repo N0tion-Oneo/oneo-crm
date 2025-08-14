@@ -1052,3 +1052,4 @@ The Oneo CRM system now provides a complete, enterprise-grade full-stack applica
 ./start-backend.sh    # Django + API
 ./start-frontend.sh   # Next.js + React
 ```
+- Permission updates and share views & shared forms

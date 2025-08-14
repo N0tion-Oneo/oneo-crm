@@ -672,13 +672,24 @@ export const savedFiltersApi = {
     view_mode?: 'table' | 'kanban' | 'calendar'
     visible_fields?: string[]
     sort_config?: any
+    access_level?: 'private' | 'pipeline_users'
     is_shareable?: boolean
-    share_access_level?: 'readonly' | 'filtered_edit'
+    share_access_level?: 'view_only' | 'filtered_edit' | 'comment' | 'export'
     is_default?: boolean
   }) => api.post('/api/v1/saved-filters/', data),
   get: (id: string) => api.get(`/api/v1/saved-filters/${id}/`),
   update: (id: string, data: any) => api.put(`/api/v1/saved-filters/${id}/`, data),
   delete: (id: string) => api.delete(`/api/v1/saved-filters/${id}/`),
+  
+  // Pipeline Filter Management
+  pipelineFilters: {
+    list: (pipelineId: string) => api.get(`/api/v1/pipelines/${pipelineId}/filters/`),
+    analytics: (pipelineId: string) => api.get(`/api/v1/pipelines/${pipelineId}/filters/analytics/`),
+    bulkUpdateAccess: (pipelineId: string, data: {
+      filter_ids: string[]
+      access_level: 'private' | 'pipeline_users'
+    }) => api.post(`/api/v1/pipelines/${pipelineId}/filters/bulk_update_access/`, data)
+  },
   
   // Actions
   useFilter: (id: string) => api.post(`/api/v1/saved-filters/${id}/use_filter/`),
@@ -696,7 +707,8 @@ export const savedFiltersApi = {
     list: (params?: any) => api.get('/api/v1/shared-filters/', { params }),
     get: (id: string) => api.get(`/api/v1/shared-filters/${id}/`),
     revoke: (id: string) => api.post(`/api/v1/shared-filters/${id}/revoke/`),
-    analytics: (id: string) => api.get(`/api/v1/shared-filters/${id}/analytics/`)
+    analytics: (id: string) => api.get(`/api/v1/shared-filters/${id}/analytics/`),
+    accessLogs: (id: string) => api.get(`/api/v1/shared-filters/${id}/access-logs/`)
   },
   
   // Public Access (no auth required)

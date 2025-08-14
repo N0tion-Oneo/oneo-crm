@@ -11,7 +11,7 @@ from django.db import transaction
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
 
-from pipelines.models import SavedFilter
+from pipelines.models import SavedFilter, Pipeline
 from sharing.models import SharedFilter
 from .serializers import (
     SavedFilterSerializer, 
@@ -24,24 +24,66 @@ from utils.encryption import ShareLinkEncryption
 
 
 class SavedFilterPermission(permissions.BasePermission):
-    """Permission class for saved filters"""
+    """Enhanced permission class for saved filters"""
     
     def has_permission(self, request, view):
         """Check if user has permission to access saved filters"""
+        from authentication.permissions import SyncPermissionManager
+        
         if not request.user.is_authenticated:
             return False
         
-        # For now, allow authenticated users to manage their own filters
-        return True
+        permission_manager = SyncPermissionManager(request.user)
+        
+        if view.action == 'create':
+            return permission_manager.has_permission('action', 'filters', 'create_filters')
+        elif view.action == 'list':
+            return True  # Users can see filters they have access to
+        elif view.action in ['share']:
+            # Sharing permissions checked at object level
+            return True
+        else:
+            return True  # Other actions checked at object level
     
     def has_object_permission(self, request, view, obj):
         """Check if user has permission to access specific saved filter"""
-        # Users can only access their own filters
-        if request.method in permissions.SAFE_METHODS:
+        from authentication.permissions import SyncPermissionManager
+        
+        permission_manager = SyncPermissionManager(request.user)
+        
+        if view.action in ['retrieve', 'use_filter', 'analytics']:
+            # Can access if filter allows it
+            return obj.can_user_access(request.user)
+        elif view.action in ['update', 'partial_update']:
+            # Can edit if owner OR has edit permission and filter is accessible
+            if obj.created_by == request.user:
+                return True
+            return (obj.can_user_access(request.user) and 
+                   permission_manager.has_permission('action', 'filters', 'edit_filters'))
+        elif view.action == 'destroy':
+            # Can delete if owner OR has delete permission
+            if obj.created_by == request.user:
+                return True
+            return permission_manager.has_permission('action', 'filters', 'delete_filters')
+        elif view.action in ['share', 'shares']:
+            # Can share if has access to filter and sharing permission
+            if not obj.can_user_access(request.user):
+                return False
+            return permission_manager.has_permission('action', 'sharing', 'create_shared_views')
+        elif view.action == 'set_default':
+            # Only owner can set as default
+            return obj.created_by == request.user
+        elif view.action == 'revoke':
+            # Can revoke if has permission and is the creator
+            if not permission_manager.has_permission('action', 'sharing', 'revoke_shared_views_forms'):
+                return False
+            # For SharedFilter objects, check if user created the share
+            if hasattr(obj, 'shared_by'):
+                return obj.shared_by == request.user
+            # For SavedFilter objects, check if user created the filter
             return obj.created_by == request.user
         
-        # Only filter creator can modify
-        return obj.created_by == request.user
+        return False
 
 
 class SavedFilterViewSet(viewsets.ModelViewSet):
@@ -55,10 +97,39 @@ class SavedFilterViewSet(viewsets.ModelViewSet):
     ordering = ['-last_used_at', '-created_at']
     
     def get_queryset(self):
-        """Get saved filters for current user"""
-        return SavedFilter.objects.filter(
-            created_by=self.request.user
-        ).select_related('pipeline', 'created_by')
+        """Get saved filters based on access level"""
+        from django.db.models import Q
+        from authentication.permissions import SyncPermissionManager
+        
+        user = self.request.user
+        permission_manager = SyncPermissionManager(user)
+        
+        # Base queryset with related objects
+        queryset = SavedFilter.objects.select_related('pipeline', 'created_by')
+        
+        # Build access conditions
+        access_conditions = Q()
+        
+        # Always include own filters
+        access_conditions |= Q(created_by=user)
+        
+        # Include pipeline_users filters if user has pipeline access
+        accessible_pipeline_ids = []
+        for pipeline_id in SavedFilter.objects.values_list('pipeline_id', flat=True).distinct():
+            if permission_manager.has_permission('action', 'pipelines', 'access', pipeline_id):
+                accessible_pipeline_ids.append(pipeline_id)
+        
+        if accessible_pipeline_ids:
+            access_conditions |= Q(
+                access_level='pipeline_users',
+                pipeline_id__in=accessible_pipeline_ids
+            )
+        
+        # Include private filters of others if user has edit_filters permission
+        if permission_manager.has_permission('action', 'filters', 'edit_filters'):
+            access_conditions |= Q(access_level='private')
+        
+        return queryset.filter(access_conditions)
     
     def get_serializer_class(self):
         """Return appropriate serializer based on action"""
@@ -184,6 +255,14 @@ class SharedFilterViewSet(viewsets.ReadOnlyModelViewSet):
         """Revoke a shared filter"""
         shared_filter = self.get_object()
         
+        # Check if user has permission to revoke shares
+        from authentication.permissions import SyncPermissionManager
+        permission_manager = SyncPermissionManager(request.user)
+        
+        if not permission_manager.has_permission('action', 'sharing', 'revoke_shared_views_forms'):
+            raise PermissionDenied("You don't have permission to revoke shared filters")
+        
+        # Check if user is the creator of the share
         if shared_filter.shared_by != request.user:
             raise PermissionDenied("You can only revoke shares you created")
         
@@ -753,3 +832,159 @@ class PublicFilterAccessViewSet(viewsets.GenericViewSet):
                 {'error': f'Failed to access related record: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+
+class PipelineFilterManagementViewSet(viewsets.ViewSet):
+    """Pipeline-specific filter management interface"""
+    
+    permission_classes = [SavedFilterPermission]
+    
+    def list(self, request, pipeline_pk=None):
+        """Get all filters for a specific pipeline"""
+        from django.db.models import Q
+        from authentication.permissions import SyncPermissionManager
+        
+        try:
+            pipeline = get_object_or_404(Pipeline, pk=pipeline_pk)
+        except Pipeline.DoesNotExist:
+            return Response(
+                {'error': 'Pipeline not found'}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        user = request.user
+        permission_manager = SyncPermissionManager(user)
+        
+        # Check if user has access to this pipeline
+        if not permission_manager.has_permission('action', 'pipelines', 'access', pipeline.id):
+            return Response(
+                {'error': 'You do not have access to this pipeline'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Get filters for this pipeline based on access levels
+        queryset = SavedFilter.objects.filter(pipeline=pipeline)
+        access_conditions = Q()
+        
+        # Always include own filters
+        access_conditions |= Q(created_by=user)
+        
+        # Include pipeline_users filters
+        access_conditions |= Q(access_level='pipeline_users')
+        
+        # Include private filters of others if user has edit_filters permission
+        if permission_manager.has_permission('action', 'filters', 'edit_filters'):
+            access_conditions |= Q(access_level='private')
+        
+        filters = queryset.filter(access_conditions).select_related('created_by')
+        
+        serializer = SavedFilterListSerializer(filters, many=True, context={'request': request})
+        
+        return Response({
+            'pipeline': {
+                'id': pipeline.id,
+                'name': pipeline.name,
+                'slug': pipeline.slug
+            },
+            'filters': serializer.data,
+            'user_permissions': {
+                'can_create_filters': permission_manager.has_permission('action', 'filters', 'create_filters'),
+                'can_edit_filters': permission_manager.has_permission('action', 'filters', 'edit_filters'),
+                'can_delete_filters': permission_manager.has_permission('action', 'filters', 'delete_filters'),
+                'can_create_shares': permission_manager.has_permission('action', 'sharing', 'create_shared_views'),
+                'can_revoke_shares': permission_manager.has_permission('action', 'sharing', 'revoke_shared_views_forms')
+            }
+        })
+    
+    @action(detail=False, methods=['get'])
+    def analytics(self, request, pipeline_pk=None):
+        """Get filter usage analytics for pipeline"""
+        from django.db.models import Count, Avg, Max
+        from authentication.permissions import SyncPermissionManager
+        
+        try:
+            pipeline = get_object_or_404(Pipeline, pk=pipeline_pk)
+        except Pipeline.DoesNotExist:
+            return Response(
+                {'error': 'Pipeline not found'}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        permission_manager = SyncPermissionManager(request.user)
+        if not permission_manager.has_permission('action', 'pipelines', 'access', pipeline.id):
+            return Response(
+                {'error': 'You do not have access to this pipeline'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Get analytics for filters in this pipeline
+        filters = SavedFilter.objects.filter(pipeline=pipeline)
+        
+        analytics = {
+            'total_filters': filters.count(),
+            'filters_by_access_level': {
+                'private': filters.filter(access_level='private').count(),
+                'pipeline_users': filters.filter(access_level='pipeline_users').count(),
+            },
+            'most_used_filters': filters.order_by('-usage_count')[:5].values(
+                'id', 'name', 'usage_count', 'created_by__email'
+            ),
+            'recent_filters': filters.order_by('-created_at')[:5].values(
+                'id', 'name', 'created_at', 'created_by__email'
+            ),
+            'sharing_stats': {
+                'shareable_filters': filters.filter(is_shareable=True).count(),
+                'active_shares': SharedFilter.objects.filter(
+                    saved_filter__pipeline=pipeline,
+                    is_active=True
+                ).count()
+            }
+        }
+        
+        return Response(analytics)
+    
+    @action(detail=False, methods=['post'])
+    def bulk_update_access(self, request, pipeline_pk=None):
+        """Bulk update access levels for multiple filters"""
+        from authentication.permissions import SyncPermissionManager
+        
+        try:
+            pipeline = get_object_or_404(Pipeline, pk=pipeline_pk)
+        except Pipeline.DoesNotExist:
+            return Response(
+                {'error': 'Pipeline not found'}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        permission_manager = SyncPermissionManager(request.user)
+        if not permission_manager.has_permission('action', 'filters', 'edit_filters'):
+            return Response(
+                {'error': 'You do not have permission to edit filters'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        filter_ids = request.data.get('filter_ids', [])
+        new_access_level = request.data.get('access_level')
+        
+        if not filter_ids or not new_access_level:
+            return Response(
+                {'error': 'filter_ids and access_level are required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        if new_access_level not in ['private', 'pipeline_users']:
+            return Response(
+                {'error': 'Invalid access_level'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Update filters
+        updated_count = SavedFilter.objects.filter(
+            id__in=filter_ids,
+            pipeline=pipeline
+        ).update(access_level=new_access_level)
+        
+        return Response({
+            'message': f'Updated {updated_count} filters',
+            'updated_count': updated_count
+        })

@@ -73,6 +73,8 @@ class UserType(models.Model):
                     'reports': ['create', 'read', 'update', 'delete', 'export'],
                     'api_access': ['full_access'],
                     'duplicates': ['create', 'read', 'update', 'delete', 'resolve', 'detect'],
+                    'filters': ['create_filters', 'edit_filters', 'delete_filters'],
+                    'sharing': ['create_shared_views', 'create_shared_forms', 'configure_shared_views_forms', 'revoke_shared_views_forms'],
                     'permissions': ['read', 'update']
                 }
             },
@@ -98,6 +100,8 @@ class UserType(models.Model):
                     'reports': ['create', 'read', 'update', 'export'],
                     'api_access': ['read', 'write'],
                     'duplicates': ['create', 'read', 'update', 'resolve', 'detect'],
+                    'filters': ['create_filters', 'edit_filters', 'delete_filters'],
+                    'sharing': ['create_shared_views', 'create_shared_forms', 'configure_shared_views_forms', 'revoke_shared_views_forms'],
                     'permissions': ['read', 'update']
                 }
             },
@@ -122,6 +126,8 @@ class UserType(models.Model):
                     'reports': ['read', 'export'],
                     'api_access': ['read', 'write'],
                     'duplicates': ['read', 'detect'],
+                    'filters': ['create_filters', 'edit_filters'],
+                    'sharing': ['create_shared_views', 'create_shared_forms'],
                     'permissions': ['read']
                 }
             },
@@ -146,6 +152,8 @@ class UserType(models.Model):
                     'reports': ['read', 'export'],
                     'api_access': ['read'],
                     'duplicates': ['read'],
+                    'filters': [],  # Viewers cannot create or edit filters
+                    'sharing': [],  # Viewers cannot create shares
                     'permissions': ['read']
                 }
             }

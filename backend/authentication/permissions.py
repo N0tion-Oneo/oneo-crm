@@ -275,6 +275,24 @@ class SyncPermissionManager:
         """Get list of pipelines user can access (sync wrapper)"""
         return async_to_sync(self.async_manager.get_accessible_pipelines)()
     
+    def check_permission(self, permission_type, resource_type, action, resource_id=None):
+        """Check permission for current user (sync wrapper)"""
+        return async_to_sync(self.async_manager.has_permission)(
+            permission_type, resource_type, action, resource_id
+        )
+    
+    def filter_by_permissions(self, queryset, permission_type, resource_type, action):
+        """Filter queryset based on user permissions (sync wrapper)"""
+        # Check if user has full access
+        if self.has_permission(permission_type, 'system', 'full_access'):
+            return queryset
+        
+        # Check if user has general permission for resource type
+        if self.has_permission(permission_type, resource_type, action):
+            return queryset
+        
+        # No access
+        return queryset.none()
 
 
 class PermissionManager:

@@ -15,13 +15,13 @@ class SharedRecordPermission(permissions.BasePermission):
         
         permission_manager = PermissionManager(request.user)
         
-        # For sharing history, check if user has read access to records
+        # Check sharing permissions
         if view.action in ['list', 'retrieve', 'access_logs', 'analytics']:
-            # For listing or viewing sharing history, user needs record read access
-            return True  # Object-level check will handle specific pipeline access
+            # Viewing shares requires create_shared_views permission
+            return permission_manager.has_permission('action', 'sharing', 'create_shared_views')
         elif view.action == 'revoke':
-            # For revoking shares, user needs record read access (same as creating shares)
-            return True  # Object-level check will handle specific pipeline access
+            # Revoking shares uses the new revoke permission
+            return permission_manager.has_permission('action', 'sharing', 'revoke_shared_views_forms')
         
         return False
     
@@ -38,15 +38,20 @@ class SharedRecordPermission(permissions.BasePermission):
             return False
         
         if view.action in ['retrieve', 'access_logs']:
-            # Viewing shared record details and access logs requires record read permission
-            return permission_manager.has_permission('action', 'records', 'read', pipeline_id)
+            # Viewing shared record details requires sharing view permission + pipeline access
+            has_sharing_perm = permission_manager.has_permission('action', 'sharing', 'create_shared_views')
+            has_pipeline_access = permission_manager.has_permission('action', 'records', 'read', pipeline_id)
+            return has_sharing_perm and has_pipeline_access
         elif view.action == 'revoke':
-            # Revoking shared records requires record read permission 
-            # (same level as creating shares - users can revoke what they can share)
-            return permission_manager.has_permission('action', 'records', 'read', pipeline_id)
+            # Revoking shares requires revoke permission + pipeline access
+            has_revoke_perm = permission_manager.has_permission('action', 'sharing', 'revoke_shared_views_forms')
+            has_pipeline_access = permission_manager.has_permission('action', 'records', 'read', pipeline_id)
+            return has_revoke_perm and has_pipeline_access
         elif view.action == 'analytics':
-            # Analytics requires record read permission
-            return permission_manager.has_permission('action', 'records', 'read', pipeline_id)
+            # Analytics requires sharing view permission + pipeline access
+            has_sharing_perm = permission_manager.has_permission('action', 'sharing', 'create_shared_views')
+            has_pipeline_access = permission_manager.has_permission('action', 'records', 'read', pipeline_id)
+            return has_sharing_perm and has_pipeline_access
         
         return False
 

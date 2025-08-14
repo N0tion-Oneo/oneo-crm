@@ -128,7 +128,7 @@ router.register(r'ai-prompt-templates', AIPromptTemplateViewSet, basename='ai-pr
 router.register(r'ai-embeddings', AIEmbeddingViewSet, basename='ai-embedding')
 
 # Saved filters endpoints
-from .views.saved_filters import SavedFilterViewSet, SharedFilterViewSet, PublicFilterAccessViewSet
+from .views.saved_filters import SavedFilterViewSet, SharedFilterViewSet, PublicFilterAccessViewSet, PipelineFilterManagementViewSet
 router.register(r'saved-filters', SavedFilterViewSet, basename='saved-filter')
 router.register(r'shared-filters', SharedFilterViewSet, basename='shared-filter')
 router.register(r'public-filters', PublicFilterAccessViewSet, basename='public-filter-access')
@@ -139,6 +139,7 @@ pipelines_router.register(r'fields', FieldViewSet, basename='pipeline-fields')
 pipelines_router.register(r'field-groups', FieldGroupViewSet, basename='pipeline-field-groups')
 pipelines_router.register(r'records', RecordViewSet, basename='pipeline-records')
 pipelines_router.register(r'forms', DynamicFormViewSet, basename='pipeline-forms')
+pipelines_router.register(r'filters', PipelineFilterManagementViewSet, basename='pipeline-filters')
 
 # Pipeline-specific duplicate management
 pipelines_router.register(r'duplicate-rules', DuplicateRuleViewSet, basename='pipeline-duplicate-rules')

@@ -24,6 +24,7 @@ import {
 } from 'lucide-react'
 import { recordsApi } from '@/lib/api'
 import { Button } from '@/components/ui/button'
+import { PermissionGuard } from '@/components/permissions/PermissionGuard'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
@@ -323,14 +324,31 @@ export function UnifiedRecordSharing({
   }, [isOpen, activeTab, pipelineId, recordId])
 
   const defaultTrigger = (
-    <Button 
-      variant={variant} 
-      size={size} 
-      className={className}
+    <PermissionGuard
+      category="sharing"
+      action="create_shared_views"
+      fallback={
+        <Button 
+          variant={variant} 
+          size={size} 
+          className={`${className} opacity-50 cursor-not-allowed`}
+          disabled={true}
+          title="You don't have permission to share records"
+        >
+          <Share2 className="w-4 h-4 mr-2" />
+          Share
+        </Button>
+      }
     >
-      <Share2 className="w-4 h-4 mr-2" />
-      Share
-    </Button>
+      <Button 
+        variant={variant} 
+        size={size} 
+        className={className}
+      >
+        <Share2 className="w-4 h-4 mr-2" />
+        Share
+      </Button>
+    </PermissionGuard>
   )
 
   return (
@@ -360,6 +378,21 @@ export function UnifiedRecordSharing({
           </TabsList>
           
           <TabsContent value="create" className="flex-1 overflow-y-auto">
+            <PermissionGuard
+              category="sharing"
+              action="create_shared_views"
+              fallback={
+                <div className="flex flex-col items-center justify-center py-12">
+                  <Shield className="w-16 h-16 text-gray-300 mb-4" />
+                  <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">
+                    Permission Required
+                  </h3>
+                  <p className="text-sm text-gray-500 dark:text-gray-400 text-center max-w-md">
+                    You don't have permission to share records. Contact your administrator to request access.
+                  </p>
+                </div>
+              }
+            >
             <div className="space-y-4">
               {!shareData ? (
                 // Initial state - generate link
@@ -577,6 +610,7 @@ export function UnifiedRecordSharing({
                 </div>
               )}
             </div>
+            </PermissionGuard>
           </TabsContent>
           
           <TabsContent value="history" className="flex-1 overflow-hidden">
@@ -686,17 +720,33 @@ export function UnifiedRecordSharing({
                                       <Copy className="w-4 h-4" />
                                     )}
                                   </Button>
-                                  <Button
-                                    onClick={(e) => {
-                                      e.stopPropagation()
-                                      revokeShare(share.id)
-                                    }}
-                                    variant="ghost"
-                                    size="sm"
-                                    className="text-red-600 hover:text-red-800"
+                                  <PermissionGuard
+                                    category="sharing"
+                                    action="revoke_shared_views_forms"
+                                    fallback={
+                                      <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        className="text-gray-400 cursor-not-allowed opacity-50"
+                                        disabled={true}
+                                        title="You don't have permission to revoke shares"
+                                      >
+                                        <Ban className="w-4 h-4" />
+                                      </Button>
+                                    }
                                   >
-                                    <Ban className="w-4 h-4" />
-                                  </Button>
+                                    <Button
+                                      onClick={(e) => {
+                                        e.stopPropagation()
+                                        revokeShare(share.id)
+                                      }}
+                                      variant="ghost"
+                                      size="sm"
+                                      className="text-red-600 hover:text-red-800"
+                                    >
+                                      <Ban className="w-4 h-4" />
+                                    </Button>
+                                  </PermissionGuard>
                                 </>
                               )}
                               <ExternalLink className="w-4 h-4 text-gray-400" />
@@ -795,14 +845,31 @@ export function UnifiedRecordSharing({
                             )}
                             Copy Link
                           </Button>
-                          <Button
-                            onClick={() => revokeShare(selectedShare.id)}
-                            variant="destructive"
-                            size="sm"
+                          <PermissionGuard
+                            category="sharing"
+                            action="revoke_shared_views_forms"
+                            fallback={
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="text-gray-400 cursor-not-allowed opacity-50"
+                                disabled={true}
+                                title="You don't have permission to revoke shares"
+                              >
+                                <Ban className="w-4 h-4 mr-2" />
+                                Revoke (No permission)
+                              </Button>
+                            }
                           >
-                            <Ban className="w-4 h-4 mr-2" />
-                            Revoke
-                          </Button>
+                            <Button
+                              onClick={() => revokeShare(selectedShare.id)}
+                              variant="destructive"
+                              size="sm"
+                            >
+                              <Ban className="w-4 h-4 mr-2" />
+                              Revoke
+                            </Button>
+                          </PermissionGuard>
                         </div>
                       )}
                     </div>

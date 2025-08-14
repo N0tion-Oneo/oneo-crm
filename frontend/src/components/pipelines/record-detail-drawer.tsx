@@ -225,6 +225,8 @@ export interface RecordDetailDrawerProps {
   onClose: () => void
   onSave: (recordId: string, data: { [key: string]: any }) => Promise<void>
   onDelete?: (recordId: string) => Promise<void>
+  isReadOnly?: boolean // For public/shared access
+  isShared?: boolean // For shared filter context (hides activity/communications)
 }
 
 // Field icons mapping (from pipeline-field-builder)
@@ -442,7 +444,9 @@ export function RecordDetailDrawer({
   isOpen, 
   onClose, 
   onSave, 
-  onDelete 
+  onDelete,
+  isReadOnly = false,
+  isShared = false
 }: RecordDetailDrawerProps) {
   const { user } = useAuth()
   const [formData, setFormData] = useState<{ [key: string]: any }>({})
@@ -628,7 +632,10 @@ export function RecordDetailDrawer({
       
       
       setFormData(formData)
-      loadActivities(record.id)
+      // Only load activities for authenticated users (not in public/readonly mode)
+      if (!isReadOnly && user) {
+        loadActivities(record.id)
+      }
     } else {
       // New record - initialize ALL fields with appropriate defaults
       const defaultData: { [key: string]: any } = {}
@@ -759,16 +766,27 @@ export function RecordDetailDrawer({
   const getFieldPermissions = (field: RecordField): FieldPermissionResult => {
     if (!user) {
       return {
-        visible: false,
+        visible: true, // Allow viewing in public mode
         editable: false,
         required: false,
         readonly: true,
         conditionallyHidden: false,
-        reasonHidden: 'No user logged in'
+        reasonHidden: 'Public access - read only'
       }
     }
 
-    return evaluateFieldPermissions(field, user, formData, 'detail')
+    const permissions = evaluateFieldPermissions(field, user, formData, 'detail')
+    
+    // Override with read-only mode if specified
+    if (isReadOnly) {
+      return {
+        ...permissions,
+        editable: false,
+        readonly: true
+      }
+    }
+    
+    return permissions
   }
 
   // Handle new record creation only
@@ -893,10 +911,10 @@ export function RecordDetailDrawer({
           value={value}
           onChange={handleFieldChange}
           onBlur={handleFieldBlur}
-          disabled={false}
+          disabled={isReadOnly}
           error={fieldError}
           autoFocus={false}
-          context="drawer"
+          context={isReadOnly ? "public" : "drawer"}
           pipeline_id={pipeline?.id ? parseInt(pipeline.id, 10) : undefined}
           record_id={record?.id ? parseInt(record.id, 10) : undefined}
         />
@@ -939,8 +957,14 @@ export function RecordDetailDrawer({
         <div className="flex items-center justify-between p-6 border-b border-gray-200 dark:border-gray-700">
           <div className="flex items-center space-x-3">
             <h2 className="text-xl font-semibold text-gray-900 dark:text-white">
-              {record ? 'Edit Record' : 'New Record'}
+              {record ? (isReadOnly ? 'View Record' : 'Edit Record') : 'New Record'}
             </h2>
+            {isReadOnly && (
+              <div className="flex items-center space-x-1 text-sm text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 px-2 py-1 rounded">
+                <Lock className="w-4 h-4" />
+                <span>Read Only</span>
+              </div>
+            )}
             {isAutoSaving && (
               <div className="flex items-center space-x-2 text-sm text-gray-500">
                 <RefreshCw className="w-4 h-4 animate-spin" />
@@ -997,7 +1021,7 @@ export function RecordDetailDrawer({
           </button>
         </div>
 
-        {/* Tabs */}
+        {/* Tabs - Only show details tab in shared mode */}
         <div className="flex border-b border-gray-200 dark:border-gray-700">
           <button
             onClick={() => setActiveTab('details')}
@@ -1009,34 +1033,38 @@ export function RecordDetailDrawer({
           >
             Details
           </button>
-          <button
-            onClick={() => setActiveTab('activity')}
-            className={`px-6 py-3 text-sm font-medium border-b-2 transition-colors ${
-              activeTab === 'activity'
-                ? 'border-primary text-primary'
-                : 'border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'
-            }`}
-          >
-            Activity ({activities.length})
-          </button>
-          <button
-            onClick={() => setActiveTab('communications')}
-            className={`px-6 py-3 text-sm font-medium border-b-2 transition-colors ${
-              activeTab === 'communications'
-                ? 'border-primary text-primary'
-                : 'border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'
-            }`}
-          >
-            Communications
-          </button>
+          {!isShared && (
+            <>
+              <button
+                onClick={() => setActiveTab('activity')}
+                className={`px-6 py-3 text-sm font-medium border-b-2 transition-colors ${
+                  activeTab === 'activity'
+                    ? 'border-primary text-primary'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'
+                }`}
+              >
+                Activity ({activities.length})
+              </button>
+              <button
+                onClick={() => setActiveTab('communications')}
+                className={`px-6 py-3 text-sm font-medium border-b-2 transition-colors ${
+                  activeTab === 'communications'
+                    ? 'border-primary text-primary'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'
+                }`}
+              >
+                Communications
+              </button>
+            </>
+          )}
         </div>
 
         {/* Content */}
         <div className="flex-1 overflow-y-auto">
           {activeTab === 'details' && (
             <div className="p-6 space-y-6">
-              {/* Duplicate Indicator */}
-              {record && pipeline && (
+              {/* Duplicate Indicator - Only show for authenticated users */}
+              {record && pipeline && !isReadOnly && user && (
                 <DuplicateIndicator 
                   recordId={record.id} 
                   pipelineId={pipeline.id}
@@ -1186,7 +1214,7 @@ export function RecordDetailDrawer({
           </div>
           
           <div className="flex items-center space-x-3">
-            {record && (
+            {record && !isReadOnly && (
               <>
                 <UnifiedRecordSharing
                   pipelineId={pipeline.id}
@@ -1198,7 +1226,7 @@ export function RecordDetailDrawer({
               </>
             )}
             
-            {record && onDelete && (
+            {record && onDelete && !isReadOnly && (
               <button
                 onClick={() => onDelete(record.id)}
                 className="px-4 py-2 text-red-600 hover:text-red-700 border border-red-300 hover:border-red-400 rounded-md hover:bg-red-50 dark:hover:bg-red-900/20"
@@ -1213,17 +1241,19 @@ export function RecordDetailDrawer({
               onClick={onClose}
               className="px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700"
             >
-              Cancel
+              {isReadOnly ? 'Close' : 'Cancel'}
             </button>
             
-            <button
-              onClick={handleCreateRecord}
-              disabled={validationErrors.length > 0}
-              className="px-4 py-2 bg-primary text-white rounded-md hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <Save className="w-4 h-4 mr-2 inline" />
-              {record ? 'Close' : 'Create Record'}
-            </button>
+            {!isReadOnly && (
+              <button
+                onClick={handleCreateRecord}
+                disabled={validationErrors.length > 0}
+                className="px-4 py-2 bg-primary text-white rounded-md hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <Save className="w-4 h-4 mr-2 inline" />
+                {record ? 'Close' : 'Create Record'}
+              </button>
+            )}
           </div>
         </div>
       </div>

@@ -22,6 +22,7 @@ interface PipelineField {
   is_visible_in_list: boolean
   is_visible_in_detail: boolean
   is_visible_in_public_forms?: boolean
+  is_visible_in_shared_list_and_detail_views?: boolean
   
   // Behavior
   is_searchable: boolean
@@ -121,6 +122,7 @@ export default function PipelineFieldsPage() {
             is_visible_in_list: field.is_visible_in_list !== false,
             is_visible_in_detail: field.is_visible_in_detail !== false,
             is_visible_in_public_forms: field.is_visible_in_public_forms || false,
+            is_visible_in_shared_list_and_detail_views: field.is_visible_in_shared_list_and_detail_views || false,
             is_searchable: field.is_searchable !== false,
             create_index: field.create_index || false,
             enforce_uniqueness: field.enforce_uniqueness || false,
@@ -343,6 +345,7 @@ export default function PipelineFieldsPage() {
           is_visible_in_list: field.is_visible_in_list !== undefined ? field.is_visible_in_list : (field.visible !== undefined ? field.visible : true),
           is_visible_in_detail: field.is_visible_in_detail !== false,
           is_visible_in_public_forms: field.is_visible_in_public_forms || false,
+          is_visible_in_shared_list_and_detail_views: field.is_visible_in_shared_list_and_detail_views || false,
           
           // AI configuration
           ai_config: field.ai_config || {}

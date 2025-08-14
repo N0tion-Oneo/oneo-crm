@@ -8,9 +8,11 @@ export class FilterTransformService {
   static transformBooleanQueryToFilters(booleanQuery: BooleanQuery): Filter[] {
     const allFilters: Filter[] = []
     
-    booleanQuery.groups.forEach(group => {
-      allFilters.push(...group.filters)
-    })
+    if (booleanQuery && booleanQuery.groups) {
+      booleanQuery.groups.forEach(group => {
+        allFilters.push(...group.filters)
+      })
+    }
     
     return allFilters
   }
@@ -48,9 +50,15 @@ export class FilterTransformService {
     groupId: string, 
     filter: Filter
   ): BooleanQuery {
+    if (!booleanQuery) {
+      return {
+        groups: [{ id: groupId, logic: 'AND', filters: [filter] }],
+        groupLogic: 'AND'
+      }
+    }
     return {
       ...booleanQuery,
-      groups: booleanQuery.groups.map(group => 
+      groups: (booleanQuery.groups || []).map(group => 
         group.id === groupId 
           ? { ...group, filters: [...group.filters, filter] }
           : group
@@ -66,9 +74,10 @@ export class FilterTransformService {
     groupId: string, 
     filterIndex: number
   ): BooleanQuery {
+    if (!booleanQuery) return { groups: [], groupLogic: 'AND' }
     return {
       ...booleanQuery,
-      groups: booleanQuery.groups.map(group => 
+      groups: (booleanQuery.groups || []).map(group => 
         group.id === groupId 
           ? { 
               ...group, 
@@ -85,10 +94,17 @@ export class FilterTransformService {
   static addFilterGroup(booleanQuery: BooleanQuery, logic: 'AND' | 'OR' = 'AND'): BooleanQuery {
     const newGroupId = `group-${Date.now()}`
     
+    if (!booleanQuery) {
+      return {
+        groups: [{ id: newGroupId, logic, filters: [] }],
+        groupLogic: 'AND'
+      }
+    }
+    
     return {
       ...booleanQuery,
       groups: [
-        ...booleanQuery.groups,
+        ...(booleanQuery.groups || []),
         {
           id: newGroupId,
           logic,
@@ -102,9 +118,10 @@ export class FilterTransformService {
    * Remove filter group
    */
   static removeFilterGroup(booleanQuery: BooleanQuery, groupId: string): BooleanQuery {
+    if (!booleanQuery) return { groups: [], groupLogic: 'AND' }
     return {
       ...booleanQuery,
-      groups: booleanQuery.groups.filter(group => group.id !== groupId)
+      groups: (booleanQuery.groups || []).filter(group => group.id !== groupId)
     }
   }
 
@@ -116,9 +133,10 @@ export class FilterTransformService {
     groupId: string, 
     logic: 'AND' | 'OR'
   ): BooleanQuery {
+    if (!booleanQuery) return { groups: [], groupLogic: 'AND' }
     return {
       ...booleanQuery,
-      groups: booleanQuery.groups.map(group => 
+      groups: (booleanQuery.groups || []).map(group => 
         group.id === groupId 
           ? { ...group, logic }
           : group
@@ -217,6 +235,7 @@ export class FilterTransformService {
    * Count total active filters across all groups
    */
   static countActiveFilters(booleanQuery: BooleanQuery): number {
+    if (!booleanQuery || !booleanQuery.groups) return 0
     return booleanQuery.groups.reduce((total, group) => total + group.filters.length, 0)
   }
 
@@ -224,6 +243,7 @@ export class FilterTransformService {
    * Check if boolean query has any filters
    */
   static hasActiveFilters(booleanQuery: BooleanQuery): boolean {
+    if (!booleanQuery) return false
     return this.countActiveFilters(booleanQuery) > 0
   }
 }

@@ -8,9 +8,11 @@ from django.utils.text import slugify
 from django.contrib.postgres.fields import ArrayField
 from django.contrib.postgres.search import SearchVectorField
 from django.contrib.postgres.indexes import GinIndex
+from django.utils import timezone
 import json
 import logging
 import re
+import uuid
 
 from .field_types import FieldType, FIELD_TYPE_CONFIGS, validate_field_config
 from .validation.field_validator import FieldValidator as AdvancedFieldValidator
@@ -769,6 +771,7 @@ class Field(models.Model):
     is_visible_in_list = models.BooleanField(default=True)
     is_visible_in_detail = models.BooleanField(default=True)
     is_visible_in_public_forms = models.BooleanField(default=False)  # Dynamic forms: public visibility
+    is_visible_in_shared_list_and_detail_views = models.BooleanField(default=False)  # Shared filtered views: external visibility
     
     # AI configuration (for AI fields)
     ai_config = models.JSONField(default=dict)
@@ -1268,3 +1271,134 @@ class Record(models.Model):
             })
         
         return result
+
+
+class SavedFilter(models.Model):
+    """
+    Saved filters for pipelines that can be shared as views.
+    Each saved filter IS a shareable view.
+    """
+    
+    # Core identification
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(max_length=255, help_text="Display name for the saved filter")
+    description = models.TextField(blank=True, help_text="Optional description of what this filter shows")
+    
+    # Ownership & Context
+    pipeline = models.ForeignKey(Pipeline, on_delete=models.CASCADE, related_name='saved_filters')
+    created_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name='created_saved_filters')
+    
+    # Filter Configuration (leverages existing BooleanQuery structure)
+    filter_config = models.JSONField(
+        default=dict, 
+        help_text="Stores BooleanQuery structure from frontend filter system"
+    )
+    
+    # View Display Configuration  
+    view_mode = models.CharField(
+        max_length=20,
+        choices=[
+            ('table', 'Table'),
+            ('kanban', 'Kanban'), 
+            ('calendar', 'Calendar')
+        ],
+        default='table',
+        help_text="Display mode for the filtered view"
+    )
+    visible_fields = ArrayField(
+        models.CharField(max_length=100), 
+        default=list,
+        help_text="List of field slugs that should be visible in this view"
+    )
+    sort_config = models.JSONField(
+        default=dict,
+        help_text="Sort configuration with field name and direction"
+    )
+    
+    # Sharing Configuration
+    is_shareable = models.BooleanField(
+        default=False,
+        help_text="Whether this filter can be shared with external users"
+    )
+    share_access_level = models.CharField(
+        max_length=20,
+        choices=[
+            ('readonly', 'Read-only'),
+            ('filtered_edit', 'Filtered Edit')
+        ],
+        default='readonly',
+        help_text="Access level for shared views"
+    )
+    
+    # Usage Analytics
+    is_default = models.BooleanField(
+        default=False,
+        help_text="Whether this is the default view for the pipeline"
+    )
+    usage_count = models.PositiveIntegerField(
+        default=0,
+        help_text="Number of times this filter has been used"
+    )
+    last_used_at = models.DateTimeField(
+        null=True, 
+        blank=True,
+        help_text="When this filter was last applied"
+    )
+    
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        db_table = 'pipelines_savedfilter'
+        indexes = [
+            models.Index(fields=['pipeline', 'created_by']),
+            models.Index(fields=['pipeline', 'is_default']),
+            models.Index(fields=['is_shareable']),
+            models.Index(fields=['created_at']),
+            models.Index(fields=['usage_count']),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['pipeline', 'name', 'created_by'],
+                name='unique_filter_name_per_user_pipeline'
+            ),
+            models.UniqueConstraint(
+                fields=['pipeline', 'created_by'],
+                condition=models.Q(is_default=True),
+                name='unique_default_filter_per_user_pipeline'
+            )
+        ]
+        ordering = ['-last_used_at', '-created_at']
+    
+    def __str__(self):
+        return f"{self.name} ({self.pipeline.name}) by {self.created_by.email}"
+    
+    def track_usage(self):
+        """Track that this filter was used"""
+        self.usage_count += 1
+        self.last_used_at = timezone.now()
+        self.save(update_fields=['usage_count', 'last_used_at'])
+    
+    def can_be_shared(self):
+        """Check if this filter can be shared based on field visibility"""
+        if not self.is_shareable:
+            return False, "Filter is not marked as shareable"
+        
+        # Check if any visible fields are allowed in shared views
+        pipeline_fields = self.pipeline.fields.filter(
+            slug__in=self.visible_fields,
+            is_visible_in_shared_list_and_detail_views=True
+        )
+        
+        if not pipeline_fields.exists():
+            return False, "No visible fields are allowed in shared views"
+        
+        return True, "Filter can be shared"
+    
+    def get_shareable_fields(self):
+        """Get list of fields that can be shared"""
+        return self.pipeline.fields.filter(
+            slug__in=self.visible_fields,
+            is_visible_in_shared_list_and_detail_views=True
+        ).values_list('slug', flat=True)

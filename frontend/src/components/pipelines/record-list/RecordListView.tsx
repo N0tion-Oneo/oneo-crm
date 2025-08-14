@@ -45,6 +45,11 @@ import {
 import { KanbanView } from '@/components/pipelines/kanban-view'
 import { CalendarView } from '@/components/pipelines/calendar-view'
 
+// Import saved filters types only (modals now handled in FilterPanel)
+import { 
+  SavedFilter 
+} from '@/components/pipelines/saved-filters'
+
 export function RecordListView({ pipeline: initialPipeline, onEditRecord, onCreateRecord }: RecordListViewProps) {
   // Internal pipeline state to handle minimal pipeline from parent
   const [pipeline, setPipeline] = useState(initialPipeline)
@@ -138,6 +143,8 @@ export function RecordListView({ pipeline: initialPipeline, onEditRecord, onCrea
     unselectAll,
     getSelectedRecordIds
   } = useRecordSelection()
+
+  // Saved filters functionality moved to FilterPanel
 
   // Initialize record data with dependencies
   const recordData = useRecordData({
@@ -263,6 +270,33 @@ export function RecordListView({ pipeline: initialPipeline, onEditRecord, onCrea
     // Filters are now automatically applied via useEffect in useRecordFilters hook
   }
 
+  // Saved filters handlers
+  const handleFilterSelect = (filter: SavedFilter) => {
+    console.log('📋 RecordListView: Applying saved filter:', filter.name)
+    console.log('📋 Filter config:', filter.filter_config)
+    console.log('📋 Filter view mode:', filter.view_mode)
+    console.log('📋 Filter visible fields:', filter.visible_fields)
+    
+    // Apply the saved filter configuration
+    updateBooleanQuery(filter.filter_config)
+    
+    // Update view mode if specified
+    if (filter.view_mode && filter.view_mode !== viewMode) {
+      console.log('📋 Updating view mode from', viewMode, 'to', filter.view_mode)
+      setViewMode(filter.view_mode)
+    }
+    
+    // Update visible fields if specified
+    if (filter.visible_fields && filter.visible_fields.length > 0) {
+      console.log('📋 Updating visible fields:', filter.visible_fields)
+      setVisibleFields(new Set(filter.visible_fields))
+    }
+    
+    // FilterPanel will handle closing its own dropdown
+  }
+
+  // Save/share filter handlers moved to FilterPanel
+
   const handleBulkUpdate = async () => {
     const selectedIds = getSelectedRecordIds()
     if (selectedIds.length === 0) return
@@ -375,6 +409,8 @@ export function RecordListView({ pipeline: initialPipeline, onEditRecord, onCrea
               Filters {activeFilterCount > 0 && `(${activeFilterCount})`}
             </button>
 
+            {/* Filters controls moved to FilterPanel - now unified */}
+
             <FieldColumnManager
               fields={pipeline.fields}
               visibleFields={visibleFields}
@@ -402,8 +438,14 @@ export function RecordListView({ pipeline: initialPipeline, onEditRecord, onCrea
           showFilters={showFilters}
           onClose={hideFilterPanel}
           onGetFieldOptions={fetchFieldOptions}
+          currentViewMode={viewMode}
+          visibleFields={Array.from(visibleFields)}
+          sortConfig={sort}
+          onFilterSelect={handleFilterSelect}
         />
       )}
+
+      {/* Saved filters modals moved to FilterPanel for unified experience */}
 
       {/* View Configuration Panel */}
       {(viewMode === 'kanban' || viewMode === 'calendar') && (

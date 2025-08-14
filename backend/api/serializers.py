@@ -119,7 +119,8 @@ class FieldSerializer(serializers.ModelSerializer):
             'storage_constraints', 'business_rules', 'display_name', 'help_text',
             'enforce_uniqueness', 'create_index', 'is_searchable',
             'is_ai_field', 'display_order', 'is_visible_in_list',
-            'is_visible_in_detail', 'is_visible_in_public_forms', 'ai_config', 
+            'is_visible_in_detail', 'is_visible_in_public_forms', 
+            'is_visible_in_shared_list_and_detail_views', 'ai_config', 
             'field_group', 'field_group_name', 'field_group_details',
             'created_at', 'updated_at'
         ]

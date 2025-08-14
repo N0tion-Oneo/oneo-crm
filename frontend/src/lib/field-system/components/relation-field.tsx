@@ -3,6 +3,7 @@ import { FieldComponent, FieldRenderProps, ValidationResult, Field } from '../ty
 import { getFieldConfig } from '../field-registry'
 import { pipelinesApi, relationshipsApi } from '../../api'
 import { X, Plus, Link, Settings } from 'lucide-react'
+import { useAuth } from '@/features/auth/context'
 
 // Global cache for relation lookups to avoid repeated API calls
 const relationCache = new Map<string, string>()
@@ -12,7 +13,8 @@ const pendingRequests = new Map<string, Promise<string>>()
 const lookupRelationValue = async (
   value: any, 
   targetPipelineId: number, 
-  displayField: string
+  displayField: string,
+  isAuthenticated: boolean = true
 ): Promise<string> => {
   const cacheKey = `${targetPipelineId}-${value}-${displayField}`
   
@@ -33,6 +35,14 @@ const lookupRelationValue = async (
   // Create the promise and store it to prevent duplicate requests
   const requestPromise = (async () => {
     try {
+      // Don't make API calls in public/unauthenticated contexts
+      if (!isAuthenticated) {
+        const fallback = `Record #${value}`
+        relationCache.set(cacheKey, fallback)
+        console.log(`⚠️ PUBLIC CONTEXT: Record ${value} using fallback "${fallback}"`)
+        return fallback
+      }
+      
       const response = await pipelinesApi.getRecord(targetPipelineId.toString(), value.toString())
     
       if (response.data) {
@@ -72,6 +82,7 @@ const RelationDisplayValue: React.FC<{
   field: Field
   context?: string
 }> = ({ value, field, context }) => {
+  const { user } = useAuth() // Use centralized auth system
   const [displayText, setDisplayText] = useState<string>(`Record #${value}`)
   const [loading, setLoading] = useState(true)
   
@@ -85,13 +96,15 @@ const RelationDisplayValue: React.FC<{
         return
       }
       
-      const result = await lookupRelationValue(value, targetPipelineId, displayField)
+      // Only lookup record details if authenticated and not in public context
+      const isAuthenticated = user && context !== 'public'
+      const result = await lookupRelationValue(value, targetPipelineId, displayField, isAuthenticated)
       setDisplayText(result)
       setLoading(false)
     }
     
     fetchData()
-  }, [value, targetPipelineId, displayField])
+  }, [value, targetPipelineId, displayField, user, context])
   
   if (loading) {
     return <span className="text-gray-500">Loading...</span>
@@ -185,7 +198,8 @@ function getDisplayValue(record: any, displayField: string): string {
 
 // Enhanced Multi-Relationship Component
 const EnhancedRelationshipInput: React.FC<FieldRenderProps> = (props) => {
-  const { field, value, onChange, onBlur, onKeyDown, disabled, error, className, autoFocus, pipeline_id } = props
+  const { field, value, onChange, onBlur, onKeyDown, disabled, error, className, autoFocus, pipeline_id, context } = props
+  const { user } = useAuth() // Use centralized auth system
   
   // Get enhanced field configuration
   const targetPipelineId = getFieldConfig(field, 'target_pipeline_id')
@@ -244,6 +258,14 @@ const EnhancedRelationshipInput: React.FC<FieldRenderProps> = (props) => {
     if (!targetPipelineId) return
     
     const loadRecords = async () => {
+      // Only load records if authenticated and not in public context
+      if (!user || context === 'public') {
+        console.warn('Relation field disabled in public/unauthenticated mode')
+        setRecords([])
+        setLoading(false)
+        return
+      }
+      
       setLoading(true)
       setLoadError(null)
       
@@ -264,13 +286,21 @@ const EnhancedRelationshipInput: React.FC<FieldRenderProps> = (props) => {
     }
     
     loadRecords()
-  }, [targetPipelineId, allowSelfReference, pipeline_id])
+  }, [targetPipelineId, allowSelfReference, pipeline_id, user, context])
   
   // Load relationship types if needed
   useEffect(() => {
     if (!allowRelationshipTypeSelection) return
     
     const loadRelationshipTypes = async () => {
+      // Only load relationship types if authenticated and not in public context
+      if (!user || context === 'public') {
+        console.warn('Relationship types disabled in public/unauthenticated mode')
+        setRelationshipTypes([])
+        setLoadingTypes(false)
+        return
+      }
+      
       setLoadingTypes(true)
       
       try {
@@ -301,7 +331,7 @@ const EnhancedRelationshipInput: React.FC<FieldRenderProps> = (props) => {
     }
     
     loadRelationshipTypes()
-  }, [allowRelationshipTypeSelection])
+  }, [allowRelationshipTypeSelection, user, context])
 
   // Filter records based on search term
   useEffect(() => {
@@ -492,7 +522,7 @@ const EnhancedRelationshipInput: React.FC<FieldRenderProps> = (props) => {
       </div>
       
       {/* Add relationship interface */}
-      {!disabled && (allowMultiple || normalizedValue.length === 0) && (
+      {!disabled && (allowMultiple || normalizedValue.length === 0) && user && context !== 'public' && (
         <div className={`space-y-2 ${(!canAddMore || (maxRelationships && normalizedValue.length >= maxRelationships)) ? 'sr-only' : ''}`}>
           {maxRelationships && normalizedValue.length > 0 && (
             <div className="text-xs text-gray-500 dark:text-gray-400 mb-2">
@@ -514,7 +544,10 @@ const EnhancedRelationshipInput: React.FC<FieldRenderProps> = (props) => {
               } ${className || ''}`}
             >
               <span className="text-gray-500 dark:text-gray-400">
-                {loading ? 'Loading records...' : `Select ${field.display_name || field.name}... (${records.length} available)`}
+                {!user || context === 'public' 
+                  ? 'Relation selection disabled in read-only mode'
+                  : loading ? 'Loading records...' : `Select ${field.display_name || field.name}... (${records.length} available)`
+                }
               </span>
               <svg className={`w-4 h-4 transition-transform ${showDropdown ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />

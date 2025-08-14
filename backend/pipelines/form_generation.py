@@ -61,6 +61,7 @@ class DynamicFormGenerator:
                 - 'stage_internal': Stage-required fields, all visibility (Type 3)
                 - 'stage_public': Stage-required AND public-visible fields (Type 4)
                 - 'shared_record': Public-visible fields with record data (Type 5)
+                - 'shared_filtered_view': Shared list/detail view visible fields (Type 6)
             stage: Target stage for stage-specific forms
             record_data: Existing record data for shared forms
         
@@ -92,6 +93,11 @@ class DynamicFormGenerator:
             filtered_fields = base_fields.filter(
                 is_visible_in_public_forms=True,
                 is_visible_in_detail=True
+            )
+        elif mode == 'shared_filtered_view':
+            # Type 6: Shared list/detail view visible fields
+            filtered_fields = base_fields.filter(
+                is_visible_in_shared_list_and_detail_views=True
             )
         else:
             # Default fallback
@@ -312,6 +318,7 @@ def generate_pipeline_form(pipeline_id: int, mode: str = 'internal_full',
             - 'stage_internal': Stage-required fields, all visibility (Type 3)
             - 'stage_public': Stage-required AND public-visible fields (Type 4)
             - 'shared_record': Public-visible fields with record data (Type 5)
+            - 'shared_filtered_view': Shared list/detail view visible fields (Type 6)
         stage: Target stage for stage-specific forms
         record_data: Existing record data for shared forms
     

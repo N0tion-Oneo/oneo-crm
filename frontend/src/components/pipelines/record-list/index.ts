@@ -11,5 +11,6 @@ export * from './FilterPanel'
 export * from './FieldColumnManager'
 export * from './Pagination'
 
-// Main orchestration component
+// Main orchestration components
 export * from './RecordListView'
+export * from './PublicRecordListView'

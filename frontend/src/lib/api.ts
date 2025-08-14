@@ -660,4 +660,55 @@ export const aiApi = {
   }
 }
 
+// Saved Filters API client functions
+export const savedFiltersApi = {
+  // Saved Filters CRUD
+  list: (params?: any) => api.get('/api/v1/saved-filters/', { params }),
+  create: (data: {
+    name: string
+    description?: string
+    pipeline: string
+    filter_config: any // BooleanQuery structure
+    view_mode?: 'table' | 'kanban' | 'calendar'
+    visible_fields?: string[]
+    sort_config?: any
+    is_shareable?: boolean
+    share_access_level?: 'readonly' | 'filtered_edit'
+    is_default?: boolean
+  }) => api.post('/api/v1/saved-filters/', data),
+  get: (id: string) => api.get(`/api/v1/saved-filters/${id}/`),
+  update: (id: string, data: any) => api.put(`/api/v1/saved-filters/${id}/`, data),
+  delete: (id: string) => api.delete(`/api/v1/saved-filters/${id}/`),
+  
+  // Actions
+  useFilter: (id: string) => api.post(`/api/v1/saved-filters/${id}/use_filter/`),
+  setDefault: (id: string) => api.post(`/api/v1/saved-filters/${id}/set_default/`),
+  share: (id: string, data: {
+    intended_recipient_email: string
+    access_mode: 'readonly' | 'filtered_edit'
+    expires_at: string
+    shared_fields?: string[]
+  }) => api.post(`/api/v1/saved-filters/${id}/share/`, data),
+  shares: (id: string) => api.get(`/api/v1/saved-filters/${id}/shares/`),
+  
+  // Shared Filters Management
+  shared: {
+    list: (params?: any) => api.get('/api/v1/shared-filters/', { params }),
+    get: (id: string) => api.get(`/api/v1/shared-filters/${id}/`),
+    revoke: (id: string) => api.post(`/api/v1/shared-filters/${id}/revoke/`),
+    analytics: (id: string) => api.get(`/api/v1/shared-filters/${id}/analytics/`)
+  },
+  
+  // Public Access (no auth required)
+  public: {
+    access: (token: string) => api.get(`/api/v1/public-filters/${token}/`),
+    recordAccess: (token: string, data: {
+      accessor_name: string
+      accessor_email: string
+    }) => api.post(`/api/v1/public-filters/${token}/access/`, data),
+    getPipeline: (token: string) => api.get(`/api/v1/public-filters/${token}/pipeline/`),
+    getRecords: (token: string, params?: any) => api.get(`/api/v1/public-filters/${token}/records/`, { params })
+  }
+}
+
 export default api

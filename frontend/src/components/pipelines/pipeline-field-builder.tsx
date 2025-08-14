@@ -118,6 +118,7 @@ import {
   Lock,
   Key,
   Fingerprint,
+  Share2,
 } from 'lucide-react'
 
 // Field group interface
@@ -149,6 +150,7 @@ interface PipelineField {
   is_visible_in_list: boolean
   is_visible_in_detail: boolean
   is_visible_in_public_forms?: boolean  // Dynamic forms: public visibility
+  is_visible_in_shared_list_and_detail_views?: boolean  // Shared filtered views: external visibility
   
   // Behavior
   is_searchable: boolean
@@ -1191,6 +1193,7 @@ export function PipelineFieldBuilder({ pipelineId, fields, onFieldsChange, onSav
       is_visible_in_list: true,
       is_visible_in_detail: true,
       is_visible_in_public_forms: false,  // Default to private
+      is_visible_in_shared_list_and_detail_views: false,  // Default to private
       
       // Behavior
       is_searchable: true,
@@ -2565,6 +2568,24 @@ function DisplaySettings({
                   checked={field.is_visible_in_public_forms || false}
                   onChange={(e) => onUpdate({ is_visible_in_public_forms: e.target.checked })}
                   className="w-4 h-4 text-blue-600 bg-white border-gray-300 rounded focus:ring-blue-500 focus:ring-2"
+                />
+              </div>
+              
+              {/* Shared Views Visibility */}
+              <div className="flex items-center justify-between p-4 bg-orange-50 dark:bg-orange-900/20 rounded-lg">
+                <div className="flex items-center space-x-3">
+                  <Share2 className="w-5 h-5 text-orange-500" />
+                  <div>
+                    <div className="font-medium text-gray-900 dark:text-white">Shared Views Visible</div>
+                    <div className="text-sm text-gray-500 dark:text-gray-400">Show this field in shared filtered views (external access)</div>
+                  </div>
+                </div>
+                <input
+                  type="checkbox"
+                  id="visible-shared-views"
+                  checked={field.is_visible_in_shared_list_and_detail_views || false}
+                  onChange={(e) => onUpdate({ is_visible_in_shared_list_and_detail_views: e.target.checked })}
+                  className="w-4 h-4 text-orange-600 bg-white border-gray-300 rounded focus:ring-orange-500 focus:ring-2"
                 />
               </div>
               

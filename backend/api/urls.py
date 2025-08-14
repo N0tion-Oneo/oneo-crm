@@ -127,6 +127,12 @@ router.register(r'ai-usage-analytics', AIUsageAnalyticsViewSet, basename='ai-usa
 router.register(r'ai-prompt-templates', AIPromptTemplateViewSet, basename='ai-prompt-template')
 router.register(r'ai-embeddings', AIEmbeddingViewSet, basename='ai-embedding')
 
+# Saved filters endpoints
+from .views.saved_filters import SavedFilterViewSet, SharedFilterViewSet, PublicFilterAccessViewSet
+router.register(r'saved-filters', SavedFilterViewSet, basename='saved-filter')
+router.register(r'shared-filters', SharedFilterViewSet, basename='shared-filter')
+router.register(r'public-filters', PublicFilterAccessViewSet, basename='public-filter-access')
+
 # Create nested routers for pipeline-specific endpoints
 pipelines_router = routers.NestedDefaultRouter(router, r'pipelines', lookup='pipeline')
 pipelines_router.register(r'fields', FieldViewSet, basename='pipeline-fields')

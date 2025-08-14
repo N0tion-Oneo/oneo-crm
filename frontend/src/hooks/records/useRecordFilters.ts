@@ -105,9 +105,11 @@ export function useRecordFilters(): UseRecordFiltersReturn {
   // Automatically apply filters when boolean query changes (matching original behavior)
   React.useEffect(() => {
     const allFilters: Filter[] = []
-    booleanQuery.groups.forEach(group => {
-      allFilters.push(...group.filters)
-    })
+    if (booleanQuery && booleanQuery.groups) {
+      booleanQuery.groups.forEach(group => {
+        allFilters.push(...group.filters)
+      })
+    }
     setAppliedFilters(allFilters)
   }, [booleanQuery])
 
@@ -153,10 +155,12 @@ export function useRecordFilters(): UseRecordFiltersReturn {
 
   // Computed properties
   const hasActiveFilters = useMemo(() => {
+    if (!booleanQuery) return false
     return FilterTransformService.hasActiveFilters(booleanQuery)
   }, [booleanQuery])
 
   const activeFilterCount = useMemo(() => {
+    if (!booleanQuery) return 0
     return FilterTransformService.countActiveFilters(booleanQuery)
   }, [booleanQuery])
 

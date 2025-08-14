@@ -25,7 +25,7 @@ export interface FieldRenderProps {
   error?: string
   className?: string
   autoFocus?: boolean
-  context?: 'form' | 'drawer' | 'table' | 'display'
+  context?: 'form' | 'drawer' | 'table' | 'display' | 'public'
   // Context data for specific field types (like USER fields)
   pipeline_id?: number
   record_id?: number

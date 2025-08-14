@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import { FieldComponent, FieldRenderProps, ValidationResult, Field } from '../types'
 import { getFieldConfig } from '../field-registry'
 import { api } from '@/lib/api'
+import { useAuth } from '@/features/auth/context'
 
 interface UserAssignment {
   user_id: number
@@ -22,7 +23,8 @@ interface UserAssignment {
 
 export const UserFieldComponent: FieldComponent = {
   renderInput: (props: FieldRenderProps) => {
-    const { field, value, onChange, className, disabled, pipeline_id, record_id, error } = props
+    const { field, value, onChange, className, disabled, pipeline_id, record_id, error, context } = props
+    const { user } = useAuth() // Use centralized auth system
     
     // Debug logging
     console.log('🧑‍💼 USER FIELD RENDER:', {
@@ -165,8 +167,11 @@ export const UserFieldComponent: FieldComponent = {
     
     // Load all users when component mounts or pipeline changes
     useEffect(() => {
-      loadAllUsers()
-    }, [pipeline_id])
+      // Only load users if authenticated and not in public context
+      if (user && context !== 'public') {
+        loadAllUsers()
+      }
+    }, [pipeline_id, user, context])
     
     // Filter users when search term changes
     useEffect(() => {

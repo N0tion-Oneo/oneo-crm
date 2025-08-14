@@ -1,6 +1,6 @@
-// FilterPanel - Complex boolean query builder interface
+// FilterPanel - Complex boolean query builder interface with unified controls
 import React, { useState, useEffect } from 'react'
-import { X, Plus } from 'lucide-react'
+import { X, Plus, BookmarkPlus, Bookmark } from 'lucide-react'
 import { 
   Filter, 
   FilterGroup, 
@@ -11,14 +11,24 @@ import {
 } from '@/types/records'
 import { FilterTransformService } from '@/services/records'
 import { pipelinesApi, usersApi } from '@/lib/api'
+import { SaveFilterModal, SavedFiltersList } from '@/components/pipelines/saved-filters'
 
 export interface FilterPanelProps {
   booleanQuery: BooleanQuery
   onBooleanQueryChange: (query: BooleanQuery) => void
-  pipeline: { id: string; fields: RecordField[] }
+  pipeline: { 
+    id: string; 
+    name: string;
+    fields: RecordField[] 
+  }
   showFilters: boolean
   onClose: () => void
   onGetFieldOptions: (fieldName: string, fieldType: string) => Promise<FieldOption[]>
+  // New props for save/load functionality
+  currentViewMode?: 'table' | 'kanban' | 'calendar'
+  visibleFields?: string[]
+  sortConfig?: any
+  onFilterSelect?: (filter: any) => void
   className?: string
 }
 
@@ -29,6 +39,10 @@ export function FilterPanel({
   showFilters,
   onClose,
   onGetFieldOptions,
+  currentViewMode = 'table',
+  visibleFields = [],
+  sortConfig = {},
+  onFilterSelect,
   className = ""
 }: FilterPanelProps) {
   const [newFilterField, setNewFilterField] = useState('')
@@ -37,13 +51,17 @@ export function FilterPanel({
   const [newFilterRole, setNewFilterRole] = useState('') // For user field role filtering
   const [selectedGroupId, setSelectedGroupId] = useState<string>('group-1')
   const [fieldOptionsCache, setFieldOptionsCache] = useState<Record<string, FieldOption[]>>({})
+  
+  // Save/Load modal states
+  const [showSaveFilterModal, setShowSaveFilterModal] = useState(false)
+  const [showSavedFiltersList, setShowSavedFiltersList] = useState(false)
 
   // Reset selected group when query changes
   useEffect(() => {
-    if (booleanQuery.groups.length > 0 && !booleanQuery.groups.find(g => g.id === selectedGroupId)) {
+    if (booleanQuery && booleanQuery.groups && booleanQuery.groups.length > 0 && !booleanQuery.groups.find(g => g.id === selectedGroupId)) {
       setSelectedGroupId(booleanQuery.groups[0].id)
     }
-  }, [booleanQuery.groups, selectedGroupId])
+  }, [booleanQuery, selectedGroupId])
 
   // Fetch field options when a field is selected
   useEffect(() => {
@@ -380,35 +398,98 @@ export function FilterPanel({
     onBooleanQueryChange({ ...booleanQuery, groupLogic: logic })
   }
 
+  // Check if there are active filters
+  const hasActiveFilters = booleanQuery && booleanQuery.groups ? booleanQuery.groups.some(group => 
+    group.filters.length > 0
+  ) : false
+
+  // Handler for save filter
+  const handleSaveFilter = () => {
+    setShowSaveFilterModal(true)
+  }
+
+  // Handler for filter selection
+  const handleFilterSelect = (filter: any) => {
+    if (onFilterSelect) {
+      onFilterSelect(filter)
+    }
+    setShowSavedFiltersList(false)
+  }
+
   return (
     <div className={`p-4 bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 ${className}`}>
-      <div className="flex items-center justify-between mb-3">
+      {/* Unified Filter Controls */}
+      <div className="flex items-center justify-between mb-4">
         <h3 className="text-sm font-medium text-gray-900 dark:text-white">Filters</h3>
-        <button
-          onClick={() => {
-            // Clear all filters
-            const emptyQuery = {
-              groups: [{
-                id: 'group-1',
-                logic: 'AND' as const,
-                filters: []
-              }],
-              groupLogic: 'AND' as const
-            }
-            onBooleanQueryChange(emptyQuery)
-          }}
-          className="text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
-        >
-          Clear all
-        </button>
+        
+        <div className="flex items-center space-x-2">
+          {/* Save Filter Button */}
+          <button
+            onClick={handleSaveFilter}
+            disabled={!hasActiveFilters && visibleFields.length === 0}
+            className="px-3 py-1 border border-blue-300 dark:border-blue-600 text-blue-600 dark:text-blue-400 rounded-md hover:bg-blue-50 dark:hover:bg-blue-900/20 disabled:opacity-50 disabled:cursor-not-allowed flex items-center text-sm"
+            title="Save current filter and view settings"
+          >
+            <BookmarkPlus className="w-4 h-4 mr-1" />
+            Save
+          </button>
+
+          {/* Saved Filters Dropdown */}
+          <div className="relative">
+            <button
+              onClick={() => setShowSavedFiltersList(!showSavedFiltersList)}
+              className={`px-3 py-1 border rounded-md flex items-center text-sm ${
+                showSavedFiltersList 
+                  ? 'border-blue-300 bg-blue-50 text-blue-600 dark:border-blue-600 dark:bg-blue-900/20 dark:text-blue-400'
+                  : 'border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700'
+              }`}
+            >
+              <Bookmark className="w-4 h-4 mr-1" />
+              Saved
+            </button>
+
+            {showSavedFiltersList && (
+              <div className="absolute right-0 top-8 w-80 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-20 max-h-80 overflow-hidden">
+                <div className="p-3 border-b border-gray-200 dark:border-gray-700">
+                  <h3 className="font-medium text-gray-900 dark:text-white">Saved Filters</h3>
+                </div>
+                <div className="max-h-64 overflow-y-auto">
+                  <SavedFiltersList
+                    pipeline={pipeline}
+                    onFilterSelect={handleFilterSelect}
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+          
+          {/* Clear All Button */}
+          <button
+            onClick={() => {
+              // Clear all filters
+              const emptyQuery = {
+                groups: [{
+                  id: 'group-1',
+                  logic: 'AND' as const,
+                  filters: []
+                }],
+                groupLogic: 'AND' as const
+              }
+              onBooleanQueryChange(emptyQuery)
+            }}
+            className="text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
+          >
+            Clear all
+          </button>
+        </div>
       </div>
 
         {/* Boolean Query Groups */}
-        {booleanQuery.groups.length > 0 && (
+        {booleanQuery && booleanQuery.groups && booleanQuery.groups.length > 0 && (
           <div className="space-y-4 mb-6">
             <div className="flex items-center justify-between">
               <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300">Filter Groups</h4>
-              {booleanQuery.groups.length > 1 && (
+              {booleanQuery && booleanQuery.groups && booleanQuery.groups.length > 1 && (
                 <div className="flex items-center space-x-2 text-sm">
                   <span className="text-gray-500 dark:text-gray-400">Connect groups with:</span>
                   <select
@@ -423,7 +504,7 @@ export function FilterPanel({
               )}
             </div>
 
-            {booleanQuery.groups.map((group, groupIndex) => (
+            {booleanQuery && booleanQuery.groups ? booleanQuery.groups.map((group, groupIndex) => (
               <div key={group.id} className="border border-gray-200 dark:border-gray-600 rounded-lg p-3">
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center space-x-2">
@@ -442,7 +523,7 @@ export function FilterPanel({
                     )}
                   </div>
                   
-                  {booleanQuery.groups.length > 1 && (
+                  {booleanQuery && booleanQuery.groups && booleanQuery.groups.length > 1 && (
                     <button
                       onClick={() => removeFilterGroup(group.id)}
                       className="text-gray-400 hover:text-red-600 dark:hover:text-red-400"
@@ -508,7 +589,7 @@ export function FilterPanel({
                   <div className="text-xs text-gray-500 italic">No filters in this group yet</div>
                 )}
               </div>
-            ))}
+            )) : []}
 
             <button
               onClick={addFilterGroup}
@@ -709,7 +790,7 @@ export function FilterPanel({
             )}
             
             {/* Group Selection */}
-            {booleanQuery.groups.length > 1 && (
+            {booleanQuery && booleanQuery.groups && booleanQuery.groups.length > 1 && (
               <div className="min-w-0 flex-1">
                 <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Add to Group</label>
                 <select
@@ -717,11 +798,11 @@ export function FilterPanel({
                   onChange={(e) => setSelectedGroupId(e.target.value)}
                   className="w-full px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
                 >
-                  {booleanQuery.groups.map((group, index) => (
+                  {booleanQuery && booleanQuery.groups ? booleanQuery.groups.map((group, index) => (
                     <option key={group.id} value={group.id}>
                       Group {index + 1} ({group.logic})
                     </option>
-                  ))}
+                  )) : []}
                 </select>
               </div>
             )}
@@ -740,6 +821,32 @@ export function FilterPanel({
             </div>
           </div>
         </div>
+
+        {/* Save Filter Modal */}
+        <SaveFilterModal
+          isOpen={showSaveFilterModal}
+          onClose={() => setShowSaveFilterModal(false)}
+          onSaved={(savedFilter) => {
+            console.log('✅ Filter saved:', savedFilter)
+            setShowSaveFilterModal(false)
+          }}
+          booleanQuery={booleanQuery}
+          pipeline={{
+            id: pipeline.id,
+            name: pipeline.name
+          }}
+          currentViewMode={currentViewMode}
+          visibleFields={visibleFields}
+          sortConfig={sortConfig}
+        />
+
+        {/* Click outside to close saved filters dropdown */}
+        {showSavedFiltersList && (
+          <div 
+            className="fixed inset-0 z-10" 
+            onClick={() => setShowSavedFiltersList(false)}
+          />
+        )}
     </div>
   )
 }

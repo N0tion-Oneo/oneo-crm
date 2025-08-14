@@ -8,6 +8,7 @@ import { Brain, Zap, Loader2, AlertCircle, CheckCircle } from 'lucide-react'
 import { aiApi } from '@/lib/api'
 import { FieldComponent, FieldRenderProps, ValidationResult, Field } from '../types'
 import { getFieldConfig } from '../field-registry'
+import { useAuth } from '@/features/auth/context'
 
 interface AIFieldConfig {
   // Core AI Settings - Models loaded dynamically from tenant configuration
@@ -58,6 +59,7 @@ function AIFieldInput({
   className,
   context
 }: FieldRenderProps) {
+  const { user } = useAuth() // Use centralized auth system
   const [isProcessing, setIsProcessing] = useState(false)
   const [lastJob, setLastJob] = useState<AIJob | null>(null)
   const [manualInput, setManualInput] = useState('')
@@ -67,6 +69,16 @@ function AIFieldInput({
   // Load tenant AI configuration on mount
   useEffect(() => {
     const loadTenantConfig = async () => {
+      // Only load AI config if authenticated and not in public context
+      if (!user || context === 'public') {
+        // Use fallback config for public/unauthenticated access
+        setTenantAiConfig({
+          default_model: 'gpt-4.1-mini',
+          available_models: ['gpt-4.1-mini', 'gpt-4.1', 'o3', 'o3-mini', 'gpt-4o', 'gpt-4o-mini', 'gpt-3.5-turbo']
+        })
+        return
+      }
+      
       try {
         const response = await aiApi.jobs.tenantConfig()
         setTenantAiConfig(response.data)
@@ -80,7 +92,7 @@ function AIFieldInput({
       }
     }
     loadTenantConfig()
-  }, [])
+  }, [user, context])
 
   // Get AI config from field.ai_config (primary) or field.field_config/field.config (fallback)
   const aiConfig: AIFieldConfig = (field as any).ai_config || field.field_config || field.config || getFieldConfig(field, 'ai_config', {})
@@ -125,6 +137,12 @@ function AIFieldInput({
 
   const handleAIProcess = async () => {
     if (isProcessing) return
+
+    // Check authentication before processing
+    if (!user || context === 'public') {
+      console.warn('AI processing disabled in public/unauthenticated mode')
+      return
+    }
 
     // Validate that a model is selected
     if (!model) {

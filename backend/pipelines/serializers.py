@@ -22,7 +22,7 @@ class FieldSerializer(serializers.ModelSerializer):
             'storage_constraints', 'business_rules', 'form_validation_rules', 
             'display_name', 'help_text', 'enforce_uniqueness', 'create_index', 
             'is_searchable', 'is_ai_field', 'display_order', 'is_visible_in_list', 
-            'is_visible_in_detail', 'is_visible_in_public_forms',
+            'is_visible_in_detail', 'is_visible_in_public_forms', 'is_visible_in_shared_list_and_detail_views',
             'ai_config', 'is_active', 'deletion_status',
             'is_deleted', 'deleted_at', 'scheduled_for_hard_delete',
             'created_at', 'updated_at'

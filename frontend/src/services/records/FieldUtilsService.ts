@@ -135,7 +135,7 @@ export class FieldUtilsService {
    * Check if field should be interactive in table context
    */
   static isInteractiveField(field: RecordField): boolean {
-    return ['button', 'boolean'].includes(field.field_type)
+    return ['button', 'boolean', 'relation'].includes(field.field_type)
   }
 
   /**

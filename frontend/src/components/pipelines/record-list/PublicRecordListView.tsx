@@ -48,7 +48,7 @@ interface SharedFilterData {
 export interface PublicRecordListViewProps {
   filterData: SharedFilterData
   token: string
-  onEditRecord?: (record: Record) => void
+  onEditRecord?: (record: Record, relatedPipeline?: any) => void
   onCreateRecord?: () => void
 }
 
@@ -90,13 +90,39 @@ export function PublicRecordListView({
         console.log('📄 Pipeline data:', pipelineResponse.data)
         
         // Transform pipeline data to match expected format
-        const pipelineData = {
-          ...pipelineResponse.data,
-          fields: (pipelineResponse.data.fields || []).map((field: any) => ({
+        // Backend already filters fields based on shared visibility, so don't filter again here
+        const visibleFields = (pipelineResponse.data.fields || [])
+          .map((field: any) => ({
             ...field,
             config: field.field_config || {},
-            field_group: null // Public access doesn't include field groups
+            field_group: field.field_group || null // Keep field group if available
           }))
+
+        // Create field groups based on visible fields (for shared view organization)
+        const fieldGroupMap = new Map()
+        const fieldGroups: any[] = []
+        
+        visibleFields.forEach((field: any) => {
+          if (field.field_group && !fieldGroupMap.has(field.field_group)) {
+            // Create a basic field group structure for organization
+            const fieldGroup = {
+              id: field.field_group,
+              name: field.field_group_name || `Group ${field.field_group}`,
+              description: field.field_group_description || '',
+              color: field.field_group_color || '#3B82F6',
+              icon: field.field_group_icon || 'folder',
+              display_order: field.field_group_display_order || 0,
+              field_count: visibleFields.filter((f: any) => f.field_group === field.field_group).length
+            }
+            fieldGroups.push(fieldGroup)
+            fieldGroupMap.set(field.field_group, fieldGroup)
+          }
+        })
+
+        const pipelineData = {
+          ...pipelineResponse.data,
+          fields: visibleFields,
+          field_groups: fieldGroups.sort((a, b) => a.display_order - b.display_order)
         }
         setPipeline(pipelineData)
         
@@ -204,6 +230,72 @@ export function PublicRecordListView({
       setCalendarField(dateField?.value || dateFields[0].value)
     }
   }, [selectFields, dateFields, kanbanField, calendarField])
+
+  // Handle related record navigation for shared views  
+  const handleOpenRelatedRecord = async (targetPipelineId: string, recordId: string) => {
+    console.log('🔗 Public: Opening related record:', { targetPipelineId, recordId })
+    
+    try {
+      // Use the new cross-pipeline shared access endpoints
+      const [targetPipelineResponse, relatedRecordResponse] = await Promise.all([
+        savedFiltersApi.public.getRelatedPipeline(token, targetPipelineId),
+        savedFiltersApi.public.getRelatedRecord(token, targetPipelineId, recordId)
+      ])
+      
+      console.log('🔗 Public: Target pipeline response:', targetPipelineResponse.data)
+      console.log('🔗 Public: Related record response:', relatedRecordResponse.data)
+      
+      if (targetPipelineResponse.data && relatedRecordResponse.data && onEditRecord) {
+        // Transform target pipeline to match expected structure
+        const targetPipeline = {
+          id: targetPipelineResponse.data.id,
+          name: targetPipelineResponse.data.name,
+          description: targetPipelineResponse.data.description || '',
+          record_count: targetPipelineResponse.data.record_count || 0,
+          fields: (targetPipelineResponse.data.fields || []).map((field: any) => ({
+            id: field.id?.toString() || `field_${Date.now()}`,
+            name: field.name || field.original_slug || field.slug,
+            display_name: field.display_name || field.name,
+            field_type: field.field_type || 'text',
+            is_visible_in_list: field.is_visible_in_list !== false,
+            is_visible_in_detail: field.is_visible_in_detail !== false,
+            is_visible_in_public_forms: field.is_visible_in_public_forms || false,
+            is_visible_in_shared_list_and_detail_views: field.is_visible_in_shared_list_and_detail_views || false,
+            display_order: field.display_order || 0,
+            field_config: field.field_config || {},
+            config: field.field_config || {},
+            ai_config: field.ai_config || {},
+            original_slug: field.original_slug || field.name,
+            business_rules: field.business_rules || {},
+            field_group: field.field_group?.toString() || null
+          })),
+          field_groups: targetPipelineResponse.data.field_groups || [],
+          stages: targetPipelineResponse.data.stages || []
+        }
+        
+        console.log('🔗 Public: Opening related record drawer with target pipeline:', targetPipeline.name)
+        onEditRecord(relatedRecordResponse.data, targetPipeline)
+      } else {
+        console.error('🔗 Public: Missing pipeline or record data')
+        alert('Unable to load related record data.')
+      }
+      
+    } catch (error: any) {
+      console.error('🔗 Public: Failed to access related record:', error)
+      
+      let errorMessage = 'Unable to access related record from shared view.'
+      
+      if (error.response?.status === 404) {
+        errorMessage = 'Related record not found or not accessible in shared view.'
+      } else if (error.response?.status === 403) {
+        errorMessage = 'Access to related record is restricted. The target pipeline may not allow shared access or the related fields are not visible in shared views.'
+      } else if (error.response?.data?.error) {
+        errorMessage = error.response.data.error
+      }
+      
+      alert(errorMessage)
+    }
+  }
 
   // Loading state
   if (loading) {
@@ -367,6 +459,7 @@ export function PublicRecordListView({
                     }
                   }
                 }}
+                onOpenRelatedRecord={handleOpenRelatedRecord}
                 pipelineId={displayPipeline.id}
               />
             )}

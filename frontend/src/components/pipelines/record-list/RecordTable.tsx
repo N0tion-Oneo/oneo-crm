@@ -15,6 +15,7 @@ export interface RecordTableProps {
   onSelectAll: () => void
   onEditRecord: (record: Record) => void
   onDeleteRecord?: (recordId: string) => void
+  onOpenRelatedRecord?: (targetPipelineId: string, recordId: string) => void
   pipelineId: string
   className?: string
 }
@@ -30,6 +31,7 @@ export function RecordTable({
   onSelectAll,
   onEditRecord,
   onDeleteRecord,
+  onOpenRelatedRecord,
   pipelineId,
   className = ""
 }: RecordTableProps) {
@@ -55,6 +57,7 @@ export function RecordTable({
             onSelectRecord={onSelectRecord}
             onEditRecord={onEditRecord}
             onDeleteRecord={onDeleteRecord}
+            onOpenRelatedRecord={onOpenRelatedRecord}
             pipelineId={pipelineId}
           />
         ))}

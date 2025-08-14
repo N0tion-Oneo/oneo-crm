@@ -371,11 +371,16 @@ class PublicFilterAccessViewSet(viewsets.GenericViewSet):
             pipeline = shared_filter.saved_filter.pipeline
             shareable_fields = list(shared_filter.saved_filter.get_shareable_fields())
             
-            # Filter fields to only those visible in shared views
+            # Filter fields to only those visible in shared views and collect field groups
             visible_fields = []
+            field_group_ids = set()
+            
             for field in pipeline.fields.all():
                 if (field.slug in shareable_fields and 
                     field.is_visible_in_shared_list_and_detail_views):
+                    if field.field_group:
+                        field_group_ids.add(field.field_group.id)
+                        
                     visible_fields.append({
                         'id': field.id,
                         'name': field.slug,
@@ -386,7 +391,27 @@ class PublicFilterAccessViewSet(viewsets.GenericViewSet):
                         'display_order': field.display_order,
                         'field_config': field.field_config,
                         'original_slug': field.slug,
-                        'business_rules': field.business_rules
+                        'business_rules': field.business_rules,
+                        'field_group': field.field_group.id if field.field_group else None,
+                        'field_group_name': field.field_group.name if field.field_group else None,
+                        'field_group_color': field.field_group.color if field.field_group else None,
+                        'field_group_icon': field.field_group.icon if field.field_group else None,
+                        'field_group_display_order': field.field_group.display_order if field.field_group else 0
+                    })
+            
+            # Get the actual field groups used by visible fields
+            field_groups = []
+            if field_group_ids:
+                from pipelines.models import FieldGroup
+                for group in FieldGroup.objects.filter(id__in=field_group_ids):
+                    field_groups.append({
+                        'id': group.id,
+                        'name': group.name,
+                        'description': group.description,
+                        'color': group.color,
+                        'icon': group.icon,
+                        'display_order': group.display_order,
+                        'field_count': sum(1 for field in visible_fields if field.get('field_group') == group.id)
                     })
             
             return Response({
@@ -395,7 +420,7 @@ class PublicFilterAccessViewSet(viewsets.GenericViewSet):
                 'description': pipeline.description,
                 'record_count': pipeline.records.count(),
                 'fields': visible_fields,
-                'field_groups': [],
+                'field_groups': field_groups,
                 'stages': []
             })
             
@@ -496,4 +521,235 @@ class PublicFilterAccessViewSet(viewsets.GenericViewSet):
             return Response(
                 {'error': 'Invalid share link format'},
                 status=status.HTTP_400_BAD_REQUEST
+            )
+    
+    @action(detail=True, methods=['get'], url_path='related-pipeline/(?P<target_pipeline_id>[^/.]+)')
+    def related_pipeline(self, request, pk=None, target_pipeline_id=None):
+        """Get related pipeline details for cross-pipeline access in shared views"""
+        try:
+            # Decrypt the token and get shared filter
+            encryption = ShareLinkEncryption()
+            payload, error = encryption.decrypt_share_data(pk)
+            
+            if error:
+                return Response(
+                    {'error': error},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            try:
+                saved_filter_id = payload['record_id']
+                shared_filter = SharedFilter.objects.get(
+                    saved_filter__id=saved_filter_id,
+                    encrypted_token=pk,
+                    is_active=True
+                )
+            except SharedFilter.DoesNotExist:
+                return Response(
+                    {'error': 'Invalid or expired share link'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Check if share is still valid
+            if not shared_filter.is_valid:
+                return Response(
+                    {'error': f'Share link is {shared_filter.status}'},
+                    status=status.HTTP_410_GONE
+                )
+            
+            # Get the target pipeline
+            try:
+                from pipelines.models import Pipeline
+                target_pipeline = Pipeline.objects.get(id=target_pipeline_id)
+            except Pipeline.DoesNotExist:
+                return Response(
+                    {'error': 'Target pipeline not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Security check: Only allow access to pipelines in the same tenant
+            source_pipeline = shared_filter.saved_filter.pipeline
+            if target_pipeline.id != source_pipeline.id:
+                # For cross-pipeline access, we need to ensure both are in the same tenant
+                # This is enforced by Django's tenant isolation, but let's be explicit
+                if hasattr(source_pipeline, 'tenant') and hasattr(target_pipeline, 'tenant'):
+                    if source_pipeline.tenant != target_pipeline.tenant:
+                        return Response(
+                            {'error': 'Cross-tenant access not allowed'},
+                            status=status.HTTP_403_FORBIDDEN
+                        )
+            
+            # Get fields that are marked as visible in shared views for the target pipeline
+            shareable_fields = target_pipeline.fields.filter(
+                is_visible_in_shared_list_and_detail_views=True
+            )
+            
+            if not shareable_fields.exists():
+                return Response(
+                    {'error': 'No shareable fields found in target pipeline'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Get field groups for the visible fields
+            field_group_ids = set()
+            visible_fields = []
+            
+            for field in shareable_fields:
+                if field.field_group:
+                    field_group_ids.add(field.field_group.id)
+                    
+                visible_fields.append({
+                    'id': field.id,
+                    'name': field.slug,
+                    'display_name': field.name,
+                    'field_type': field.field_type,
+                    'is_visible_in_list': True,
+                    'is_visible_in_detail': True,
+                    'is_visible_in_shared_list_and_detail_views': True,
+                    'display_order': field.display_order,
+                    'field_config': field.field_config,
+                    'original_slug': field.slug,
+                    'business_rules': field.business_rules,
+                    'field_group': field.field_group.id if field.field_group else None,
+                    'field_group_name': field.field_group.name if field.field_group else None,
+                    'field_group_color': field.field_group.color if field.field_group else None,
+                    'field_group_icon': field.field_group.icon if field.field_group else None,
+                    'field_group_display_order': field.field_group.display_order if field.field_group else 0
+                })
+            
+            # Get the actual field groups used by visible fields
+            field_groups = []
+            if field_group_ids:
+                from pipelines.models import FieldGroup
+                for group in FieldGroup.objects.filter(id__in=field_group_ids):
+                    field_groups.append({
+                        'id': group.id,
+                        'name': group.name,
+                        'description': group.description,
+                        'color': group.color,
+                        'icon': group.icon,
+                        'display_order': group.display_order,
+                        'field_count': sum(1 for field in visible_fields if field.get('field_group') == group.id)
+                    })
+            
+            return Response({
+                'id': target_pipeline.id,
+                'name': target_pipeline.name,
+                'description': target_pipeline.description,
+                'record_count': target_pipeline.records.filter(is_deleted=False).count(),
+                'fields': visible_fields,
+                'field_groups': field_groups,
+                'stages': []  # Pipeline model doesn't have stages - use empty array
+            })
+            
+        except Exception as e:
+            return Response(
+                {'error': f'Failed to access related pipeline: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @action(detail=True, methods=['get'], url_path='related-record/(?P<target_pipeline_id>[^/.]+)/(?P<target_record_id>[^/.]+)')
+    def related_record(self, request, pk=None, target_pipeline_id=None, target_record_id=None):
+        """Get related record details for cross-pipeline access in shared views"""
+        try:
+            # Decrypt the token and get shared filter
+            encryption = ShareLinkEncryption()
+            payload, error = encryption.decrypt_share_data(pk)
+            
+            if error:
+                return Response(
+                    {'error': error},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            try:
+                saved_filter_id = payload['record_id']
+                shared_filter = SharedFilter.objects.get(
+                    saved_filter__id=saved_filter_id,
+                    encrypted_token=pk,
+                    is_active=True
+                )
+            except SharedFilter.DoesNotExist:
+                return Response(
+                    {'error': 'Invalid or expired share link'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Check if share is still valid
+            if not shared_filter.is_valid:
+                return Response(
+                    {'error': f'Share link is {shared_filter.status}'},
+                    status=status.HTTP_410_GONE
+                )
+            
+            # Get the target pipeline and record
+            try:
+                from pipelines.models import Pipeline, Record
+                target_pipeline = Pipeline.objects.get(id=target_pipeline_id)
+                target_record = Record.objects.get(
+                    id=target_record_id,
+                    pipeline=target_pipeline,
+                    is_deleted=False
+                )
+            except Pipeline.DoesNotExist:
+                return Response(
+                    {'error': 'Target pipeline not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            except Record.DoesNotExist:
+                return Response(
+                    {'error': 'Target record not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Security check: Only allow access to pipelines in the same tenant
+            source_pipeline = shared_filter.saved_filter.pipeline
+            if target_pipeline.id != source_pipeline.id:
+                # For cross-pipeline access, we need to ensure both are in the same tenant
+                # This is enforced by Django's tenant isolation, but let's be explicit
+                if hasattr(source_pipeline, 'tenant') and hasattr(target_pipeline, 'tenant'):
+                    if source_pipeline.tenant != target_pipeline.tenant:
+                        return Response(
+                            {'error': 'Cross-tenant access not allowed'},
+                            status=status.HTTP_403_FORBIDDEN
+                        )
+            
+            # Get fields that are marked as visible in shared views for the target pipeline
+            shareable_fields = target_pipeline.fields.filter(
+                is_visible_in_shared_list_and_detail_views=True
+            )
+            
+            if not shareable_fields.exists():
+                return Response(
+                    {'error': 'No shareable fields found in target pipeline'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Filter record data to only include shareable fields
+            shareable_field_slugs = list(shareable_fields.values_list('slug', flat=True))
+            filtered_record_data = {}
+            
+            for field_slug in shareable_field_slugs:
+                if field_slug in target_record.data:
+                    filtered_record_data[field_slug] = target_record.data[field_slug]
+            
+            return Response({
+                'id': target_record.id,
+                'data': filtered_record_data,
+                'stage': getattr(target_record, 'stage', None),
+                'tags': getattr(target_record, 'tags', []),
+                'created_at': target_record.created_at.isoformat() if target_record.created_at else None,
+                'updated_at': target_record.updated_at.isoformat() if target_record.updated_at else None,
+                'created_by': {
+                    'id': target_record.created_by.id,
+                    'first_name': target_record.created_by.first_name,
+                    'last_name': target_record.created_by.last_name,
+                    'email': target_record.created_by.email
+                } if target_record.created_by else None
+            })
+            
+        except Exception as e:
+            return Response(
+                {'error': f'Failed to access related record: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )

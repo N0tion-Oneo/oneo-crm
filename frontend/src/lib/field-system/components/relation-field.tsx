@@ -110,8 +110,13 @@ const RelationDisplayValue: React.FC<{
     return <span className="text-gray-500">Loading...</span>
   }
   
-  // For table and detail contexts, show a link-like appearance
-  if (context === 'table' || context === 'detail') {
+  // For table context, return simple text since it will be inside a chip
+  if (context === 'table') {
+    return <>{displayText}</>
+  }
+  
+  // For detail context, show a link-like appearance
+  if (context === 'detail') {
     return (
       <span className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 cursor-pointer">
         {displayText}
@@ -665,18 +670,18 @@ export const RelationFieldComponent: FieldComponent = {
     
     if (allowMultiple && Array.isArray(value)) {
       return (
-        <div className="space-y-1">
+        <div className="flex items-center gap-1 flex-wrap">
           {value.map((relationship, index) => {
             const recordId = typeof relationship === 'object' ? relationship.record_id : relationship
             const relationshipType = typeof relationship === 'object' ? relationship.relationship_type : null
             
             return (
-              <div key={`${recordId}-${index}`} className="flex items-center gap-2">
-                <Link className="w-3 h-3 text-gray-500" />
+              <div key={`${recordId}-${index}`} className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-200 gap-1">
+                <Link className="w-3 h-3" />
                 <RelationDisplayValue value={recordId} field={field} context={context} />
                 {allowRelationshipTypeSelection && relationshipType && (
-                  <span className="text-xs text-gray-500 bg-gray-100 dark:bg-gray-700 px-2 py-0.5 rounded">
-                    {relationshipType.replace('_', ' ')}
+                  <span className="text-xs opacity-75">
+                    ({relationshipType.replace('_', ' ')})
                   </span>
                 )}
               </div>
@@ -689,19 +694,28 @@ export const RelationFieldComponent: FieldComponent = {
     // Handle enhanced single relationship
     if (typeof value === 'object' && value.record_id) {
       return (
-        <div className="flex items-center gap-2">
-          <Link className="w-3 h-3 text-gray-500" />
+        <div className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-200 gap-1">
+          <Link className="w-3 h-3" />
           <RelationDisplayValue value={value.record_id} field={field} context={context} />
           {allowRelationshipTypeSelection && value.relationship_type && (
-            <span className="text-xs text-gray-500 bg-gray-100 dark:bg-gray-700 px-2 py-0.5 rounded">
-              {value.relationship_type.replace('_', ' ')}
+            <span className="text-xs opacity-75">
+              ({value.relationship_type.replace('_', ' ')})
             </span>
           )}
         </div>
       )
     }
     
-    // Fall back to simple single relationship display
+    // Fall back to simple single relationship display - also use chip design for table context
+    if (context === 'table') {
+      return (
+        <div className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-200 gap-1">
+          <Link className="w-3 h-3" />
+          <RelationDisplayValue value={value} field={field} context={context} />
+        </div>
+      )
+    }
+    
     return <RelationDisplayValue value={value} field={field} context={context} />
   },
 

@@ -337,6 +337,90 @@ export function RecordListView({ pipeline: initialPipeline, onEditRecord, onCrea
     }
   }
 
+  const handleOpenRelatedRecord = async (targetPipelineId: string, recordId: string) => {
+    console.log('🔗 Opening related record:', { targetPipelineId, recordId })
+    
+    try {
+      // Load the target pipeline data and field groups in parallel
+      console.log('🔗 Fetching target pipeline and field groups:', targetPipelineId)
+      const [pipelineResponse, fieldGroupsResponse, recordResponse] = await Promise.all([
+        pipelinesApi.get(targetPipelineId),
+        pipelinesApi.getFieldGroups(targetPipelineId),
+        pipelinesApi.getRecord(targetPipelineId, recordId)
+      ])
+      console.log('🔗 Pipeline response:', pipelineResponse.data)
+      console.log('🔗 Field groups response:', fieldGroupsResponse.data)
+      console.log('🔗 Record response:', recordResponse.data)
+      
+      if (pipelineResponse.data && recordResponse.data) {
+        // Extract field groups from the response
+        const fieldGroups = (fieldGroupsResponse.data as any)?.results || fieldGroupsResponse.data || []
+        
+        // Create a complete pipeline object for the related record
+        const targetPipeline = {
+          id: pipelineResponse.data.id?.toString() || targetPipelineId,
+          name: pipelineResponse.data.name || 'Related Record',
+          description: pipelineResponse.data.description || '',
+          record_count: pipelineResponse.data.record_count || 0,
+          fields: (pipelineResponse.data.fields || []).map((field: any) => ({
+            id: field.id?.toString() || `field_${Date.now()}`,
+            name: field.slug || field.name?.toLowerCase().replace(/\s+/g, '_'),
+            display_name: field.name || field.display_name || field.slug || 'Unknown Field',
+            field_type: field.field_type || 'text',
+            is_visible_in_list: field.is_visible_in_list !== false,
+            is_visible_in_detail: field.is_visible_in_detail !== false,
+            is_visible_in_public_forms: field.is_visible_in_public_forms || false,
+            display_order: field.display_order || 0,
+            field_config: field.field_config || {},
+            config: field.field_config || {},
+            ai_config: field.ai_config || {},
+            original_slug: field.slug,
+            business_rules: field.business_rules || {},
+            field_group: field.field_group?.toString() || null
+          })),
+          field_groups: fieldGroups.map((group: any) => ({
+            id: group.id?.toString() || `group_${Date.now()}`,
+            name: group.name || 'Unknown Group',
+            description: group.description || '',
+            color: group.color || '#3B82F6',
+            icon: group.icon || 'folder',
+            display_order: group.display_order || 0,
+            field_count: group.field_count || 0
+          })),
+          stages: pipelineResponse.data.stages || []
+        }
+        
+        console.log('🔗 Opening related record drawer with pipeline:', targetPipeline.name)
+        console.log('🔗 Target pipeline field groups:', targetPipeline.field_groups)
+        console.log('🔗 Target pipeline fields with groups:', targetPipeline.fields.map(f => ({ name: f.name, field_group: f.field_group })))
+        
+        // Open the related record with its proper pipeline context
+        onEditRecord(recordResponse.data, targetPipeline)
+      } else {
+        console.error('🔗 Missing pipeline or record data:', { 
+          hasPipeline: !!pipelineResponse.data, 
+          hasRecord: !!recordResponse.data 
+        })
+      }
+    } catch (error: any) {
+      console.error('🔗 Failed to open related record:', {
+        targetPipelineId,
+        recordId,
+        error: error.message,
+        status: error.response?.status,
+        statusText: error.response?.statusText,
+        data: error.response?.data
+      })
+      
+      // Show user-friendly error message
+      const errorMessage = error.response?.status === 404 
+        ? `Related record not found (Pipeline: ${targetPipelineId}, Record: ${recordId})`
+        : `Failed to load related record: ${error.message}`
+      
+      alert(errorMessage) // TODO: Replace with proper toast notification
+    }
+  }
+
   // Only show loading state if we have no records and are actively loading (prevent spinner flash)
   if (loading && records.length === 0 && pipeline.id) {
     return <LoadingState />
@@ -505,6 +589,7 @@ export function RecordListView({ pipeline: initialPipeline, onEditRecord, onCrea
             onSelectRecord={toggleRecord}
             onSelectAll={() => toggleSelectAll(records)}
             onEditRecord={onEditRecord}
+            onOpenRelatedRecord={handleOpenRelatedRecord}
             pipelineId={pipeline.id}
           />
         )}

@@ -45,6 +45,7 @@ export default function SharedFilterPage() {
   const [selectedRecord, setSelectedRecord] = useState<Record | null>(null)
   const [isRecordDrawerOpen, setIsRecordDrawerOpen] = useState(false)
   const [pipelineData, setPipelineData] = useState<any>(null)
+  const [drawerPipeline, setDrawerPipeline] = useState<any>(null)
 
   useEffect(() => {
     if (token) {
@@ -58,6 +59,13 @@ export default function SharedFilterPage() {
       loadPipelineData()
     }
   }, [accessGranted, token, pipelineData])
+
+  // Set initial drawer pipeline when pipeline data is loaded
+  useEffect(() => {
+    if (pipelineData && !drawerPipeline) {
+      setDrawerPipeline(pipelineData)
+    }
+  }, [pipelineData, drawerPipeline])
 
   const loadSharedFilter = async () => {
     try {
@@ -341,10 +349,19 @@ export default function SharedFilterPage() {
       <PublicRecordListView
         filterData={filterData}
         token={token}
-        onEditRecord={(record) => {
+        onEditRecord={(record, relatedPipeline) => {
           // Open record drawer for viewing (read-only or edit mode)
           setSelectedRecord(record)
           setIsRecordDrawerOpen(true)
+          
+          // Use related pipeline if provided, otherwise use main pipeline
+          if (relatedPipeline) {
+            console.log('🔗 Shared page: Using related pipeline for drawer:', relatedPipeline.name)
+            setDrawerPipeline(relatedPipeline)
+          } else {
+            console.log('🔗 Shared page: Using main pipeline for drawer')
+            setDrawerPipeline(pipelineData)
+          }
         }}
         onCreateRecord={() => {
           if (filterData.access_mode === 'readonly') {
@@ -365,16 +382,17 @@ export default function SharedFilterPage() {
       />
 
       {/* Record Detail Drawer */}
-      {pipelineData && selectedRecord && (
+      {drawerPipeline && selectedRecord && (
         <RecordDetailDrawer
           record={selectedRecord}
-          pipeline={pipelineData}
+          pipeline={drawerPipeline}
           isOpen={isRecordDrawerOpen}
           isReadOnly={filterData?.access_mode === 'readonly'}
           isShared={true}
           onClose={() => {
             setIsRecordDrawerOpen(false)
             setSelectedRecord(null)
+            setDrawerPipeline(null)
           }}
           onSave={async (recordId: string, data: { [key: string]: any }) => {
             if (filterData?.access_mode === 'readonly') {

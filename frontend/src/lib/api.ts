@@ -707,7 +707,12 @@ export const savedFiltersApi = {
       accessor_email: string
     }) => api.post(`/api/v1/public-filters/${token}/access/`, data),
     getPipeline: (token: string) => api.get(`/api/v1/public-filters/${token}/pipeline/`),
-    getRecords: (token: string, params?: any) => api.get(`/api/v1/public-filters/${token}/records/`, { params })
+    getRecords: (token: string, params?: any) => api.get(`/api/v1/public-filters/${token}/records/`, { params }),
+    // Cross-pipeline shared access endpoints
+    getRelatedPipeline: (token: string, targetPipelineId: string) => 
+      api.get(`/api/v1/public-filters/${token}/related-pipeline/${targetPipelineId}/`),
+    getRelatedRecord: (token: string, targetPipelineId: string, recordId: string) =>
+      api.get(`/api/v1/public-filters/${token}/related-record/${targetPipelineId}/${recordId}/`)
   }
 }
 

@@ -13,6 +13,7 @@ export interface RecordTableRowProps {
   onSelectRecord: (recordId: string) => void
   onEditRecord: (record: Record) => void
   onDeleteRecord?: (recordId: string) => void
+  onOpenRelatedRecord?: (targetPipelineId: string, recordId: string) => void
   pipelineId: string
   className?: string
 }
@@ -40,13 +41,14 @@ export function RecordTableRow({
   onSelectRecord,
   onEditRecord,
   onDeleteRecord,
+  onOpenRelatedRecord,
   pipelineId,
   className = ""
 }: RecordTableRowProps) {
 
 
   const renderFieldValue = (field: RecordField, value: any) => {
-    // Handle interactive fields (buttons, checkboxes)
+    // Handle interactive fields (buttons, checkboxes, relations)
     if (FieldUtilsService.isInteractiveField(field)) {
       return renderInteractiveField(field, value)
     }
@@ -117,6 +119,102 @@ export function RecordTableRow({
           {buttonText}
         </button>
       )
+    }
+
+    if (field.field_type === 'relation') {
+      const formattedValue = FieldUtilsService.formatFieldValue(field, value)
+      
+      if (!value || !onOpenRelatedRecord) {
+        console.log('🔗 Relation field skipped:', { 
+          fieldName: field.name, 
+          hasValue: !!value, 
+          hasCallback: !!onOpenRelatedRecord 
+        })
+        return formattedValue
+      }
+
+      // Extract target pipeline ID from field configuration
+      const targetPipelineId = field.field_config?.target_pipeline_id || field.field_config?.target_pipeline
+      
+      console.log('🔗 Relation field config:', {
+        fieldName: field.name,
+        value,
+        fieldConfig: field.field_config,
+        targetPipelineId,
+        formattedValue
+      })
+      
+      if (!targetPipelineId) {
+        console.warn('🔗 No target pipeline ID found for relation field:', field.name)
+        return formattedValue
+      }
+
+      // Create a wrapper component to add click handlers to the formatted relation value
+      const RelationWrapper: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+        const handleClick = (e: React.MouseEvent, recordId: string) => {
+          e.stopPropagation()
+          console.log('🔗 Relation field clicked:', { 
+            fieldName: field.name,
+            targetPipelineId: targetPipelineId.toString(), 
+            recordId: recordId
+          })
+          onOpenRelatedRecord(targetPipelineId.toString(), recordId)
+        }
+
+        // Extract record IDs from the value to handle click events
+        const recordIds = Array.isArray(value) 
+          ? value.map(v => (typeof v === 'object' && v.record_id) ? v.record_id.toString() : v.toString())
+          : value.toString().includes(',') 
+            ? value.toString().split(',').map(id => id.trim())
+            : [value.toString()]
+
+        // Clone the formatted component and add click handlers
+        const addClickHandlersToElement = (element: React.ReactElement, recordIndex: number = 0): React.ReactElement => {
+          if (!React.isValidElement(element)) return element
+
+          // If it's a div with space-y-1 (multiple relations), add click handlers to children
+          if (element.props.className?.includes('space-y-1') && element.props.children) {
+            return React.cloneElement(element, {
+              children: React.Children.map(element.props.children, (child, index) => {
+                if (React.isValidElement(child) && recordIds[index]) {
+                  return addClickHandlersToElement(child, index)
+                }
+                return child
+              })
+            })
+          }
+
+          // Add click handler to the element
+          const recordId = recordIds[recordIndex] || recordIds[0]
+          return React.cloneElement(element, {
+            onClick: (e: React.MouseEvent) => handleClick(e, recordId),
+            style: { 
+              cursor: 'pointer',
+              ...element.props.style
+            },
+            className: `${element.props.className || ''} hover:underline`,
+            title: "Click to view related record"
+          })
+        }
+
+        if (React.isValidElement(children)) {
+          return addClickHandlersToElement(children)
+        }
+
+        // Fallback for non-React elements
+        const recordId = recordIds[0]
+        return (
+          <button
+            onClick={(e) => handleClick(e, recordId)}
+            className="text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 hover:underline cursor-pointer transition-colors text-left"
+            title="Click to view related record"
+          >
+            {children}
+          </button>
+        )
+      }
+
+      return <RelationWrapper>{formattedValue}</RelationWrapper>
     }
 
     return FieldUtilsService.formatFieldValue(field, value)

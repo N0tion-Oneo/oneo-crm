@@ -19,6 +19,7 @@ export default function PipelineRecordsPage() {
   const [selectedRecord, setSelectedRecord] = useState<Record | null>(null)
   const [showRecordDrawer, setShowRecordDrawer] = useState(false)
   const [creatingNewRecord, setCreatingNewRecord] = useState(false)
+  const [drawerPipeline, setDrawerPipeline] = useState<Pipeline | null>(null)
 
   // Load pipeline data
   useEffect(() => {
@@ -115,11 +116,20 @@ export default function PipelineRecordsPage() {
   }, [pipelineId, authLoading, isAuthenticated, router])
 
 
-  // Handle record selection
-  const handleEditRecord = (record: Record) => {
+  // Handle record selection with optional related pipeline
+  const handleEditRecord = (record: Record, relatedPipeline?: Pipeline) => {
     setSelectedRecord(record)
     setCreatingNewRecord(false)
     setShowRecordDrawer(true)
+    
+    // Set the pipeline to use in the drawer (related pipeline or main pipeline)
+    if (relatedPipeline) {
+      console.log('🔗 Parent: Using related pipeline for drawer:', relatedPipeline.name)
+      setDrawerPipeline(relatedPipeline)
+    } else {
+      console.log('🔗 Parent: Using original pipeline for drawer')
+      setDrawerPipeline(pipeline)
+    }
   }
 
   // Handle new record creation
@@ -127,6 +137,7 @@ export default function PipelineRecordsPage() {
     setSelectedRecord(null)
     setCreatingNewRecord(true)
     setShowRecordDrawer(true)
+    setDrawerPipeline(pipeline) // Always use main pipeline for new records
   }
 
   // Handle record save
@@ -308,18 +319,21 @@ export default function PipelineRecordsPage() {
       </div>
 
       {/* Record Detail Drawer */}
-      <RecordDetailDrawer
-        record={selectedRecord}
-        pipeline={minimalPipeline}
-        isOpen={showRecordDrawer}
-        onClose={() => {
-          setShowRecordDrawer(false)
-          setSelectedRecord(null)
-          setCreatingNewRecord(false)
-        }}
-        onSave={handleRecordSave}
-        onDelete={handleRecordDelete}
-      />
+      {showRecordDrawer && drawerPipeline && (
+        <RecordDetailDrawer
+          record={selectedRecord}
+          pipeline={drawerPipeline}
+          isOpen={showRecordDrawer}
+          onClose={() => {
+            setShowRecordDrawer(false)
+            setSelectedRecord(null)
+            setCreatingNewRecord(false)
+            setDrawerPipeline(null) // Clear drawer pipeline when closing
+          }}
+          onSave={handleRecordSave}
+          onDelete={handleRecordDelete}
+        />
+      )}
 
     </div>
   )

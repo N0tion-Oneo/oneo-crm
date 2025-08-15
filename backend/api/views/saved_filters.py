@@ -285,6 +285,19 @@ class SharedFilterViewSet(viewsets.ReadOnlyModelViewSet):
             'status': shared_filter.status,
             'is_valid': shared_filter.is_valid
         })
+    
+    @action(detail=True, methods=['get'], url_path='access-logs')
+    def access_logs(self, request, pk=None):
+        """Get access logs for a shared filter"""
+        shared_filter = self.get_object()
+        
+        # SharedFilter doesn't have detailed access logs like SharedRecord
+        # Return basic access information instead
+        return Response({
+            'results': [],
+            'count': 0,
+            'message': 'Detailed access logs are not available for shared filters. Use analytics endpoint for basic access information.'
+        })
 
 
 class PublicFilterAccessViewSet(viewsets.GenericViewSet):
@@ -814,6 +827,7 @@ class PublicFilterAccessViewSet(viewsets.GenericViewSet):
             
             return Response({
                 'id': target_record.id,
+                'title': target_record.title,  # Add title at root level to match private API
                 'data': filtered_record_data,
                 'stage': getattr(target_record, 'stage', None),
                 'tags': getattr(target_record, 'tags', []),

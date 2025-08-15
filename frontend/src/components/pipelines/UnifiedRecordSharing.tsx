@@ -25,7 +25,7 @@ import {
 import { recordsApi } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { PermissionGuard } from '@/components/permissions/PermissionGuard'
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -344,6 +344,7 @@ export function UnifiedRecordSharing({
         variant={variant} 
         size={size} 
         className={className}
+        onClick={() => setIsOpen(true)}
       >
         <Share2 className="w-4 h-4 mr-2" />
         Share
@@ -352,12 +353,11 @@ export function UnifiedRecordSharing({
   )
 
   return (
-    <Dialog open={isOpen} onOpenChange={setIsOpen}>
-      <DialogTrigger asChild>
-        {trigger || defaultTrigger}
-      </DialogTrigger>
+    <>
+      {trigger || defaultTrigger}
       
-      <DialogContent className="sm:max-w-4xl max-h-[85vh] overflow-hidden flex flex-col">
+      <Dialog open={isOpen} onOpenChange={setIsOpen}>
+        <DialogContent className="sm:max-w-4xl max-h-[85vh] overflow-hidden flex flex-col">
         <DialogHeader>
           <DialogTitle className="flex items-center">
             <Shield className="w-5 h-5 mr-2 text-blue-600" />
@@ -950,5 +950,6 @@ export function UnifiedRecordSharing({
         </Tabs>
       </DialogContent>
     </Dialog>
+    </>
   )
 }

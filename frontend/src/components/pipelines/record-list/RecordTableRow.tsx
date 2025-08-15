@@ -4,7 +4,7 @@ import { CheckSquare, Square, Edit, Eye, Trash2 } from 'lucide-react'
 import { Record, RecordField } from '@/types/records'
 import { FieldUtilsService } from '@/services/records'
 import { FieldResolver, getFieldConfig } from '@/lib/field-system/field-registry'
-import { pipelinesApi } from '@/lib/api'
+import { pipelinesApi, savedFiltersApi } from '@/lib/api'
 
 export interface RecordTableRowProps {
   record: Record
@@ -16,6 +16,7 @@ export interface RecordTableRowProps {
   onOpenRelatedRecord?: (targetPipelineId: string, recordId: string) => void
   pipelineId: string
   className?: string
+  sharedToken?: string // For public/shared access context
 }
 
 // Helper function to format system timestamps
@@ -39,7 +40,8 @@ const RelationChip: React.FC<{
   recordId: string
   field: RecordField
   onClick: () => void
-}> = ({ recordId, field, onClick }) => {
+  sharedToken?: string
+}> = ({ recordId, field, onClick, sharedToken }) => {
   const [displayText, setDisplayText] = useState<string>(`Record #${recordId}`)
   
   useEffect(() => {
@@ -53,7 +55,10 @@ const RelationChip: React.FC<{
         
         console.log('🔍 RelationChip Debug:', {
           fieldName: field.name,
+          fieldType: field.field_type,
           fieldConfig: field.field_config,
+          fieldConfigRaw: field.config, // Legacy config
+          fieldForConfig,
           targetPipelineId,
           displayField,
           recordId
@@ -64,17 +69,28 @@ const RelationChip: React.FC<{
           return
         }
         
-        const response = await pipelinesApi.getRecord(targetPipelineId.toString(), recordId)
+        // Use public API if we're in a shared context, otherwise use authenticated API
+        const response = sharedToken 
+          ? await savedFiltersApi.public.getRelatedRecord(sharedToken, targetPipelineId.toString(), recordId)
+          : await pipelinesApi.getRecord(targetPipelineId.toString(), recordId)
         console.log('🔍 API Response:', response.data)
+        console.log('🔍 API Response structure:', {
+          hasData: !!response.data,
+          hasDataData: !!(response.data && response.data.data),
+          responseKeys: response.data ? Object.keys(response.data) : [],
+          dataKeys: response.data && response.data.data ? Object.keys(response.data.data) : []
+        })
         
         if (response.data) {
           let recordName = `Record #${recordId}` // Default fallback
           
-          console.log('🔍 Available fields in response.data.data:', Object.keys(response.data.data))
+          console.log('🔍 Available fields in response.data.data:', response.data.data ? Object.keys(response.data.data) : 'No data.data field')
+          console.log('🔍 Looking for display field:', displayField)
+          console.log('🔍 Display field value:', response.data.data ? response.data.data[displayField] : 'No data.data field')
           
           // First priority: Use the configured display field (try exact match first)
-          if (displayField && response.data.data && response.data.data[displayField] !== undefined && response.data.data[displayField] !== null && response.data.data[displayField] !== '') {
-            recordName = String(response.data.data[displayField])
+          if (displayField && response.data[displayField] !== undefined && response.data[displayField] !== null && response.data[displayField] !== '') {
+            recordName = String(response.data[displayField])
             console.log('🔍 Using display field (exact):', displayField, '=', recordName)
           }
           // Try slugified version of display field (convert "Email 2" to "email_2")
@@ -145,7 +161,8 @@ export function RecordTableRow({
   onDeleteRecord,
   onOpenRelatedRecord,
   pipelineId,
-  className = ""
+  className = "",
+  sharedToken
 }: RecordTableRowProps) {
 
 
@@ -252,6 +269,7 @@ export function RecordTableRow({
               key={`${recordId}-${index}`}
               recordId={recordId}
               field={field}
+              sharedToken={sharedToken}
               onClick={() => {
                 console.log('🔗 Relation chip clicked:', { 
                   fieldName: field.name,

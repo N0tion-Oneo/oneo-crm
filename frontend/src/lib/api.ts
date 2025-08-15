@@ -696,7 +696,7 @@ export const savedFiltersApi = {
   setDefault: (id: string) => api.post(`/api/v1/saved-filters/${id}/set_default/`),
   share: (id: string, data: {
     intended_recipient_email: string
-    access_mode: 'readonly' | 'filtered_edit'
+    access_mode: 'view_only' | 'filtered_edit' | 'comment' | 'export'
     expires_at: string
     shared_fields?: string[]
   }) => api.post(`/api/v1/saved-filters/${id}/share/`, data),

@@ -444,6 +444,7 @@ export function PublicRecordListView({
                 selectedRecords={new Set()}
                 onSelectRecord={() => {}} // Disable selection for public views
                 onSelectAll={() => {}} // Disable selection for public views
+                sharedToken={token}
                 onEditRecord={(record) => {
                   // Always provide a function, but handle read-only mode
                   if (filterData.access_mode === 'readonly') {

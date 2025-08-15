@@ -93,7 +93,7 @@ export function ShareFilterModal({
   // Share creation state
   const [formData, setFormData] = useState({
     intended_recipient_email: '',
-    access_mode: 'readonly' as 'readonly' | 'filtered_edit'
+    access_mode: 'view_only' as 'view_only' | 'filtered_edit' | 'comment' | 'export'
   })
   const [selectedShareFields, setSelectedShareFields] = useState<string[]>([])
   const [loading, setLoading] = useState(false)
@@ -208,7 +208,7 @@ export function ShareFilterModal({
       // Reset form and reload shares
       setFormData({
         intended_recipient_email: '',
-        access_mode: 'readonly'
+        access_mode: 'view_only'
       })
       
       // Reset to default shareable fields
@@ -440,20 +440,20 @@ export function ShareFilterModal({
                     </button>
                     
                     <button
-                      onClick={() => setFormData(prev => ({ ...prev, access_mode: 'readonly' }))}
+                      onClick={() => setFormData(prev => ({ ...prev, access_mode: 'view_only' }))}
                       className={`p-4 border rounded-lg text-left transition-all ${
-                        formData.access_mode === 'readonly'
+                        formData.access_mode === 'view_only'
                           ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
                           : 'border-gray-200 dark:border-gray-700 hover:border-gray-300'
                       }`}
                     >
                       <div className="flex items-center space-x-2 mb-2">
-                        <Eye className={`w-5 h-5 ${formData.access_mode === 'readonly' ? 'text-blue-600' : 'text-gray-400'}`} />
-                        <span className={`font-medium ${formData.access_mode === 'readonly' ? 'text-blue-900 dark:text-blue-100' : 'text-gray-900 dark:text-white'}`}>
+                        <Eye className={`w-5 h-5 ${formData.access_mode === 'view_only' ? 'text-blue-600' : 'text-gray-400'}`} />
+                        <span className={`font-medium ${formData.access_mode === 'view_only' ? 'text-blue-900 dark:text-blue-100' : 'text-gray-900 dark:text-white'}`}>
                           Read-only
                         </span>
                       </div>
-                      <p className={`text-sm ${formData.access_mode === 'readonly' ? 'text-blue-700 dark:text-blue-300' : 'text-gray-500 dark:text-gray-400'}`}>
+                      <p className={`text-sm ${formData.access_mode === 'view_only' ? 'text-blue-700 dark:text-blue-300' : 'text-gray-500 dark:text-gray-400'}`}>
                         Recipients can only view the filtered data
                       </p>
                     </button>

@@ -18,6 +18,7 @@ export interface RecordTableProps {
   onOpenRelatedRecord?: (targetPipelineId: string, recordId: string) => void
   pipelineId: string
   className?: string
+  sharedToken?: string // For public/shared access context
 }
 
 export function RecordTable({
@@ -33,7 +34,8 @@ export function RecordTable({
   onDeleteRecord,
   onOpenRelatedRecord,
   pipelineId,
-  className = ""
+  className = "",
+  sharedToken
 }: RecordTableProps) {
   return (
     <table className={`w-full ${className}`}>
@@ -59,6 +61,7 @@ export function RecordTable({
             onDeleteRecord={onDeleteRecord}
             onOpenRelatedRecord={onOpenRelatedRecord}
             pipelineId={pipelineId}
+            sharedToken={sharedToken}
           />
         ))}
       </tbody>

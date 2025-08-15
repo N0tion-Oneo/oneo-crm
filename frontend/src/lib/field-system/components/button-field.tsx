@@ -1,4 +1,5 @@
 import React from 'react'
+import { Button } from '@/components/ui/button'
 import { FieldComponent, FieldRenderProps, ValidationResult, Field } from '../types'
 import { getFieldConfig } from '../field-registry'
 
@@ -85,22 +86,16 @@ export const ButtonFieldComponent: FieldComponent = {
 
     return (
       <div className={className}>
-        <button
+        <Button
           type="button"
           onClick={handleClick}
           disabled={isDisabled}
-          className={`
-            rounded-lg transition-all duration-200 font-medium focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500
-            ${buttonStyles[buttonStyle as keyof typeof buttonStyles] || buttonStyles.primary}
-            ${buttonSizes[buttonSize as keyof typeof buttonSizes] || buttonSizes.medium}
-            ${isDisabled 
-              ? 'opacity-50 cursor-not-allowed' 
-              : 'hover:shadow-md transform hover:-translate-y-0.5'
-            }
-          `}
+          variant={buttonStyle === 'secondary' ? 'secondary' : buttonStyle === 'danger' ? 'destructive' : 'default'}
+          size={buttonSize === 'large' ? 'lg' : buttonSize === 'small' ? 'sm' : 'default'}
+          className={`transition-all duration-200 ${!isDisabled ? 'hover:shadow-md transform hover:-translate-y-0.5' : ''}`}
         >
           {buttonText}
-        </button>
+        </Button>
         
         {disableAfterClick && hasBeenClicked && (
           <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">

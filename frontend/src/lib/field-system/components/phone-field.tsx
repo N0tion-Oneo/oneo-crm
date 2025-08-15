@@ -1,4 +1,6 @@
 import React, { useState, useEffect } from 'react'
+import { Input } from '@/components/ui/input'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { FieldComponent, FieldRenderProps, ValidationResult, Field } from '../types'
 import { getFieldConfig } from '../field-registry'
 
@@ -70,20 +72,15 @@ export const PhoneFieldComponent: FieldComponent = {
       return codes[country] || '+1'
     }
     
-    const inputClass = `w-full px-3 py-2 border rounded-lg transition-colors shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-0 ${
-      error 
-        ? 'border-red-300 dark:border-red-600 focus:border-red-500 focus:ring-red-500 dark:focus:ring-red-400' 
-        : 'border-gray-300 dark:border-gray-600 focus:border-blue-500 focus:ring-blue-500 dark:focus:ring-blue-400'
-    } ${disabled 
-        ? 'bg-gray-50 dark:bg-gray-700 cursor-not-allowed text-gray-500 dark:text-gray-400' 
-        : 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white'
-    } ${className || ''}`
+    const inputClass = error 
+      ? 'border-red-300 dark:border-red-600 focus:border-red-500 focus:ring-red-500 dark:focus:ring-red-400'
+      : className || ''
 
     return (
       <div>
         {requireCountryCode === false ? (
           // Simple phone field (stores strings)
-          <input
+          <Input
             type="tel"
             value={localValue}
             onChange={(e) => {
@@ -205,50 +202,53 @@ export const PhoneFieldComponent: FieldComponent = {
                   }
                 }}
               >
-                <select
-                  className="w-32 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  value={currentCountryCode}
-                  disabled={disabled}
-                  onChange={(e) => {
-                    const newCountryCode = e.target.value
-                    setCurrentCountryCode(newCountryCode)
-                    updatePhoneValue(currentNumber, newCountryCode)
+                <Select
+                  value={currentCountryCode || undefined}
+                  onValueChange={(value) => {
+                    setCurrentCountryCode(value)
+                    updatePhoneValue(currentNumber, value)
                   }}
+                  disabled={disabled}
                 >
-                  {(() => {
-                    // Available countries with their codes
-                    const allCountries = [
-                      { code: 'US', name: 'United States', phoneCode: '+1' },
-                      { code: 'CA', name: 'Canada', phoneCode: '+1' },
-                      { code: 'GB', name: 'United Kingdom', phoneCode: '+44' },
-                      { code: 'AU', name: 'Australia', phoneCode: '+61' },
-                      { code: 'DE', name: 'Germany', phoneCode: '+49' },
-                      { code: 'FR', name: 'France', phoneCode: '+33' },
-                      { code: 'IT', name: 'Italy', phoneCode: '+39' },
-                      { code: 'ES', name: 'Spain', phoneCode: '+34' },
-                      { code: 'NL', name: 'Netherlands', phoneCode: '+31' },
-                      { code: 'ZA', name: 'South Africa', phoneCode: '+27' },
-                      { code: 'NG', name: 'Nigeria', phoneCode: '+234' },
-                      { code: 'IN', name: 'India', phoneCode: '+91' },
-                      { code: 'CN', name: 'China', phoneCode: '+86' },
-                      { code: 'JP', name: 'Japan', phoneCode: '+81' },
-                      { code: 'SG', name: 'Singapore', phoneCode: '+65' },
-                      { code: 'BR', name: 'Brazil', phoneCode: '+55' }
-                    ]
-                    
-                    // Filter countries based on allowedCountries config
-                    const availableCountries = allowedCountries.length > 0 
-                      ? allCountries.filter(country => allowedCountries.includes(country.code))
-                      : allCountries
-                    
-                    return availableCountries.map(country => (
-                      <option key={country.code} value={country.phoneCode}>
-                        {country.phoneCode} ({country.code})
-                      </option>
-                    ))
-                  })()}
-                </select>
-                <input
+                  <SelectTrigger className="w-32 text-sm">
+                    <SelectValue placeholder="+1" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(() => {
+                      // Available countries with their codes
+                      const allCountries = [
+                        { code: 'US', name: 'United States', phoneCode: '+1' },
+                        { code: 'CA', name: 'Canada', phoneCode: '+1' },
+                        { code: 'GB', name: 'United Kingdom', phoneCode: '+44' },
+                        { code: 'AU', name: 'Australia', phoneCode: '+61' },
+                        { code: 'DE', name: 'Germany', phoneCode: '+49' },
+                        { code: 'FR', name: 'France', phoneCode: '+33' },
+                        { code: 'IT', name: 'Italy', phoneCode: '+39' },
+                        { code: 'ES', name: 'Spain', phoneCode: '+34' },
+                        { code: 'NL', name: 'Netherlands', phoneCode: '+31' },
+                        { code: 'ZA', name: 'South Africa', phoneCode: '+27' },
+                        { code: 'NG', name: 'Nigeria', phoneCode: '+234' },
+                        { code: 'IN', name: 'India', phoneCode: '+91' },
+                        { code: 'CN', name: 'China', phoneCode: '+86' },
+                        { code: 'JP', name: 'Japan', phoneCode: '+81' },
+                        { code: 'SG', name: 'Singapore', phoneCode: '+65' },
+                        { code: 'BR', name: 'Brazil', phoneCode: '+55' }
+                      ]
+                      
+                      // Filter countries based on allowedCountries config
+                      const availableCountries = allowedCountries.length > 0 
+                        ? allCountries.filter(country => allowedCountries.includes(country.code))
+                        : allCountries
+                      
+                      return availableCountries.map(country => (
+                        <SelectItem key={country.code} value={country.phoneCode}>
+                          {country.phoneCode} ({country.code})
+                        </SelectItem>
+                      ))
+                    })()}
+                  </SelectContent>
+                </Select>
+                <Input
                   type="tel"
                   value={currentNumber || ''}
                   onChange={(e) => {

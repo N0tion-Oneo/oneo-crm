@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react'
+import { Input } from '@/components/ui/input'
 import { FieldComponent, FieldRenderProps, ValidationResult, Field } from '../types'
 import { getFieldConfig } from '../field-registry'
 
@@ -21,14 +22,9 @@ export const EmailFieldComponent: FieldComponent = {
     const autoLowercase = getFieldConfig(field, 'auto_lowercase', true)
     const trimWhitespace = getFieldConfig(field, 'trim_whitespace', true)
     
-    const inputClass = `w-full px-3 py-2 border rounded-lg transition-colors shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-0 ${
-      error 
-        ? 'border-red-300 dark:border-red-600 focus:border-red-500 focus:ring-red-500 dark:focus:ring-red-400' 
-        : 'border-gray-300 dark:border-gray-600 focus:border-blue-500 focus:ring-blue-500 dark:focus:ring-blue-400'
-    } ${disabled 
-        ? 'bg-gray-50 dark:bg-gray-700 cursor-not-allowed text-gray-500 dark:text-gray-400' 
-        : 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white'
-    } ${className || ''}`
+    const inputClass = error 
+      ? 'border-red-300 dark:border-red-600 focus:border-red-500 focus:ring-red-500 dark:focus:ring-red-400'
+      : className || ''
 
     const handleFocus = () => {
       setIsEditing(true)
@@ -71,7 +67,7 @@ export const EmailFieldComponent: FieldComponent = {
 
     return (
       <div>
-        <input
+        <Input
           type="email"
           value={localValue}
           onChange={handleChange}
@@ -207,18 +203,13 @@ export const UrlFieldComponent: FieldComponent = {
     
     const placeholder = field.placeholder || getFieldConfig(field, 'placeholder') || `Enter ${field.display_name || field.name}`
     
-    const inputClass = `w-full px-3 py-2 border rounded-lg transition-colors shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-0 ${
-      error 
-        ? 'border-red-300 dark:border-red-600 focus:border-red-500 focus:ring-red-500 dark:focus:ring-red-400' 
-        : 'border-gray-300 dark:border-gray-600 focus:border-blue-500 focus:ring-blue-500 dark:focus:ring-blue-400'
-    } ${disabled 
-        ? 'bg-gray-50 dark:bg-gray-700 cursor-not-allowed text-gray-500 dark:text-gray-400' 
-        : 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white'
-    } ${className || ''}`
+    const inputClass = error 
+      ? 'border-red-300 dark:border-red-600 focus:border-red-500 focus:ring-red-500 dark:focus:ring-red-400'
+      : className || ''
 
     return (
       <div>
-        <input
+        <Input
           type="url"
           value={localValue}
           onChange={handleChange}

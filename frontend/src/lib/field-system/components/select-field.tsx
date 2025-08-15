@@ -1,4 +1,5 @@
 import React from 'react'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { FieldComponent, FieldRenderProps, ValidationResult, Field } from '../types'
 import { getFieldOptions, getFieldConfig } from '../field-registry'
 
@@ -11,36 +12,28 @@ export const SelectFieldComponent: FieldComponent = {
     const allowCustom = getFieldConfig(field, 'allow_custom', false)
     const placeholder = field.placeholder || `Select ${field.display_name || field.name}`
     
-    const inputClass = `w-full px-3 py-2 border rounded-lg transition-colors shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-0 ${
-      error 
-        ? 'border-red-300 dark:border-red-600 focus:border-red-500 focus:ring-red-500 dark:focus:ring-red-400' 
-        : 'border-gray-300 dark:border-gray-600 focus:border-blue-500 focus:ring-blue-500 dark:focus:ring-blue-400'
-    } ${disabled 
-        ? 'bg-gray-50 dark:bg-gray-700 cursor-not-allowed text-gray-500 dark:text-gray-400' 
-        : 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white'
-    } ${className || ''}`
-
     return (
       <div>
-        <select
-          value={value || ''}
-          onChange={(e) => onChange(e.target.value || null)}
-          onBlur={onBlur}
-          onKeyDown={onKeyDown}
+        <Select
+          value={value || undefined}
+          onValueChange={(newValue) => onChange(newValue || null)}
           disabled={disabled}
-          className={inputClass}
-          autoFocus={autoFocus}
-          // Required attribute handled by FieldWrapper
         >
-          {allowEmpty && (
-            <option value="">{placeholder}</option>
-          )}
-          {options.map((option, index) => (
-            <option key={`${option.value}-${index}`} value={option.value}>
-              {option.label}
-            </option>
-          ))}
-        </select>
+          <SelectTrigger 
+            className={error ? 'border-red-300 dark:border-red-600' : className}
+            onBlur={onBlur}
+            onKeyDown={onKeyDown}
+          >
+            <SelectValue placeholder={placeholder} />
+          </SelectTrigger>
+          <SelectContent>
+            {options.map((option, index) => (
+              <SelectItem key={`${option.value}-${index}`} value={option.value}>
+                {option.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
         {error && (
           <p className="mt-1 text-sm text-red-600 dark:text-red-400">{error}</p>
         )}

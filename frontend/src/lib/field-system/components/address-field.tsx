@@ -1,4 +1,6 @@
 import React from 'react'
+import { Input } from '@/components/ui/input'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { FieldComponent, FieldRenderProps, ValidationResult, Field } from '../types'
 import { getFieldConfig } from '../field-registry'
 
@@ -28,14 +30,14 @@ export const AddressFieldComponent: FieldComponent = {
     if (addressFormat === 'single_line') {
       return (
         <div>
-          <input
+          <Input
             type="text"
             value={typeof value === 'string' ? value : value?.full_address || ''}
             onChange={(e) => onChange(e.target.value)}
             onBlur={onBlur}
             onKeyDown={onKeyDown}
             disabled={disabled}
-            className={inputClass}
+            className={error ? 'border-red-300 dark:border-red-600 focus:border-red-500 focus:ring-red-500 dark:focus:ring-red-400' : className || ''}
             placeholder={field.placeholder || 'Enter full address'}
             autoFocus={autoFocus}
             // Required attribute handled by FieldWrapper
@@ -60,14 +62,14 @@ export const AddressFieldComponent: FieldComponent = {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           {components.street_address && (
             <div className="md:col-span-2">
-              <input
+              <Input
                 type="text"
                 value={addressValue.street_address || ''}
                 onChange={(e) => updateAddressField('street_address', e.target.value)}
                 onBlur={onBlur}
                 onKeyDown={onKeyDown}
                 disabled={disabled}
-                className={inputClass}
+                className={error ? 'border-red-300 dark:border-red-600 focus:border-red-500 focus:ring-red-500 dark:focus:ring-red-400' : className || ''}
                 placeholder="Street Address"
                 autoFocus={autoFocus}
               />
@@ -76,14 +78,14 @@ export const AddressFieldComponent: FieldComponent = {
           
           {components.apartment_suite && (
             <div className="md:col-span-2">
-              <input
+              <Input
                 type="text"
                 value={addressValue.apartment_suite || ''}
                 onChange={(e) => updateAddressField('apartment_suite', e.target.value)}
                 onBlur={onBlur}
                 onKeyDown={onKeyDown}
                 disabled={disabled}
-                className={inputClass}
+                className={error ? 'border-red-300 dark:border-red-600 focus:border-red-500 focus:ring-red-500 dark:focus:ring-red-400' : className || ''}
                 placeholder="Apartment, suite, etc."
               />
             </div>
@@ -91,14 +93,14 @@ export const AddressFieldComponent: FieldComponent = {
           
           {components.city && (
             <div>
-              <input
+              <Input
                 type="text"
                 value={addressValue.city || ''}
                 onChange={(e) => updateAddressField('city', e.target.value)}
                 onBlur={onBlur}
                 onKeyDown={onKeyDown}
                 disabled={disabled}
-                className={inputClass}
+                className={error ? 'border-red-300 dark:border-red-600 focus:border-red-500 focus:ring-red-500 dark:focus:ring-red-400' : className || ''}
                 placeholder="City"
               />
             </div>
@@ -106,14 +108,14 @@ export const AddressFieldComponent: FieldComponent = {
           
           {components.state_province && (
             <div>
-              <input
+              <Input
                 type="text"
                 value={addressValue.state_province || ''}
                 onChange={(e) => updateAddressField('state_province', e.target.value)}
                 onBlur={onBlur}
                 onKeyDown={onKeyDown}
                 disabled={disabled}
-                className={inputClass}
+                className={error ? 'border-red-300 dark:border-red-600 focus:border-red-500 focus:ring-red-500 dark:focus:ring-red-400' : className || ''}
                 placeholder="State/Province"
               />
             </div>
@@ -121,14 +123,14 @@ export const AddressFieldComponent: FieldComponent = {
           
           {components.postal_code && (
             <div>
-              <input
+              <Input
                 type="text"
                 value={addressValue.postal_code || ''}
                 onChange={(e) => updateAddressField('postal_code', e.target.value)}
                 onBlur={onBlur}
                 onKeyDown={onKeyDown}
                 disabled={disabled}
-                className={inputClass}
+                className={error ? 'border-red-300 dark:border-red-600 focus:border-red-500 focus:ring-red-500 dark:focus:ring-red-400' : className || ''}
                 placeholder="Postal Code"
               />
             </div>
@@ -136,14 +138,14 @@ export const AddressFieldComponent: FieldComponent = {
           
           {components.country && (
             <div>
-              <input
+              <Input
                 type="text"
                 value={addressValue.country || ''}
                 onChange={(e) => updateAddressField('country', e.target.value)}
                 onBlur={onBlur}
                 onKeyDown={onKeyDown}
                 disabled={disabled}
-                className={inputClass}
+                className={error ? 'border-red-300 dark:border-red-600 focus:border-red-500 focus:ring-red-500 dark:focus:ring-red-400' : className || ''}
                 placeholder="Country"
               />
             </div>

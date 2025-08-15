@@ -1,4 +1,5 @@
 import React from 'react'
+import { Input } from '@/components/ui/input'
 import { FieldComponent, FieldRenderProps, ValidationResult, Field } from '../types'
 import { getFieldConfig } from '../field-registry'
 
@@ -9,15 +10,11 @@ export const DateFieldComponent: FieldComponent = {
     // Get field configurations
     const includeTime = getFieldConfig(field, 'include_time', false)
     const timeFormat = getFieldConfig(field, 'time_format', '24h')
+    const defaultTime = getFieldConfig(field, 'default_time')
     
-    const inputClass = `w-full px-3 py-2 border rounded-lg transition-colors shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-0 ${
-      error 
-        ? 'border-red-300 dark:border-red-600 focus:border-red-500 focus:ring-red-500 dark:focus:ring-red-400' 
-        : 'border-gray-300 dark:border-gray-600 focus:border-blue-500 focus:ring-blue-500 dark:focus:ring-blue-400'
-    } ${disabled 
-        ? 'bg-gray-50 dark:bg-gray-700 cursor-not-allowed text-gray-500 dark:text-gray-400' 
-        : 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white'
-    } ${className || ''}`
+    const inputClass = error 
+      ? 'border-red-300 dark:border-red-600 focus:border-red-500 focus:ring-red-500 dark:focus:ring-red-400'
+      : className || ''
 
     // Choose input type based on configuration
     const inputType = includeTime ? 'datetime-local' : 'date'
@@ -37,15 +34,14 @@ export const DateFieldComponent: FieldComponent = {
 
     return (
       <div>
-        <input
+        <Input
           type={inputType}
           value={inputValue}
+          step={includeTime ? "300" : undefined} // 5-minute intervals for datetime
           onChange={(e) => {
             const newValue = e.target.value
             if (newValue) {
-              // Convert to ISO string for consistency
-              const date = new Date(newValue)
-              onChange(date.toISOString())
+              onChange(new Date(newValue).toISOString())
             } else {
               onChange(null)
             }
@@ -55,14 +51,13 @@ export const DateFieldComponent: FieldComponent = {
           disabled={disabled}
           className={inputClass}
           autoFocus={autoFocus}
-          // Required attribute handled by FieldWrapper
         />
         {error && (
           <p className="mt-1 text-sm text-red-600 dark:text-red-400">{error}</p>
         )}
         {includeTime && (
           <p className="mt-1 text-xs text-blue-600 dark:text-blue-400">
-            Time format: {timeFormat === '12h' ? '12-hour (AM/PM)' : '24-hour'}
+            Time format: {timeFormat === '12h' ? '12-hour (AM/PM)' : '24-hour'} • 5-minute intervals
           </p>
         )}
       </div>
@@ -193,21 +188,16 @@ export const DateTimeFieldComponent: FieldComponent = {
   renderInput: (props: FieldRenderProps) => {
     const { field, value, onChange, onBlur, onKeyDown, disabled, error, className, autoFocus } = props
     
-    const inputClass = `w-full px-3 py-2 border rounded-lg transition-colors shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-0 ${
-      error 
-        ? 'border-red-300 dark:border-red-600 focus:border-red-500 focus:ring-red-500 dark:focus:ring-red-400' 
-        : 'border-gray-300 dark:border-gray-600 focus:border-blue-500 focus:ring-blue-500 dark:focus:ring-blue-400'
-    } ${disabled 
-        ? 'bg-gray-50 dark:bg-gray-700 cursor-not-allowed text-gray-500 dark:text-gray-400' 
-        : 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white'
-    } ${className || ''}`
+    const inputClass = error 
+      ? 'border-red-300 dark:border-red-600 focus:border-red-500 focus:ring-red-500 dark:focus:ring-red-400'
+      : className || ''
 
     // Convert value to datetime-local format (YYYY-MM-DDTHH:mm)
     const datetimeValue = value ? new Date(value).toISOString().slice(0, 16) : ''
 
     return (
       <div>
-        <input
+        <Input
           type="datetime-local"
           value={datetimeValue}
           onChange={(e) => {
@@ -301,18 +291,13 @@ export const TimeFieldComponent: FieldComponent = {
   renderInput: (props: FieldRenderProps) => {
     const { field, value, onChange, onBlur, onKeyDown, disabled, error, className, autoFocus } = props
     
-    const inputClass = `w-full px-3 py-2 border rounded-lg transition-colors shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-0 ${
-      error 
-        ? 'border-red-300 dark:border-red-600 focus:border-red-500 focus:ring-red-500 dark:focus:ring-red-400' 
-        : 'border-gray-300 dark:border-gray-600 focus:border-blue-500 focus:ring-blue-500 dark:focus:ring-blue-400'
-    } ${disabled 
-        ? 'bg-gray-50 dark:bg-gray-700 cursor-not-allowed text-gray-500 dark:text-gray-400' 
-        : 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white'
-    } ${className || ''}`
+    const inputClass = error 
+      ? 'border-red-300 dark:border-red-600 focus:border-red-500 focus:ring-red-500 dark:focus:ring-red-400'
+      : className || ''
 
     return (
       <div>
-        <input
+        <Input
           type="time"
           value={value || ''}
           onChange={(e) => onChange(e.target.value || null)}

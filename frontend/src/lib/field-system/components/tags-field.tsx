@@ -1,4 +1,6 @@
 import React, { useState, useEffect } from 'react'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { FieldComponent, FieldRenderProps, ValidationResult, Field } from '../types'
 import { getFieldConfig } from '../field-registry'
 import { X, Plus, Search } from 'lucide-react'
@@ -137,14 +139,16 @@ export const TagsFieldComponent: FieldComponent = {
       }`}>
         {/* Add tag button */}
         {!disabled && (!maxTags || tagValues.length < maxTags) && (
-          <button
+          <Button
             type="button"
             onClick={() => setIsModalOpen(true)}
-            className="inline-flex items-center px-3 py-1.5 text-sm text-gray-600 dark:text-gray-300 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700 hover:border-gray-400 dark:hover:border-gray-500 transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 mb-3"
+            variant="outline"
+            size="sm"
+            className="mb-3"
           >
             <Plus className="w-4 h-4 mr-1" />
             Add tag
-          </button>
+          </Button>
         )}
 
         {/* Display existing tags */}
@@ -157,18 +161,20 @@ export const TagsFieldComponent: FieldComponent = {
               >
                 <span className="mr-1.5" style={{textTransform: 'none'}}>{tag}</span>
                 {!disabled && (
-                  <button
+                  <Button
                     type="button"
                     onClick={(e) => {
                       e.preventDefault()
                       e.stopPropagation()
                       removeTag(index)
                     }}
-                    className="ml-1 inline-flex items-center justify-center w-3.5 h-3.5 text-blue-500 hover:text-red-600 dark:text-blue-400 dark:hover:text-red-400 focus:outline-none hover:bg-white/50 dark:hover:bg-black/20 rounded-full transition-colors duration-200"
+                    variant="ghost"
+                    size="sm"
+                    className="ml-1 h-3.5 w-3.5 p-0 text-blue-500 hover:text-red-600 dark:text-blue-400 dark:hover:text-red-400 hover:bg-white/50 dark:hover:bg-black/20 rounded-full"
                     title="Remove tag"
                   >
                     <X className="w-3 h-3" />
-                  </button>
+                  </Button>
                 )}
               </span>
             ))}
@@ -181,12 +187,14 @@ export const TagsFieldComponent: FieldComponent = {
             <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl p-6 w-full max-w-md mx-4" onClick={(e) => e.stopPropagation()}>
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Add Tags</h3>
-                <button
+                <Button
                   onClick={() => setIsModalOpen(false)}
-                  className="p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 rounded-md hover:bg-gray-100 dark:hover:bg-gray-700"
+                  variant="ghost"
+                  size="sm"
+                  className="p-1 h-6 w-6"
                 >
                   <X className="w-5 h-5" />
-                </button>
+                </Button>
               </div>
 
               <div className="space-y-4">
@@ -195,7 +203,7 @@ export const TagsFieldComponent: FieldComponent = {
                   <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                     <Search className="w-4 h-4 text-gray-400" />
                   </div>
-                  <input
+                  <Input
                     type="text"
                     value={searchInput}
                     onChange={(e) => setSearchInput(e.target.value)}
@@ -211,7 +219,7 @@ export const TagsFieldComponent: FieldComponent = {
                         setIsModalOpen(false)
                       }
                     }}
-                    className={`pl-10 ${inputClass}`}
+                    className={`pl-10 ${error ? 'border-red-300 dark:border-red-600 focus:border-red-500 focus:ring-red-500 dark:focus:ring-red-400' : ''}`}
                     placeholder={
                       predefinedTags.length > 0 
                         ? allowCustomTags 
@@ -235,7 +243,7 @@ export const TagsFieldComponent: FieldComponent = {
                           <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">Suggested tags:</p>
                           <div className="flex flex-wrap gap-2">
                             {filteredPredefinedTags.map((tag: string) => (
-                              <button
+                              <Button
                                 key={tag}
                                 type="button"
                                 onClick={(e) => {
@@ -245,11 +253,13 @@ export const TagsFieldComponent: FieldComponent = {
                                   setSearchInput('')
                                   setIsModalOpen(false)
                                 }}
-                                className="inline-flex items-center px-3 py-1.5 text-sm bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 border border-gray-200 dark:border-gray-600 rounded-md hover:bg-blue-50 dark:hover:bg-blue-900/20 hover:border-blue-300 dark:hover:border-blue-600 hover:text-blue-700 dark:hover:text-blue-300 transition-all duration-200"
+                                variant="outline"
+                                size="sm"
+                                className="hover:bg-blue-50 dark:hover:bg-blue-900/20 hover:border-blue-300 dark:hover:border-blue-600 hover:text-blue-700 dark:hover:text-blue-300"
                               >
                                 <Plus className="w-3 h-3 mr-1" />
                                 {tag}
-                              </button>
+                              </Button>
                             ))}
                           </div>
                         </div>
@@ -261,7 +271,7 @@ export const TagsFieldComponent: FieldComponent = {
                           {filteredPredefinedTags.length > 0 && (
                             <p className="text-xs text-gray-500 dark:text-gray-400 mb-2 mt-3">Or add custom tag:</p>
                           )}
-                          <button
+                          <Button
                             type="button"
                             onClick={(e) => {
                               e.preventDefault()
@@ -270,11 +280,13 @@ export const TagsFieldComponent: FieldComponent = {
                               setSearchInput('')
                               setIsModalOpen(false)
                             }}
-                            className="inline-flex items-center px-3 py-1.5 text-sm bg-blue-100 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 border border-blue-300 dark:border-blue-600 rounded-md hover:bg-blue-200 dark:hover:bg-blue-900/40 transition-all duration-200"
+                            variant="outline"
+                            size="sm"
+                            className="bg-blue-100 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 border-blue-300 dark:border-blue-600 hover:bg-blue-200 dark:hover:bg-blue-900/40"
                           >
                             <Plus className="w-3 h-3 mr-1" />
                             Add "{searchInput.trim()}"
-                          </button>
+                          </Button>
                         </div>
                       )}
 
@@ -296,7 +308,7 @@ export const TagsFieldComponent: FieldComponent = {
                             const normalizedExisting = caseSensitive ? tagValues : tagValues.map((t: string) => t.toLowerCase())
                             return !normalizedExisting.includes(normalizedTag)
                           }).map((tag: string) => (
-                            <button
+                            <Button
                               key={tag}
                               type="button"
                               onClick={(e) => {
@@ -305,11 +317,13 @@ export const TagsFieldComponent: FieldComponent = {
                                 addTag(tag)
                                 setIsModalOpen(false)
                               }}
-                              className="inline-flex items-center px-3 py-1.5 text-sm bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 border border-gray-200 dark:border-gray-600 rounded-md hover:bg-blue-50 dark:hover:bg-blue-900/20 hover:border-blue-300 dark:hover:border-blue-600 hover:text-blue-700 dark:hover:text-blue-300 transition-all duration-200"
+                              variant="outline"
+                              size="sm"
+                              className="hover:bg-blue-50 dark:hover:bg-blue-900/20 hover:border-blue-300 dark:hover:border-blue-600 hover:text-blue-700 dark:hover:text-blue-300"
                             >
                               <Plus className="w-3 h-3 mr-1" />
                               {tag}
-                            </button>
+                            </Button>
                           ))}
                         </div>
                       </div>

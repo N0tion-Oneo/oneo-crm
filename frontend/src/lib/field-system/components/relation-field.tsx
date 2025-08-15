@@ -1,4 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { FieldComponent, FieldRenderProps, ValidationResult, Field } from '../types'
 import { getFieldConfig } from '../field-registry'
 import { pipelinesApi, relationshipsApi } from '../../api'
@@ -478,38 +481,43 @@ const EnhancedRelationshipInput: React.FC<FieldRenderProps> = (props) => {
               </div>
               
               {allowRelationshipTypeSelection && !disabled && (
-                <select
-                  value={relationship.relationship_type || ''}
-                  onChange={(e) => updateRelationshipType(index, e.target.value)}
+                <Select
+                  value={relationship.relationship_type || undefined}
+                  onValueChange={(value) => updateRelationshipType(index, value)}
                   disabled={disabled || loadingTypes}
-                  className={`text-xs border rounded px-2 py-1 transition-colors focus:outline-none focus:ring-1 focus:ring-offset-0 ${
+                >
+                  <SelectTrigger className={`w-32 text-xs h-7 ${
                     !hasRequiredType
                       ? 'border-amber-300 dark:border-amber-600 bg-amber-50 dark:bg-amber-900/20 focus:border-amber-500 focus:ring-amber-500'
-                      : 'border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:border-blue-500 focus:ring-blue-500'
-                  }`}
-                >
-                  <option value="">Select type...</option>
-                  {Array.isArray(relationshipTypes) ? relationshipTypes.map(type => (
-                    <option key={type.slug} value={type.slug}>
-                      {type.name} {type.is_bidirectional ? '↔' : '→'}
-                    </option>
-                  )) : (
-                    <option value={defaultRelationshipType}>
-                      {defaultRelationshipType.replace('_', ' ')} (default)
-                    </option>
-                  )}
-                </select>
+                      : ''
+                  }`}>
+                    <SelectValue placeholder="Type" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {Array.isArray(relationshipTypes) ? relationshipTypes.map(type => (
+                      <SelectItem key={type.slug} value={type.slug}>
+                        {type.name} {type.is_bidirectional ? '↔' : '→'}
+                      </SelectItem>
+                    )) : (
+                      <SelectItem value={defaultRelationshipType}>
+                        {defaultRelationshipType.replace('_', ' ')} (default)
+                      </SelectItem>
+                    )}
+                  </SelectContent>
+                </Select>
               )}
               
               {!disabled && (
-                <button
+                <Button
                   onClick={() => removeRelationship(index)}
-                  className="text-red-500 hover:text-red-700 text-sm font-bold"
+                  variant="ghost"
+                  size="sm"
+                  className="text-red-500 hover:text-red-700 h-6 w-6 p-0"
                   type="button"
                   title="Remove relationship"
                 >
                   ×
-                </button>
+                </Button>
               )}
             </div>
           )
@@ -530,18 +538,12 @@ const EnhancedRelationshipInput: React.FC<FieldRenderProps> = (props) => {
             </div>
           )}
           <div className="relative" ref={dropdownRef}>
-            <button
+            <Button
               type="button"
               onClick={() => setShowDropdown(!showDropdown)}
               disabled={disabled}
-              className={`w-full px-3 py-2 border rounded-lg transition-colors shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-0 text-left flex items-center justify-between ${
-                error 
-                  ? 'border-red-300 dark:border-red-600 focus:border-red-500 focus:ring-red-500 dark:focus:ring-red-400' 
-                  : 'border-gray-300 dark:border-gray-600 focus:border-blue-500 focus:ring-blue-500 dark:focus:ring-blue-400'
-              } ${disabled 
-                  ? 'bg-gray-50 dark:bg-gray-700 cursor-not-allowed text-gray-500 dark:text-gray-400' 
-                  : 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white hover:bg-gray-50 dark:hover:bg-gray-600'
-              } ${className || ''}`}
+              variant="outline"
+              className={`w-full justify-between ${error ? 'border-red-300 dark:border-red-600 focus:border-red-500 focus:ring-red-500 dark:focus:ring-red-400' : ''}`}
             >
               <span className="text-gray-500 dark:text-gray-400">
                 {!user || context === 'public' 
@@ -552,19 +554,19 @@ const EnhancedRelationshipInput: React.FC<FieldRenderProps> = (props) => {
               <svg className={`w-4 h-4 transition-transform ${showDropdown ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
               </svg>
-            </button>
+            </Button>
             
             {/* Record dropdown */}
             {showDropdown && (
               <div className="absolute z-50 w-full mt-1 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg shadow-lg max-h-64 overflow-hidden">
                 {/* Search input inside dropdown */}
                 <div className="p-2 border-b border-gray-200 dark:border-gray-700">
-                  <input
+                  <Input
                     type="text"
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
                     placeholder="Type to filter records..."
-                    className="w-full px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                    className="text-sm"
                     autoFocus
                     onKeyDown={(e) => {
                       if (e.key === 'Escape') {

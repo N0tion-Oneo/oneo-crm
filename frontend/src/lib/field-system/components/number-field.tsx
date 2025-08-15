@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react'
+import { Input } from '@/components/ui/input'
 import { FieldComponent, FieldRenderProps, ValidationResult, Field } from '../types'
 import { getFieldConfig } from '../field-registry'
 
@@ -100,14 +101,9 @@ export const NumberFieldComponent: FieldComponent = {
       }
     }
     
-    const inputClass = `w-full px-3 py-2 border rounded-lg transition-colors shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-0 ${
-      error 
-        ? 'border-red-300 dark:border-red-600 focus:border-red-500 focus:ring-red-500 dark:focus:ring-red-400' 
-        : 'border-gray-300 dark:border-gray-600 focus:border-blue-500 focus:ring-blue-500 dark:focus:ring-blue-400'
-    } ${isFieldDisabled 
-        ? 'bg-gray-50 dark:bg-gray-700 cursor-not-allowed text-gray-500 dark:text-gray-400' 
-        : 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white'
-    } ${className || ''}`
+    const inputClass = error 
+      ? 'border-red-300 dark:border-red-600 focus:border-red-500 focus:ring-red-500 dark:focus:ring-red-400'
+      : className || ''
 
     return (
       <div>
@@ -117,7 +113,7 @@ export const NumberFieldComponent: FieldComponent = {
             <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
               {getCurrencySymbol(currencyCode)}
             </span>
-            <input
+            <Input
               type="number"
               value={localValue}
               onChange={handleNumberChange}
@@ -137,7 +133,7 @@ export const NumberFieldComponent: FieldComponent = {
         ) : isPercentage ? (
           // Percentage input with % indicator
           <div className="relative">
-            <input
+            <Input
               type="number"
               value={localValue}
               onChange={handleNumberChange}
@@ -243,7 +239,7 @@ export const NumberFieldComponent: FieldComponent = {
                 </select>
 
                 {/* Amount input */}
-                <input
+                <Input
                   type="number"
                   value={localValue}
                   onChange={(e) => {
@@ -278,7 +274,7 @@ export const NumberFieldComponent: FieldComponent = {
           })()
         ) : (
           // Regular number or auto-increment input
-          <input
+          <Input
             type={isAutoIncrement ? "text" : "number"}
             value={isAutoIncrement ? `#${(value || 0).toString().padStart(6, '0')}` : localValue}
             onChange={isAutoIncrement ? undefined : handleNumberChange}

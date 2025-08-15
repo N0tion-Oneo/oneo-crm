@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { FieldComponent, FieldRenderProps, ValidationResult, Field } from '../types'
 import { getFieldConfig } from '../field-registry'
 
@@ -170,13 +172,15 @@ export const FileFieldComponent: FieldComponent = {
                 )}
               </div>
               {!disabled && (
-                <button
+                <Button
                   type="button"
                   onClick={handleRemoveFile}
-                  className="ml-2 text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300 text-sm"
+                  variant="ghost"
+                  size="sm"
+                  className="ml-2 text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300"
                 >
                   Remove
-                </button>
+                </Button>
               )}
             </div>
           </div>

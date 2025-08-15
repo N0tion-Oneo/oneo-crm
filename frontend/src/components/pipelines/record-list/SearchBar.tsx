@@ -1,6 +1,7 @@
 // SearchBar - Search input with debouncing
 import React, { useState, useEffect, useRef } from 'react'
 import { Search } from 'lucide-react'
+import { Input } from '@/components/ui/input'
 
 export interface SearchBarProps {
   searchQuery: string
@@ -47,13 +48,13 @@ export function SearchBar({
 
   return (
     <div className={`relative ${className}`}>
-      <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
-      <input
+      <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400 z-10" />
+      <Input
         type="text"
         placeholder={placeholder}
         value={localQuery}
         onChange={(e) => setLocalQuery(e.target.value)}
-        className="pl-10 pr-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white w-full"
+        className="pl-10"
       />
     </div>
   )

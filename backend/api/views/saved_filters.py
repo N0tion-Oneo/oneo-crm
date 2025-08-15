@@ -565,9 +565,18 @@ class PublicFilterAccessViewSet(viewsets.GenericViewSet):
             
             # Apply filter config if available
             if saved_filter.filter_config:
-                # Here you would apply the boolean query filtering
-                # For now, we'll return all records (this needs proper implementation)
-                pass
+                # Apply the boolean query filtering using our existing filter validation logic
+                filtered_records = []
+                for record in queryset:
+                    if self._record_matches_filter(record, saved_filter):
+                        filtered_records.append(record.id)
+                
+                # Filter queryset to only include matching records
+                if filtered_records:
+                    queryset = queryset.filter(id__in=filtered_records)
+                else:
+                    # No records match the filter
+                    queryset = queryset.none()
             
             # Get shareable fields only
             shareable_fields = list(saved_filter.get_shareable_fields())
@@ -846,6 +855,283 @@ class PublicFilterAccessViewSet(viewsets.GenericViewSet):
                 {'error': f'Failed to access related record: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+    
+    @action(detail=True, methods=['patch'], url_path='records/(?P<record_id>[^/.]+)')
+    def update_record(self, request, pk=None, record_id=None):
+        """Update a record through shared filter access"""
+        try:
+            # Decrypt the token and get shared filter
+            encryption = ShareLinkEncryption()
+            payload, error = encryption.decrypt_share_data(pk)
+            
+            if error:
+                return Response(
+                    {'error': error},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            try:
+                saved_filter_id = payload['record_id']
+                shared_filter = SharedFilter.objects.get(
+                    saved_filter__id=saved_filter_id,
+                    encrypted_token=pk,
+                    is_active=True
+                )
+            except SharedFilter.DoesNotExist:
+                return Response(
+                    {'error': 'Invalid or expired share link'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Check if share is still valid
+            if not shared_filter.is_valid:
+                return Response(
+                    {'error': f'Share link is {shared_filter.status}'},
+                    status=status.HTTP_410_GONE
+                )
+            
+            # Check access mode - only allow updates for filtered_edit mode
+            if shared_filter.access_mode != 'filtered_edit':
+                return Response(
+                    {'error': f'Record editing not allowed. Your access mode is "{shared_filter.access_mode}". Only "filtered_edit" mode allows record updates.'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Log access
+            shared_filter.track_access()
+            
+            # Get the record
+            try:
+                from pipelines.models import Record
+                record = Record.objects.get(
+                    id=record_id,
+                    pipeline=shared_filter.saved_filter.pipeline,
+                    is_deleted=False
+                )
+            except Record.DoesNotExist:
+                return Response(
+                    {'error': 'Record not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Check if record passes the filter criteria
+            saved_filter = shared_filter.saved_filter
+            if not self._record_matches_filter(record, saved_filter):
+                return Response(
+                    {'error': 'Record is not accessible through this filtered view'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Get the data to update
+            data = request.data.get('data', {})
+            if not data:
+                return Response(
+                    {'error': 'No data provided for update'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Validate that only allowed fields are being updated
+            # For shared filters, we restrict to fields that are in shared_fields or visible_fields
+            allowed_fields = set(shared_filter.shared_fields or saved_filter.visible_fields or [])
+            if allowed_fields:
+                invalid_fields = set(data.keys()) - allowed_fields
+                if invalid_fields:
+                    return Response(
+                        {'error': f'Cannot update fields {list(invalid_fields)}. Only these fields are editable: {list(allowed_fields)}'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+            
+            # Update the record data
+            for field_name, value in data.items():
+                if hasattr(record, 'data') and isinstance(record.data, dict):
+                    record.data[field_name] = value
+                else:
+                    # Handle case where record.data might not be initialized
+                    record.data = {field_name: value}
+            
+            # Save the record
+            record.save(update_fields=['data', 'updated_at'])
+            
+            # Return the updated record data
+            return Response({
+                'id': record.id,
+                'data': record.data,
+                'updated_at': record.updated_at.isoformat(),
+                'message': 'Record updated successfully'
+            })
+            
+        except Exception as e:
+            return Response(
+                {'error': f'Failed to update record: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def _record_matches_filter(self, record, saved_filter):
+        """
+        Check if a record matches the saved filter criteria.
+        
+        Args:
+            record: The Record instance to check
+            saved_filter: The SavedFilter instance with filter_config
+        
+        Returns:
+            bool: True if record matches filter criteria, False otherwise
+        """
+        # If no filter config, all records match
+        if not saved_filter.filter_config:
+            return True
+        
+        filter_config = saved_filter.filter_config
+        groups = filter_config.get('groups', [])
+        group_logic = filter_config.get('groupLogic', 'AND')
+        
+        # If no groups, all records match
+        if not groups:
+            return True
+        
+        group_results = []
+        
+        for group in groups:
+            filters = group.get('filters', [])
+            logic = group.get('logic', 'AND')
+            
+            if not filters:
+                # Empty group matches all records
+                group_results.append(True)
+                continue
+            
+            filter_results = []
+            
+            for filter_item in filters:
+                field_name = filter_item.get('field')
+                operator = filter_item.get('operator')
+                value = filter_item.get('value')
+                
+                # Get the field value from record data
+                record_value = record.data.get(field_name)
+                
+                # Evaluate the filter condition
+                matches = self._evaluate_filter_condition(record_value, operator, value)
+                filter_results.append(matches)
+            
+            # Apply group logic (AND/OR)
+            if logic.upper() == 'AND':
+                group_result = all(filter_results)
+            else:  # OR
+                group_result = any(filter_results)
+            
+            group_results.append(group_result)
+        
+        # Apply group logic (AND/OR)
+        if group_logic.upper() == 'AND':
+            return all(group_results)
+        else:  # OR
+            return any(group_results)
+    
+    def _evaluate_filter_condition(self, record_value, operator, filter_value):
+        """
+        Evaluate a single filter condition.
+        
+        Args:
+            record_value: The value from the record
+            operator: The filter operator (e.g., 'contains', 'equals', 'gt')
+            filter_value: The value to compare against
+        
+        Returns:
+            bool: True if condition matches, False otherwise
+        """
+        # Handle null/empty values
+        if record_value is None:
+            record_value = ""
+        
+        try:
+            if operator == 'contains':
+                # Special handling for user field arrays (JSON objects)
+                if isinstance(record_value, list):
+                    # Try to parse filter_value as JSON for user field matching
+                    try:
+                        import json
+                        filter_obj = json.loads(filter_value)
+                        if 'user_id' in filter_obj:
+                            # Check if any user in the array has the specified user_id
+                            target_user_id = filter_obj['user_id']
+                            # Handle both string and integer user_ids
+                            target_user_id_int = int(target_user_id)
+                            target_user_id_str = str(target_user_id)
+                            
+                            for user in record_value:
+                                if isinstance(user, dict) and 'user_id' in user:
+                                    user_id = user['user_id']
+                                    if user_id == target_user_id_int or str(user_id) == target_user_id_str:
+                                        return True
+                            return False
+                    except (json.JSONDecodeError, ValueError, KeyError):
+                        pass  # Fall back to string comparison
+                
+                # Default string-based comparison
+                record_str = str(record_value).lower() if record_value is not None else ""
+                filter_str = str(filter_value).lower() if filter_value is not None else ""
+                return filter_str in record_str
+            elif operator == 'not_contains':
+                # Default string-based comparison
+                record_str = str(record_value).lower() if record_value is not None else ""
+                filter_str = str(filter_value).lower() if filter_value is not None else ""
+                return filter_str not in record_str
+            elif operator == 'equals':
+                # Default string-based comparison  
+                record_str = str(record_value).lower() if record_value is not None else ""
+                filter_str = str(filter_value).lower() if filter_value is not None else ""
+                return record_str == filter_str
+            elif operator == 'not_equals':
+                # Default string-based comparison  
+                record_str = str(record_value).lower() if record_value is not None else ""
+                filter_str = str(filter_value).lower() if filter_value is not None else ""
+                return record_str != filter_str
+            elif operator == 'starts_with':
+                # Default string-based comparison  
+                record_str = str(record_value).lower() if record_value is not None else ""
+                filter_str = str(filter_value).lower() if filter_value is not None else ""
+                return record_str.startswith(filter_str)
+            elif operator == 'ends_with':
+                # Default string-based comparison  
+                record_str = str(record_value).lower() if record_value is not None else ""
+                filter_str = str(filter_value).lower() if filter_value is not None else ""
+                return record_str.endswith(filter_str)
+            elif operator == 'is_empty':
+                # Default string-based comparison  
+                record_str = str(record_value).lower() if record_value is not None else ""
+                return record_str == ""
+            elif operator == 'is_not_empty':
+                # Default string-based comparison  
+                record_str = str(record_value).lower() if record_value is not None else ""
+                return record_str != ""
+            elif operator in ['gt', 'greater_than']:
+                # Try numeric comparison first, fall back to string
+                try:
+                    return float(record_value) > float(filter_value)
+                except (ValueError, TypeError):
+                    return record_str > filter_str
+            elif operator in ['gte', 'greater_than_or_equal']:
+                try:
+                    return float(record_value) >= float(filter_value)
+                except (ValueError, TypeError):
+                    return record_str >= filter_str
+            elif operator in ['lt', 'less_than']:
+                try:
+                    return float(record_value) < float(filter_value)
+                except (ValueError, TypeError):
+                    return record_str < filter_str
+            elif operator in ['lte', 'less_than_or_equal']:
+                try:
+                    return float(record_value) <= float(filter_value)
+                except (ValueError, TypeError):
+                    return record_str <= filter_str
+            else:
+                # Unknown operator, default to false for security
+                return False
+        except Exception:
+            # If any error occurs during comparison, default to false for security
+            return False
 
 
 class PipelineFilterManagementViewSet(viewsets.ViewSet):

@@ -32,6 +32,7 @@ export interface FieldSaveParams {
   apiEndpoint: string
   onSuccess?: (result: any) => void
   onError?: (error: any) => void
+  isSharedContext?: boolean // Flag to indicate shared/public context
 }
 
 /**
@@ -349,6 +350,7 @@ export class FieldSaveService {
    */
   private async saveNow(params: FieldSaveParams): Promise<any> {
     try {
+      
       // Use backend slug if available, otherwise use field name (same logic as auto-save transform)
       const fieldKey = params.field.original_slug || params.field.name
       const payload = { 
@@ -368,7 +370,8 @@ export class FieldSaveService {
           arrayLength: Array.isArray(params.newValue) ? params.newValue.length : 'N/A',
           firstElement: Array.isArray(params.newValue) ? params.newValue[0] : params.newValue,
           apiEndpoint: params.apiEndpoint,
-          payload: payload
+          payload: payload,
+          isSharedContext: params.isSharedContext
         })
       }
       
@@ -383,7 +386,8 @@ export class FieldSaveService {
           hasLastTriggered: params.newValue && typeof params.newValue === 'object' && 'last_triggered' in params.newValue,
           hasClickCount: params.newValue && typeof params.newValue === 'object' && 'click_count' in params.newValue,
           apiEndpoint: params.apiEndpoint,
-          payload: JSON.stringify(payload, null, 2)
+          payload: JSON.stringify(payload, null, 2),
+          isSharedContext: params.isSharedContext
         })
       }
       

@@ -27,6 +27,14 @@ import { FieldUtilsService } from '@/services/records'
 import { KanbanView } from '@/components/pipelines/kanban-view'
 import { CalendarView } from '@/components/pipelines/calendar-view'
 
+// Import access mode utilities
+import { 
+  type SharedAccessMode, 
+  getAccessPermissions, 
+  getAccessModeDisplayName, 
+  getAccessModeDescription 
+} from '@/utils/shared-access-modes'
+
 interface SharedFilterData {
   id: string
   name: string
@@ -40,7 +48,7 @@ interface SharedFilterData {
   view_mode: 'table' | 'kanban' | 'calendar'
   visible_fields: string[]
   sort_config: any
-  access_mode: 'readonly' | 'filtered_edit'
+  access_mode: SharedAccessMode
   expires_at: string
   time_remaining_seconds: number
 }
@@ -62,6 +70,9 @@ export function PublicRecordListView({
   const [error, setError] = useState<string | null>(null)
   const [records, setRecords] = useState<Record[]>([])
   const [pipeline, setPipeline] = useState<any>(null)
+  
+  // Calculate permissions based on access mode
+  const permissions = getAccessPermissions(filterData.access_mode)
   const [pagination, setPagination] = useState({
     currentPage: 1,
     totalPages: 1,
@@ -323,7 +334,7 @@ export function PublicRecordListView({
               Shared Filter Access
             </h3>
             <p className="text-sm text-blue-700 dark:text-blue-300">
-              You're viewing a shared filter with {filterData.access_mode === 'readonly' ? 'read-only' : 'filtered edit'} access. 
+              You're viewing a shared filter with {getAccessModeDisplayName(filterData.access_mode).toLowerCase()} access. 
               Some features may be limited.
             </p>
           </div>
@@ -368,7 +379,7 @@ export function PublicRecordListView({
           />
           
           <div className="text-sm text-gray-500 dark:text-gray-400">
-            {pagination.totalRecords} records • {filterData.access_mode === 'readonly' ? 'Read-only access' : 'Edit access'}
+            {pagination.totalRecords} records • {getAccessModeDisplayName(filterData.access_mode)} access
           </div>
         </div>
       </div>
@@ -446,18 +457,9 @@ export function PublicRecordListView({
                 onSelectAll={() => {}} // Disable selection for public views
                 sharedToken={token}
                 onEditRecord={(record) => {
-                  // Always provide a function, but handle read-only mode
-                  if (filterData.access_mode === 'readonly') {
-                    // For read-only mode, still allow viewing the record drawer
-                    // but it should be opened in read-only mode
-                    if (onEditRecord) {
-                      onEditRecord(record)
-                    }
-                  } else {
-                    // For edit mode, call the provided onEditRecord function
-                    if (onEditRecord) {
-                      onEditRecord(record)
-                    }
+                  // Always allow viewing records in the drawer
+                  if (onEditRecord) {
+                    onEditRecord(record)
                   }
                 }}
                 onOpenRelatedRecord={handleOpenRelatedRecord}
@@ -471,16 +473,16 @@ export function PublicRecordListView({
                 pipeline={displayPipeline}
                 kanbanField={kanbanField || selectFields[0]?.value || ''}
                 onEditRecord={(record) => {
-                  // Always provide a function, but handle read-only mode
+                  // Always allow viewing records in the drawer
                   if (onEditRecord) {
                     onEditRecord(record)
                   }
                 }}
-                onCreateRecord={filterData.access_mode === 'readonly' ? undefined : onCreateRecord}
-                onUpdateRecord={filterData.access_mode === 'readonly' ? undefined : async (recordId: string, fieldName: string, value: any) => {
+                onCreateRecord={permissions.canCreate ? onCreateRecord : undefined}
+                onUpdateRecord={permissions.canEdit ? async (recordId: string, fieldName: string, value: any) => {
                   // For shared filters, we would need to implement public record updates
                   console.log('Public record update:', { recordId, fieldName, value })
-                }}
+                } : undefined}
               />
             )}
 
@@ -504,12 +506,12 @@ export function PublicRecordListView({
                 pipeline={displayPipeline}
                 calendarField={calendarField || dateFields[0]?.value || ''}
                 onEditRecord={(record) => {
-                  // Always provide a function, but handle read-only mode
+                  // Always allow viewing records in the drawer
                   if (onEditRecord) {
                     onEditRecord(record)
                   }
                 }}
-                onCreateRecord={filterData.access_mode === 'readonly' ? undefined : onCreateRecord}
+                onCreateRecord={permissions.canCreate ? onCreateRecord : undefined}
               />
             )}
 

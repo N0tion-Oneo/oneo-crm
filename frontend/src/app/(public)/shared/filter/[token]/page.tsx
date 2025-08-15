@@ -2,13 +2,20 @@
 
 import { useState, useEffect } from 'react'
 import { useParams } from 'next/navigation'
-import { Eye, Lock, Clock, Users, Shield, AlertCircle } from 'lucide-react'
+import { Eye, Lock, Clock, Users, Shield, AlertCircle, Edit } from 'lucide-react'
 import { savedFiltersApi } from '@/lib/api'
 import { PublicRecordListView } from '@/components/pipelines/record-list/PublicRecordListView'
 import { RecordDetailDrawer } from '@/components/pipelines/record-detail-drawer'
 import { Button } from '@/components/ui/button'
 import { toast } from '@/hooks/use-toast'
 import { Record } from '@/types/records'
+import { 
+  type SharedAccessMode, 
+  getAccessPermissions, 
+  getAccessModeDisplayName, 
+  getAccessModeDescription,
+  getAccessDeniedMessage 
+} from '@/utils/shared-access-modes'
 
 interface SharedFilterData {
   id: string
@@ -23,7 +30,7 @@ interface SharedFilterData {
   view_mode: 'table' | 'kanban' | 'calendar'
   visible_fields: string[]
   sort_config: any
-  access_mode: 'readonly' | 'filtered_edit'
+  access_mode: SharedAccessMode
   expires_at: string
   time_remaining_seconds: number
 }
@@ -47,8 +54,26 @@ export default function SharedFilterPage() {
   const [pipelineData, setPipelineData] = useState<any>(null)
   const [drawerPipeline, setDrawerPipeline] = useState<any>(null)
 
+  // Restore authentication state from localStorage on page load
   useEffect(() => {
     if (token) {
+      // Try to restore authentication state from localStorage
+      const savedAccessState = localStorage.getItem(`shared_filter_access_${token}`)
+      if (savedAccessState) {
+        try {
+          const { accessGranted: savedAccessGranted, accessorInfo: savedAccessorInfo } = JSON.parse(savedAccessState)
+          if (savedAccessGranted && savedAccessorInfo.name && savedAccessorInfo.email) {
+            console.log('🔄 Restoring authentication state from localStorage')
+            setAccessGranted(true)
+            setAccessorInfo(savedAccessorInfo)
+          }
+        } catch (error) {
+          console.warn('Failed to restore authentication state:', error)
+          // Clear invalid data
+          localStorage.removeItem(`shared_filter_access_${token}`)
+        }
+      }
+      
       loadSharedFilter()
     }
   }, [token])
@@ -67,6 +92,32 @@ export default function SharedFilterPage() {
     }
   }, [pipelineData, drawerPipeline])
 
+  // Clean up old authentication data on component unmount
+  useEffect(() => {
+    return () => {
+      // Clean up any authentication data older than 24 hours to prevent localStorage bloat
+      try {
+        const keys = Object.keys(localStorage)
+        const filterAccessKeys = keys.filter(key => key.startsWith('shared_filter_access_'))
+        
+        filterAccessKeys.forEach(key => {
+          try {
+            const data = JSON.parse(localStorage.getItem(key) || '{}')
+            // Remove if data is malformed or very old (no timestamp means it's old)
+            if (!data.accessGranted || !data.accessorInfo) {
+              localStorage.removeItem(key)
+            }
+          } catch (error) {
+            // Remove malformed data
+            localStorage.removeItem(key)
+          }
+        })
+      } catch (error) {
+        console.warn('Failed to clean up authentication data:', error)
+      }
+    }
+  }, [])
+
   const loadSharedFilter = async () => {
     try {
       setLoading(true)
@@ -84,8 +135,12 @@ export default function SharedFilterPage() {
       let errorMessage = 'Failed to load shared filter.'
       if (err.response?.status === 404) {
         errorMessage = 'This shared filter link is invalid or has expired.'
+        // Clear any stored authentication for this expired link
+        localStorage.removeItem(`shared_filter_access_${token}`)
       } else if (err.response?.status === 410) {
         errorMessage = 'This shared filter link has been revoked or expired.'
+        // Clear any stored authentication for this revoked link
+        localStorage.removeItem(`shared_filter_access_${token}`)
       } else if (err.response?.data?.error) {
         errorMessage = err.response.data.error
       }
@@ -119,6 +174,14 @@ export default function SharedFilterPage() {
       })
 
       setAccessGranted(true)
+      
+      // Persist authentication state to localStorage
+      localStorage.setItem(`shared_filter_access_${token}`, JSON.stringify({
+        accessGranted: true,
+        accessorInfo: accessorInfo
+      }))
+      
+      console.log('💾 Saved authentication state to localStorage')
       
       toast({
         title: '✅ Access granted',
@@ -245,7 +308,7 @@ export default function SharedFilterPage() {
               </div>
               <div className="flex items-center text-blue-700 dark:text-blue-300">
                 <Eye className="w-4 h-4 mr-2" />
-                Access: {filterData.access_mode === 'readonly' ? 'Read-only' : 'View & Edit'}
+                Access: {getAccessModeDisplayName(filterData.access_mode)}
               </div>
               <div className="flex items-center text-blue-700 dark:text-blue-300">
                 <Clock className="w-4 h-4 mr-2" />
@@ -319,67 +382,209 @@ export default function SharedFilterPage() {
   }
 
 
+  const expiresSoon = filterData.time_remaining_seconds < 24 * 60 * 60 // Less than 24 hours
+  const permissions = getAccessPermissions(filterData.access_mode)
+
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
-      {/* Header Banner */}
-      <div className="bg-blue-600 text-white">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-3">
-              <Shield className="w-5 h-5" />
-              <span className="text-sm font-medium">
-                Shared Filter: {filterData.name}
-              </span>
-            </div>
-            <div className="flex items-center space-x-4 text-sm">
-              <div className="flex items-center space-x-1">
-                <Lock className="w-4 h-4" />
-                <span>{filterData.access_mode === 'readonly' ? 'Read-only' : 'Read & Edit'}</span>
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-50 dark:from-blue-900/20 dark:to-indigo-900/20">
+      <div className="container mx-auto px-4 py-8">
+        <div className="max-w-7xl mx-auto">
+          {/* Header Section */}
+          <div className="bg-white dark:bg-gray-800 rounded-xl shadow-lg border border-gray-200 dark:border-gray-700 p-6 mb-6">
+            <div className="flex items-start justify-between">
+              <div className="flex items-start space-x-4">
+                <div className="w-12 h-12 bg-blue-100 dark:bg-blue-900/30 rounded-full flex items-center justify-center flex-shrink-0">
+                  <Shield className="w-6 h-6 text-blue-600 dark:text-blue-400" />
+                </div>
+                
+                <div className="flex-1">
+                  <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">
+                    {filterData.name}
+                  </h1>
+                  {filterData.description && (
+                    <p className="text-gray-600 dark:text-gray-400 mb-2">
+                      {filterData.description}
+                    </p>
+                  )}
+                  <p className="text-gray-600 dark:text-gray-400 mb-4">
+                    Shared filter from <strong>{filterData.pipeline.name}</strong> pipeline
+                  </p>
+                  
+                  <div className="flex flex-wrap items-center gap-4 text-sm">
+                    <div className="flex items-center text-gray-500 dark:text-gray-400">
+                      <Clock className="w-4 h-4 mr-2" />
+                      Expires in {formatTimeRemaining(filterData.time_remaining_seconds)}
+                    </div>
+                    <div className="flex items-center text-gray-500 dark:text-gray-400">
+                      <Users className="w-4 h-4 mr-2" />
+                      {filterData.visible_fields?.length || 0} fields visible
+                    </div>
+                  </div>
+                </div>
               </div>
-              <div className="flex items-center space-x-1">
-                <Clock className="w-4 h-4" />
-                <span>Expires in {formatTimeRemaining(filterData.time_remaining_seconds)}</span>
+              
+              {/* Status Badge */}
+              <div className="flex flex-col items-end space-y-2">
+                {/* Access Mode Badge */}
+                <div className={`flex items-center px-3 py-1.5 rounded-full text-sm font-medium ${
+                  permissions.isReadOnly
+                    ? 'bg-gray-100 text-gray-800 dark:bg-gray-900/30 dark:text-gray-300'
+                    : 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300'
+                }`}>
+                  {permissions.isReadOnly ? (
+                    <>
+                      <Lock className="w-4 h-4 mr-1.5" />
+                      {getAccessModeDisplayName(filterData.access_mode)}
+                    </>
+                  ) : (
+                    <>
+                      <Edit className="w-4 h-4 mr-1.5" />
+                      {getAccessModeDisplayName(filterData.access_mode)}
+                    </>
+                  )}
+                </div>
+                
+                {/* Expiry Status Badge */}
+                <div className={`flex items-center px-3 py-1.5 rounded-full text-sm font-medium ${
+                  expiresSoon 
+                    ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300'
+                    : 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300'
+                }`}>
+                  {expiresSoon ? (
+                    <>
+                      <AlertCircle className="w-4 h-4 mr-1.5" />
+                      Expiring Soon
+                    </>
+                  ) : (
+                    <>
+                      <Eye className="w-4 h-4 mr-1.5" />
+                      Active
+                    </>
+                  )}
+                </div>
               </div>
             </div>
           </div>
+
+          {/* Expiry Warning */}
+          {expiresSoon && (
+            <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg p-4 mb-6">
+              <div className="flex items-start">
+                <AlertCircle className="w-5 h-5 text-amber-600 dark:text-amber-400 mt-0.5 mr-3 flex-shrink-0" />
+                <div>
+                  <h3 className="font-medium text-amber-900 dark:text-amber-200 mb-1">
+                    Share Link Expiring Soon
+                  </h3>
+                  <p className="text-sm text-amber-700 dark:text-amber-300">
+                    This shared filter will expire in {formatTimeRemaining(filterData.time_remaining_seconds)}. 
+                    After expiration, you will no longer be able to access this filtered data.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Access Information */}
+          <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4 mb-6">
+            <div className="flex items-start">
+              <Shield className="w-5 h-5 text-blue-600 dark:text-blue-400 mt-0.5 mr-3 flex-shrink-0" />
+              <div>
+                <h3 className="font-medium text-blue-900 dark:text-blue-200 mb-1">
+                  Secure Shared Access
+                </h3>
+                <p className="text-sm text-blue-700 dark:text-blue-300">
+                  This is a secure, encrypted share link with{' '}
+                  <strong>{getAccessModeDisplayName(filterData.access_mode).toLowerCase()}</strong> access.{' '}
+                  {getAccessModeDescription(filterData.access_mode)}
+                </p>
+                <p className="text-sm text-blue-700 dark:text-blue-300 mt-1">
+                  Access is logged for security purposes. No login is required.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Filter Content */}
+          <div className="bg-white dark:bg-gray-800 rounded-xl shadow-lg border border-gray-200 dark:border-gray-700">
+            <div className="p-6 border-b border-gray-200 dark:border-gray-700">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-xl font-semibold text-gray-900 dark:text-white">
+                    Filtered Records
+                  </h2>
+                  <p className="text-gray-600 dark:text-gray-400 mt-1">
+                    View the filtered records below. {getAccessModeDescription(filterData.access_mode)}
+                  </p>
+                </div>
+                <div className={`flex items-center px-3 py-1.5 rounded-full text-xs font-medium ${
+                  permissions.isReadOnly
+                    ? 'bg-gray-100 text-gray-700 dark:bg-gray-900/30 dark:text-gray-300'
+                    : 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300'
+                }`}>
+                  {permissions.isReadOnly ? (
+                    <>
+                      <Lock className="w-3 h-3 mr-1" />
+                      {getAccessModeDisplayName(filterData.access_mode)}
+                    </>
+                  ) : (
+                    <>
+                      <Edit className="w-3 h-3 mr-1" />
+                      {getAccessModeDisplayName(filterData.access_mode)}
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
+            
+            <div className="p-6">
+              {/* PublicRecordListView with token-based authentication */}
+              <PublicRecordListView
+                filterData={filterData}
+                token={token}
+                onEditRecord={(record, relatedPipeline) => {
+                  // Open record drawer for viewing (read-only or edit mode)
+                  setSelectedRecord(record)
+                  setIsRecordDrawerOpen(true)
+                  
+                  // Use related pipeline if provided, otherwise use main pipeline
+                  if (relatedPipeline) {
+                    console.log('🔗 Shared page: Using related pipeline for drawer:', relatedPipeline.name)
+                    setDrawerPipeline(relatedPipeline)
+                  } else {
+                    console.log('🔗 Shared page: Using main pipeline for drawer')
+                    setDrawerPipeline(pipelineData)
+                  }
+                }}
+                onCreateRecord={permissions.canCreate ? () => {
+                  // Handle create for filtered_edit mode
+                  console.log('Create new record')
+                  toast({
+                    title: 'Create functionality',
+                    description: 'Record creation for shared filters will be implemented soon.',
+                  })
+                } : () => {
+                  toast({
+                    title: 'Access Denied',
+                    description: getAccessDeniedMessage(filterData.access_mode, 'create'),
+                    variant: 'destructive',
+                  })
+                }}
+              />
+            </div>
+          </div>
+
+          {/* Footer */}
+          <div className="mt-8 text-center">
+            <p className="text-sm text-gray-500 dark:text-gray-400">
+              Powered by{' '}
+              <span className="font-medium text-blue-600 dark:text-blue-400">
+                Oneo CRM
+              </span>
+              {' '}- Secure Filter Sharing
+            </p>
+          </div>
         </div>
       </div>
-
-      {/* PublicRecordListView with token-based authentication */}
-      <PublicRecordListView
-        filterData={filterData}
-        token={token}
-        onEditRecord={(record, relatedPipeline) => {
-          // Open record drawer for viewing (read-only or edit mode)
-          setSelectedRecord(record)
-          setIsRecordDrawerOpen(true)
-          
-          // Use related pipeline if provided, otherwise use main pipeline
-          if (relatedPipeline) {
-            console.log('🔗 Shared page: Using related pipeline for drawer:', relatedPipeline.name)
-            setDrawerPipeline(relatedPipeline)
-          } else {
-            console.log('🔗 Shared page: Using main pipeline for drawer')
-            setDrawerPipeline(pipelineData)
-          }
-        }}
-        onCreateRecord={() => {
-          if (filterData.access_mode === 'readonly') {
-            toast({
-              title: 'Read-only access',
-              description: 'You can only view this data. Creating new records is not allowed.',
-              variant: 'destructive',
-            })
-          } else {
-            // Handle create for filtered_edit mode
-            console.log('Create new record')
-            toast({
-              title: 'Create functionality',
-              description: 'Record creation for shared filters will be implemented soon.',
-            })
-          }
-        }}
-      />
 
       {/* Record Detail Drawer */}
       {drawerPipeline && selectedRecord && (
@@ -387,18 +592,19 @@ export default function SharedFilterPage() {
           record={selectedRecord}
           pipeline={drawerPipeline}
           isOpen={isRecordDrawerOpen}
-          isReadOnly={filterData?.access_mode === 'readonly'}
+          isReadOnly={permissions.isReadOnly}
           isShared={true}
+          sharedToken={token}
           onClose={() => {
             setIsRecordDrawerOpen(false)
             setSelectedRecord(null)
             setDrawerPipeline(null)
           }}
           onSave={async (recordId: string, data: { [key: string]: any }) => {
-            if (filterData?.access_mode === 'readonly') {
+            if (!permissions.canEdit) {
               toast({
-                title: 'Read-only access',
-                description: 'You can only view this data. Editing is not allowed.',
+                title: 'Access Denied',
+                description: getAccessDeniedMessage(filterData.access_mode, 'edit'),
                 variant: 'destructive',
               })
               return

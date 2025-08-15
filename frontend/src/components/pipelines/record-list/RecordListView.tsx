@@ -3,6 +3,7 @@
 
 import React, { useState, useMemo, useEffect } from 'react'
 import { Plus } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 
 // Import types
 import { 
@@ -493,13 +494,10 @@ export function RecordListView({ pipeline: initialPipeline, onEditRecord, onCrea
           </div>
           
           <div className="flex items-center space-x-3">
-            <button
-              onClick={onCreateRecord}
-              className="px-4 py-2 bg-primary text-white rounded-md hover:bg-primary/90"
-            >
-              <Plus className="w-4 h-4 mr-2 inline" />
+            <Button onClick={onCreateRecord}>
+              <Plus className="w-4 h-4 mr-2" />
               Add Record
-            </button>
+            </Button>
             
             <RealtimeStatus isConnected={isConnected} />
           </div>
@@ -521,19 +519,16 @@ export function RecordListView({ pipeline: initialPipeline, onEditRecord, onCrea
               placeholder="Search records..."
             />
             
-            <button
+            <Button
               onClick={toggleFilterPanel}
-              className={`px-3 py-2 border rounded-md flex items-center ${
-                showFilters 
-                  ? 'border-primary bg-primary/10 text-primary'
-                  : 'border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700'
-              }`}
+              variant={showFilters ? "default" : "outline"}
+              className={showFilters ? "bg-primary/10 text-primary border-primary" : ""}
             >
               <svg className="w-4 h-4 mr-2" fill="currentColor" viewBox="0 0 20 20">
                 <path fillRule="evenodd" d="M3 3a1 1 0 011-1h12a1 1 0 011 1v3a1 1 0 01-.293.707L12 11.414V15a1 1 0 01-.293.707l-2 2A1 1 0 018 17v-5.586L3.293 6.707A1 1 0 013 6V3z" clipRule="evenodd" />
               </svg>
               Filters {activeFilterCount > 0 && `(${activeFilterCount})`}
-            </button>
+            </Button>
 
             {/* Filters controls moved to FilterPanel - now unified */}
 

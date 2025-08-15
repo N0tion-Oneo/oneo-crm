@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef, useMemo } from 'react'
+import { Button } from '@/components/ui/button'
 import { pipelinesApi, recordsApi } from '@/lib/api'
 import { useDocumentSubscription } from '@/hooks/use-websocket-subscription'
 import { type RealtimeMessage, type UserPresence } from '@/contexts/websocket-context'
@@ -227,6 +228,7 @@ export interface RecordDetailDrawerProps {
   onDelete?: (recordId: string) => Promise<void>
   isReadOnly?: boolean // For public/shared access
   isShared?: boolean // For shared filter context (hides activity/communications)
+  sharedToken?: string // For shared filter access
 }
 
 // Field icons mapping (from pipeline-field-builder)
@@ -446,7 +448,8 @@ export function RecordDetailDrawer({
   onSave, 
   onDelete,
   isReadOnly = false,
-  isShared = false
+  isShared = false,
+  sharedToken
 }: RecordDetailDrawerProps) {
   const { user } = useAuth()
   const [formData, setFormData] = useState<{ [key: string]: any }>({})
@@ -856,12 +859,19 @@ export function RecordDetailDrawer({
       }
       
       // For EXISTING records, use FieldSaveService based on save strategy
-      console.log('EXISTING record - using FieldSaveService:', { fieldName: field.name, newValue, isSaving: isSavingRef.current }) // DEBUG
+      console.log('EXISTING record - using FieldSaveService:', { fieldName: field.name, newValue, isSaving: isSavingRef.current, isShared, sharedToken }) // DEBUG
       isSavingRef.current = true
+      
+      // Use shared API endpoint if in shared context, otherwise use authenticated endpoint
+      const apiEndpoint = sharedToken 
+        ? `/api/v1/public-filters/${sharedToken}/records/${record.id}/`
+        : `/api/pipelines/${pipeline.id}/records/${record.id}/`
+      
       fieldSaveService.onFieldChange({
         field: fieldType,
         newValue,
-        apiEndpoint: `/api/pipelines/${pipeline.id}/records/${record.id}/`,
+        apiEndpoint,
+        isSharedContext: !!sharedToken,
         onSuccess: (result) => {
           console.log('FieldSaveService SUCCESS - updating formData:', { fieldName: field.name, newValue, result }) // DEBUG
           setFormData(prev => {
@@ -1013,48 +1023,53 @@ export function RecordDetailDrawer({
             </div>
           </div>
           
-          <button
+          <Button
             onClick={onClose}
-            className="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 rounded-md hover:bg-gray-100 dark:hover:bg-gray-700"
+            variant="ghost"
+            size="icon"
+            className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
           >
             <X className="w-5 h-5" />
-          </button>
+          </Button>
         </div>
 
         {/* Tabs - Only show details tab in shared mode */}
         <div className="flex border-b border-gray-200 dark:border-gray-700">
-          <button
+          <Button
             onClick={() => setActiveTab('details')}
-            className={`px-6 py-3 text-sm font-medium border-b-2 transition-colors ${
+            variant="ghost"
+            className={`px-6 py-3 rounded-none border-b-2 transition-colors ${
               activeTab === 'details'
                 ? 'border-primary text-primary'
                 : 'border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'
             }`}
           >
             Details
-          </button>
+          </Button>
           {!isShared && (
             <>
-              <button
+              <Button
                 onClick={() => setActiveTab('activity')}
-                className={`px-6 py-3 text-sm font-medium border-b-2 transition-colors ${
+                variant="ghost"
+                className={`px-6 py-3 rounded-none border-b-2 transition-colors ${
                   activeTab === 'activity'
                     ? 'border-primary text-primary'
                     : 'border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'
                 }`}
               >
                 Activity ({activities.length})
-              </button>
-              <button
+              </Button>
+              <Button
                 onClick={() => setActiveTab('communications')}
-                className={`px-6 py-3 text-sm font-medium border-b-2 transition-colors ${
+                variant="ghost"
+                className={`px-6 py-3 rounded-none border-b-2 transition-colors ${
                   activeTab === 'communications'
                     ? 'border-primary text-primary'
                     : 'border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'
                 }`}
               >
                 Communications
-              </button>
+              </Button>
             </>
           )}
         </div>
@@ -1227,32 +1242,32 @@ export function RecordDetailDrawer({
             )}
             
             {record && onDelete && !isReadOnly && (
-              <button
+              <Button
                 onClick={() => onDelete(record.id)}
-                className="px-4 py-2 text-red-600 hover:text-red-700 border border-red-300 hover:border-red-400 rounded-md hover:bg-red-50 dark:hover:bg-red-900/20"
+                variant="outline"
+                className="text-red-600 hover:text-red-700 border-red-300 hover:border-red-400 hover:bg-red-50 dark:hover:bg-red-900/20"
                 title="Move record to trash (can be restored)"
               >
-                <Trash2 className="w-4 h-4 mr-2 inline" />
+                <Trash2 className="w-4 h-4 mr-2" />
                 Move to Trash
-              </button>
+              </Button>
             )}
             
-            <button
+            <Button
               onClick={onClose}
-              className="px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700"
+              variant="outline"
             >
               {isReadOnly ? 'Close' : 'Cancel'}
-            </button>
+            </Button>
             
             {!isReadOnly && (
-              <button
+              <Button
                 onClick={handleCreateRecord}
                 disabled={validationErrors.length > 0}
-                className="px-4 py-2 bg-primary text-white rounded-md hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                <Save className="w-4 h-4 mr-2 inline" />
+                <Save className="w-4 h-4 mr-2" />
                 {record ? 'Close' : 'Create Record'}
-              </button>
+              </Button>
             )}
           </div>
         </div>

@@ -41,6 +41,7 @@ from .views.communications import (
     ChannelViewSet, ConversationViewSet, 
     MessageViewSet, CommunicationAnalyticsViewSet
 )
+from communications.api.views import AccountConnectionViewSet
 from .views.tracking import (
     CommunicationTrackingViewSet, DeliveryTrackingViewSet,
     ReadTrackingViewSet, ResponseTrackingViewSet,
@@ -108,6 +109,11 @@ router.register(r'channels', ChannelViewSet, basename='channel')
 router.register(r'conversations', ConversationViewSet, basename='conversation')
 router.register(r'messages', MessageViewSet, basename='message')
 router.register(r'communication-analytics', CommunicationAnalyticsViewSet, basename='communication-analytics')
+
+# Account connection endpoints
+router.register(r'account-connections', AccountConnectionViewSet, basename='account-connection')
+
+# Communications API endpoints (handled via include)
 
 # Communication tracking endpoints
 router.register(r'communication-tracking', CommunicationTrackingViewSet, basename='communication-tracking')
@@ -188,6 +194,9 @@ api_patterns = [
     path('realtime/activity/', activity_stream, name='realtime-activity'),
     path('realtime/dashboard/<str:dashboard_id>/', dashboard_stream, name='realtime-dashboard'),
     path('realtime/pipeline/<str:pipeline_id>/', pipeline_stream, name='realtime-pipeline'),
+    
+    # Communications account management endpoints
+    path('communications/', include('communications.api.urls')),
     
     # API documentation
     path('schema/', SpectacularAPIView.as_view(), name='schema'),

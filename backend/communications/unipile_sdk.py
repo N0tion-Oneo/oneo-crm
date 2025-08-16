@@ -46,6 +46,7 @@ class UnipileClient:
         self.account = UnipileAccountClient(self)
         self.messaging = UnipileMessagingClient(self)
         self.users = UnipileUsersClient(self)
+        self.webhooks = UnipileWebhookClient(self)
         self.request = UnipileRequestClient(self)
     
     async def _make_request(
@@ -81,7 +82,7 @@ class UnipileClient:
                     
                     response_data = await response.json()
                     
-                    if response.status == 200:
+                    if response.status in [200, 201]:  # Accept both 200 OK and 201 Created
                         return response_data
                     elif response.status == 401:
                         raise UnipileAuthenticationError(
@@ -112,9 +113,105 @@ class UnipileAccountClient:
         """Get all connected accounts"""
         try:
             response = await self.client._make_request('GET', 'accounts')
-            return response.get('accounts', [])
+            # UniPile returns a list directly, not wrapped in 'accounts' key
+            return response if isinstance(response, list) else response.get('accounts', [])
         except Exception as e:
             logger.error(f"Failed to get accounts: {e}")
+            raise
+    
+    async def request_hosted_link(self, 
+                                  providers: Union[str, List[str]], 
+                                  success_redirect_url: Optional[str] = None,
+                                  failure_redirect_url: Optional[str] = None,
+                                  name: Optional[str] = None,
+                                  notify_url: Optional[str] = None,
+                                  account_id: Optional[str] = None) -> Dict[str, Any]:
+        """Request hosted authentication link with proper UniPile format"""
+        try:
+            from datetime import datetime, timedelta, timezone
+            
+            # Convert provider to UniPile format (exact provider names from UniPile docs)
+            # Supported: LINKEDIN | WHATSAPP | INSTAGRAM | MESSENGER | TELEGRAM | GOOGLE | OUTLOOK | MAIL | TWITTER
+            if isinstance(providers, str):
+                provider_lower = providers.lower()
+                if provider_lower == 'linkedin':
+                    provider_list = ['LINKEDIN']
+                elif provider_lower in ['gmail', 'google']:
+                    provider_list = ['GOOGLE']
+                elif provider_lower == 'outlook':
+                    provider_list = ['OUTLOOK']
+                elif provider_lower in ['email', 'mail']:
+                    provider_list = ['MAIL']
+                elif provider_lower == 'whatsapp':
+                    provider_list = ['WHATSAPP']
+                elif provider_lower == 'instagram':
+                    provider_list = ['INSTAGRAM']
+                elif provider_lower in ['messenger', 'facebook']:
+                    provider_list = ['MESSENGER']
+                elif provider_lower == 'telegram':
+                    provider_list = ['TELEGRAM']
+                elif provider_lower == 'twitter':
+                    provider_list = ['TWITTER']
+                else:
+                    # For unknown providers, try uppercase
+                    provider_list = [providers.upper()]
+            else:
+                # Convert list of providers
+                provider_list = []
+                for p in providers:
+                    p_lower = p.lower()
+                    if p_lower == 'linkedin':
+                        provider_list.append('LINKEDIN')
+                    elif p_lower in ['gmail', 'google']:
+                        provider_list.append('GOOGLE')
+                    elif p_lower == 'outlook':
+                        provider_list.append('OUTLOOK')
+                    elif p_lower in ['email', 'mail']:
+                        provider_list.append('MAIL')
+                    elif p_lower == 'whatsapp':
+                        provider_list.append('WHATSAPP')
+                    elif p_lower == 'instagram':
+                        provider_list.append('INSTAGRAM')
+                    elif p_lower in ['messenger', 'facebook']:
+                        provider_list.append('MESSENGER')
+                    elif p_lower == 'telegram':
+                        provider_list.append('TELEGRAM')
+                    elif p_lower == 'twitter':
+                        provider_list.append('TWITTER')
+                    else:
+                        provider_list.append(p.upper())
+            
+            # Set expiration to 24 hours from now with proper ISO format
+            expires_dt = datetime.now(timezone.utc) + timedelta(days=1)
+            expires_on = expires_dt.strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
+            
+            # Create the request data
+            data = {
+                'type': 'reconnect' if account_id else 'create',
+                'api_url': self.client.dsn,  # Use the DSN as the API URL
+                'expiresOn': expires_on,
+                'providers': provider_list
+            }
+            
+            if account_id:
+                data['reconnect_account'] = account_id
+            
+            if name:
+                data['name'] = name
+            
+            if success_redirect_url:
+                data['success_redirect_url'] = success_redirect_url
+                
+            if failure_redirect_url:
+                data['failure_redirect_url'] = failure_redirect_url
+                
+            if notify_url:
+                data['notify_url'] = notify_url
+                
+            response = await self.client._make_request('POST', 'hosted/accounts/link', data=data)
+            return response
+        except Exception as e:
+            logger.error(f"Failed to request hosted link for {providers}: {e}")
             raise
     
     async def get_account(self, account_id: str) -> Dict[str, Any]:
@@ -194,6 +291,52 @@ class UnipileAccountClient:
             return response
         except Exception as e:
             logger.error(f"Failed to get account status {account_id}: {e}")
+            raise
+    
+    async def restart_account(self, account_id: str) -> Dict[str, Any]:
+        """Restart an account"""
+        try:
+            response = await self.client._make_request('POST', f'accounts/{account_id}/restart')
+            return response
+        except Exception as e:
+            logger.error(f"Failed to restart account {account_id}: {e}")
+            raise
+    
+    async def resync_account(self, account_id: str) -> Dict[str, Any]:
+        """Resynchronize account messaging data"""
+        try:
+            response = await self.client._make_request('POST', f'accounts/{account_id}/resync')
+            return response
+        except Exception as e:
+            logger.error(f"Failed to resync account {account_id}: {e}")
+            raise
+    
+    async def solve_checkpoint(self, account_id: str, code: str) -> Dict[str, Any]:
+        """Solve a code checkpoint"""
+        try:
+            data = {'code': code}
+            response = await self.client._make_request('POST', f'accounts/{account_id}/checkpoint/solve', data=data)
+            return response
+        except Exception as e:
+            logger.error(f"Failed to solve checkpoint for account {account_id}: {e}")
+            raise
+    
+    async def resend_checkpoint(self, account_id: str) -> Dict[str, Any]:
+        """Resend checkpoint notification"""
+        try:
+            response = await self.client._make_request('POST', f'accounts/{account_id}/checkpoint/resend')
+            return response
+        except Exception as e:
+            logger.error(f"Failed to resend checkpoint for account {account_id}: {e}")
+            raise
+    
+    async def reconnect_account(self, account_id: str) -> Dict[str, Any]:
+        """Reconnect an account"""
+        try:
+            response = await self.client._make_request('POST', f'accounts/{account_id}/reconnect')
+            return response
+        except Exception as e:
+            logger.error(f"Failed to reconnect account {account_id}: {e}")
             raise
 
 
@@ -359,6 +502,77 @@ class UnipileUsersClient:
             raise
 
 
+class UnipileWebhookClient:
+    """UniPile webhook management client"""
+    
+    def __init__(self, client: UnipileClient):
+        self.client = client
+    
+    async def create_webhook(self, url: str, source: str = 'messaging', events: List[str] = None, name: str = None) -> Dict[str, Any]:
+        """Create a webhook with proper UniPile format"""
+        try:
+            # Use proper UniPile webhook format
+            data = {
+                'request_url': url,  # UniPile uses 'request_url' not 'url'
+                'source': source,    # Required: messaging, email, account_status, users, email_tracking
+                'format': 'json',    # Default to JSON format
+                'enabled': True      # Enable the webhook
+            }
+            
+            if name:
+                data['name'] = name
+            
+            # Set default events based on source type
+            if events:
+                data['events'] = events
+            elif source == 'messaging':
+                data['events'] = ['message_received', 'message_delivered', 'message_read']
+            elif source == 'email':
+                data['events'] = ['mail_received', 'mail_sent']
+            elif source == 'account_status':
+                data['events'] = ['creation_success', 'creation_fail', 'error', 'credentials', 'permissions']
+            elif source == 'users':
+                data['events'] = ['new_relation']
+            elif source == 'email_tracking':
+                data['events'] = ['mail_opened', 'mail_link_clicked']
+            
+            response = await self.client._make_request('POST', 'webhooks', data=data)
+            return response
+        except Exception as e:
+            logger.error(f"Failed to create webhook: {e}")
+            raise
+    
+    async def create_messaging_webhook(self, url: str, events: List[str] = None, name: str = None) -> Dict[str, Any]:
+        """Create a messaging webhook specifically"""
+        return await self.create_webhook(url, source='messaging', events=events, name=name)
+    
+    async def create_email_webhook(self, url: str, events: List[str] = None, name: str = None) -> Dict[str, Any]:
+        """Create an email webhook specifically"""
+        return await self.create_webhook(url, source='email', events=events, name=name)
+    
+    async def create_account_status_webhook(self, url: str, events: List[str] = None, name: str = None) -> Dict[str, Any]:
+        """Create an account status webhook specifically"""
+        return await self.create_webhook(url, source='account_status', events=events, name=name)
+    
+    async def list_webhooks(self) -> List[Dict[str, Any]]:
+        """List all webhooks"""
+        try:
+            response = await self.client._make_request('GET', 'webhooks')
+            return response if isinstance(response, list) else response.get('webhooks', [])
+        except Exception as e:
+            logger.error(f"Failed to list webhooks: {e}")
+            raise
+    
+    async def delete_webhook(self, webhook_id: str) -> Dict[str, Any]:
+        """Delete a webhook"""
+        try:
+            response = await self.client._make_request('DELETE', f'webhooks/{webhook_id}')
+            return response
+        except Exception as e:
+            logger.error(f"Failed to delete webhook {webhook_id}: {e}")
+            raise
+
+
 class UnipileRequestClient:
     """UniPile custom request client for unsupported endpoints"""
     
@@ -385,20 +599,24 @@ class UnipileRequestClient:
 class UnipileService:
     """
     High-level UniPile service for Django integration
-    Manages tenant-level configuration and user-level connections
+    Uses global configuration and manages user-level connections
     """
     
     def __init__(self):
-        self._clients = {}  # Cache for tenant clients
+        self._client = None  # Single global client
     
-    def get_client(self, dsn: str, access_token: str) -> UnipileClient:
-        """Get or create UniPile client for tenant"""
-        cache_key = f"{dsn}:{access_token[:8]}"  # Cache by DSN and token prefix
+    def get_client(self) -> UnipileClient:
+        """Get or create global UniPile client"""
+        if self._client is None:
+            # Import the global config directly from settings module
+            from oneo_crm.settings import unipile_settings as global_config
+            
+            if not global_config.is_configured():
+                raise UnipileConnectionError("UniPile not configured. Please set UNIPILE_DSN and UNIPILE_API_KEY")
+            
+            self._client = UnipileClient(global_config.dsn, global_config.api_key)
         
-        if cache_key not in self._clients:
-            self._clients[cache_key] = UnipileClient(dsn, access_token)
-        
-        return self._clients[cache_key]
+        return self._client
     
     async def connect_user_account(
         self, 

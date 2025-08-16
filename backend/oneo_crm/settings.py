@@ -5,10 +5,21 @@ Multi-tenant configuration with django-tenants for schema isolation.
 
 import os
 from pathlib import Path
-from decouple import config
+from decouple import config, Config, RepositoryEnv
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+# Project root (one level up from backend)
+PROJECT_ROOT = BASE_DIR.parent
+
+# Configure decouple to look for .env in project root
+env_path = PROJECT_ROOT / '.env'
+if env_path.exists():
+    config = Config(RepositoryEnv(str(env_path)))
+else:
+    # Fallback to default behavior
+    config = config
 
 # Security settings
 SECRET_KEY = config('SECRET_KEY', default='django-insecure-development-key-change-in-production')
@@ -70,6 +81,8 @@ ALLOWED_HOSTS = [
     'localhost', 
     '127.0.0.1',
     '.localhost',  # Subdomain wildcard for development (demo.localhost, test.localhost, etc.)
+    'oneocrm.com',  # Cloudflare tunnel domain
+    '.oneocrm.com',  # Subdomain wildcard for production
     '.example.com',  # Production domain pattern (customize as needed)
 ]
 
@@ -318,9 +331,54 @@ CORS_ALLOWED_ORIGIN_REGEXES = [
     r"^http://.*\.localhost:3000$",  # Any subdomain of localhost:3000
     r"^http://localhost:3000$",     # Regular localhost:3000
     r"^http://127\.0\.0\.1:3000$",  # IP address access
+    r"^https://.*\.oneocrm\.com$",  # Cloudflare tunnel subdomains
+    r"^https://oneocrm\.com$",      # Cloudflare tunnel main domain
 ] if DEBUG else []
 
 CORS_ALLOW_CREDENTIALS = True
+
+# UniPile Global Configuration
+# Global app-level configuration for all tenants
+UNIPILE_DSN = config('UNIPILE_DSN', default='')
+UNIPILE_API_KEY = config('UNIPILE_API_KEY', default='')
+
+# UniPile Settings Class
+class UnipileSettings:
+    """Centralized UniPile configuration management"""
+    
+    @property
+    def dsn(self):
+        return UNIPILE_DSN
+    
+    @property 
+    def api_key(self):
+        return UNIPILE_API_KEY
+    
+    @property
+    def base_url(self):
+        if not self.dsn:
+            return None
+        return f"{self.dsn.rstrip('/')}/api/v1"
+    
+    def is_configured(self):
+        """Check if UniPile is properly configured"""
+        return bool(self.dsn and self.api_key)
+    
+    def get_webhook_url(self, request=None):
+        """Get the webhook URL for UniPile registration"""
+        # Always use the Cloudflare tunnel domain for webhooks
+        # This ensures UniPile can reach our localhost development environment
+        webhook_domain = config('WEBHOOK_DOMAIN', default='oneocrm.com')
+        
+        if DEBUG:
+            # Development: Use Cloudflare tunnel webhook subdomain
+            return f"https://webhooks.{webhook_domain}/webhooks/unipile/"
+        else:
+            # Production: Use the actual domain
+            return f"https://{webhook_domain}/webhooks/unipile/"
+
+# Global UniPile settings instance
+unipile_settings = UnipileSettings()
 
 # CSRF trusted origins for development
 CSRF_TRUSTED_ORIGINS = [

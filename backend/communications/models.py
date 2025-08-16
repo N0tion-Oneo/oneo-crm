@@ -22,13 +22,11 @@ User = get_user_model()
 
 
 class TenantUniPileConfig(models.Model):
-    """Tenant-level UniPile API configuration - moved to communications app for proper dependencies"""
-    # Note: tenant reference will be handled through tenant context since this is now in TENANT_APPS
+    """Tenant-level UniPile preferences and settings"""
+    # Note: Global DSN/API key are in settings.py, this stores tenant-specific preferences
     
-    # UniPile API Configuration
-    dsn = models.CharField(max_length=255, help_text="UniPile Data Source Name")
-    access_token_encrypted = models.TextField(help_text="Encrypted UniPile access token")
-    webhook_secret = models.CharField(max_length=255, help_text="Webhook verification secret")
+    # Webhook Configuration (optional - for tenant-specific secrets)
+    webhook_secret = models.CharField(max_length=255, blank=True, help_text="Optional tenant-specific webhook secret")
     
     # Message tracking settings
     auto_create_contacts = models.BooleanField(default=True, help_text="Auto-create contact records from messages")
@@ -77,47 +75,35 @@ class TenantUniPileConfig(models.Model):
         from django_tenants.utils import connection
         return f"UniPile Config for tenant: {connection.tenant.name if hasattr(connection, 'tenant') else 'Unknown'}"
     
-    @property
-    def encryption_key(self):
-        """Get encryption key from Django settings"""
+    @classmethod
+    def get_or_create_for_tenant(cls):
+        """Get or create UniPile config for current tenant"""
+        config, created = cls.objects.get_or_create(defaults={
+            'auto_create_contacts': True,
+            'sync_historical_days': 30,
+            'enable_real_time_sync': True,
+            'max_api_calls_per_hour': 1000,
+            'is_active': True
+        })
+        return config
+    
+    def get_global_config(self):
+        """Get global UniPile configuration from settings"""
         from django.conf import settings
-        if hasattr(settings, 'TENANT_AI_ENCRYPTION_KEY'):
-            return settings.TENANT_AI_ENCRYPTION_KEY.encode()
-        else:
-            # Fallback to a default key (should be in settings for production)
-            return b'dummy-key-for-development-only-replace-in-prod'
-    
-    def get_access_token(self):
-        """Decrypt and return UniPile access token"""
-        if not self.access_token_encrypted:
-            return None
-        
-        try:
-            f = Fernet(base64.urlsafe_b64encode(self.encryption_key[:32]))
-            decrypted_token = f.decrypt(self.access_token_encrypted.encode())
-            return decrypted_token.decode()
-        except Exception as e:
-            import logging
-            logger = logging.getLogger(__name__)
-            logger.error(f"Failed to decrypt UniPile token: {e}")
-            return None
-    
-    def set_access_token(self, token):
-        """Encrypt and store UniPile access token"""
-        try:
-            f = Fernet(base64.urlsafe_b64encode(self.encryption_key[:32]))
-            encrypted_token = f.encrypt(token.encode())
-            self.access_token_encrypted = encrypted_token.decode()
-            return True
-        except Exception as e:
-            import logging
-            logger = logging.getLogger(__name__)
-            logger.error(f"Failed to encrypt UniPile token: {e}")
-            return False
+        return settings.unipile_settings
     
     def is_configured(self):
-        """Check if UniPile is properly configured"""
-        return bool(self.dsn and self.get_access_token() and self.is_active)
+        """Check if UniPile is properly configured (globally + tenant active)"""
+        global_config = self.get_global_config()
+        return global_config.is_configured() and self.is_active
+    
+    def get_api_credentials(self):
+        """Get API credentials (DSN and API key from global config)"""
+        global_config = self.get_global_config()
+        return {
+            'dsn': global_config.dsn,
+            'api_key': global_config.api_key
+        }
     
     def record_webhook_success(self):
         """Record successful webhook reception"""
@@ -132,14 +118,17 @@ class TenantUniPileConfig(models.Model):
 
 
 class ChannelType(models.TextChoices):
-    """Available communication channel types"""
-    EMAIL = 'email', 'Email'
-    WHATSAPP = 'whatsapp', 'WhatsApp'
+    """Available communication channel types matching UniPile providers exactly"""
+    # UniPile supported: LINKEDIN | WHATSAPP | INSTAGRAM | MESSENGER | TELEGRAM | GOOGLE | OUTLOOK | MAIL | TWITTER
     LINKEDIN = 'linkedin', 'LinkedIn'
-    SMS = 'sms', 'SMS'
-    SLACK = 'slack', 'Slack'
+    GOOGLE = 'gmail', 'Gmail'  # Maps to GOOGLE in UniPile
+    OUTLOOK = 'outlook', 'Outlook'
+    MAIL = 'mail', 'Email (Generic)'  # UniPile MAIL provider
+    WHATSAPP = 'whatsapp', 'WhatsApp'
+    INSTAGRAM = 'instagram', 'Instagram'
+    MESSENGER = 'messenger', 'Facebook Messenger'
     TELEGRAM = 'telegram', 'Telegram'
-    DISCORD = 'discord', 'Discord'
+    TWITTER = 'twitter', 'Twitter/X'
 
 
 class AuthStatus(models.TextChoices):
@@ -191,7 +180,7 @@ class UserChannelConnection(models.Model):
     
     # Channel identification
     channel_type = models.CharField(max_length=20, choices=ChannelType.choices)
-    external_account_id = models.CharField(max_length=255, help_text="UniPile account ID")
+    unipile_account_id = models.CharField(max_length=255, help_text="UniPile account ID")
     account_name = models.CharField(max_length=255, help_text="Display name for the account")
     
     # Authentication details
@@ -210,18 +199,45 @@ class UserChannelConnection(models.Model):
         help_text="Channel-specific configuration (API keys, webhooks, etc.)"
     )
     
+    # Hosted authentication support
+    hosted_auth_url = models.URLField(blank=True, help_text="Hosted authentication URL for pending connections")
+    checkpoint_data = models.JSONField(
+        default=dict,
+        help_text="2FA/checkpoint data for authentication challenges"
+    )
+    
+    # Enhanced status tracking
+    account_status = models.CharField(
+        max_length=50,
+        default='pending',
+        choices=[
+            ('pending', 'Pending Connection'),
+            ('active', 'Active'),
+            ('failed', 'Failed'),
+            ('expired', 'Expired'),
+            ('checkpoint_required', 'Checkpoint Required'),
+            ('disconnected', 'Disconnected'),
+        ],
+        help_text="Current account status"
+    )
+    
     # Status and metadata
     is_active = models.BooleanField(default=True)
     last_sync_at = models.DateTimeField(null=True, blank=True)
     sync_error_count = models.IntegerField(default=0)
     last_error = models.TextField(blank=True)
     
+    # Rate limiting and usage tracking
+    messages_sent_today = models.IntegerField(default=0)
+    rate_limit_per_hour = models.IntegerField(default=100)
+    last_rate_limit_reset = models.DateTimeField(null=True, blank=True)
+    
     # Timestamps
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
     class Meta:
-        unique_together = ['user', 'channel_type', 'external_account_id']
+        unique_together = ['user', 'channel_type', 'unipile_account_id']
         indexes = [
             models.Index(fields=['user', 'channel_type']),
             models.Index(fields=['auth_status', 'is_active']),
@@ -242,6 +258,80 @@ class UserChannelConnection(models.Model):
         if not self.token_expires_at:
             return False
         return django_timezone.now() >= (self.token_expires_at - timezone.timedelta(hours=1))
+    
+    def needs_reconnection(self) -> bool:
+        """Check if account needs reconnection"""
+        return self.account_status in ['failed', 'expired', 'disconnected']
+    
+    def can_send_messages(self) -> bool:
+        """Check if account can send messages"""
+        if not self.is_active or self.account_status != 'active':
+            return False
+        
+        # Check rate limiting
+        now = django_timezone.now()
+        if self.last_rate_limit_reset and self.last_rate_limit_reset.date() != now.date():
+            # Reset daily counter
+            self.messages_sent_today = 0
+            self.last_rate_limit_reset = now
+            self.save(update_fields=['messages_sent_today', 'last_rate_limit_reset'])
+        
+        return self.messages_sent_today < self.rate_limit_per_hour
+    
+    def get_status_display_info(self) -> dict:
+        """Get detailed status information for display"""
+        status_info = {
+            'status': self.account_status,
+            'display': self.get_account_status_display(),
+            'can_send': self.can_send_messages(),
+            'needs_action': False,
+            'action_type': None,
+            'message': ''
+        }
+        
+        if self.account_status == 'checkpoint_required':
+            status_info['needs_action'] = True
+            status_info['action_type'] = 'checkpoint'
+            status_info['message'] = 'Account requires verification code'
+        elif self.needs_reconnection():
+            status_info['needs_action'] = True
+            status_info['action_type'] = 'reconnect'
+            status_info['message'] = 'Account needs to be reconnected'
+        elif self.account_status == 'pending' and self.hosted_auth_url:
+            status_info['needs_action'] = True
+            status_info['action_type'] = 'complete_auth'
+            status_info['message'] = 'Complete authentication process'
+        
+        return status_info
+    
+    def record_message_sent(self):
+        """Record that a message was sent (for rate limiting)"""
+        now = django_timezone.now()
+        if not self.last_rate_limit_reset or self.last_rate_limit_reset.date() != now.date():
+            # Reset daily counter
+            self.messages_sent_today = 1
+            self.last_rate_limit_reset = now
+        else:
+            self.messages_sent_today += 1
+        
+        self.save(update_fields=['messages_sent_today', 'last_rate_limit_reset'])
+    
+    def record_sync_success(self):
+        """Record successful sync"""
+        self.last_sync_at = django_timezone.now()
+        self.sync_error_count = 0
+        self.last_error = ''
+        if self.account_status in ['failed', 'expired']:
+            self.account_status = 'active'
+        self.save(update_fields=['last_sync_at', 'sync_error_count', 'last_error', 'account_status'])
+    
+    def record_sync_failure(self, error_message: str = ''):
+        """Record sync failure"""
+        self.sync_error_count += 1
+        self.last_error = error_message
+        if self.sync_error_count >= 3:  # Mark as failed after 3 consecutive failures
+            self.account_status = 'failed'
+        self.save(update_fields=['sync_error_count', 'last_error', 'account_status'])
 
 
 class Channel(models.Model):
@@ -257,7 +347,7 @@ class Channel(models.Model):
     channel_type = models.CharField(max_length=20, choices=ChannelType.choices)
     
     # External integration
-    external_account_id = models.CharField(
+    unipile_account_id = models.CharField(
         max_length=255, 
         help_text="UniPile account ID for this channel"
     )

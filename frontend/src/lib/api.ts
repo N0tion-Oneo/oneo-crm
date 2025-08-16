@@ -660,6 +660,31 @@ export const aiApi = {
   }
 }
 
+// Communications API client functions
+export const communicationsApi = {
+  // Connection management
+  getConnections: () => api.get('/api/v1/communications/connections/'),
+  
+  deleteConnection: (connectionId: string) => 
+    api.delete(`/api/v1/communications/connections/${connectionId}/`),
+  
+  // Hosted authentication
+  requestHostedAuth: (data: {
+    providers: string[]
+    success_redirect_url: string
+    failure_redirect_url: string
+    name: string
+    account_id?: string
+  }) => api.post('/api/v1/communications/request-hosted-auth/', data),
+  
+  // Checkpoint resolution
+  solveCheckpoint: (connectionId: string, data: { code: string }) =>
+    api.post(`/api/v1/communications/connections/${connectionId}/checkpoint/solve/`, data),
+  
+  resendCheckpoint: (connectionId: string) =>
+    api.post(`/api/v1/communications/connections/${connectionId}/checkpoint/resend/`),
+}
+
 // Saved Filters API client functions
 export const savedFiltersApi = {
   // Saved Filters CRUD

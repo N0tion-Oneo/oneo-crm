@@ -19,4 +19,7 @@ urlpatterns = [
     
     # Tenant registration (public schema only)
     path('api/tenants/', include('tenants.urls')),
+    
+    # Global webhook endpoints (accessible from webhook subdomain)
+    path('webhooks/', include('communications.webhooks.urls')),
 ]

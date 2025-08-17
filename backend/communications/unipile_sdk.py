@@ -48,6 +48,9 @@ class UnipileClient:
         self.users = UnipileUsersClient(self)
         self.webhooks = UnipileWebhookClient(self)
         self.request = UnipileRequestClient(self)
+        self.linkedin = UnipileLinkedInClient(self)
+        self.email = UnipileEmailClient(self)
+        self.calendar = UnipileCalendarClient(self)
     
     async def _make_request(
         self, 
@@ -416,7 +419,7 @@ class UnipileMessagingClient:
             if attachments:
                 data['attachments'] = attachments
                 
-            response = await self.client._make_request('POST', 'messages/send', data=data)
+            response = await self.client._make_request('POST', f'chats/{chat_id}/messages', data=data)
             return response
         except Exception as e:
             logger.error(f"Failed to send message: {e}")
@@ -596,6 +599,743 @@ class UnipileRequestClient:
         return await self.client._make_request('DELETE', endpoint)
 
 
+class UnipileLinkedInClient:
+    """LinkedIn-specific UniPile client for advanced LinkedIn features"""
+    
+    def __init__(self, client: UnipileClient):
+        self.client = client
+    
+    # Job Posting Management
+    async def create_job_posting(
+        self, 
+        account_id: str,
+        job_title: str,
+        company_name: str,
+        location: str,
+        description: str,
+        requirements: str,
+        employment_type: str = "FULL_TIME",
+        experience_level: str = "MID_LEVEL",
+        salary_range: Optional[Dict] = None,
+        skills: Optional[List[str]] = None,
+        apply_url: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Create a new job posting on LinkedIn"""
+        try:
+            data = {
+                'account_id': account_id,
+                'job_title': job_title,
+                'company_name': company_name,
+                'location': location,
+                'description': description,
+                'requirements': requirements,
+                'employment_type': employment_type,  # FULL_TIME, PART_TIME, CONTRACT, INTERNSHIP
+                'experience_level': experience_level,  # ENTRY_LEVEL, MID_LEVEL, SENIOR_LEVEL, DIRECTOR, EXECUTIVE
+            }
+            
+            if salary_range:
+                data['salary_range'] = salary_range
+            if skills:
+                data['skills'] = skills
+            if apply_url:
+                data['apply_url'] = apply_url
+                
+            response = await self.client._make_request('POST', 'linkedin/jobs', data=data)
+            return response
+        except Exception as e:
+            logger.error(f"Failed to create job posting: {e}")
+            raise
+    
+    async def get_job_postings(
+        self, 
+        account_id: str,
+        status: Optional[str] = None,
+        limit: int = 20,
+        cursor: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Get job postings for account"""
+        try:
+            params = {
+                'account_id': account_id,
+                'limit': limit
+            }
+            if status:
+                params['status'] = status  # ACTIVE, PAUSED, CLOSED, DRAFT
+            if cursor:
+                params['cursor'] = cursor
+                
+            response = await self.client._make_request('GET', 'linkedin/jobs', params=params)
+            return response
+        except Exception as e:
+            logger.error(f"Failed to get job postings: {e}")
+            raise
+    
+    async def update_job_posting(
+        self, 
+        account_id: str,
+        job_id: str,
+        updates: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Update an existing job posting"""
+        try:
+            data = {
+                'account_id': account_id,
+                **updates
+            }
+            response = await self.client._make_request('PUT', f'linkedin/jobs/{job_id}', data=data)
+            return response
+        except Exception as e:
+            logger.error(f"Failed to update job posting {job_id}: {e}")
+            raise
+    
+    async def close_job_posting(self, account_id: str, job_id: str) -> Dict[str, Any]:
+        """Close a job posting"""
+        try:
+            data = {'account_id': account_id}
+            response = await self.client._make_request('POST', f'linkedin/jobs/{job_id}/close', data=data)
+            return response
+        except Exception as e:
+            logger.error(f"Failed to close job posting {job_id}: {e}")
+            raise
+    
+    # Applicant Management
+    async def get_job_applicants(
+        self, 
+        account_id: str,
+        job_id: str,
+        status: Optional[str] = None,
+        limit: int = 50,
+        cursor: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Get applicants for a job posting"""
+        try:
+            params = {
+                'account_id': account_id,
+                'limit': limit
+            }
+            if status:
+                params['status'] = status  # NEW, REVIEWED, SHORTLISTED, REJECTED, HIRED
+            if cursor:
+                params['cursor'] = cursor
+                
+            response = await self.client._make_request('GET', f'linkedin/jobs/{job_id}/applicants', params=params)
+            return response
+        except Exception as e:
+            logger.error(f"Failed to get applicants for job {job_id}: {e}")
+            raise
+    
+    async def get_applicant_profile(
+        self, 
+        account_id: str,
+        applicant_id: str
+    ) -> Dict[str, Any]:
+        """Get detailed applicant profile"""
+        try:
+            params = {'account_id': account_id}
+            response = await self.client._make_request('GET', f'linkedin/applicants/{applicant_id}', params=params)
+            return response
+        except Exception as e:
+            logger.error(f"Failed to get applicant profile {applicant_id}: {e}")
+            raise
+    
+    async def update_applicant_status(
+        self, 
+        account_id: str,
+        applicant_id: str,
+        status: str,
+        note: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Update applicant status in hiring pipeline"""
+        try:
+            data = {
+                'account_id': account_id,
+                'status': status,  # REVIEWED, SHORTLISTED, REJECTED, HIRED, WITHDRAWN
+            }
+            if note:
+                data['note'] = note
+                
+            response = await self.client._make_request('PUT', f'linkedin/applicants/{applicant_id}', data=data)
+            return response
+        except Exception as e:
+            logger.error(f"Failed to update applicant status {applicant_id}: {e}")
+            raise
+    
+    # LinkedIn Search
+    async def search_people(
+        self, 
+        account_id: str,
+        keywords: Optional[str] = None,
+        location: Optional[str] = None,
+        company: Optional[str] = None,
+        industry: Optional[str] = None,
+        current_position: Optional[str] = None,
+        connection_degree: Optional[str] = None,
+        limit: int = 25
+    ) -> Dict[str, Any]:
+        """Search for people on LinkedIn"""
+        try:
+            params = {
+                'account_id': account_id,
+                'limit': limit
+            }
+            
+            if keywords:
+                params['keywords'] = keywords
+            if location:
+                params['location'] = location
+            if company:
+                params['company'] = company
+            if industry:
+                params['industry'] = industry
+            if current_position:
+                params['current_position'] = current_position
+            if connection_degree:
+                params['connection_degree'] = connection_degree  # 1ST, 2ND, 3RD_PLUS
+                
+            response = await self.client._make_request('GET', 'linkedin/search/people', params=params)
+            return response
+        except Exception as e:
+            logger.error(f"Failed to search people: {e}")
+            raise
+    
+    async def search_companies(
+        self, 
+        account_id: str,
+        keywords: Optional[str] = None,
+        location: Optional[str] = None,
+        industry: Optional[str] = None,
+        company_size: Optional[str] = None,
+        limit: int = 25
+    ) -> Dict[str, Any]:
+        """Search for companies on LinkedIn"""
+        try:
+            params = {
+                'account_id': account_id,
+                'limit': limit
+            }
+            
+            if keywords:
+                params['keywords'] = keywords
+            if location:
+                params['location'] = location
+            if industry:
+                params['industry'] = industry
+            if company_size:
+                params['company_size'] = company_size  # 1-10, 11-50, 51-200, 201-500, 501-1000, 1001-5000, 5001-10000, 10001+
+                
+            response = await self.client._make_request('GET', 'linkedin/search/companies', params=params)
+            return response
+        except Exception as e:
+            logger.error(f"Failed to search companies: {e}")
+            raise
+    
+    # Connection Management
+    async def send_connection_request(
+        self, 
+        account_id: str,
+        profile_id: str,
+        message: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Send connection request to LinkedIn profile"""
+        try:
+            data = {
+                'account_id': account_id,
+                'profile_id': profile_id
+            }
+            if message:
+                data['message'] = message
+                
+            response = await self.client._make_request('POST', 'linkedin/connections/invite', data=data)
+            return response
+        except Exception as e:
+            logger.error(f"Failed to send connection request to {profile_id}: {e}")
+            raise
+    
+    async def get_connections(
+        self, 
+        account_id: str,
+        limit: int = 50,
+        cursor: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Get LinkedIn connections"""
+        try:
+            params = {
+                'account_id': account_id,
+                'limit': limit
+            }
+            if cursor:
+                params['cursor'] = cursor
+                
+            response = await self.client._make_request('GET', 'linkedin/connections', params=params)
+            return response
+        except Exception as e:
+            logger.error(f"Failed to get connections: {e}")
+            raise
+    
+    async def get_pending_invitations(
+        self, 
+        account_id: str,
+        direction: str = "OUTGOING",
+        limit: int = 50
+    ) -> Dict[str, Any]:
+        """Get pending connection invitations"""
+        try:
+            params = {
+                'account_id': account_id,
+                'direction': direction,  # OUTGOING, INCOMING
+                'limit': limit
+            }
+            response = await self.client._make_request('GET', 'linkedin/invitations', params=params)
+            return response
+        except Exception as e:
+            logger.error(f"Failed to get pending invitations: {e}")
+            raise
+    
+    # InMail Management
+    async def send_inmail(
+        self, 
+        account_id: str,
+        recipient_profile_id: str,
+        subject: str,
+        message: str
+    ) -> Dict[str, Any]:
+        """Send InMail message to LinkedIn profile"""
+        try:
+            data = {
+                'account_id': account_id,
+                'recipient_profile_id': recipient_profile_id,
+                'subject': subject,
+                'message': message
+            }
+            response = await self.client._make_request('POST', 'linkedin/inmail/send', data=data)
+            return response
+        except Exception as e:
+            logger.error(f"Failed to send InMail to {recipient_profile_id}: {e}")
+            raise
+    
+    async def get_inmail_quota(self, account_id: str) -> Dict[str, Any]:
+        """Get InMail quota information"""
+        try:
+            params = {'account_id': account_id}
+            response = await self.client._make_request('GET', 'linkedin/inmail/quota', params=params)
+            return response
+        except Exception as e:
+            logger.error(f"Failed to get InMail quota: {e}")
+            raise
+    
+    # Content and Posts
+    async def create_post(
+        self, 
+        account_id: str,
+        content: str,
+        visibility: str = "PUBLIC",
+        attachments: Optional[List[Dict]] = None
+    ) -> Dict[str, Any]:
+        """Create a LinkedIn post"""
+        try:
+            data = {
+                'account_id': account_id,
+                'content': content,
+                'visibility': visibility  # PUBLIC, CONNECTIONS, LOGGED_IN
+            }
+            if attachments:
+                data['attachments'] = attachments
+                
+            response = await self.client._make_request('POST', 'linkedin/posts', data=data)
+            return response
+        except Exception as e:
+            logger.error(f"Failed to create post: {e}")
+            raise
+    
+    async def get_posts(
+        self, 
+        account_id: str,
+        limit: int = 20,
+        cursor: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Get LinkedIn posts"""
+        try:
+            params = {
+                'account_id': account_id,
+                'limit': limit
+            }
+            if cursor:
+                params['cursor'] = cursor
+                
+            response = await self.client._make_request('GET', 'linkedin/posts', params=params)
+            return response
+        except Exception as e:
+            logger.error(f"Failed to get posts: {e}")
+            raise
+    
+    # Company Profile Management
+    async def get_company_profile(
+        self, 
+        account_id: str,
+        company_id: str
+    ) -> Dict[str, Any]:
+        """Get company profile information"""
+        try:
+            params = {'account_id': account_id}
+            response = await self.client._make_request('GET', f'linkedin/companies/{company_id}', params=params)
+            return response
+        except Exception as e:
+            logger.error(f"Failed to get company profile {company_id}: {e}")
+            raise
+    
+    async def get_company_followers(
+        self, 
+        account_id: str,
+        company_id: str,
+        limit: int = 50
+    ) -> Dict[str, Any]:
+        """Get company followers"""
+        try:
+            params = {
+                'account_id': account_id,
+                'limit': limit
+            }
+            response = await self.client._make_request('GET', f'linkedin/companies/{company_id}/followers', params=params)
+            return response
+        except Exception as e:
+            logger.error(f"Failed to get company followers {company_id}: {e}")
+            raise
+    
+    # Analytics and Insights
+    async def get_profile_analytics(
+        self, 
+        account_id: str,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Get LinkedIn profile analytics"""
+        try:
+            params = {'account_id': account_id}
+            if start_date:
+                params['start_date'] = start_date
+            if end_date:
+                params['end_date'] = end_date
+                
+            response = await self.client._make_request('GET', 'linkedin/analytics/profile', params=params)
+            return response
+        except Exception as e:
+            logger.error(f"Failed to get profile analytics: {e}")
+            raise
+    
+    async def get_post_analytics(
+        self, 
+        account_id: str,
+        post_id: str
+    ) -> Dict[str, Any]:
+        """Get analytics for specific post"""
+        try:
+            params = {'account_id': account_id}
+            response = await self.client._make_request('GET', f'linkedin/analytics/posts/{post_id}', params=params)
+            return response
+        except Exception as e:
+            logger.error(f"Failed to get post analytics {post_id}: {e}")
+            raise
+
+
+class UnipileEmailClient:
+    """Email-specific UniPile client for advanced email features"""
+    
+    def __init__(self, client: UnipileClient):
+        self.client = client
+    
+    async def get_folders(self, account_id: str) -> Dict[str, Any]:
+        """Get email folders for account"""
+        try:
+            params = {'account_id': account_id}
+            response = await self.client._make_request('GET', 'mails/folders', params=params)
+            return response
+        except Exception as e:
+            logger.error(f"Failed to get email folders: {e}")
+            raise
+    
+    async def get_emails(
+        self, 
+        account_id: str,
+        folder: str = "INBOX",
+        limit: int = 50,
+        cursor: Optional[str] = None,
+        unread_only: bool = False
+    ) -> Dict[str, Any]:
+        """Get emails from specific folder"""
+        try:
+            params = {
+                'account_id': account_id,
+                'folder': folder,
+                'limit': limit,
+                'unread_only': unread_only
+            }
+            if cursor:
+                params['cursor'] = cursor
+                
+            response = await self.client._make_request('GET', 'mails', params=params)
+            return response
+        except Exception as e:
+            logger.error(f"Failed to get emails: {e}")
+            raise
+    
+    async def send_email(
+        self, 
+        account_id: str,
+        to: List[str],
+        subject: str,
+        body: str,
+        cc: Optional[List[str]] = None,
+        bcc: Optional[List[str]] = None,
+        attachments: Optional[List[Dict]] = None,
+        is_html: bool = True
+    ) -> Dict[str, Any]:
+        """Send email"""
+        try:
+            data = {
+                'account_id': account_id,
+                'to': to,
+                'subject': subject,
+                'body': body,
+                'is_html': is_html
+            }
+            if cc:
+                data['cc'] = cc
+            if bcc:
+                data['bcc'] = bcc
+            if attachments:
+                data['attachments'] = attachments
+                
+            response = await self.client._make_request('POST', 'mails/send', data=data)
+            return response
+        except Exception as e:
+            logger.error(f"Failed to send email: {e}")
+            raise
+    
+    async def mark_as_read(self, account_id: str, email_ids: List[str]) -> Dict[str, Any]:
+        """Mark emails as read"""
+        try:
+            data = {
+                'account_id': account_id,
+                'email_ids': email_ids,
+                'read': True
+            }
+            response = await self.client._make_request('POST', 'mails/mark', data=data)
+            return response
+        except Exception as e:
+            logger.error(f"Failed to mark emails as read: {e}")
+            raise
+    
+    async def move_to_folder(
+        self, 
+        account_id: str, 
+        email_ids: List[str], 
+        folder: str
+    ) -> Dict[str, Any]:
+        """Move emails to folder"""
+        try:
+            data = {
+                'account_id': account_id,
+                'email_ids': email_ids,
+                'folder': folder
+            }
+            response = await self.client._make_request('POST', 'mails/move', data=data)
+            return response
+        except Exception as e:
+            logger.error(f"Failed to move emails to folder {folder}: {e}")
+            raise
+    
+    async def delete_emails(self, account_id: str, email_ids: List[str]) -> Dict[str, Any]:
+        """Delete emails"""
+        try:
+            data = {
+                'account_id': account_id,
+                'email_ids': email_ids
+            }
+            response = await self.client._make_request('DELETE', 'mails', data=data)
+            return response
+        except Exception as e:
+            logger.error(f"Failed to delete emails: {e}")
+            raise
+    
+    async def create_draft(
+        self, 
+        account_id: str,
+        to: List[str],
+        subject: str,
+        body: str,
+        cc: Optional[List[str]] = None,
+        bcc: Optional[List[str]] = None
+    ) -> Dict[str, Any]:
+        """Create email draft"""
+        try:
+            data = {
+                'account_id': account_id,
+                'to': to,
+                'subject': subject,
+                'body': body
+            }
+            if cc:
+                data['cc'] = cc
+            if bcc:
+                data['bcc'] = bcc
+                
+            response = await self.client._make_request('POST', 'mails/drafts', data=data)
+            return response
+        except Exception as e:
+            logger.error(f"Failed to create draft: {e}")
+            raise
+    
+    async def get_drafts(
+        self, 
+        account_id: str,
+        limit: int = 20,
+        cursor: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Get email drafts"""
+        try:
+            params = {
+                'account_id': account_id,
+                'limit': limit
+            }
+            if cursor:
+                params['cursor'] = cursor
+                
+            response = await self.client._make_request('GET', 'mails/drafts', params=params)
+            return response
+        except Exception as e:
+            logger.error(f"Failed to get drafts: {e}")
+            raise
+
+
+class UnipileCalendarClient:
+    """Calendar-specific UniPile client for calendar integration"""
+    
+    def __init__(self, client: UnipileClient):
+        self.client = client
+    
+    async def get_calendars(self, account_id: str) -> Dict[str, Any]:
+        """Get available calendars"""
+        try:
+            params = {'account_id': account_id}
+            response = await self.client._make_request('GET', 'calendars', params=params)
+            return response
+        except Exception as e:
+            logger.error(f"Failed to get calendars: {e}")
+            raise
+    
+    async def get_events(
+        self, 
+        account_id: str,
+        calendar_id: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        limit: int = 50
+    ) -> Dict[str, Any]:
+        """Get calendar events"""
+        try:
+            params = {
+                'account_id': account_id,
+                'limit': limit
+            }
+            if calendar_id:
+                params['calendar_id'] = calendar_id
+            if start_date:
+                params['start_date'] = start_date
+            if end_date:
+                params['end_date'] = end_date
+                
+            response = await self.client._make_request('GET', 'events', params=params)
+            return response
+        except Exception as e:
+            logger.error(f"Failed to get events: {e}")
+            raise
+    
+    async def create_event(
+        self, 
+        account_id: str,
+        calendar_id: str,
+        title: str,
+        start_time: str,
+        end_time: str,
+        description: Optional[str] = None,
+        location: Optional[str] = None,
+        attendees: Optional[List[str]] = None,
+        reminder_minutes: Optional[int] = None
+    ) -> Dict[str, Any]:
+        """Create calendar event"""
+        try:
+            data = {
+                'account_id': account_id,
+                'calendar_id': calendar_id,
+                'title': title,
+                'start_time': start_time,
+                'end_time': end_time
+            }
+            if description:
+                data['description'] = description
+            if location:
+                data['location'] = location
+            if attendees:
+                data['attendees'] = attendees
+            if reminder_minutes:
+                data['reminder_minutes'] = reminder_minutes
+                
+            response = await self.client._make_request('POST', 'events', data=data)
+            return response
+        except Exception as e:
+            logger.error(f"Failed to create event: {e}")
+            raise
+    
+    async def update_event(
+        self, 
+        account_id: str,
+        event_id: str,
+        updates: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Update calendar event"""
+        try:
+            data = {
+                'account_id': account_id,
+                **updates
+            }
+            response = await self.client._make_request('PUT', f'events/{event_id}', data=data)
+            return response
+        except Exception as e:
+            logger.error(f"Failed to update event {event_id}: {e}")
+            raise
+    
+    async def delete_event(self, account_id: str, event_id: str) -> Dict[str, Any]:
+        """Delete calendar event"""
+        try:
+            data = {'account_id': account_id}
+            response = await self.client._make_request('DELETE', f'events/{event_id}', data=data)
+            return response
+        except Exception as e:
+            logger.error(f"Failed to delete event {event_id}: {e}")
+            raise
+    
+    async def get_free_busy(
+        self, 
+        account_id: str,
+        emails: List[str],
+        start_time: str,
+        end_time: str
+    ) -> Dict[str, Any]:
+        """Get free/busy information for users"""
+        try:
+            params = {
+                'account_id': account_id,
+                'emails': ','.join(emails),
+                'start_time': start_time,
+                'end_time': end_time
+            }
+            response = await self.client._make_request('GET', 'freebusy', params=params)
+            return response
+        except Exception as e:
+            logger.error(f"Failed to get free/busy information: {e}")
+            raise
+
+
 class UnipileService:
     """
     High-level UniPile service for Django integration
@@ -759,6 +1499,237 @@ class UnipileService:
                 'success': False,
                 'error': str(e),
                 'recipient': recipient
+            }
+    
+    # LinkedIn-specific service methods
+    async def create_linkedin_job_posting(
+        self,
+        user_channel_connection,
+        job_data: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Create LinkedIn job posting via user's LinkedIn connection"""
+        try:
+            client = self.get_client()
+            
+            result = await client.linkedin.create_job_posting(
+                account_id=user_channel_connection.unipile_account_id,
+                **job_data
+            )
+            
+            return {
+                'success': True,
+                'job_id': result.get('job_id'),
+                'job_posting': result
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to create LinkedIn job posting: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
+    async def search_linkedin_people(
+        self,
+        user_channel_connection,
+        search_criteria: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Search for people on LinkedIn"""
+        try:
+            client = self.get_client()
+            
+            result = await client.linkedin.search_people(
+                account_id=user_channel_connection.unipile_account_id,
+                **search_criteria
+            )
+            
+            return {
+                'success': True,
+                'people': result.get('results', []),
+                'total_count': result.get('total_count', 0)
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to search LinkedIn people: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
+    async def send_linkedin_connection_request(
+        self,
+        user_channel_connection,
+        profile_id: str,
+        message: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Send LinkedIn connection request"""
+        try:
+            client = self.get_client()
+            
+            result = await client.linkedin.send_connection_request(
+                account_id=user_channel_connection.unipile_account_id,
+                profile_id=profile_id,
+                message=message
+            )
+            
+            return {
+                'success': True,
+                'connection_request': result
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to send LinkedIn connection request: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
+    async def send_linkedin_inmail(
+        self,
+        user_channel_connection,
+        recipient_profile_id: str,
+        subject: str,
+        message: str
+    ) -> Dict[str, Any]:
+        """Send LinkedIn InMail message"""
+        try:
+            client = self.get_client()
+            
+            result = await client.linkedin.send_inmail(
+                account_id=user_channel_connection.unipile_account_id,
+                recipient_profile_id=recipient_profile_id,
+                subject=subject,
+                message=message
+            )
+            
+            return {
+                'success': True,
+                'inmail': result
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to send LinkedIn InMail: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
+    # Email service methods
+    async def send_email(
+        self,
+        user_channel_connection,
+        email_data: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Send email via user's email connection"""
+        try:
+            client = self.get_client()
+            
+            result = await client.email.send_email(
+                account_id=user_channel_connection.unipile_account_id,
+                **email_data
+            )
+            
+            return {
+                'success': True,
+                'email_id': result.get('email_id'),
+                'email': result
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to send email: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
+    async def get_emails(
+        self,
+        user_channel_connection,
+        folder: str = "INBOX",
+        limit: int = 50,
+        unread_only: bool = False
+    ) -> Dict[str, Any]:
+        """Get emails from user's email account"""
+        try:
+            client = self.get_client()
+            
+            result = await client.email.get_emails(
+                account_id=user_channel_connection.unipile_account_id,
+                folder=folder,
+                limit=limit,
+                unread_only=unread_only
+            )
+            
+            return {
+                'success': True,
+                'emails': result.get('emails', []),
+                'total_count': result.get('total_count', 0)
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to get emails: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
+    # Calendar service methods
+    async def create_calendar_event(
+        self,
+        user_channel_connection,
+        event_data: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Create calendar event via user's calendar connection"""
+        try:
+            client = self.get_client()
+            
+            result = await client.calendar.create_event(
+                account_id=user_channel_connection.unipile_account_id,
+                **event_data
+            )
+            
+            return {
+                'success': True,
+                'event_id': result.get('event_id'),
+                'event': result
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to create calendar event: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
+    async def get_calendar_events(
+        self,
+        user_channel_connection,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        limit: int = 50
+    ) -> Dict[str, Any]:
+        """Get calendar events from user's calendar"""
+        try:
+            client = self.get_client()
+            
+            result = await client.calendar.get_events(
+                account_id=user_channel_connection.unipile_account_id,
+                start_date=start_date,
+                end_date=end_date,
+                limit=limit
+            )
+            
+            return {
+                'success': True,
+                'events': result.get('events', []),
+                'total_count': result.get('total_count', 0)
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to get calendar events: {e}")
+            return {
+                'success': False,
+                'error': str(e)
             }
     
     async def sync_messages(

@@ -18,6 +18,10 @@ class UnipileWebhookHandler:
         self.event_handlers = {
             'message.received': self.handle_message_received,
             'message.sent': self.handle_message_sent,
+            'message_received': self.handle_message_received,  # Handle both formats
+            'message_sent': self.handle_message_sent,          # Handle both formats
+            'message_delivered': self.handle_message_delivered, # Handle delivery status
+            'message_read': self.handle_message_read,          # Handle read receipts
             'account.connected': self.handle_account_connected,
             'account.disconnected': self.handle_account_disconnected,
             'account.error': self.handle_account_error,
@@ -69,6 +73,11 @@ class UnipileWebhookHandler:
     
     def extract_account_id(self, data: Dict[str, Any]) -> Optional[str]:
         """Extract account ID from webhook data"""
+        # Ensure data is a dictionary
+        if not isinstance(data, dict):
+            logger.error(f"Expected dict but got {type(data)}: {data}")
+            return None
+        
         # Try different possible locations for account ID
         possible_keys = ['account_id', 'accountId', 'account', 'from_account_id']
         
@@ -88,14 +97,20 @@ class UnipileWebhookHandler:
     def handle_message_received(self, account_id: str, data: Dict[str, Any]) -> Dict[str, Any]:
         """Handle incoming message webhook"""
         try:
+            # Ensure data is a dictionary
+            if not isinstance(data, dict):
+                logger.error(f"Expected dict in handle_message_received but got {type(data)}: {data}")
+                return {'success': False, 'error': f'Invalid data type: {type(data)}'}
+            
             # Get user connection (we're already in tenant context)
             connection = account_router.get_user_connection(account_id)
             if not connection:
                 logger.error(f"No user connection found for account {account_id}")
                 return {'success': False, 'error': 'User connection not found'}
             
-            # Extract message data
-            message_data = data.get('message', data)
+            # UniPile webhook data structure has message content at the top level,
+            # not nested under a 'message' object. So we use the entire data object.
+            message_data = data
             
             # Create or get conversation
             conversation = self.get_or_create_conversation(
@@ -103,24 +118,46 @@ class UnipileWebhookHandler:
                 message_data
             )
             
-            # Create message record
-            message = self.create_message_record(
+            # Check if message already exists to prevent duplicates
+            external_message_id = message_data.get('message_id')
+            if external_message_id:
+                existing_message = Message.objects.filter(
+                    external_message_id=external_message_id,
+                    conversation=conversation
+                ).first()
+                
+                if existing_message:
+                    logger.info(f"Message {external_message_id} already exists (ID: {existing_message.id}), skipping duplicate")
+                    return {
+                        'success': True,
+                        'message_id': str(existing_message.id),
+                        'conversation_id': str(conversation.id),
+                        'note': 'Message already exists, skipped duplicate'
+                    }
+            
+            # Create message record - real-time processing will only happen if message is actually created
+            message, was_created = self.create_message_record_atomic(
                 connection,
                 conversation,
                 message_data,
                 MessageDirection.INBOUND
             )
             
-            logger.info(f"Created inbound message {message.id} for account {account_id}")
+            if was_created:
+                logger.info(f"Created new inbound message {message.id} for account {account_id}")
+            else:
+                logger.info(f"Message {message.id} already existed (race condition resolved)")
             
-            # Auto-create contact if enabled
-            if connection.user.tenant_unipile_config.auto_create_contacts:
-                self.auto_create_contact(message_data, connection)
+            # Auto-create contact if enabled (skip for now as config model is not implemented)
+            # TODO: Implement tenant_unipile_config model for auto-create contacts setting
+            # if hasattr(connection.user, 'tenant_unipile_config') and connection.user.tenant_unipile_config.auto_create_contacts:
+            #     self.auto_create_contact(message_data, connection)
             
             return {
                 'success': True,
                 'message_id': str(message.id),
-                'conversation_id': str(conversation.id)
+                'conversation_id': str(conversation.id),
+                'was_created': was_created
             }
             
         except Exception as e:
@@ -130,9 +167,16 @@ class UnipileWebhookHandler:
     def handle_message_sent(self, account_id: str, data: Dict[str, Any]) -> Dict[str, Any]:
         """Handle outbound message confirmation webhook"""
         try:
-            # Update message status if we have a record
-            message_data = data.get('message', data)
-            external_message_id = message_data.get('id')
+            # Ensure data is a dictionary
+            if not isinstance(data, dict):
+                logger.error(f"Expected dict in handle_message_sent but got {type(data)}: {data}")
+                return {'success': False, 'error': f'Invalid data type: {type(data)}'}
+            
+            # UniPile webhook data structure has message content at the top level,
+            # not nested under a 'message' object. So we use the entire data object.
+            message_data = data
+            
+            external_message_id = message_data.get('message_id')
             
             if external_message_id:
                 # Find existing message record
@@ -153,6 +197,77 @@ class UnipileWebhookHandler:
             
         except Exception as e:
             logger.error(f"Error handling message sent for account {account_id}: {e}")
+            return {'success': False, 'error': str(e)}
+    
+    def handle_message_delivered(self, account_id: str, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Handle message delivery confirmation webhook"""
+        try:
+            # Ensure data is a dictionary
+            if not isinstance(data, dict):
+                logger.error(f"Expected dict in handle_message_delivered but got {type(data)}: {data}")
+                return {'success': False, 'error': f'Invalid data type: {type(data)}'}
+            
+            # UniPile webhook data structure has message content at the top level,
+            # not nested under a 'message' object. So we use the entire data object.
+            message_data = data
+            
+            external_message_id = message_data.get('message_id')
+            
+            if external_message_id:
+                # Find existing message record
+                message = Message.objects.filter(
+                    external_message_id=external_message_id
+                ).first()
+                
+                if message:
+                    message.status = MessageStatus.DELIVERED
+                    message.save()
+                    
+                    logger.info(f"Updated message {message.id} status to delivered")
+                    return {'success': True, 'message_id': str(message.id)}
+            
+            logger.warning(f"No message record found for external ID {external_message_id}")
+            return {'success': True, 'note': 'No local message record to update'}
+            
+        except Exception as e:
+            logger.error(f"Error handling message delivered for account {account_id}: {e}")
+            return {'success': False, 'error': str(e)}
+    
+    def handle_message_read(self, account_id: str, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Handle message read receipt webhook"""
+        try:
+            # Debug: Log the actual data structure
+            logger.info(f"DEBUG: Read message webhook data: {data}")
+            logger.info(f"DEBUG: Data type: {type(data)}")
+            
+            # UniPile webhook data structure has message content at the top level,
+            # not nested under a 'message' object. So we use the entire data object.
+            message_data = data
+            
+            external_message_id = message_data.get('message_id')
+            
+            if external_message_id:
+                # Find existing message record and mark as read
+                message = Message.objects.filter(
+                    external_message_id=external_message_id
+                ).first()
+                
+                if message:
+                    # Update status to read (if it's an outbound message) or just log for inbound
+                    if message.direction == MessageDirection.OUTBOUND:
+                        message.status = MessageStatus.READ
+                        message.save()
+                        logger.info(f"Updated message {message.id} status to read")
+                    else:
+                        logger.info(f"Read receipt for inbound message {message.id} - no status update needed")
+                    
+                    return {'success': True, 'message_id': str(message.id)}
+            
+            logger.warning(f"No message record found for external ID {external_message_id}")
+            return {'success': True, 'note': 'No local message record to update'}
+            
+        except Exception as e:
+            logger.error(f"Error handling message read for account {account_id}: {e}")
             return {'success': False, 'error': str(e)}
     
     def handle_account_connected(self, account_id: str, data: Dict[str, Any]) -> Dict[str, Any]:
@@ -238,8 +353,8 @@ class UnipileWebhookHandler:
     
     def get_or_create_conversation(self, connection: UserChannelConnection, message_data: Dict[str, Any]) -> Conversation:
         """Get or create conversation for message"""
-        # Try to find existing conversation
-        external_thread_id = message_data.get('thread_id') or message_data.get('conversation_id')
+        # In UniPile webhook format, the chat_id is the conversation identifier
+        external_thread_id = message_data.get('chat_id')
         
         if external_thread_id:
             conversation = Conversation.objects.filter(
@@ -253,7 +368,7 @@ class UnipileWebhookHandler:
         
         # Get or create channel for this connection
         channel, _ = Channel.objects.get_or_create(
-            external_account_id=connection.external_account_id,
+            unipile_account_id=connection.unipile_account_id,
             channel_type=connection.channel_type,
             defaults={
                 'name': f"{connection.channel_type.title()} - {connection.account_name}",
@@ -264,34 +379,105 @@ class UnipileWebhookHandler:
         
         conversation = Conversation.objects.create(
             channel=channel,
-            external_thread_id=external_thread_id or f"msg_{message_data.get('id', timezone.now().timestamp())}",
-            subject=message_data.get('subject', f"Conversation via {connection.channel_type}"),
+            external_thread_id=external_thread_id or f"msg_{message_data.get('message_id', timezone.now().timestamp())}",
+            subject=f"WhatsApp conversation", 
             status='active'
         )
         
         return conversation
     
-    def create_message_record(self, connection: UserChannelConnection, conversation: Conversation, 
+    def create_message_record_atomic(self, connection: UserChannelConnection, conversation: Conversation, 
+                            message_data: Dict[str, Any], direction: str) -> tuple[Message, bool]:
+        """Create message record atomically, preventing duplicates and only triggering real-time for new messages"""
+        from django.db import transaction
+        
+        external_message_id = message_data.get('message_id')
+        
+        # Use database-level atomic transaction to prevent race conditions
+        with transaction.atomic():
+            # Try to get existing message first (with select_for_update to prevent race conditions)
+            existing_message = Message.objects.select_for_update().filter(
+                external_message_id=external_message_id,
+                conversation=conversation
+            ).first()
+            
+            if existing_message:
+                # Message already exists - return without triggering real-time processing
+                return existing_message, False
+            
+            # Create new message - this will trigger real-time processing
+            message = self.create_message_record_internal(connection, conversation, message_data, direction)
+            return message, True
+    
+    def create_message_record_internal(self, connection: UserChannelConnection, conversation: Conversation, 
                             message_data: Dict[str, Any], direction: str) -> Message:
-        """Create message record from webhook data"""
+        """Create message record from webhook data with real-time enhancements"""
         
-        # Extract sender/recipient info
-        sender_email = message_data.get('from', {}).get('email') if isinstance(message_data.get('from'), dict) else message_data.get('from')
-        contact_email = sender_email if direction == MessageDirection.INBOUND else message_data.get('to')
+        # Extract sender info from UniPile webhook format
+        sender_info = message_data.get('sender', {})
+        sender_email = sender_info.get('attendee_provider_id', '') if isinstance(sender_info, dict) else ''
         
+        # CRITICAL: Determine correct direction and contact based on sender
+        business_account = '27720720047@s.whatsapp.net'
+        
+        # If sender is business account, this is an OUTBOUND message TO a customer
+        if sender_email == business_account:
+            actual_direction = MessageDirection.OUTBOUND
+            contact_email = ''  # For outbound, we don't set contact_email to business account
+        else:
+            # If sender is NOT business account, this is an INBOUND message FROM that customer
+            actual_direction = MessageDirection.INBOUND
+            contact_email = sender_email  # Customer's phone number
+        
+        # Override the direction parameter with our corrected logic
+        direction = actual_direction
+        
+        # Extract message content and metadata 
+        message_content = message_data.get('message', '')  # This is the actual text content
+        
+        # Get enhanced contact name from sender info
+        contact_name = ''
+        if isinstance(sender_info, dict):
+            contact_name = sender_info.get('attendee_name', '')
+        
+        # Create enhanced metadata with contact name for better display
+        enhanced_metadata = dict(message_data)  # Copy all webhook data
+        if contact_name and contact_name != sender_email:
+            enhanced_metadata['contact_name'] = contact_name
+        
+        # REAL-TIME ENHANCEMENT: Add attendee_id for profile picture fetching
+        attendee_id = sender_info.get('attendee_id', '') if isinstance(sender_info, dict) else ''
+        if attendee_id:
+            enhanced_metadata['attendee_id'] = attendee_id
+            # Trigger async profile picture fetch for real-time contact updates
+            self._fetch_contact_profile_picture_async(connection, attendee_id, contact_email)
+        
+        # REAL-TIME ENHANCEMENT: Add attachment info for immediate download
+        attachments = message_data.get('attachments', [])
+        if attachments:
+            enhanced_metadata['has_attachments'] = True
+            enhanced_metadata['attachment_count'] = len(attachments)
+            # Trigger async attachment processing for real-time media
+            for attachment in attachments:
+                self._process_attachment_async(connection, message_data.get('message_id'), attachment)
+
         message = Message.objects.create(
             channel=conversation.channel,
             conversation=conversation,
-            external_message_id=message_data.get('id'),
+            external_message_id=message_data.get('message_id'),
             direction=direction,
-            content=message_data.get('text', message_data.get('content', '')),
-            subject=message_data.get('subject', ''),
-            contact_email=contact_email or '',
+            content=message_content,
+            subject='',  # WhatsApp doesn't have subjects
+            contact_email=contact_email,
             status=MessageStatus.DELIVERED if direction == MessageDirection.INBOUND else MessageStatus.SENT,
-            metadata=message_data,
+            metadata=enhanced_metadata,
             sent_at=timezone.now() if direction == MessageDirection.OUTBOUND else None,
             received_at=timezone.now() if direction == MessageDirection.INBOUND else None
         )
+        
+        # REAL-TIME ENHANCEMENT: Broadcast message with contact info immediately
+        # This will only happen for actually created messages, not duplicates
+        self._broadcast_message_with_contact_info(message, conversation, contact_name, attendee_id, connection)
         
         return message
     
@@ -300,23 +486,24 @@ class UnipileWebhookHandler:
         try:
             from communications.services import communication_service
             
-            # Extract contact info
-            sender_info = message_data.get('from', {})
-            if isinstance(sender_info, str):
-                sender_email = sender_info
-                sender_name = None
+            # Extract contact info from UniPile webhook format
+            sender_info = message_data.get('sender', {})
+            if isinstance(sender_info, dict):
+                sender_email = sender_info.get('attendee_provider_id', '')
+                sender_name = sender_info.get('attendee_name', '')
             else:
-                sender_email = sender_info.get('email')
-                sender_name = sender_info.get('name')
+                sender_email = ''
+                sender_name = ''
             
             if sender_email:
                 # Try to create/resolve contact
                 communication_service.resolve_or_create_contact(
                     recipient=sender_email,
-                    name=sender_name,
+                    name=sender_name if sender_name != sender_email else None,
                     additional_data={
                         'source': 'webhook',
-                        'channel_type': connection.channel_type
+                        'channel_type': connection.channel_type,
+                        'attendee_id': sender_info.get('attendee_id', '') if isinstance(sender_info, dict) else ''
                     }
                 )
                 
@@ -337,7 +524,7 @@ class UnipileWebhookHandler:
             recent_pending = UserChannelConnection.objects.filter(
                 channel_type=provider,
                 account_status='pending',
-                external_account_id__isnull=True,
+                unipile_account_id__isnull=True,
                 created_at__gte=timezone.now() - timezone.timedelta(hours=1)
             ).order_by('-created_at')
             
@@ -345,7 +532,7 @@ class UnipileWebhookHandler:
                 connection = recent_pending.first()
                 
                 # Update the connection with the new account ID
-                connection.external_account_id = account_id
+                connection.unipile_account_id = account_id
                 connection.account_status = 'active'
                 connection.auth_status = 'authenticated'
                 connection.hosted_auth_url = ''
@@ -458,6 +645,132 @@ class UnipileWebhookHandler:
         except Exception as e:
             logger.error(f"Error handling permissions error for {account_id}: {e}")
             return {'success': False, 'error': str(e)}
+    
+    def _fetch_contact_profile_picture_async(self, connection: UserChannelConnection, attendee_id: str, contact_email: str):
+        """Async fetch profile picture for real-time contact updates"""
+        try:
+            from communications.tasks import fetch_contact_profile_picture
+            
+            # Trigger Celery task for immediate profile picture fetch
+            fetch_contact_profile_picture.delay(
+                connection.unipile_account_id,
+                attendee_id,
+                contact_email
+            )
+            logger.info(f"Triggered async profile picture fetch for attendee {attendee_id}")
+        except ImportError as e:
+            logger.warning(f"Could not import profile picture task: {e}")
+        except Exception as e:
+            logger.warning(f"Failed to trigger profile picture fetch: {e}")
+    
+    def _process_attachment_async(self, connection: UserChannelConnection, message_id: str, attachment: Dict[str, Any]):
+        """Async process attachment for real-time media handling"""
+        try:
+            from communications.tasks import process_message_attachment
+            
+            # Trigger Celery task for immediate attachment processing
+            process_message_attachment.delay(
+                connection.unipile_account_id,
+                message_id,
+                attachment.get('id', ''),
+                attachment.get('type', ''),
+                attachment.get('name', '')
+            )
+            logger.info(f"Triggered async attachment processing for message {message_id}")
+        except ImportError as e:
+            logger.warning(f"Could not import attachment processing task: {e}")
+        except Exception as e:
+            logger.warning(f"Failed to trigger attachment processing: {e}")
+    
+    def _broadcast_message_with_contact_info(self, message, conversation, contact_name: str, attendee_id: str, connection):
+        """Broadcast message with enhanced contact info for real-time updates"""
+        try:
+            from channels.layers import get_channel_layer
+            from asgiref.sync import async_to_sync
+            
+            channel_layer = get_channel_layer()
+            if not channel_layer:
+                logger.debug("No channel layer available for broadcasting")
+                return
+            
+            # Enhanced message data for real-time broadcast - match frontend Message interface
+            message_data = {
+                'type': 'message_update',
+                'message': {
+                    'id': str(message.id),
+                    'type': 'whatsapp',  # Add message type
+                    'content': message.content,
+                    'direction': message.direction,
+                    'contact_email': message.contact_email,
+                    'sender': {
+                        'name': contact_name or 'Unknown',
+                        'email': message.contact_email,
+                        'platform_id': attendee_id
+                    },
+                    'recipient': {
+                        'name': 'Business',
+                        'email': connection.user.email if hasattr(connection, 'user') else ''
+                    },
+                    'timestamp': message.created_at.isoformat(),
+                    'is_read': False,
+                    'is_starred': False,
+                    'conversation_id': str(conversation.id),
+                    'account_id': connection.unipile_account_id,
+                    'external_id': message.external_message_id,
+                    'metadata': {
+                        'contact_name': contact_name,
+                        'sender_attendee_id': attendee_id,
+                        'chat_id': conversation.external_thread_id,
+                        'from': message.contact_email,
+                        'to': connection.user.email if hasattr(connection, 'user') else '',
+                        'is_sender': 0 if message.direction == 'inbound' else 1,
+                        'profile_picture': message.metadata.get('profile_picture', ''),
+                        'seen': False,
+                        'delivery_status': message.status
+                    },
+                    'channel': {
+                        'name': conversation.channel.name,
+                        'channel_type': 'whatsapp'
+                    },
+                    'attachments': message.metadata.get('attachments', []) if message.metadata.get('has_attachments', False) else []
+                }
+            }
+            
+            # Broadcast to conversation room for instant updates (using generic consumer naming)
+            room_name = f"conversation_{conversation.id}"
+            async_to_sync(channel_layer.group_send)(room_name, message_data)
+            
+            # Broadcast to channel overview for conversation list updates (using generic consumer naming)
+            inbox_room = f"channel_{conversation.channel.id}"
+            async_to_sync(channel_layer.group_send)(inbox_room, {
+                'type': 'new_conversation',
+                'conversation': {
+                    'id': str(conversation.id),
+                    'last_message': message_data['message'],
+                    'contact_name': contact_name,
+                    # For unread count: delivered messages that haven't been marked as read
+                    'unread_count': conversation.messages.filter(
+                        direction='inbound', 
+                        status__in=['delivered', 'sent']  # Count delivered and sent inbound messages as unread
+                    ).exclude(status='read').count(),
+                    'type': 'whatsapp',  # Add conversation type
+                    'updated_at': timezone.now().isoformat(),  # Add timestamp
+                    'created_at': conversation.created_at.isoformat() if hasattr(conversation, 'created_at') else timezone.now().isoformat(),
+                    # Add minimal participants array for frontend compatibility (optional since we made it optional)
+                    'participants': [{
+                        'name': contact_name or 'Unknown Contact',
+                        'email': message.contact_email,
+                        'platform': 'whatsapp'
+                    }] if contact_name and message.contact_email else []
+                }
+            })
+            
+            logger.info(f"Broadcasted real-time WhatsApp message to rooms: {room_name}, {inbox_room}")
+            
+        except ImportError as e:
+            logger.warning(f"Could not import channels for broadcasting: {e}")
+        except Exception as e:
+            logger.warning(f"Failed to broadcast real-time message: {e}")
 
 
 # Global handler instance

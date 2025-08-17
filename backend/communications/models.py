@@ -53,10 +53,16 @@ class TenantUniPileConfig(models.Model):
         help_text="Enable real-time message sync via webhooks"
     )
     
-    # Rate limiting
+    # Rate limiting (tenant preference within global limits)
     max_api_calls_per_hour = models.PositiveIntegerField(
         default=1000,
-        help_text="Maximum UniPile API calls per hour"
+        help_text="Maximum UniPile API calls per hour (tenant preference within global limits)"
+    )
+    
+    # Provider-specific preferences (within global feature limits)
+    provider_preferences = models.JSONField(
+        default=dict,
+        help_text="Provider-specific preferences and feature toggles within global limits"
     )
     
     # Status tracking
@@ -90,7 +96,7 @@ class TenantUniPileConfig(models.Model):
     def get_global_config(self):
         """Get global UniPile configuration from settings"""
         from django.conf import settings
-        return settings.unipile_settings
+        return settings.UNIPILE_SETTINGS
     
     def is_configured(self):
         """Check if UniPile is properly configured (globally + tenant active)"""
@@ -115,6 +121,89 @@ class TenantUniPileConfig(models.Model):
         """Record webhook failure"""
         self.webhook_failures += 1
         self.save(update_fields=['webhook_failures'])
+    
+    def get_provider_preferences(self, provider_type):
+        """Get preferences for a specific provider"""
+        return self.provider_preferences.get(provider_type, {})
+    
+    def set_provider_preferences(self, provider_type, preferences):
+        """Set preferences for a specific provider (validates against global limits)"""
+        global_config = self.get_global_config()
+        global_provider_config = global_config.get_provider_config(provider_type)
+        
+        if not global_provider_config:
+            raise ValueError(f"Provider {provider_type} not supported globally")
+        
+        # Validate that enabled features are within global limits
+        global_features = global_provider_config.get('features', {})
+        enabled_features = preferences.get('enabled_features', [])
+        
+        for feature in enabled_features:
+            if not global_features.get(feature, False):
+                raise ValueError(f"Feature {feature} not enabled globally for {provider_type}")
+        
+        # Store preferences
+        if not self.provider_preferences:
+            self.provider_preferences = {}
+        
+        self.provider_preferences[provider_type] = preferences
+        self.save(update_fields=['provider_preferences'])
+    
+    def is_provider_feature_enabled(self, provider_type, feature):
+        """Check if a feature is enabled for a provider (tenant preference + global limit)"""
+        global_config = self.get_global_config()
+        
+        # Check global enablement first
+        if not global_config.is_feature_enabled(provider_type, feature):
+            return False
+        
+        # Check tenant preferences
+        provider_prefs = self.get_provider_preferences(provider_type)
+        enabled_features = provider_prefs.get('enabled_features', [])
+        
+        # If no tenant preferences, default to global settings
+        if not enabled_features:
+            return True
+        
+        return feature in enabled_features
+    
+    def get_provider_rate_limit(self, provider_type, limit_type):
+        """Get rate limit for a provider (tenant preference within global limits)"""
+        global_config = self.get_global_config()
+        global_limits = global_config.get_provider_rate_limits(provider_type)
+        global_limit = global_limits.get(limit_type, 0)
+        
+        # Get tenant preferences
+        provider_prefs = self.get_provider_preferences(provider_type)
+        tenant_limits = provider_prefs.get('rate_limits', {})
+        tenant_limit = tenant_limits.get(limit_type, global_limit)
+        
+        # Return the minimum of global and tenant limits
+        return min(global_limit, tenant_limit) if global_limit > 0 else tenant_limit
+    
+    def get_default_provider_preferences(self):
+        """Get default provider preferences based on global configuration"""
+        global_config = self.get_global_config()
+        default_prefs = {}
+        
+        for provider_type in global_config.get_supported_providers():
+            provider_config = global_config.get_provider_config(provider_type)
+            features = provider_config.get('features', {})
+            
+            # Enable all globally available features by default
+            enabled_features = [feature for feature, enabled in features.items() if enabled]
+            
+            default_prefs[provider_type] = {
+                'enabled_features': enabled_features,
+                'auto_sync_enabled': True,
+                'sync_frequency': 'real_time',
+                'auto_create_contacts': True,
+                'preferred_auth_method': provider_config.get('auth_methods', ['hosted'])[0],
+                'rate_limits': provider_config.get('rate_limits', {}),
+                'notifications_enabled': True
+            }
+        
+        return default_prefs
 
 
 class ChannelType(models.TextChoices):
@@ -180,7 +269,7 @@ class UserChannelConnection(models.Model):
     
     # Channel identification
     channel_type = models.CharField(max_length=20, choices=ChannelType.choices)
-    unipile_account_id = models.CharField(max_length=255, help_text="UniPile account ID")
+    unipile_account_id = models.CharField(max_length=255, blank=True, default='', help_text="UniPile account ID")
     account_name = models.CharField(max_length=255, help_text="Display name for the account")
     
     # Authentication details
@@ -197,6 +286,10 @@ class UserChannelConnection(models.Model):
     connection_config = models.JSONField(
         default=dict,
         help_text="Channel-specific configuration (API keys, webhooks, etc.)"
+    )
+    provider_config = models.JSONField(
+        default=dict,
+        help_text="Provider-specific configuration and preferences"
     )
     
     # Hosted authentication support
@@ -226,6 +319,7 @@ class UserChannelConnection(models.Model):
     last_sync_at = models.DateTimeField(null=True, blank=True)
     sync_error_count = models.IntegerField(default=0)
     last_error = models.TextField(blank=True)
+    messages_sent_count = models.IntegerField(default=0)
     
     # Rate limiting and usage tracking
     messages_sent_today = models.IntegerField(default=0)
@@ -611,6 +705,10 @@ def update_conversation_stats_on_delete(sender, instance, **kwargs):
         last_message = conversation.messages.order_by('-created_at').first()
         conversation.last_message_at = last_message.created_at if last_message else None
         conversation.save(update_fields=['message_count', 'last_message_at'])
+
+
+# Import draft models
+from .models_drafts import MessageDraft, DraftAutoSaveSettings
 
 
 @receiver(post_save, sender=Message)

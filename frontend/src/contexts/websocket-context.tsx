@@ -4,7 +4,7 @@ import React, { createContext, useContext, useEffect, useRef, useState, useCallb
 import { useAuth } from '@/features/auth/context'
 
 export interface RealtimeMessage {
-  type: 'record_create' | 'record_update' | 'record_delete' | 'pipeline_update' | 'user_presence' | 'field_lock' | 'field_unlock' | 'permission_update' | 'activity_update'
+  type: 'record_create' | 'record_update' | 'record_delete' | 'pipeline_update' | 'user_presence' | 'field_lock' | 'field_unlock' | 'permission_update' | 'activity_update' | 'message_update' | 'new_conversation'
   payload: any
   data?: any // Backend sends activity data in 'data' field for activity_update messages
   user?: {
@@ -13,6 +13,9 @@ export interface RealtimeMessage {
     email: string
   }
   timestamp: string
+  // Communication-specific properties
+  message?: any
+  conversation?: any
 }
 
 export interface UserPresence {
@@ -240,6 +243,8 @@ export function WebSocketProvider({ children, autoConnect = true }: WebSocketPro
         message.type === 'user_presence' && subscription.channel === 'user_presence' ||
         message.type === 'permission_update' && subscription.channel.startsWith('permission') ||
         message.type === 'activity_update' && subscription.channel.startsWith('document_') ||
+        message.type === 'message_update' && subscription.channel.startsWith('conversation_') ||
+        message.type === 'new_conversation' && subscription.channel.startsWith('channel_') ||
         subscription.channel === 'pipelines_overview' // Special case for overview page
       
       

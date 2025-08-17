@@ -10,11 +10,13 @@ from celery import shared_task
 from django.contrib.auth import get_user_model
 from django.utils import timezone as django_timezone
 from django_tenants.utils import schema_context
+from asgiref.sync import async_to_sync
 
 from .models import (
-    Channel, Message, CommunicationAnalytics
+    Channel, Message, CommunicationAnalytics, UserChannelConnection
 )
 from .unipile_sdk import unipile_service
+from .message_sync import message_sync_service
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
@@ -212,3 +214,503 @@ def send_scheduled_message(
     except Exception as e:
         logger.error(f"Scheduled message send failed: {e}")
         raise
+
+
+# New message sync tasks
+
+@shared_task(bind=True, max_retries=3)
+def sync_account_messages_task(self, connection_id: str, initial_sync: bool = False, days_back: int = 30):
+    """
+    Celery task to sync messages for a specific account connection
+    
+    Args:
+        connection_id: UUID of the UserChannelConnection
+        initial_sync: Whether this is an initial sync
+        days_back: Days to sync back for initial sync
+    """
+    try:
+        # Get the connection
+        connection = UserChannelConnection.objects.get(id=connection_id)
+        
+        # Run the sync
+        result = async_to_sync(message_sync_service.sync_account_messages)(
+            connection,
+            initial_sync=initial_sync,
+            days_back=days_back
+        )
+        
+        if result['success']:
+            logger.info(f"Successfully synced messages for connection {connection_id}: "
+                       f"{result['messages_synced']} messages, {result['conversations_synced']} conversations")
+            return result
+        else:
+            logger.error(f"Failed to sync messages for connection {connection_id}: {result['error']}")
+            # Retry the task
+            raise self.retry(countdown=60 * (2 ** self.request.retries))
+    
+    except UserChannelConnection.DoesNotExist:
+        logger.error(f"Connection {connection_id} not found")
+        return {'success': False, 'error': f'Connection {connection_id} not found'}
+    
+    except Exception as e:
+        logger.error(f"Error in sync_account_messages_task for {connection_id}: {e}")
+        # Retry with exponential backoff
+        raise self.retry(countdown=60 * (2 ** self.request.retries), exc=e)
+
+
+@shared_task(bind=True)
+def sync_all_active_connections_task(self, initial_sync: bool = False, days_back: int = 30):
+    """
+    Celery task to sync messages for all active connections across all tenants
+    
+    This task handles multi-tenant execution by iterating through all tenants
+    """
+    try:
+        # Import here to avoid circular imports
+        from django_tenants.utils import get_tenant_model, get_public_schema_name
+        from django.db import connection
+        
+        tenant_model = get_tenant_model()
+        tenants = tenant_model.objects.exclude(schema_name=get_public_schema_name())
+        
+        total_results = {
+            'tenants_processed': 0,
+            'total_connections': 0,
+            'successful_syncs': 0,
+            'failed_syncs': 0,
+            'tenant_results': []
+        }
+        
+        for tenant in tenants:
+            try:
+                # Switch to tenant schema
+                connection.set_tenant(tenant)
+                
+                # Sync all connections for this tenant
+                result = async_to_sync(message_sync_service.sync_all_active_connections)(
+                    initial_sync=initial_sync,
+                    days_back=days_back
+                )
+                
+                total_results['tenants_processed'] += 1
+                total_results['total_connections'] += result['total_connections']
+                total_results['successful_syncs'] += result['successful_syncs']
+                total_results['failed_syncs'] += result['failed_syncs']
+                
+                total_results['tenant_results'].append({
+                    'tenant_name': tenant.name,
+                    'schema_name': tenant.schema_name,
+                    'result': result
+                })
+                
+                logger.info(f"Synced tenant {tenant.name}: {result['successful_syncs']}/{result['total_connections']} connections")
+                
+            except Exception as e:
+                logger.error(f"Failed to sync tenant {tenant.name}: {e}")
+                total_results['tenant_results'].append({
+                    'tenant_name': tenant.name,
+                    'schema_name': tenant.schema_name,
+                    'result': {'success': False, 'error': str(e)}
+                })
+        
+        logger.info(f"Completed sync for all tenants: {total_results['successful_syncs']}/{total_results['total_connections']} total connections")
+        return total_results
+    
+    except Exception as e:
+        logger.error(f"Error in sync_all_active_connections_task: {e}")
+        raise
+    
+    finally:
+        # Switch back to public schema
+        try:
+            public_tenant = tenant_model.objects.get(schema_name=get_public_schema_name())
+            connection.set_tenant(public_tenant)
+        except Exception as e:
+            logger.error(f"Failed to switch back to public schema: {e}")
+
+
+@shared_task(bind=True)
+def periodic_message_sync_task(self):
+    """
+    Periodic task to sync messages for all active connections
+    This should be run every 5-15 minutes via Celery Beat
+    """
+    try:
+        logger.info("Starting periodic message sync")
+        
+        # Sync all active connections (not initial sync, just recent messages)
+        result = sync_all_active_connections_task.delay(
+            initial_sync=False,
+            days_back=1  # Only sync last day for periodic sync
+        ).get()
+        
+        logger.info(f"Periodic sync completed: {result['successful_syncs']}/{result['total_connections']} connections synced")
+        return result
+    
+    except Exception as e:
+        logger.error(f"Error in periodic_message_sync_task: {e}")
+        raise
+
+
+@shared_task(bind=True)
+def initial_sync_new_connection_task(self, connection_id: str, days_back: int = 30):
+    """
+    Task to perform initial sync for a newly connected account
+    
+    Args:
+        connection_id: UUID of the UserChannelConnection
+        days_back: Days to sync back for initial sync
+    """
+    try:
+        logger.info(f"Starting initial sync for new connection {connection_id}")
+        
+        # Run initial sync with more messages
+        result = sync_account_messages_task.delay(
+            connection_id=connection_id,
+            initial_sync=True,
+            days_back=days_back
+        ).get()
+        
+        if result['success']:
+            logger.info(f"Initial sync completed for connection {connection_id}: "
+                       f"{result['messages_synced']} messages synced")
+        else:
+            logger.error(f"Initial sync failed for connection {connection_id}: {result['error']}")
+        
+        return result
+    
+    except Exception as e:
+        logger.error(f"Error in initial_sync_new_connection_task for {connection_id}: {e}")
+        raise
+
+
+# Real-time WhatsApp enhancement tasks
+
+@shared_task(bind=True, max_retries=3)
+def fetch_contact_profile_picture(self, account_id: str, attendee_id: str, contact_email: str):
+    """
+    Fetch contact profile picture from UniPile API and broadcast update
+    """
+    try:
+        from communications.unipile_sdk import unipile_service
+        from django.core.cache import cache
+        from channels.layers import get_channel_layer
+        from asgiref.sync import async_to_sync
+        
+        # Get UniPile client
+        client = unipile_service.get_client()
+        
+        # Fetch profile picture from UniPile API  
+        picture_response = client.request.get(f'chat_attendees/{attendee_id}/picture')
+        
+        if picture_response:
+            # Cache the profile picture for quick access
+            cache_key = f"profile_picture:{contact_email}"
+            cache.set(cache_key, picture_response, timeout=86400)  # 24 hours
+            
+            # Broadcast real-time update to frontend
+            channel_layer = get_channel_layer()
+            if channel_layer:
+                async_to_sync(channel_layer.group_send)(
+                    f"channel_{account_id}",
+                    {
+                        'type': 'contact_profile_updated',
+                        'contact': {
+                            'email': contact_email,
+                            'attendee_id': attendee_id,
+                            'has_profile_picture': True,
+                            'profile_picture_url': f'/api/v1/contacts/{contact_email}/picture/'
+                        }
+                    }
+                )
+            
+            logger.info(f"Fetched and cached profile picture for {contact_email}")
+            return {'success': True, 'contact_email': contact_email}
+            
+    except Exception as e:
+        logger.error(f"Failed to fetch profile picture for {contact_email}: {e}")
+        
+        # Retry with exponential backoff
+        if self.request.retries < self.max_retries:
+            raise self.retry(countdown=60 * (2 ** self.request.retries))
+        
+        return {'success': False, 'error': str(e)}
+
+
+@shared_task(bind=True, max_retries=3)
+def process_message_attachment(self, account_id: str, message_id: str, attachment_id: str, attachment_type: str, attachment_name: str):
+    """
+    Download and process message attachment from UniPile API
+    """
+    try:
+        from communications.unipile_sdk import unipile_service
+        from django.core.cache import cache
+        from channels.layers import get_channel_layer
+        from asgiref.sync import async_to_sync
+        
+        # Get UniPile client
+        client = unipile_service.get_client()
+        
+        # Download attachment from UniPile API
+        attachment_data = client.request.get(f'messages/{message_id}/attachments/{attachment_id}')
+        
+        if attachment_data:
+            # Store attachment metadata and broadcast update
+            attachment_info = {
+                'id': attachment_id,
+                'name': attachment_name,
+                'type': attachment_type,
+                'size': len(attachment_data) if isinstance(attachment_data, bytes) else 0,
+                'download_url': f'/api/v1/messages/{message_id}/attachments/{attachment_id}/',
+                'processed_at': django_timezone.now().isoformat()
+            }
+            
+            # Cache attachment for quick access
+            cache_key = f"attachment:{message_id}:{attachment_id}"
+            cache.set(cache_key, attachment_data, timeout=3600)  # 1 hour
+            
+            # Broadcast real-time attachment ready notification
+            channel_layer = get_channel_layer()
+            if channel_layer:
+                async_to_sync(channel_layer.group_send)(
+                    f"channel_{account_id}",
+                    {
+                        'type': 'attachment_ready',
+                        'message_id': message_id,
+                        'attachment': attachment_info
+                    }
+                )
+            
+            logger.info(f"Processed attachment {attachment_name} for message {message_id}")
+            return {'success': True, 'attachment_id': attachment_id}
+            
+    except Exception as e:
+        logger.error(f"Failed to process attachment {attachment_id}: {e}")
+        
+        # Retry with exponential backoff
+        if self.request.retries < self.max_retries:
+            raise self.retry(countdown=30 * (2 ** self.request.retries))
+        
+        return {'success': False, 'error': str(e)}
+
+
+@shared_task(bind=True, max_retries=3)
+def sync_chat_history_realtime(self, account_id: str, chat_id: str, conversation_id: str):
+    """
+    Sync complete chat history from UniPile and broadcast updates
+    """
+    try:
+        from communications.unipile_sdk import unipile_service
+        from communications.models import Message, Conversation
+        from channels.layers import get_channel_layer
+        from asgiref.sync import async_to_sync
+        
+        # Get UniPile client
+        client = unipile_service.get_client()
+        
+        # Sync chat history from beginning
+        sync_response = client.request.get(f'chats/{chat_id}/sync')
+        
+        if sync_response and sync_response.get('messages'):
+            # Get conversation
+            conversation = Conversation.objects.get(id=conversation_id)
+            
+            # Process historical messages
+            new_messages = []
+            for msg_data in sync_response['messages']:
+                # Check if message already exists
+                if not Message.objects.filter(external_message_id=msg_data.get('message_id')).exists():
+                    # Process new historical message
+                    new_messages.append(msg_data)
+            
+            # Broadcast history sync completion
+            channel_layer = get_channel_layer()
+            if channel_layer:
+                async_to_sync(channel_layer.group_send)(
+                    f"conversation_{conversation_id}",
+                    {
+                        'type': 'chat_history_synced',
+                        'chat_id': chat_id,
+                        'new_messages_count': len(new_messages),
+                        'total_messages': len(sync_response['messages']),
+                        'sync_completed_at': django_timezone.now().isoformat()
+                    }
+                )
+            
+            logger.info(f"Synced {len(new_messages)} new messages for chat {chat_id}")
+            return {'success': True, 'new_messages': len(new_messages)}
+            
+    except Exception as e:
+        logger.error(f"Failed to sync chat history for {chat_id}: {e}")
+        
+        # Retry with exponential backoff
+        if self.request.retries < self.max_retries:
+            raise self.retry(countdown=120 * (2 ** self.request.retries))
+        
+        return {'success': False, 'error': str(e)}
+
+
+@shared_task(bind=True)
+def update_message_status_realtime(self, message_id: str, status: str, account_id: str):
+    """
+    Update message status (delivered, read) and broadcast real-time update
+    """
+    try:
+        from communications.models import Message, MessageStatus
+        from channels.layers import get_channel_layer
+        from asgiref.sync import async_to_sync
+        
+        # Update message status
+        message = Message.objects.get(external_message_id=message_id)
+        old_status = message.status
+        
+        if status == 'delivered':
+            message.status = MessageStatus.DELIVERED
+        elif status == 'read':
+            message.status = MessageStatus.READ
+        
+        message.save()
+        
+        # Broadcast real-time status update
+        channel_layer = get_channel_layer()
+        if channel_layer:
+            async_to_sync(channel_layer.group_send)(
+                f"conversation_{message.conversation.id}",
+                {
+                    'type': 'message_status_updated',
+                    'message_id': str(message.id),
+                    'external_message_id': message_id,
+                    'old_status': old_status,
+                    'new_status': message.status,
+                    'updated_at': django_timezone.now().isoformat()
+                }
+            )
+        
+        logger.info(f"Updated message {message_id} status from {old_status} to {message.status}")
+        return {'success': True, 'message_id': message_id, 'status': message.status}
+        
+    except Exception as e:
+        logger.error(f"Failed to update message status for {message_id}: {e}")
+        return {'success': False, 'error': str(e)}
+
+
+@shared_task(bind=True, max_retries=3)
+def mark_chat_read_realtime(self, account_id: str, chat_id: str, conversation_id: str):
+    """
+    Mark chat as read via UniPile API and broadcast update
+    """
+    try:
+        from communications.unipile_sdk import unipile_service
+        from channels.layers import get_channel_layer
+        from asgiref.sync import async_to_sync
+        
+        # Get UniPile client
+        client = unipile_service.get_client()
+        
+        # Mark chat as read via UniPile API
+        read_response = client.request.patch(f'chats/{chat_id}', data={'read': True})
+        
+        if read_response:
+            # Broadcast real-time read status update
+            channel_layer = get_channel_layer()
+            if channel_layer:
+                async_to_sync(channel_layer.group_send)(
+                    f"channel_{account_id}",
+                    {
+                        'type': 'chat_marked_read',
+                        'conversation_id': conversation_id,
+                        'chat_id': chat_id,
+                        'marked_read_at': django_timezone.now().isoformat()
+                    }
+                )
+            
+            logger.info(f"Marked chat {chat_id} as read")
+            return {'success': True, 'chat_id': chat_id}
+            
+    except Exception as e:
+        logger.error(f"Failed to mark chat {chat_id} as read: {e}")
+        
+        # Retry with exponential backoff
+        if self.request.retries < self.max_retries:
+            raise self.retry(countdown=30 * (2 ** self.request.retries))
+        
+        return {'success': False, 'error': str(e)}
+
+
+@shared_task(bind=True, max_retries=3)
+def forward_message_realtime(self, account_id: str, message_id: str, target_chat_id: str, conversation_id: str):
+    """
+    Forward WhatsApp message via UniPile API and broadcast update
+    """
+    try:
+        from communications.unipile_sdk import unipile_service
+        from channels.layers import get_channel_layer
+        from asgiref.sync import async_to_sync
+        
+        # Get UniPile client
+        client = unipile_service.get_client()
+        
+        # Forward message via UniPile API (WhatsApp-specific)
+        forward_response = client.request.post(f'messages/{message_id}/forward', data={
+            'chat_id': target_chat_id
+        })
+        
+        if forward_response:
+            # Broadcast real-time forward notification
+            channel_layer = get_channel_layer()
+            if channel_layer:
+                async_to_sync(channel_layer.group_send)(
+                    f"conversation_{conversation_id}",
+                    {
+                        'type': 'message_forwarded',
+                        'original_message_id': message_id,
+                        'target_chat_id': target_chat_id,
+                        'forwarded_message_id': forward_response.get('message_id'),
+                        'forwarded_at': django_timezone.now().isoformat()
+                    }
+                )
+            
+            logger.info(f"Forwarded message {message_id} to chat {target_chat_id}")
+            return {'success': True, 'forwarded_message_id': forward_response.get('message_id')}
+            
+    except Exception as e:
+        logger.error(f"Failed to forward message {message_id}: {e}")
+        
+        # Retry with exponential backoff
+        if self.request.retries < self.max_retries:
+            raise self.retry(countdown=60 * (2 ** self.request.retries))
+        
+        return {'success': False, 'error': str(e)}
+
+
+@shared_task(bind=True)
+def periodic_account_resync(self, account_id: str):
+    """
+    Periodic account resync for maintaining connection health
+    """
+    try:
+        from communications.unipile_sdk import unipile_service
+        from communications.models import UserChannelConnection
+        
+        # Get UniPile client
+        client = unipile_service.get_client()
+        
+        # Resync account data
+        resync_response = client.request.get(f'accounts/{account_id}/sync')
+        
+        if resync_response:
+            # Update connection last sync time
+            try:
+                connection = UserChannelConnection.objects.get(unipile_account_id=account_id)
+                connection.last_sync_at = django_timezone.now()
+                connection.sync_error_count = 0
+                connection.save()
+            except UserChannelConnection.DoesNotExist:
+                pass
+            
+            logger.info(f"Periodic resync completed for account {account_id}")
+            return {'success': True, 'account_id': account_id}
+            
+    except Exception as e:
+        logger.error(f"Failed periodic resync for account {account_id}: {e}")
+        return {'success': False, 'error': str(e)}

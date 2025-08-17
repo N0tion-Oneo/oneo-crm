@@ -20,6 +20,7 @@ class UserChannelConnectionSerializer(serializers.ModelSerializer):
     # Enhanced status information
     statusInfo = serializers.SerializerMethodField()
     canSendMessages = serializers.SerializerMethodField()
+    channelId = serializers.SerializerMethodField()  # Associated Channel ID for WebSocket subscriptions
     lastError = serializers.CharField(source='last_error', read_only=True)
     checkpointData = serializers.JSONField(source='checkpoint_data', read_only=True)
     messagesSentToday = serializers.IntegerField(source='messages_sent_today', read_only=True)
@@ -30,7 +31,7 @@ class UserChannelConnectionSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'channelType', 'accountName', 'authStatus', 'accountStatus',
             'externalAccountId', 'hostedAuthUrl', 'lastActiveAt', 'createdAt',
-            'statusInfo', 'canSendMessages', 'lastError', 'checkpointData',
+            'statusInfo', 'canSendMessages', 'channelId', 'lastError', 'checkpointData',
             'messagesSentToday', 'rateLimitPerHour'
         ]
     
@@ -41,6 +42,18 @@ class UserChannelConnectionSerializer(serializers.ModelSerializer):
     def get_canSendMessages(self, obj):
         """Check if account can send messages"""
         return obj.can_send_messages()
+    
+    def get_channelId(self, obj):
+        """Get the associated Channel ID for WebSocket subscriptions"""
+        from communications.models import Channel
+        try:
+            channel = Channel.objects.filter(
+                unipile_account_id=obj.unipile_account_id,
+                channel_type=obj.channel_type
+            ).first()
+            return str(channel.id) if channel else None
+        except Exception:
+            return None
 
 
 class AccountConnectionSerializer(serializers.ModelSerializer):

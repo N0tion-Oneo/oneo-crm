@@ -683,6 +683,228 @@ export const communicationsApi = {
   
   resendCheckpoint: (connectionId: string) =>
     api.post(`/api/v1/communications/connections/${connectionId}/checkpoint/resend/`),
+  
+  // Provider configuration management
+  getProviderConfigurations: () => 
+    api.get('/api/v1/communications/providers/configurations/'),
+  
+  updateProviderPreferences: (data: {
+    provider_type: string
+    preferences: any
+  }) => api.post('/api/v1/communications/providers/preferences/', data),
+  
+  updateTenantConfig: (data: {
+    auto_create_contacts?: boolean
+    sync_historical_days?: number
+    enable_real_time_sync?: boolean
+    max_api_calls_per_hour?: number
+  }) => api.post('/api/v1/communications/tenant-config/', data),
+  
+  getProviderRateLimits: (providerType: string) =>
+    api.get(`/api/v1/communications/providers/${providerType}/rate-limits/`),
+  
+  getProviderFeatures: (providerType: string) =>
+    api.get(`/api/v1/communications/providers/${providerType}/features/`),
+  
+  // Unified Inbox API
+  getUnifiedInbox: (filters?: {
+    search?: string
+    type?: 'all' | 'email' | 'linkedin' | 'whatsapp' | 'sms'
+    status?: 'all' | 'unread' | 'starred'
+    account?: string
+  }) => api.get('/api/v1/communications/local-inbox/', { params: filters }),
+  
+  getConversationMessages: (conversationId: string) =>
+    api.get(`/api/v1/communications/local-inbox/conversations/${conversationId}/messages/`),
+  
+  markConversationAsRead: (conversationId: string) =>
+    api.post(`/api/v1/communications/conversations/${conversationId}/mark-read/`),
+  
+  sendMessage: (data: {
+    conversation_id?: string
+    content: string
+    type: string
+    attachments?: any[]
+    recipient?: string
+    subject?: string
+  }) => api.post('/api/v1/communications/messages/send/', data),
+
+  // Attachment management
+  uploadAttachment: (formData: FormData) => {
+    // Create a new axios instance for file uploads with multipart/form-data
+    const uploadApi = axios.create({
+      baseURL: getApiBaseUrl(),
+      timeout: 60000, // 60 seconds for file uploads
+      withCredentials: true,
+    })
+    
+    // Add auth token manually since we're using a different instance
+    const accessToken = typeof document !== 'undefined' ? 
+      document.cookie.split('; ').find(row => row.startsWith('oneo_access_token='))?.split('=')[1] : null
+    
+    if (accessToken) {
+      uploadApi.defaults.headers.common['Authorization'] = `Bearer ${accessToken}`
+    }
+    
+    return uploadApi.post('/api/v1/communications/attachments/upload/', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      }
+    })
+  },
+
+  sendMessageWithAttachments: (data: {
+    conversation_id?: string
+    content: string
+    account_id: string
+    attachments?: any[]
+    recipient?: string
+    subject?: string
+  }) => api.post('/api/v1/communications/messages/send-with-attachments/', data),
+
+  deleteAttachment: (attachmentId: string) => 
+    api.delete(`/api/v1/communications/attachments/${attachmentId}/`),
+
+  // Draft management
+  getDraftForContext: (params: {
+    conversation_id?: string
+    account_connection_id?: string
+    recipient?: string
+  }) => api.get('/api/v1/communications/drafts/context/', { params }),
+
+  autoSaveDraft: (data: {
+    content: string
+    subject?: string
+    recipient?: string
+    account_connection_id?: string
+    conversation_id?: string
+    recipient_type?: 'new' | 'reply'
+    attachments?: any[]
+  }) => api.post('/api/v1/communications/drafts/auto-save/', data),
+
+  saveManualDraft: (data: {
+    content: string
+    draft_name: string
+    subject?: string
+    recipient?: string
+    account_connection_id?: string
+    conversation_id?: string
+    recipient_type?: 'new' | 'reply'
+    attachments?: any[]
+  }) => api.post('/api/v1/communications/drafts/manual-save/', data),
+
+  deleteDraft: (draftId: string) => 
+    api.delete(`/api/v1/communications/drafts/${draftId}/delete/`),
+
+  getDrafts: (params?: any) => 
+    api.get('/api/v1/communications/drafts/', { params }),
+
+  getDraftSettings: () => 
+    api.get('/api/v1/communications/draft-settings/'),
+
+  updateDraftSettings: (data: any) => 
+    api.patch('/api/v1/communications/draft-settings/', data),
+  
+  // LinkedIn-specific API
+  createLinkedInJobPosting: (data: {
+    account_id: string
+    job_title: string
+    company_name: string
+    location: string
+    description: string
+    requirements: string
+    employment_type?: string
+    experience_level?: string
+    salary_range?: any
+    skills?: string[]
+    apply_url?: string
+  }) => api.post('/api/v1/communications/linkedin/jobs/', data),
+  
+  getLinkedInJobPostings: (accountId: string, params?: {
+    status?: string
+    limit?: number
+    cursor?: string
+  }) => api.get('/api/v1/communications/linkedin/jobs/', { 
+    params: { account_id: accountId, ...params }
+  }),
+  
+  searchLinkedInPeople: (accountId: string, criteria: {
+    keywords?: string
+    location?: string
+    company?: string
+    industry?: string
+    current_position?: string
+    connection_degree?: string
+    limit?: number
+  }) => api.get('/api/v1/communications/linkedin/search/people/', {
+    params: { account_id: accountId, ...criteria }
+  }),
+  
+  sendLinkedInConnectionRequest: (data: {
+    account_id: string
+    profile_id: string
+    message?: string
+  }) => api.post('/api/v1/communications/linkedin/connections/invite/', data),
+  
+  sendLinkedInInMail: (data: {
+    account_id: string
+    recipient_profile_id: string
+    subject: string
+    message: string
+  }) => api.post('/api/v1/communications/linkedin/inmail/send/', data),
+  
+  // Email API
+  sendEmail: (data: {
+    account_id: string
+    to: string[]
+    subject: string
+    body: string
+    cc?: string[]
+    bcc?: string[]
+    attachments?: any[]
+    is_html?: boolean
+  }) => api.post('/api/v1/communications/email/send/', data),
+  
+  getEmails: (accountId: string, params?: {
+    folder?: string
+    limit?: number
+    cursor?: string
+    unread_only?: boolean
+  }) => api.get('/api/v1/communications/email/', {
+    params: { account_id: accountId, ...params }
+  }),
+  
+  getEmailFolders: (accountId: string) =>
+    api.get('/api/v1/communications/email/folders/', {
+      params: { account_id: accountId }
+    }),
+  
+  // Calendar API
+  createCalendarEvent: (data: {
+    account_id: string
+    calendar_id: string
+    title: string
+    start_time: string
+    end_time: string
+    description?: string
+    location?: string
+    attendees?: string[]
+    reminder_minutes?: number
+  }) => api.post('/api/v1/communications/calendar/events/', data),
+  
+  getCalendarEvents: (accountId: string, params?: {
+    calendar_id?: string
+    start_date?: string
+    end_date?: string
+    limit?: number
+  }) => api.get('/api/v1/communications/calendar/events/', {
+    params: { account_id: accountId, ...params }
+  }),
+  
+  getCalendars: (accountId: string) =>
+    api.get('/api/v1/communications/calendar/', {
+      params: { account_id: accountId }
+    }),
 }
 
 // Saved Filters API client functions

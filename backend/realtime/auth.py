@@ -401,6 +401,13 @@ async def check_channel_subscription_permission(user, channel: str):
             user_id_from_channel = channel.split('_')[1]
             return str(user.id) == user_id_from_channel
         
+        elif channel.startswith('channel_') or channel.startswith('conversation_'):
+            # Communication channels - check if user has access to communications
+            # For now, allow all authenticated users to subscribe to communication channels
+            # In the future, you might want to check specific channel/conversation permissions
+            logger.info(f"✅ Communication channel access granted for user {user.username}: {channel}")
+            return True
+        
         else:
             # Unknown channel pattern - deny access
             logger.warning(f"Unknown channel pattern for permission check: {channel}")

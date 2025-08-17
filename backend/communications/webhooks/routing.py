@@ -36,7 +36,7 @@ class AccountTenantRouter:
                 try:
                     with schema_context(tenant.schema_name):
                         connection_exists = UserChannelConnection.objects.filter(
-                            external_account_id=account_id
+                            unipile_account_id=account_id
                         ).exists()
                         
                         if connection_exists:
@@ -95,7 +95,7 @@ class AccountTenantRouter:
         """
         try:
             return UserChannelConnection.objects.filter(
-                external_account_id=account_id
+                unipile_account_id=account_id
             ).first()
         except Exception as e:
             logger.error(f"Error getting user connection for account {account_id}: {e}")

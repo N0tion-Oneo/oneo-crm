@@ -342,6 +342,186 @@ CORS_ALLOW_CREDENTIALS = True
 UNIPILE_DSN = config('UNIPILE_DSN', default='')
 UNIPILE_API_KEY = config('UNIPILE_API_KEY', default='')
 
+# Provider-specific global configurations
+# These settings define what features are available globally and rate limits
+UNIPILE_PROVIDER_SETTINGS = {
+    'linkedin': {
+        'name': 'LinkedIn',
+        'icon': '💼',
+        'features': {
+            'messaging': True,
+            'job_posting': True,
+            'search': True,
+            'hiring_projects': True,
+            'endorsements': True,
+            'company_profiles': True,
+            'invitations': True,
+            'profile_actions': True
+        },
+        'rate_limits': {
+            'api_calls_per_hour': 1000,
+            'search_queries_per_day': 100,
+            'job_postings_per_month': 50,
+            'invitations_per_week': 200,
+            'messages_per_day': 100
+        },
+        'auth_methods': ['hosted', 'native'],
+        'supported_endpoints': [
+            'messaging', 'users', 'posts', 'linkedin-specific'
+        ]
+    },
+    'gmail': {
+        'name': 'Gmail',
+        'icon': '📧',
+        'features': {
+            'messaging': True,
+            'calendar': True,
+            'drafts': True,
+            'folders': True,
+            'attachments': True,
+            'email_tracking': True
+        },
+        'rate_limits': {
+            'api_calls_per_hour': 2000,
+            'emails_per_day': 500,
+            'calendar_events_per_day': 100
+        },
+        'auth_methods': ['hosted'],
+        'supported_endpoints': [
+            'emails', 'calendars', 'webhooks'
+        ]
+    },
+    'outlook': {
+        'name': 'Outlook',
+        'icon': '📧',
+        'features': {
+            'messaging': True,
+            'calendar': True,
+            'drafts': True,
+            'folders': True,
+            'attachments': True,
+            'email_tracking': True
+        },
+        'rate_limits': {
+            'api_calls_per_hour': 1500,
+            'emails_per_day': 400,
+            'calendar_events_per_day': 80
+        },
+        'auth_methods': ['hosted'],
+        'supported_endpoints': [
+            'emails', 'calendars', 'webhooks'
+        ]
+    },
+    'mail': {
+        'name': 'Email (Generic)',
+        'icon': '📬',
+        'features': {
+            'messaging': True,
+            'drafts': True,
+            'folders': True,
+            'attachments': True
+        },
+        'rate_limits': {
+            'api_calls_per_hour': 1000,
+            'emails_per_day': 300
+        },
+        'auth_methods': ['hosted', 'native'],
+        'supported_endpoints': [
+            'emails', 'webhooks'
+        ]
+    },
+    'whatsapp': {
+        'name': 'WhatsApp',
+        'icon': '💬',
+        'features': {
+            'messaging': True,
+            'group_chat': True,
+            'media': True,
+            'qr_auth': True
+        },
+        'rate_limits': {
+            'api_calls_per_hour': 800,
+            'messages_per_day': 1000,
+            'media_uploads_per_day': 100
+        },
+        'auth_methods': ['hosted'],
+        'supported_endpoints': [
+            'messaging', 'webhooks'
+        ]
+    },
+    'instagram': {
+        'name': 'Instagram',
+        'icon': '📷',
+        'features': {
+            'messaging': True,
+            'media': True,
+            'posts': True
+        },
+        'rate_limits': {
+            'api_calls_per_hour': 600,
+            'messages_per_day': 500,
+            'posts_per_day': 10
+        },
+        'auth_methods': ['hosted'],
+        'supported_endpoints': [
+            'messaging', 'posts', 'webhooks'
+        ]
+    },
+    'messenger': {
+        'name': 'Facebook Messenger',
+        'icon': '💬',
+        'features': {
+            'messaging': True,
+            'group_chat': True,
+            'media': True
+        },
+        'rate_limits': {
+            'api_calls_per_hour': 800,
+            'messages_per_day': 800
+        },
+        'auth_methods': ['hosted'],
+        'supported_endpoints': [
+            'messaging', 'webhooks'
+        ]
+    },
+    'telegram': {
+        'name': 'Telegram',
+        'icon': '✈️',
+        'features': {
+            'messaging': True,
+            'group_chat': True,
+            'media': True,
+            'bots': True
+        },
+        'rate_limits': {
+            'api_calls_per_hour': 1000,
+            'messages_per_day': 1000
+        },
+        'auth_methods': ['hosted'],
+        'supported_endpoints': [
+            'messaging', 'webhooks'
+        ]
+    },
+    'twitter': {
+        'name': 'Twitter/X',
+        'icon': '🐦',
+        'features': {
+            'messaging': True,
+            'posts': True,
+            'follows': True
+        },
+        'rate_limits': {
+            'api_calls_per_hour': 500,
+            'messages_per_day': 300,
+            'posts_per_day': 50
+        },
+        'auth_methods': ['hosted'],
+        'supported_endpoints': [
+            'messaging', 'posts', 'users', 'webhooks'
+        ]
+    }
+}
+
 # UniPile Settings Class
 class UnipileSettings:
     """Centralized UniPile configuration management"""
@@ -360,9 +540,46 @@ class UnipileSettings:
             return None
         return f"{self.dsn.rstrip('/')}/api/v1"
     
+    @property
+    def provider_settings(self):
+        """Get provider-specific settings"""
+        return UNIPILE_PROVIDER_SETTINGS
+    
     def is_configured(self):
         """Check if UniPile is properly configured"""
         return bool(self.dsn and self.api_key)
+    
+    def get_provider_config(self, provider_type):
+        """Get configuration for a specific provider"""
+        return self.provider_settings.get(provider_type, {})
+    
+    def get_provider_features(self, provider_type):
+        """Get features enabled for a specific provider"""
+        config = self.get_provider_config(provider_type)
+        return config.get('features', {})
+    
+    def get_provider_rate_limits(self, provider_type):
+        """Get rate limits for a specific provider"""
+        config = self.get_provider_config(provider_type)
+        return config.get('rate_limits', {})
+    
+    def is_feature_enabled(self, provider_type, feature):
+        """Check if a feature is enabled for a provider"""
+        features = self.get_provider_features(provider_type)
+        return features.get(feature, False)
+    
+    def get_supported_providers(self):
+        """Get list of all supported providers"""
+        return list(self.provider_settings.keys())
+    
+    def get_provider_display_info(self, provider_type):
+        """Get display information for a provider"""
+        config = self.get_provider_config(provider_type)
+        return {
+            'name': config.get('name', provider_type.title()),
+            'icon': config.get('icon', '📢'),
+            'auth_methods': config.get('auth_methods', ['hosted'])
+        }
     
     def get_webhook_url(self, request=None):
         """Get the webhook URL for UniPile registration"""
@@ -378,7 +595,9 @@ class UnipileSettings:
             return f"https://{webhook_domain}/webhooks/unipile/"
 
 # Global UniPile settings instance
-unipile_settings = UnipileSettings()
+UNIPILE_SETTINGS = UnipileSettings()
+# Backward compatibility - some code might still use lowercase
+unipile_settings = UNIPILE_SETTINGS
 
 # CSRF trusted origins for development
 CSRF_TRUSTED_ORIGINS = [

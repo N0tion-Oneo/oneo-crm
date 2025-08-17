@@ -142,3 +142,33 @@ export function usePipelinesOverviewSubscription(
     enabled
   })
 }
+
+/**
+ * Hook for subscribing to communication channel updates (conversation list)
+ */
+export function useChannelSubscription(
+  channelId: string,
+  onMessage?: (message: RealtimeMessage) => void,
+  enabled = true
+) {
+  return useWebSocketSubscription({
+    channel: `channel_${channelId}`,
+    onMessage,
+    enabled
+  })
+}
+
+/**
+ * Hook for subscribing to conversation updates (messages)
+ */
+export function useConversationSubscription(
+  conversationId: string,
+  onMessage?: (message: RealtimeMessage) => void,
+  enabled = true
+) {
+  return useWebSocketSubscription({
+    channel: `conversation_${conversationId}`,
+    onMessage,
+    enabled
+  })
+}

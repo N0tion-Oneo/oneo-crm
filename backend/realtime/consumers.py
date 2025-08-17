@@ -674,6 +674,32 @@ class BaseRealtimeConsumer(AsyncWebsocketConsumer):
         
         # Log the permission update for debugging
         logger.info(f"Permission update sent to user {self.user_id}: {message.get('data', {}).get('event_type', 'unknown')}")
+    
+    async def message_update(self, event):
+        """Handle real-time message updates from communication system"""
+        message_data = event.get('message', {})
+        
+        # Send message update to the client
+        await self.send(text_data=json.dumps({
+            'type': 'message_update',
+            'message': message_data,
+            'timestamp': message_data.get('timestamp')
+        }))
+        
+        logger.debug(f"Message update sent to user {self.user_id}: message {message_data.get('id', 'unknown')}")
+    
+    async def new_conversation(self, event):
+        """Handle new conversation notifications from communication system"""
+        conversation_data = event.get('conversation', {})
+        
+        # Send new conversation notification to the client
+        await self.send(text_data=json.dumps({
+            'type': 'new_conversation',
+            'conversation': conversation_data,
+            'timestamp': conversation_data.get('updated_at')
+        }))
+        
+        logger.debug(f"New conversation sent to user {self.user_id}: conversation {conversation_data.get('id', 'unknown')}")
 
 
 class CollaborativeEditingConsumer(BaseRealtimeConsumer):

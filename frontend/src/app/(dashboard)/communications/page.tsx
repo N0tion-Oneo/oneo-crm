@@ -1,7 +1,8 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Plus, MessageSquare, CheckCircle, AlertCircle, ExternalLink, Trash2, RotateCcw, Shield, RefreshCw } from 'lucide-react'
+import { Plus, MessageSquare, CheckCircle, AlertCircle, ExternalLink, Trash2, RotateCcw, Shield, RefreshCw, Settings } from 'lucide-react'
+import Link from 'next/link'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -387,13 +388,28 @@ export default function CommunicationsPage() {
             <p className="text-gray-600 dark:text-gray-400">Manage your communication account connections</p>
           </div>
           
-          <Dialog open={addAccountOpen} onOpenChange={setAddAccountOpen}>
-            <DialogTrigger asChild>
-              <Button>
-                <Plus className="w-4 h-4 mr-2" />
-                Add Account
+          <div className="flex space-x-2">
+            <Link href="/communications/inbox">
+              <Button variant="outline">
+                <MessageSquare className="w-4 h-4 mr-2" />
+                Inbox
               </Button>
-            </DialogTrigger>
+            </Link>
+            
+            <Link href="/communications/settings">
+              <Button variant="outline">
+                <Settings className="w-4 h-4 mr-2" />
+                Settings
+              </Button>
+            </Link>
+            
+            <Dialog open={addAccountOpen} onOpenChange={setAddAccountOpen}>
+              <DialogTrigger asChild>
+                <Button>
+                  <Plus className="w-4 h-4 mr-2" />
+                  Add Account
+                </Button>
+              </DialogTrigger>
             <DialogContent>
               <DialogHeader>
                 <DialogTitle>Add Communication Account</DialogTitle>
@@ -443,6 +459,7 @@ export default function CommunicationsPage() {
               </div>
             </DialogContent>
           </Dialog>
+          </div>
         </div>
 
         {connections.length === 0 ? (

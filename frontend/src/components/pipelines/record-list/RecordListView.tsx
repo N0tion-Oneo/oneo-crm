@@ -435,7 +435,7 @@ export function RecordListView({ pipeline: initialPipeline, onEditRecord, onCrea
         
         console.log('🔗 Opening related record drawer with pipeline:', targetPipeline.name)
         console.log('🔗 Target pipeline field groups:', targetPipeline.field_groups)
-        console.log('🔗 Target pipeline fields with groups:', targetPipeline.fields.map(f => ({ name: f.name, field_group: f.field_group })))
+        console.log('🔗 Target pipeline fields with groups:', targetPipeline.fields.map((f: any) => ({ name: f.name, field_group: f.field_group })))
         
         // Open the related record with its proper pipeline context
         onEditRecord(recordResponse.data, targetPipeline)

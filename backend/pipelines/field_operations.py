@@ -77,9 +77,10 @@ class FieldOperationManager:
                 'operation_id': operation_id,
                 'pipeline_id': self.pipeline.id,
                 'pipeline_name': self.pipeline.name,
-                'field_slug': field.slug,
-                'field_name': field.name,
-                'field_type': field.field_type,
+                # For hard deletes, field might be None, so get from changes dict
+                'field_slug': field.slug if field else changes.get('field_slug', 'unknown'),
+                'field_name': field.name if field else changes.get('field_name', 'unknown'),
+                'field_type': field.field_type if field else changes.get('field_type', 'unknown'),
             }
             
             # Safely serialize changes to avoid JSON serialization errors
@@ -107,14 +108,16 @@ class FieldOperationManager:
                 user=user,
                 action=action,
                 model_name='Field',
-                object_id=str(field.id),
+                object_id=str(field.id) if field else changes.get('field_slug', 'unknown'),
                 changes=audit_changes
             )
             
-            logger.info(f"Created audit log: {action} for field {field.slug} by user {user.username if user else 'system'}")
+            field_slug = field.slug if field else changes.get('field_slug', 'unknown')
+            logger.info(f"Created audit log: {action} for field {field_slug} by user {user.username if user else 'system'}")
             
         except Exception as e:
-            logger.error(f"Failed to create audit log for field {field.slug}: {e}")
+            field_slug = field.slug if field else changes.get('field_slug', 'unknown')
+            logger.error(f"Failed to create audit log for field {field_slug}: {e}")
     
     # =============================================================================
     # MAIN FIELD OPERATIONS - Single entry points for all field operations
@@ -360,6 +363,8 @@ class FieldOperationManager:
         Returns:
             FieldOperationResult with success status and deletion details
         """
+        from django.utils import timezone
+        
         operation_id = self._generate_operation_id()
         logger.info(f"[{operation_id}] Starting field deletion: field_id={field_id}, hard_delete={hard_delete}")
         
@@ -401,6 +406,8 @@ class FieldOperationManager:
                     # Hard deletion - permanent removal
                     field_slug = field.slug
                     field_name = field.name
+                    field_type = field.field_type
+                    pipeline_id = field.pipeline_id
                     
                     # Queue cleanup of orphaned data
                     deletion_metadata['orphaned_data_cleanup_queued'] = True
@@ -411,10 +418,11 @@ class FieldOperationManager:
                     deletion_metadata['deletion_type'] = 'hard'
                     deletion_metadata['field_slug'] = field_slug
                     deletion_metadata['field_name'] = field_name
+                    deletion_metadata['field_type'] = field_type
+                    deletion_metadata['pipeline_id'] = pipeline_id
                     
                 else:
                     # Soft deletion - direct update to avoid circular dependency
-                    from django.utils import timezone
                     field.is_deleted = True
                     field.deleted_at = timezone.now()
                     field.deleted_by = user
@@ -697,7 +705,22 @@ class FieldOperationManager:
         """Apply changes to field instance"""
         for key, value in changes.items():
             if hasattr(field, key):
-                setattr(field, key, value)
+                # Special handling for ForeignKey fields like field_group
+                if key == 'field_group':
+                    if value is None:
+                        field.field_group = None
+                    else:
+                        # Look up the FieldGroup instance by ID within the current pipeline
+                        try:
+                            from .models import FieldGroup
+                            field_group = FieldGroup.objects.get(id=value, pipeline=field.pipeline)
+                            field.field_group = field_group
+                            logger.info(f"Successfully assigned field_group {value} to field {field.name}")
+                        except FieldGroup.DoesNotExist:
+                            logger.error(f"FieldGroup with ID {value} not found in pipeline {field.pipeline.id}")
+                            raise ValidationError(f"FieldGroup with ID {value} not found in this pipeline")
+                else:
+                    setattr(field, key, value)
         
         field.updated_by = user
         field.save()

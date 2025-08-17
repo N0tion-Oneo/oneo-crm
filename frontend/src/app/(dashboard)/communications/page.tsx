@@ -95,7 +95,7 @@ export default function CommunicationsPage() {
         hasTenantCookie: hasTenant,
         isAuthenticated: isAuthenticated,
         user: user?.email,
-        tenant: tenant?.schema_name
+        tenant: tenant?.name || tenant?.schemaName
       })
       
       const response = await communicationsApi.getConnections()

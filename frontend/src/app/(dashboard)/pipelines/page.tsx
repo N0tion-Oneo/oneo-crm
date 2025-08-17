@@ -8,6 +8,7 @@ import { useAuth } from '@/features/auth/context'
 import { api, pipelinesApi } from '@/lib/api'
 import { PermissionGuard, PermissionButton } from '@/components/permissions/PermissionGuard'
 import { PipelineTemplateLoader, type PipelineTemplate } from '@/components/pipelines/pipeline-template-loader'
+import { PipelineCreationWizard, type PipelineCreationData } from '@/components/pipelines/pipeline-creation-wizard'
 import { usePipelinesOverviewSubscription } from '@/hooks/use-websocket-subscription'
 import { type RealtimeMessage } from '@/contexts/websocket-context'
 
@@ -53,6 +54,8 @@ export default function PipelinesPage() {
   
   // New pipeline creation states
   const [showTemplateLoader, setShowTemplateLoader] = useState(false)
+  const [showCreationWizard, setShowCreationWizard] = useState(false)
+  const [creationLoading, setCreationLoading] = useState(false)
 
   // Handle real-time record updates
   const handleRealtimeMessage = useCallback((message: RealtimeMessage) => {
@@ -163,6 +166,13 @@ export default function PipelinesPage() {
 
   // Handle template selection - create pipeline and redirect to fields page
   const handleTemplateSelected = async (template: PipelineTemplate) => {
+    // If it's a blank template, show the creation wizard instead
+    if (template.id === 'blank') {
+      setShowTemplateLoader(false)
+      setShowCreationWizard(true)
+      return
+    }
+
     try {
       setShowTemplateLoader(false)
       
@@ -212,6 +222,51 @@ export default function PipelinesPage() {
     }
   }
 
+  // Handle custom pipeline creation from wizard
+  const handlePipelineCreation = async (data: PipelineCreationData) => {
+    try {
+      setCreationLoading(true)
+      
+      console.log('Creating custom pipeline:', data)
+      const pipelineResponse = await pipelinesApi.create(data)
+      const newPipeline = pipelineResponse.data
+      
+      // Show success notification
+      const successNotification = document.createElement('div')
+      successNotification.className = 'fixed top-4 right-4 bg-green-500 text-white px-4 py-2 rounded-md shadow-lg z-50'
+      successNotification.textContent = `Pipeline "${data.name}" created! Redirecting to field builder...`
+      document.body.appendChild(successNotification)
+      
+      setTimeout(() => {
+        if (document.body.contains(successNotification)) {
+          document.body.removeChild(successNotification)
+        }
+      }, 2000)
+      
+      // Close wizard and redirect to the fields page
+      setShowCreationWizard(false)
+      router.push(`/pipelines/${newPipeline.id}/fields`)
+      
+    } catch (error: any) {
+      console.error('Failed to create pipeline:', error)
+      
+      const errorNotification = document.createElement('div')
+      errorNotification.className = 'fixed top-4 right-4 bg-red-500 text-white px-4 py-2 rounded-md shadow-lg z-50 max-w-md'
+      errorNotification.innerHTML = `
+        <div class="font-semibold">Failed to create pipeline</div>
+        <div class="text-sm mt-1">${error?.response?.data?.error || error?.message || 'Unknown error occurred'}</div>
+      `
+      document.body.appendChild(errorNotification)
+      
+      setTimeout(() => {
+        if (document.body.contains(errorNotification)) {
+          document.body.removeChild(errorNotification)
+        }
+      }, 5000)
+    } finally {
+      setCreationLoading(false)
+    }
+  }
 
   // Handle pipeline edit - redirect to dedicated fields page
   const handleEditPipeline = (pipeline: Pipeline) => {
@@ -487,6 +542,15 @@ export default function PipelinesPage() {
         <PipelineTemplateLoader
           onSelectTemplate={handleTemplateSelected}
           onCancel={() => setShowTemplateLoader(false)}
+        />
+      )}
+
+      {/* Pipeline Creation Wizard */}
+      {showCreationWizard && (
+        <PipelineCreationWizard
+          onCreatePipeline={handlePipelineCreation}
+          onCancel={() => setShowCreationWizard(false)}
+          loading={creationLoading}
         />
       )}
 

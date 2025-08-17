@@ -109,7 +109,7 @@ export function useCommunicationsWebSocket(options: UseCommunicationsWebSocketOp
     console.error('❌ Communications WebSocket error:', error)
     console.error('❌ Connection details:', {
       attemptedUrl: wsUrl,
-      readyState: error.target?.readyState,
+      readyState: (error.target as WebSocket)?.readyState,
       timestamp: new Date().toISOString(),
       currentOrigin: window.location.origin,
       hasToken: wsUrl.includes('token=')

@@ -546,6 +546,34 @@ class FieldViewSet(viewsets.ModelViewSet):
         # FieldOperationManager handles both full and partial updates
         return self.perform_update(serializer)
     
+    def destroy(self, request, *args, **kwargs):
+        """Hard delete field using FieldOperationManager for proper signal firing"""
+        import logging
+        import time
+        logger = logging.getLogger(__name__)
+        
+        instance = self.get_object()
+        field_id = str(instance.id)
+        field_name = instance.name
+        pipeline_id = str(instance.pipeline_id)
+        
+        logger.info(f"🗑️ HARD DELETE: Field {field_id} ({field_name}) from pipeline {pipeline_id}")
+        
+        # Use FieldOperationManager for unified field deletion with proper signal handling
+        from pipelines.field_operations import get_field_operation_manager
+        
+        field_manager = get_field_operation_manager(instance.pipeline)
+        result = field_manager.delete_field(instance.id, request.user, hard_delete=True)
+        
+        if not result.success:
+            logger.error(f"❌ HARD DELETE FAILED: {result.errors}")
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError(result.errors)
+        
+        logger.info(f"✅ HARD DELETE COMPLETED via FieldOperationManager: Field {field_id} deleted")
+        
+        return Response(status=status.HTTP_204_NO_CONTENT)
+    
     @extend_schema(
         summary="Reorder fields",
         description="Update the display order of multiple fields",

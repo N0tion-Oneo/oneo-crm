@@ -688,6 +688,40 @@ class BaseRealtimeConsumer(AsyncWebsocketConsumer):
         
         logger.debug(f"Message update sent to user {self.user_id}: message {message_data.get('id', 'unknown')}")
     
+    async def field_update(self, event):
+        """Handle field update messages from pipeline system"""
+        field_data = event.get('data', {})
+        
+        # Send field update to the client
+        await self.send(text_data=json.dumps({
+            'type': 'field_update',
+            'data': field_data,
+            'timestamp': field_data.get('timestamp')
+        }))
+        
+        logger.debug(f"Field update sent to user {self.user_id}: field {field_data.get('field_id', 'unknown')}")
+    
+    async def field_delete(self, event):
+        """Handle field deletion messages from pipeline system"""
+        field_data = event.get('data', {})
+        
+        logger.info(f"🗑️ CONSUMER: field_delete handler called for user {self.user_id}")
+        logger.info(f"🗑️ CONSUMER: Event data: {event}")
+        logger.info(f"🗑️ CONSUMER: Field data: {field_data}")
+        
+        # Send field deletion to the client
+        message_to_send = {
+            'type': 'field_delete',
+            'data': field_data,
+            'timestamp': field_data.get('timestamp')
+        }
+        
+        logger.info(f"🗑️ CONSUMER: Sending to frontend: {message_to_send}")
+        
+        await self.send(text_data=json.dumps(message_to_send))
+        
+        logger.info(f"🗑️ CONSUMER: Field deletion sent to user {self.user_id}: field {field_data.get('field_id', 'unknown')}")
+    
     async def new_conversation(self, event):
         """Handle new conversation notifications from communication system"""
         conversation_data = event.get('conversation', {})

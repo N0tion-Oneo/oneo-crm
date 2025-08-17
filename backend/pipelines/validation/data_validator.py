@@ -467,9 +467,14 @@ class FieldValidator:
         
         raise ValueError('Value must be a boolean')
     
-    def _validate_date(self, value: Any) -> str:
-        """Validate date field using DateFieldConfig"""
-        # Convert to datetime object for validation
+    def _validate_date(self, value: Any) -> Any:
+        """Validate date field using DateFieldConfig - supports both date and duration modes"""
+        
+        # Check if this is a duration value (dict with 'value' and 'unit' keys)
+        if isinstance(value, dict) and 'value' in value and 'unit' in value:
+            return self._validate_duration(value)
+        
+        # Handle traditional date validation
         if isinstance(value, str):
             try:
                 dt = datetime.fromisoformat(value.replace('Z', '+00:00'))
@@ -488,7 +493,7 @@ class FieldValidator:
         elif isinstance(value, date):
             dt = datetime.combine(value, datetime.min.time())
         else:
-            raise ValueError('Value must be a date string or datetime object')
+            raise ValueError('Value must be a date string, datetime object, or duration object')
         
         # Use DateFieldConfig
         if self.config:
@@ -515,6 +520,65 @@ class FieldValidator:
                 dt = dt.replace(hour=0, minute=0, second=0, microsecond=0)
         
         return dt.isoformat()
+    
+    def _validate_duration(self, value: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate duration value for date fields"""
+        if not isinstance(value, dict):
+            raise ValueError('Duration value must be a dictionary with "value" and "unit" keys')
+        
+        # Validate required keys
+        if 'value' not in value or 'unit' not in value:
+            raise ValueError('Duration must have both "value" and "unit" properties')
+        
+        duration_value = value['value']
+        duration_unit = value['unit']
+        
+        # Validate duration value is a positive number
+        try:
+            duration_value = int(duration_value) if isinstance(duration_value, str) else duration_value
+            if not isinstance(duration_value, (int, float)) or duration_value <= 0:
+                raise ValueError('Duration value must be a positive number')
+        except (ValueError, TypeError):
+            raise ValueError('Duration value must be a valid number')
+        
+        # Validate duration unit
+        valid_units = ['minutes', 'hours', 'days', 'weeks', 'months', 'years']
+        if self.config and hasattr(self.config, 'duration_units'):
+            valid_units = self.config.duration_units
+        
+        if duration_unit not in valid_units:
+            raise ValueError(f'Invalid duration unit: {duration_unit}. Valid units: {valid_units}')
+        
+        # Validate duration constraints if configured
+        if self.config:
+            if hasattr(self.config, 'min_duration_days') and self.config.min_duration_days:
+                # Convert duration to days for comparison
+                days = self._convert_to_days(duration_value, duration_unit)
+                if days < self.config.min_duration_days:
+                    raise ValueError(f'Duration must be at least {self.config.min_duration_days} days')
+            
+            if hasattr(self.config, 'max_duration_days') and self.config.max_duration_days:
+                days = self._convert_to_days(duration_value, duration_unit)
+                if days > self.config.max_duration_days:
+                    raise ValueError(f'Duration must be no more than {self.config.max_duration_days} days')
+        
+        # Return cleaned duration value
+        return {
+            'value': int(duration_value),
+            'unit': duration_unit
+        }
+    
+    def _convert_to_days(self, value: float, unit: str) -> float:
+        """Convert duration value to days for constraint validation"""
+        conversion_factors = {
+            'minutes': 1/1440,  # 1440 minutes in a day
+            'hours': 1/24,      # 24 hours in a day
+            'days': 1,
+            'weeks': 7,
+            'months': 30,       # Approximate
+            'years': 365        # Approximate
+        }
+        return value * conversion_factors.get(unit, 1)
     
     
     
@@ -1220,9 +1284,20 @@ def validate_record_data(field_definitions: List[Dict[str, Any]], record_data: D
         
         # Validate based on context
         if context == 'storage':
-            # Storage context: ONLY validate storage constraints (for partial updates)
+            # Storage context: Validate storage constraints + field config for complex field types
             result = validator.validate_storage(value, storage_constraints)
-            print(f"🔓 STORAGE VALIDATION: {field_slug} - no field config validation")
+            
+            # For certain field types that require field config validation even in storage context
+            # (like date fields with duration support), also run field config validation
+            if result.is_valid and field_type in [FieldType.DATE, FieldType.AI_GENERATED]:
+                config_result = validator.validate_field_config(value)
+                if not config_result.is_valid:
+                    result = config_result
+                    print(f"🔒 STORAGE + FIELD CONFIG: {field_slug} validation failed")
+                else:
+                    print(f"🔒 STORAGE + FIELD CONFIG: {field_slug} validation passed")
+            else:
+                print(f"🔓 STORAGE VALIDATION: {field_slug} - storage constraints only")
         elif context == 'migration':
             # Migration context: MINIMAL validation - only critical storage constraints (no business rules)
             result = validator.validate_storage(value, storage_constraints)

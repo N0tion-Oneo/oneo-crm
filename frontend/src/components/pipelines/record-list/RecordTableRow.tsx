@@ -258,13 +258,13 @@ export function RecordTableRow({
       const recordIds = Array.isArray(value) 
         ? value.map(v => (typeof v === 'object' && v.record_id) ? v.record_id.toString() : v.toString())
         : value.toString().includes(',') 
-          ? value.toString().split(',').map(id => id.trim())
+          ? value.toString().split(',').map((id: string) => id.trim())
           : [value.toString()]
 
       // Display as chips like user fields - with emerald color for relations
       return (
         <div className="flex items-center gap-1 flex-wrap">
-          {recordIds.map((recordId, index) => (
+          {recordIds.map((recordId: string, index: number) => (
             <RelationChip
               key={`${recordId}-${index}`}
               recordId={recordId}

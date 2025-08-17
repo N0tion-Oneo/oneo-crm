@@ -104,7 +104,7 @@ class UserTypeSerializer(serializers.ModelSerializer):
 class FieldSerializer(serializers.ModelSerializer):
     """Pipeline field serializer"""
     field_group = serializers.PrimaryKeyRelatedField(
-        queryset=FieldGroup.objects.all(),
+        queryset=FieldGroup.objects.none(),  # Default to empty, will be set in __init__
         allow_null=True,
         required=False,
         help_text="Field group this field belongs to"
@@ -124,6 +124,55 @@ class FieldSerializer(serializers.ModelSerializer):
             'field_group', 'field_group_name', 'field_group_details',
             'created_at', 'updated_at'
         ]
+    
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        
+        # Scope field_group queryset to current pipeline context
+        pipeline_id = None
+        
+        # Debug logging
+        print(f"🔍 FieldSerializer.__init__ called")
+        print(f"🔍 Args: {args}")
+        print(f"🔍 Kwargs: {kwargs}")
+        print(f"🔍 Has context: {hasattr(self, 'context')}")
+        if hasattr(self, 'context'):
+            print(f"🔍 Context keys: {list(self.context.keys()) if self.context else 'None'}")
+            
+        # Method 1: Get pipeline from view context
+        if hasattr(self, 'context') and 'view' in self.context:
+            view = self.context['view']
+            print(f"🔍 View: {view}")
+            print(f"🔍 View kwargs: {getattr(view, 'kwargs', {})}")
+            if hasattr(view, 'kwargs') and 'pipeline_pk' in view.kwargs:
+                pipeline_id = view.kwargs['pipeline_pk']
+                print(f"🔍 Got pipeline_id from view.kwargs['pipeline_pk']: {pipeline_id}")
+            elif hasattr(view, 'kwargs') and 'pipeline_id' in view.kwargs:
+                pipeline_id = view.kwargs['pipeline_id']
+                print(f"🔍 Got pipeline_id from view.kwargs['pipeline_id']: {pipeline_id}")
+        
+        # Method 2: Get pipeline from instance if updating existing field
+        if not pipeline_id and hasattr(self, 'instance') and self.instance and hasattr(self.instance, 'pipeline_id'):
+            pipeline_id = self.instance.pipeline_id
+            print(f"🔍 Got pipeline_id from instance.pipeline_id: {pipeline_id}")
+        
+        # Method 3: Get pipeline from initial data if provided
+        if not pipeline_id and hasattr(self, 'initial_data') and isinstance(self.initial_data, dict):
+            if 'pipeline' in self.initial_data:
+                pipeline_id = self.initial_data['pipeline']
+                print(f"🔍 Got pipeline_id from initial_data['pipeline']: {pipeline_id}")
+        
+        # Scope the field_group queryset
+        if pipeline_id:
+            queryset = FieldGroup.objects.filter(pipeline_id=pipeline_id)
+            self.fields['field_group'].queryset = queryset
+            print(f"🔍 Set field_group queryset to pipeline {pipeline_id}")
+        else:
+            # Fallback: use all field groups in current tenant (already scoped by django-tenants)
+            queryset = FieldGroup.objects.all()
+            self.fields['field_group'].queryset = queryset
+            print(f"🔍 Using fallback queryset (all field groups)")
+            print(f"❌ No pipeline_id found in context, instance, or initial_data")
     
     def get_field_group_details(self, obj):
         """Get complete field group details for this field"""
@@ -379,11 +428,24 @@ class DynamicRecordSerializer(serializers.ModelSerializer):
                     required=is_required
                 )
             elif field.field_type in ['date', 'datetime']:
-                fields_dict[field_name] = serializers.DateTimeField(
-                    source=f'data.{field_name}',
-                    required=is_required,
-                    allow_null=not is_required
-                )
+                # Check if this is a duration field
+                field_config = field.field_config or {}
+                field_mode = field_config.get('field_mode', 'date')
+                
+                if field_mode in ['duration', 'both']:
+                    # Duration fields store dict objects like {"value": 7, "unit": "days"}
+                    fields_dict[field_name] = serializers.JSONField(
+                        source=f'data.{field_name}',
+                        required=is_required,
+                        allow_null=not is_required
+                    )
+                else:
+                    # Regular date/datetime fields
+                    fields_dict[field_name] = serializers.DateTimeField(
+                        source=f'data.{field_name}',
+                        required=is_required,
+                        allow_null=not is_required
+                    )
             elif field.field_type == 'phone':
                 # Check if this phone field requires country code
                 field_config = field.field_config or {}

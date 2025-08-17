@@ -38,6 +38,19 @@ app.conf.beat_schedule = {
         'task': 'workflows.tasks.validate_workflow_definition',
         'schedule': 60 * 60 * 6,  # Every 6 hours
         'enabled': False  # Disabled by default
+    },
+    
+    # Communication system periodic sync (backup to webhooks)
+    'communications-periodic-sync': {
+        'task': 'communications.tasks.periodic_message_sync_task',
+        'schedule': 300.0,  # Every 5 minutes
+    },
+    
+    # Generate daily communication analytics
+    'communications-daily-analytics': {
+        'task': 'communications.tasks.generate_daily_analytics',
+        'schedule': 60 * 60 * 24,  # Daily
+        'kwargs': {'date': None}  # Use current date
     }
 }
 

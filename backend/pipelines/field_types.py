@@ -262,14 +262,34 @@ class FileFieldConfig(BaseFieldConfig):
 
 
 class DateFieldConfig(BaseFieldConfig):
-    """Configuration for consolidated date fields"""
+    """Configuration for consolidated date fields with duration support"""
+    # Field Mode Configuration
+    field_mode: str = 'date'              # 'date', 'duration', 'both'
+    
+    # Date/Time Configuration
     include_time: bool = False            # false = date only, true = datetime
     default_time: Optional[str] = None    # Default time when date selected (e.g., "09:00")
     date_format: str = 'MM/DD/YYYY'       # 'MM/DD/YYYY', 'DD/MM/YYYY', 'YYYY-MM-DD'
     time_format: str = '12h'              # '12h' or '24h'
     min_date: Optional[str] = None        # Minimum selectable date
     max_date: Optional[str] = None        # Maximum selectable date
-    # default_value removed per requirements - no defaults
+    
+    # Duration/Timeframe Configuration
+    duration_units: List[str] = ['days', 'weeks', 'months', 'years']  # Available duration units
+    custom_duration_presets: List[Dict[str, Any]] = []               # Custom duration presets like "1 week", "2 months"
+    allow_custom_duration: bool = True                               # Allow users to enter custom durations
+    duration_display_format: str = 'full'                           # 'full' (2 weeks), 'short' (2w), 'numeric' (14 days)
+    
+    # Duration constraints
+    min_duration_days: Optional[int] = None                          # Minimum duration in days
+    max_duration_days: Optional[int] = None                          # Maximum duration in days
+    
+    @validator('field_mode')
+    def validate_field_mode(cls, v):
+        valid_modes = ['date', 'duration', 'both']
+        if v not in valid_modes:
+            raise ValueError(f'Field mode must be one of: {valid_modes}')
+        return v
     
     @validator('date_format')
     def validate_date_format(cls, v):
@@ -283,6 +303,32 @@ class DateFieldConfig(BaseFieldConfig):
         valid_formats = ['12h', '24h']
         if v not in valid_formats:
             raise ValueError(f'Time format must be one of: {valid_formats}')
+        return v
+    
+    @validator('duration_units')
+    def validate_duration_units(cls, v):
+        valid_units = ['minutes', 'hours', 'days', 'weeks', 'months', 'years']
+        for unit in v:
+            if unit not in valid_units:
+                raise ValueError(f'Invalid duration unit: {unit}. Valid units: {valid_units}')
+        return v
+    
+    @validator('duration_display_format')
+    def validate_duration_display_format(cls, v):
+        valid_formats = ['full', 'short', 'numeric']
+        if v not in valid_formats:
+            raise ValueError(f'Duration display format must be one of: {valid_formats}')
+        return v
+    
+    @validator('custom_duration_presets')
+    def validate_custom_duration_presets(cls, v):
+        for preset in v:
+            if not isinstance(preset, dict):
+                raise ValueError('Each duration preset must be a dictionary')
+            if 'label' not in preset or 'value' not in preset or 'unit' not in preset:
+                raise ValueError('Each duration preset must have label, value, and unit')
+            if not isinstance(preset['value'], int) or preset['value'] <= 0:
+                raise ValueError('Duration preset value must be a positive integer')
         return v
 
 

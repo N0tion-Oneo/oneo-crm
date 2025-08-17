@@ -78,6 +78,13 @@ interface Conversation {
   type: 'email' | 'linkedin' | 'whatsapp' | 'sms'
   created_at: string
   updated_at: string
+  // Contact integration
+  primary_contact?: {
+    id: string
+    name: string
+    email?: string
+    pipeline_name: string
+  }
 }
 
 interface InboxFilters {
@@ -619,11 +626,25 @@ export default function InboxPage() {
                                   )}
                                 </p>
                                 <div className="flex items-center justify-between mt-1">
-                                  {getMessageTypeBadge(conversation.type)}
+                                  <div className="flex items-center space-x-2">
+                                    {getMessageTypeBadge(conversation.type)}
+                                    {/* Contact Integration Display */}
+                                    {conversation.primary_contact && (
+                                      <Badge variant="outline" className="text-xs bg-blue-50 text-blue-700 border-blue-200">
+                                        📋 {conversation.primary_contact.name}
+                                      </Badge>
+                                    )}
+                                  </div>
                                   <span className="text-xs text-gray-500">
                                     {formatTimestamp(conversation.updated_at)}
                                   </span>
                                 </div>
+                                {/* Contact pipeline info */}
+                                {conversation.primary_contact && (
+                                  <div className="text-xs text-gray-500 mt-1 flex items-center">
+                                    <span className="text-blue-600">CRM:</span> {conversation.primary_contact.pipeline_name}
+                                  </div>
+                                )}
                               </div>
                             </div>
                           </div>
@@ -729,8 +750,10 @@ export default function InboxPage() {
                                           className="w-full h-full object-cover"
                                           onError={(e) => {
                                             // Fallback to initials if image fails
-                                            e.currentTarget.style.display = 'none';
-                                            e.currentTarget.nextElementSibling!.style.display = 'block';
+                                            const target = e.currentTarget as HTMLImageElement;
+                                            const nextElement = target.nextElementSibling as HTMLElement;
+                                            target.style.display = 'none';
+                                            if (nextElement) nextElement.style.display = 'block';
                                           }}
                                         />
                                       ) : null}

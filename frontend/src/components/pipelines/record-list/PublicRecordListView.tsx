@@ -209,8 +209,8 @@ export function PublicRecordListView({
   }, [pipeline, filterData.visible_fields])
 
   const visibleFieldsList = useMemo(() => {
-    return displayPipeline.fields.filter(field => visibleFields.has(field.name))
-      .sort((a, b) => (a.display_order || 0) - (b.display_order || 0))
+    return displayPipeline.fields.filter((field: RecordField) => visibleFields.has(field.name))
+      .sort((a: RecordField, b: RecordField) => (a.display_order || 0) - (b.display_order || 0))
   }, [displayPipeline.fields, visibleFields])
 
   // Compute field options for view mode selectors
@@ -478,11 +478,11 @@ export function PublicRecordListView({
                     onEditRecord(record)
                   }
                 }}
-                onCreateRecord={permissions.canCreate ? onCreateRecord : undefined}
+                onCreateRecord={permissions.canCreate && onCreateRecord ? onCreateRecord : () => {}}
                 onUpdateRecord={permissions.canEdit ? async (recordId: string, fieldName: string, value: any) => {
                   // For shared filters, we would need to implement public record updates
                   console.log('Public record update:', { recordId, fieldName, value })
-                } : undefined}
+                } : async () => {}}
               />
             )}
 
@@ -511,7 +511,7 @@ export function PublicRecordListView({
                     onEditRecord(record)
                   }
                 }}
-                onCreateRecord={permissions.canCreate ? onCreateRecord : undefined}
+                onCreateRecord={permissions.canCreate && onCreateRecord ? onCreateRecord : () => {}}
               />
             )}
 

@@ -172,10 +172,12 @@ class PipelineTemplate(models.Model):
 class Pipeline(models.Model):
     """Main pipeline model - represents a data structure"""
     PIPELINE_TYPES = [
-        ('crm', 'CRM Pipeline'),
-        ('ats', 'ATS Pipeline'),
-        ('cms', 'CMS Pipeline'),
-        ('custom', 'Custom Pipeline'),
+        ('contacts', 'Contacts & People'),
+        ('companies', 'Companies & Organizations'),
+        ('deals', 'Deals & Opportunities'),
+        ('inventory', 'Inventory & Assets'),
+        ('support', 'Support & Tickets'),
+        ('custom', 'Custom'),
     ]
     
     ACCESS_LEVELS = [
@@ -237,9 +239,27 @@ class Pipeline(models.Model):
     def __str__(self):
         return self.name
     
+    def _generate_unique_slug(self):
+        """Generate a unique slug from the pipeline name"""
+        base_slug = field_slugify(self.name)
+        if not base_slug:
+            base_slug = 'pipeline'
+        
+        # Check if base slug is unique
+        if not Pipeline.objects.filter(slug=base_slug).exists():
+            return base_slug
+        
+        # If not unique, append a number
+        counter = 1
+        while True:
+            new_slug = f"{base_slug}_{counter}"
+            if not Pipeline.objects.filter(slug=new_slug).exists():
+                return new_slug
+            counter += 1
+    
     def save(self, *args, **kwargs):
         if not self.slug:
-            self.slug = field_slugify(self.name)
+            self.slug = self._generate_unique_slug()
         
         # Debug: Log the save operation
         logger.info(f"💾 Saving pipeline {self.name} (ID: {self.pk}) with access_level: {self.access_level}")

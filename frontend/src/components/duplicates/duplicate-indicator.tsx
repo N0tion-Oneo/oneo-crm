@@ -27,9 +27,9 @@ export function DuplicateIndicator({ recordId, pipelineId, onNavigateToDuplicate
         const pendingMatches = matches.filter((match: any) => match.status === 'pending')
         
         setDuplicateCount({
-          has_duplicates: pendingMatches.length > 0,
-          pending_count: pendingMatches.length,
-          total_count: matches.length
+          record_id: recordId,
+          duplicate_count: pendingMatches.length,
+          has_duplicates: pendingMatches.length > 0
         })
       } catch (error: any) {
         // Handle 403 permission errors gracefully - just don't show duplicate indicator
@@ -80,9 +80,9 @@ export function DuplicateIndicator({ recordId, pipelineId, onNavigateToDuplicate
             </button>
           </div>
           <p className="text-sm text-orange-700 dark:text-orange-400 mt-1">
-            {duplicateCount.pending_count === 1 
+            {duplicateCount.duplicate_count === 1 
               ? '1 potential duplicate record' 
-              : `${duplicateCount.pending_count} potential duplicate records`
+              : `${duplicateCount.duplicate_count} potential duplicate records`
             } found for this record.
           </p>
           <p className="text-xs text-orange-600 dark:text-orange-500 mt-1">

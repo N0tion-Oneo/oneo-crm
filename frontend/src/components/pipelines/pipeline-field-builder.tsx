@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react'
 import { fieldTypesApi, permissionsApi, aiApi, pipelinesApi } from '@/lib/api'
+import { useWebSocketSubscription } from '@/hooks/use-websocket-subscription'
 import {
   DndContext,
   closestCenter,
@@ -204,8 +205,8 @@ interface FieldType {
 interface Props {
   pipelineId?: string
   fields: PipelineField[]
-  onFieldsChange: (fields: PipelineField[]) => void
-  onSave?: () => void
+  onFieldsChange: (fields: PipelineField[], changedField?: PipelineField) => void
+  onEditingFieldIdChange?: (oldId: string, newId: string) => void
 }
 
 const FIELD_ICONS: Record<string, any> = {
@@ -1042,7 +1043,7 @@ const getRequiredStages = (field: PipelineField): string[] => {
   }
 }
 
-export function PipelineFieldBuilder({ pipelineId, fields, onFieldsChange, onSave }: Props) {
+export function PipelineFieldBuilder({ pipelineId, fields, onFieldsChange, onEditingFieldIdChange }: Props) {
   const [availableFieldTypes, setAvailableFieldTypes] = useState<FieldType[]>([])
   const [userTypes, setUserTypes] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
@@ -1065,6 +1066,26 @@ export function PipelineFieldBuilder({ pipelineId, fields, onFieldsChange, onSav
     icon: string
   } | null>(null)
   
+  // Handle field ID changes (temp to real ID) for editing state
+  useEffect(() => {
+    if (editingField && editingField.startsWith('field_')) {
+      // Check if the field with temp ID still exists
+      const fieldByTempId = fields.find(f => f.id === editingField)
+      if (!fieldByTempId) {
+        // Field was auto-saved and got a real ID - find it by checking recent additions
+        // Look for the most recently added field (highest ID that's not temp)
+        const realFields = fields.filter(f => !f.id.toString().startsWith('field_'))
+        const mostRecentField = realFields.reduce((latest, current) => {
+          return parseInt(current.id) > parseInt(latest.id) ? current : latest
+        }, realFields[0])
+        
+        if (mostRecentField) {
+          console.log('🔄 Auto-saved field detected, updating editingField ID:', editingField, '→', mostRecentField.id)
+          setEditingField(mostRecentField.id.toString())
+        }
+      }
+    }
+  }, [fields, editingField])
   
   // Frontend-only collapse state management
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => {
@@ -1089,6 +1110,71 @@ export function PipelineFieldBuilder({ pipelineId, fields, onFieldsChange, onSav
   
   // Group deletion dialog state
   const [deletionDialogGroup, setDeletionDialogGroup] = useState<FieldGroup | null>(null)
+  
+  // WebSocket subscription for real-time field updates
+  const wsSubscription = useWebSocketSubscription({
+    channel: `pipeline_fields_${pipelineId}`,
+    onMessage: (message) => {
+      console.log('🔥 WebSocket field update received:', {
+        type: message.type,
+        data: message.data,
+        fullMessage: message
+      })
+      
+      // Debug: Log all message types we receive
+      console.log('📋 All WebSocket message types:', message.type)
+      
+      // Special logging for field_delete messages
+      if (message.type === 'field_delete') {
+        console.log('🗑️ FIELD DELETE MESSAGE RECEIVED!', {
+          messageType: message.type,
+          messageData: message.data,
+          timestamp: new Date().toISOString()
+        })
+      }
+      
+      if (message.type === 'field_update' && message.data) {
+        const fieldData = message.data
+        
+        // Update fields state with the new field data
+        const updatedFields = fields.map(field => 
+          field.id === fieldData.field_id ? {
+            ...field,
+            field_group: fieldData.field_group_id,
+            display_order: fieldData.display_order,
+            is_visible_in_list: fieldData.is_visible_in_list,
+            // Merge other field properties as needed
+            ...fieldData
+          } : field
+        )
+        
+        console.log('🔄 Updating fields from WebSocket:', updatedFields.length, 'fields')
+        onFieldsChange(updatedFields) // Don't trigger auto-save for WebSocket updates
+      }
+      
+      if (message.type === 'field_delete' && message.data) {
+        const fieldData = message.data
+        
+        console.log('🗑️ Processing field delete WebSocket message:', {
+          messageData: fieldData,
+          fieldIdToDelete: fieldData.field_id,
+          currentFields: fields.map(f => ({ id: f.id, name: f.name || f.display_name }))
+        })
+        
+        // Remove deleted field from state - handle both string and number IDs
+        const updatedFields = fields.filter(field => String(field.id) !== String(fieldData.field_id))
+        console.log('🗑️ Removing field from WebSocket:', fieldData.field_id)
+        console.log('🗑️ Field ID comparison:', {
+          fieldId: fieldData.field_id,
+          fieldIdType: typeof fieldData.field_id,
+          currentFields: fields.map(f => ({ id: f.id, idType: typeof f.id }))
+        })
+        console.log('🗑️ Fields before delete:', fields.length, 'Fields after delete:', updatedFields.length)
+        onFieldsChange(updatedFields) // Don't trigger auto-save for WebSocket updates
+      }
+    },
+    enabled: !!pipelineId
+  })
   const [isDeletingGroup, setIsDeletingGroup] = useState(false)
   
   // Load available field types and user types
@@ -1237,7 +1323,7 @@ export function PipelineFieldBuilder({ pipelineId, fields, onFieldsChange, onSav
       config: {}
     }
     
-    onFieldsChange([...fields, newField])
+    onFieldsChange([...fields, newField], newField)
     setShowAddField(false)
     setEditingField(newField.id)
   }
@@ -1247,19 +1333,91 @@ export function PipelineFieldBuilder({ pipelineId, fields, onFieldsChange, onSav
   // Update field - optimized to avoid full array mapping  
   const updateField = useCallback((fieldId: string, updates: Partial<PipelineField>) => {
     const index = fields.findIndex(f => f.id === fieldId)
-    if (index === -1) return
+    if (index === -1) {
+      console.warn('🚫 updateField: Field not found with ID:', fieldId)
+      return
+    }
+    
+    const originalField = fields[index]
+    const updatedField = { ...originalField, ...updates }
+    
+    // Debug field ID preservation
+    console.log('🔍 updateField called:', {
+      originalFieldId: originalField.id,
+      updatedFieldId: updatedField.id,
+      fieldName: originalField.name || originalField.display_name,
+      updates: Object.keys(updates),
+      idChanged: originalField.id !== updatedField.id
+    })
+    
+    // Ensure ID is preserved (should never change during update)
+    if (updatedField.id !== originalField.id) {
+      console.error('🚨 Field ID changed during update! Restoring original ID:', originalField.id)
+      updatedField.id = originalField.id
+    }
     
     const newFields = [...fields]
-    newFields[index] = { ...fields[index], ...updates }
-    onFieldsChange(newFields)
+    newFields[index] = updatedField
+    onFieldsChange(newFields, updatedField)
   }, [fields, onFieldsChange])
   
   
-  // Delete field
-  const deleteField = (fieldId: string) => {
-    onFieldsChange(fields.filter(field => field.id !== fieldId))
-    if (editingField === fieldId) {
-      setEditingField(null)
+  // Delete field - hard delete via API
+  const deleteField = async (fieldId: string) => {
+    if (!pipelineId) {
+      console.error('Cannot delete field: no pipeline ID')
+      return
+    }
+
+
+    // Confirm hard delete
+    const fieldToDelete = fields.find(f => f.id === fieldId)
+    const fieldName = fieldToDelete?.name || fieldToDelete?.display_name || 'this field'
+    
+    if (!confirm(`Are you sure you want to permanently delete "${fieldName}"? This action cannot be undone and will remove all data associated with this field.`)) {
+      return
+    }
+
+    try {
+      console.log('🗑️ Hard deleting field:', fieldId)
+      console.log('📡 WebSocket status before API call:', {
+        isConnected: wsSubscription.isConnected,
+        connectionStatus: wsSubscription.connectionStatus,
+        channel: wsSubscription.channel
+      })
+      
+      // Call API to hard delete the field
+      await pipelinesApi.deleteField(pipelineId, fieldId)
+      
+      console.log('📡 WebSocket status after API call:', {
+        isConnected: wsSubscription.isConnected,
+        connectionStatus: wsSubscription.connectionStatus,
+        channel: wsSubscription.channel
+      })
+      
+      // Close editor if this field was being edited
+      if (editingField === fieldId) {
+        setEditingField(null)
+      }
+      
+      console.log('✅ Field hard deleted successfully:', fieldName)
+      console.log('📡 WebSocket MUST update UI - no fallback!')
+      
+      // Wait a moment for WebSocket message to arrive
+      setTimeout(() => {
+        console.log('📡 WebSocket status 2 seconds after deletion:', {
+          isConnected: wsSubscription.isConnected,
+          connectionStatus: wsSubscription.connectionStatus,
+          fieldsCount: fields.length,
+          fieldsWithDeletedId: fields.filter(f => String(f.id) === String(fieldId))
+        })
+      }, 2000)
+      
+    } catch (error: any) {
+      console.error('❌ Failed to delete field:', error)
+      
+      // Show user-friendly error message
+      alert(`Failed to delete field "${fieldName}": ${error.response?.data?.message || error.message || 'Unknown error'}`)
     }
   }
   
@@ -1313,52 +1471,11 @@ export function PipelineFieldBuilder({ pipelineId, fields, onFieldsChange, onSav
   const assignFieldToGroup = async (fieldId: string, groupId: string | null) => {
     if (!pipelineId) return
     
-    console.log('🔄 assignFieldToGroup called:', { fieldId, groupId })
-    console.log('🔄 Current fieldGroups state:', fieldGroups)
+    console.log('🔄 assignFieldToGroup called (WebSocket mode):', { fieldId, groupId })
     
-    try {
-      if (groupId) {
-        // Assign field to group - convert fieldId to integer
-        const fieldIdInt = parseInt(fieldId, 10)
-        console.log('🔄 Calling pipelinesApi.assignFieldsToGroup:', { pipelineId, groupId, fieldIds: [fieldIdInt], originalFieldId: fieldId })
-        const assignResponse = await pipelinesApi.assignFieldsToGroup(pipelineId, groupId, [fieldId])
-        console.log('✅ Assign response:', assignResponse.data)
-      } else {
-        // Find the field's current group and ungroup it
-        const field = fields.find(f => f.id === fieldId)
-        if (field?.field_group) {
-          const fieldIdInt = parseInt(fieldId, 10)
-          console.log('🔄 Calling pipelinesApi.ungroupFields:', { pipelineId, groupId: field.field_group, fieldIds: [fieldIdInt], originalFieldId: fieldId })
-          await pipelinesApi.ungroupFields(pipelineId, field.field_group, [fieldId])
-        }
-      }
-      
-      // Update field locally after successful API call
-      console.log('🔄 Updating field locally:', { fieldId, field_group: groupId })
-      updateField(fieldId, { field_group: groupId })
-      console.log('🔄 Field updated, current fieldGroups state:', fieldGroups.length, 'groups')
-      
-      // Reload field groups to update field counts (use setTimeout to ensure state updates complete)
-      setTimeout(async () => {
-        try {
-          console.log('🔄 Reloading field groups...')
-          const groupsResponse = await pipelinesApi.getFieldGroups(pipelineId)
-          console.log('🔍 Field groups reload response:', groupsResponse)
-          
-          // Handle both paginated and direct array responses
-          const groupsData = groupsResponse.data?.results || (groupsResponse as any).results || groupsResponse.data || groupsResponse || []
-          const validGroupsData = Array.isArray(groupsData) ? groupsData : []
-          console.log('🔄 Setting field groups (delayed):', validGroupsData.length, 'groups')
-          setFieldGroups(validGroupsData)
-        } catch (reloadError) {
-          console.error('Failed to reload field groups:', reloadError)
-        }
-      }, 100)
-      
-    } catch (error) {
-      console.error('Failed to update field group assignment:', error)
-      // Don't revert since we haven't updated locally yet
-    }
+    // Simply update the field locally - auto-save will handle the API call and WebSocket will notify other clients
+    updateField(fieldId, { field_group: groupId })
+    console.log('✅ Field group assignment scheduled for auto-save')
   }
   
   const toggleGroupCollapse = useCallback((groupId: string) => {
@@ -1493,9 +1610,9 @@ export function PipelineFieldBuilder({ pipelineId, fields, onFieldsChange, onSav
     setManagingField(field)
   }, [])
 
-  const handleDeleteField = useCallback((fieldId: string) => {
-    deleteField(fieldId)
-  }, [])
+  const handleDeleteField = useCallback(async (fieldId: string) => {
+    await deleteField(fieldId)
+  }, [deleteField])
   
   // Reorder fields
   const moveField = (fieldId: string, direction: 'up' | 'down') => {
@@ -1927,7 +2044,7 @@ export function PipelineFieldBuilder({ pipelineId, fields, onFieldsChange, onSav
                       >
                         {fieldsInGroup.map((field, index) => {
                         const isEditing = editingField === field.id
-                        const fieldTypeInfo = availableFieldTypes.find(t => t.key === (field.field_type || field.type))
+                        const fieldTypeInfo = availableFieldTypes?.find(t => t?.key === (field.field_type || field.type))
                         
                         return (
                           <SortableField
@@ -1979,7 +2096,7 @@ export function PipelineFieldBuilder({ pipelineId, fields, onFieldsChange, onSav
                     <div role="list" aria-label="Ungrouped fields">
                       {organizedFields.ungroupedFields.map((field, index) => {
                     const isEditing = editingField === field.id
-                    const fieldTypeInfo = availableFieldTypes.find(t => t.key === (field.field_type || field.type))
+                    const fieldTypeInfo = availableFieldTypes?.find(t => t?.key === (field.field_type || field.type))
                     
                     return (
                       <SortableField
@@ -2040,16 +2157,59 @@ export function PipelineFieldBuilder({ pipelineId, fields, onFieldsChange, onSav
       
       {/* Field Configuration */}
       <div className="flex-1 flex flex-col min-w-0">
-        {editingField ? (
-          <FieldEditor 
-            field={fields.find(f => f.id === editingField)!}
-            availableFieldTypes={availableFieldTypes}
-            userTypes={userTypes}
-            onUpdate={(updates) => updateField(editingField, updates)}
-            onClose={() => setEditingField(null)}
-            fields={fields}
-          />
-        ) : (
+        {editingField ? (() => {
+          // Smart field lookup with fallback for ID transitions
+          let fieldToEdit = fields.find(f => f.id === editingField)
+          
+          // If not found and editingField is a temp ID, try to find the most recent field
+          // This prevents the red flash during auto-save ID transitions
+          if (!fieldToEdit && editingField.startsWith('field_')) {
+            const realFields = fields.filter(f => !f.id.toString().startsWith('field_'))
+            if (realFields.length > 0) {
+              fieldToEdit = realFields.reduce((latest, current) => {
+                return parseInt(current.id) > parseInt(latest.id) ? current : latest
+              }, realFields[0])
+              console.log('🔄 Using fallback field during ID transition:', fieldToEdit?.id)
+            }
+          }
+          
+          // Debug field lookup
+          console.log('🔍 FieldEditor lookup:', {
+            editingField,
+            editingFieldType: typeof editingField,
+            availableFieldIds: fields.map(f => f.id),
+            foundField: !!fieldToEdit,
+            fieldToEdit: fieldToEdit?.name || 'undefined'
+          })
+          
+          if (!fieldToEdit) {
+            return (
+              <div className="p-6 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
+                <h3 className="text-red-800 dark:text-red-200 font-medium">Field Not Found</h3>
+                <p className="text-red-700 dark:text-red-300 text-sm mt-1">
+                  The field you're trying to edit (ID: {editingField}) could not be found.
+                </p>
+                <button
+                  onClick={() => setEditingField(null)}
+                  className="mt-3 px-3 py-1 bg-red-600 text-white rounded hover:bg-red-700"
+                >
+                  Close
+                </button>
+              </div>
+            )
+          }
+          
+          return (
+            <FieldEditor 
+              field={fieldToEdit}
+              availableFieldTypes={availableFieldTypes}
+              userTypes={userTypes}
+              onUpdate={(updates) => updateField(editingField, updates)}
+              onClose={() => setEditingField(null)}
+              fields={fields}
+            />
+          )
+        })() : (
           <div className="flex-1 flex items-center justify-center bg-gray-50 dark:bg-gray-800/50">
             <div className="text-center max-w-md">
               <div className="w-16 h-16 bg-gradient-to-br from-gray-100 to-gray-200 dark:from-gray-700 dark:to-gray-800 rounded-2xl flex items-center justify-center mx-auto mb-6">
@@ -2095,7 +2255,7 @@ export function PipelineFieldBuilder({ pipelineId, fields, onFieldsChange, onSav
           field={managingField}
           pipelineId={pipelineId}
           onFieldUpdate={(updatedField) => {
-            onFieldsChange(fields.map(f => f.id === updatedField.id ? updatedField : f))
+            onFieldsChange(fields.map(f => f.id === updatedField.id ? updatedField : f), updatedField)
             setManagingField(null)
           }}
           onClose={() => setManagingField(null)}
@@ -2121,7 +2281,18 @@ function FieldEditor({
   onClose: () => void
   fields: PipelineField[]
 }) {
-  const fieldType = availableFieldTypes.find(t => t.key === (field.field_type || field.type))
+  // Defensive checks to prevent errors
+  if (!field) {
+    console.error('FieldEditor: field is undefined')
+    return <div>Error: Field not found</div>
+  }
+  
+  if (!availableFieldTypes || availableFieldTypes.length === 0) {
+    console.error('FieldEditor: availableFieldTypes is missing or empty')
+    return <div>Error: Field types not loaded</div>
+  }
+  
+  const fieldType = availableFieldTypes?.find(t => t?.key === (field.field_type || field.type))
   const [activeTab, setActiveTab] = useState('basic')
 
   // Memoized onChange handlers to prevent performance issues

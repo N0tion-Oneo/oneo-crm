@@ -4,7 +4,7 @@ import React, { createContext, useContext, useEffect, useRef, useState, useCallb
 import { useAuth } from '@/features/auth/context'
 
 export interface RealtimeMessage {
-  type: 'record_create' | 'record_update' | 'record_delete' | 'pipeline_update' | 'user_presence' | 'field_lock' | 'field_unlock' | 'permission_update' | 'activity_update' | 'message_update' | 'new_conversation'
+  type: 'record_create' | 'record_update' | 'record_delete' | 'pipeline_update' | 'field_update' | 'field_delete' | 'user_presence' | 'field_lock' | 'field_unlock' | 'permission_update' | 'activity_update' | 'message_update' | 'new_conversation'
   payload: any
   data?: any // Backend sends activity data in 'data' field for activity_update messages
   user?: {
@@ -240,6 +240,8 @@ export function WebSocketProvider({ children, autoConnect = true }: WebSocketPro
         message.type === 'record_update' && subscription.channel.startsWith('pipeline_records_') ||
         message.type === 'record_delete' && subscription.channel.startsWith('pipeline_records_') ||
         message.type === 'pipeline_update' && subscription.channel === 'pipeline_updates' ||
+        message.type === 'field_delete' && subscription.channel.startsWith('pipeline_fields_') ||
+        message.type === 'field_update' && subscription.channel.startsWith('pipeline_fields_') ||
         message.type === 'user_presence' && subscription.channel === 'user_presence' ||
         message.type === 'permission_update' && subscription.channel.startsWith('permission') ||
         message.type === 'activity_update' && subscription.channel.startsWith('document_') ||

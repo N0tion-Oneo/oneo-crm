@@ -113,7 +113,7 @@ export function ShareFilterModal({
     if (isOpen && filter) {
       setFormData({
         intended_recipient_email: '',
-        access_mode: 'readonly'
+        access_mode: 'view_only'
       })
       
       // Initialize with all shareable fields selected by default
@@ -514,7 +514,7 @@ export function ShareFilterModal({
                   ) : (
                     <>
                       <Share2 className="w-4 h-4 mr-2" />
-                      Generate {formData.access_mode === 'readonly' ? 'Read-only' : 'Editable'} Share Link
+                      Generate {formData.access_mode === 'view_only' ? 'Read-only' : 'Editable'} Share Link
                     </>
                   )}
                 </Button>
@@ -646,8 +646,7 @@ export function ShareFilterModal({
                                     <PermissionButton
                                       category="sharing"
                                       action="revoke_shared_views_forms"
-                                      onClick={(e) => {
-                                        e.stopPropagation()
+                                      onClick={() => {
                                         revokeShare(share.id)
                                       }}
                                       variant="danger"

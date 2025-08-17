@@ -3,11 +3,12 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { useAuth } from '@/features/auth/context'
-import { ArrowLeft, Save, AlertCircle, ChevronRight, Settings, Database, Sparkles, Archive, RotateCcw } from 'lucide-react'
+import { ArrowLeft, AlertCircle, ChevronRight, Settings, Database, Sparkles, Archive, RotateCcw, Check, Clock } from 'lucide-react'
 import { PipelineFieldBuilder } from '@/components/pipelines/pipeline-field-builder'
 import { DeletedFieldsList } from '@/components/pipelines/deleted-fields-list'
 import { FieldConfigCacheProvider } from '@/contexts/FieldConfigCacheContext'
 import { pipelinesApi } from '@/lib/api'
+import { useAutoSaveFields } from '@/hooks/use-auto-save-fields'
 
 interface PipelineField {
   id: string
@@ -87,6 +88,73 @@ export default function PipelineFieldsPage() {
   // Tab management
   const [activeTab, setActiveTab] = useState<'active' | 'deleted'>('active')
   const [deletedFieldsLoading, setDeletedFieldsLoading] = useState(false)
+  
+  // Auto-save hook with validation
+  const { scheduleAutoSave, isFieldSaving } = useAutoSaveFields(pipelineId, {
+    delay: 1500, // 1.5 second delay
+    allFields: fields,
+    validateField: (field, allFields) => {
+      // Skip validation for temporary/new fields that haven't been created yet
+      if (!field.id || field.id.startsWith('field_')) {
+        return null
+      }
+      
+      // Check for duplicate field names (excluding the field being updated)
+      const fieldName = field.display_name || field.name
+      const duplicateField = allFields.find(f => 
+        f.id !== field.id && 
+        !f.id.startsWith('field_') && // Don't check against temp fields
+        (f.name === fieldName || f.display_name === fieldName)
+      )
+      if (duplicateField) {
+        return `Field name "${fieldName}" already exists`
+      }
+      
+      // Basic validation
+      if (!fieldName || fieldName.trim() === '') {
+        return 'Field name is required'
+      }
+      
+      return null // No validation errors
+    },
+    onSaveStart: (field) => {
+      console.log('🔄 Auto-save started for:', field.name)
+    },
+    onSaveSuccess: (savedField) => {
+      console.log('✅ Auto-save completed for:', savedField.name)
+      console.log('🔄 ID mapping: temp →', savedField.name, 'real →', savedField.id)
+      
+      // Update the field in local state with the saved version
+      // For new fields, we need to match by name since the ID changed from temp to real
+      setFields(prevFields => prevFields.map(f => {
+        // First try exact ID match (for existing fields)
+        if (f.id === savedField.id) {
+          return { ...f, ...savedField }
+        }
+        
+        // For new fields with temp IDs, match by name and temp ID pattern
+        if (f.id.toString().startsWith('field_') && 
+            (f.name === savedField.name || f.display_name === savedField.name)) {
+          console.log('🔄 Updating temp field ID:', f.id, '→', savedField.id)
+          return { ...f, ...savedField, id: savedField.id.toString() }
+        }
+        
+        return f
+      }))
+      setHasChanges(false) // Clear changes indicator
+      setError(null) // Clear any previous errors
+    },
+    onSaveError: (error, field) => {
+      console.error('❌ Auto-save failed for:', field.name, error)
+      const errorMessage = error?.response?.data?.detail || 
+                          error?.response?.data?.error || 
+                          error?.response?.data?.message || 
+                          Object.values(error?.response?.data || {}).flat().join(', ') ||
+                          error?.message || 
+                          'Failed to save field changes'
+      setError(`Auto-save failed for "${field.name}": ${errorMessage}`)
+    }
+  })
 
   // Load pipeline data
   useEffect(() => {
@@ -223,19 +291,40 @@ export default function PipelineFieldsPage() {
     }
   }
 
-  // Handle field changes - support both direct arrays and functional updates
-  const handleFieldsChange = useCallback((newFields: PipelineField[] | ((prev: PipelineField[]) => PipelineField[])) => {
+  // Handle field changes - support both direct arrays and functional updates with auto-save
+  const handleFieldsChange = useCallback((newFields: PipelineField[] | ((prev: PipelineField[]) => PipelineField[]), changedField?: PipelineField) => {
+    // Debug field ID handling
+    if (changedField) {
+      console.log('🔍 handleFieldsChange received changedField:', {
+        id: changedField.id,
+        name: changedField.name || changedField.display_name || changedField.label,
+        idType: typeof changedField.id,
+        shouldBeNumeric: !isNaN(Number(changedField.id))
+      })
+    }
+    
     if (typeof newFields === 'function') {
       setFields(prevFields => {
         const updatedFields = newFields(prevFields)
         setHasChanges(true)
+        
+        // If a specific field was changed, schedule auto-save for it
+        if (changedField) {
+          scheduleAutoSave(changedField)
+        }
+        
         return updatedFields
       })
     } else {
       setFields(newFields)
       setHasChanges(true)
+      
+      // If a specific field was changed, schedule auto-save for it
+      if (changedField) {
+        scheduleAutoSave(changedField)
+      }
     }
-  }, [])
+  }, [scheduleAutoSave])
 
   // Handle field restoration - refresh both lists
   const handleFieldRestored = async () => {
@@ -292,105 +381,7 @@ export default function PipelineFieldsPage() {
     }
   }
 
-  // Save fields
-  const saveFields = async () => {
-    if (!pipeline) return
-
-    try {
-      setSaving(true)
-      setError(null)
-
-      // Transform fields back to API format
-      const apiFields = fields.map((field, index) => {
-        // Create proper slug from name
-        const properSlug = (field.name || field.display_name || field.label || `field_${index}`)
-          .toLowerCase()
-          .replace(/[^a-z0-9]+/g, '_')
-          .replace(/^_+|_+$/g, '') // Remove leading/trailing underscores
-          .replace(/_{2,}/g, '_') // Replace multiple underscores with single
-          || `field_${index}` // Fallback if empty
-        
-        return {
-          id: field.id && !field.id.startsWith('field_') ? field.id : undefined,
-          name: field.display_name || field.label || field.name || `Field ${index + 1}`,
-          slug: properSlug,
-          description: field.description || '',
-          field_type: field.field_type || field.type || 'text',
-          display_name: field.display_name || field.label || field.name || `Field ${index + 1}`,
-          help_text: field.help_text || '',
-          
-          // Configuration objects
-          field_config: field.field_config || field.config || {},
-          storage_constraints: field.storage_constraints || {
-            allow_null: true,
-            max_storage_length: null,
-            enforce_uniqueness: false,
-            create_index: false
-          },
-          business_rules: field.business_rules || {
-            stage_requirements: field.required ? { qualified: { required: true } } : {},
-            conditional_requirements: [],
-            block_transitions: true,
-            show_warnings: true
-          },
-          
-          // Field behavior
-          enforce_uniqueness: field.enforce_uniqueness || false,
-          create_index: field.create_index || false,
-          is_searchable: field.is_searchable !== false,
-          is_ai_field: field.is_ai_field || (field.field_type || field.type) === 'ai_generated',
-          
-          // Display configuration
-          display_order: field.display_order !== undefined ? field.display_order : (field.order !== undefined ? field.order : index),
-          is_visible_in_list: field.is_visible_in_list !== undefined ? field.is_visible_in_list : (field.visible !== undefined ? field.visible : true),
-          is_visible_in_detail: field.is_visible_in_detail !== false,
-          is_visible_in_public_forms: field.is_visible_in_public_forms || false,
-          is_visible_in_shared_list_and_detail_views: field.is_visible_in_shared_list_and_detail_views || false,
-          
-          // AI configuration
-          ai_config: field.ai_config || {}
-        }
-      })
-
-      // Save all fields
-      for (const field of apiFields) {
-        if (field.id) {
-          // Update existing field
-          await pipelinesApi.updateField(pipelineId, field.id, field)
-        } else {
-          // Create new field
-          await pipelinesApi.createField(pipelineId, field)
-        }
-      }
-
-      setHasChanges(false)
-      
-    } catch (error: any) {
-      console.error('Failed to save fields:', error)
-      console.error('Error details:', {
-        message: error?.message,
-        response: error?.response?.data,
-        status: error?.response?.status,
-        config: {
-          url: error?.config?.url,
-          method: error?.config?.method,
-          data: error?.config?.data
-        }
-      })
-      
-      // Show more detailed error message
-      const errorMessage = error?.response?.data?.detail || 
-                          error?.response?.data?.error || 
-                          error?.response?.data?.message || 
-                          Object.values(error?.response?.data || {}).flat().join(', ') ||
-                          error?.message || 
-                          'Failed to save fields. Please try again.'
-      
-      setError(`Save failed: ${errorMessage}`)
-    } finally {
-      setSaving(false)
-    }
-  }
+  // Auto-save handles field saving - no manual save needed
 
   // Let the dashboard layout handle auth loading to prevent spinner cascade
   if (!isAuthenticated && !authLoading) {
@@ -486,45 +477,19 @@ export default function PipelineFieldsPage() {
               </div>
             </div>
             
-            {/* Save Actions */}
-            <div className="flex items-center space-x-4">
-              {/* Save Status Indicator */}
-              <div className="flex items-center space-x-2">
-                {hasChanges ? (
-                  <div className="flex items-center space-x-2 px-3 py-1.5 bg-orange-50 dark:bg-orange-900/20 text-orange-700 dark:text-orange-300 rounded-full text-sm font-medium border border-orange-200 dark:border-orange-800">
-                    <div className="w-2 h-2 bg-orange-500 rounded-full animate-pulse"></div>
-                    <span>Unsaved changes</span>
-                  </div>
-                ) : (
-                  <div className="flex items-center space-x-2 px-3 py-1.5 bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300 rounded-full text-sm font-medium border border-green-200 dark:border-green-800">
-                    <div className="w-2 h-2 bg-green-500 rounded-full"></div>
-                    <span>All changes saved</span>
-                  </div>
-                )}
-              </div>
-
-              {/* Save Button */}
-              <button
-                onClick={saveFields}
-                disabled={saving || !hasChanges}
-                className={`inline-flex items-center px-6 py-2.5 border border-transparent text-sm font-medium rounded-lg shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary ${
-                  hasChanges 
-                    ? 'text-white bg-primary hover:bg-primary/90 hover:shadow-lg transform hover:-translate-y-0.5' 
-                    : 'text-gray-500 bg-gray-100 dark:bg-gray-700 dark:text-gray-400 cursor-not-allowed'
-                }`}
-              >
-                {saving ? (
-                  <>
-                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
-                    Saving...
-                  </>
-                ) : (
-                  <>
-                    <Save className="w-4 h-4 mr-2" />
-                    {hasChanges ? 'Save Fields' : 'Saved'}
-                  </>
-                )}
-              </button>
+            {/* Auto-Save Status */}
+            <div className="flex items-center space-x-2">
+              {hasChanges ? (
+                <div className="flex items-center space-x-2 px-3 py-1.5 bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 rounded-full text-sm font-medium border border-blue-200 dark:border-blue-800">
+                  <Clock className="w-3 h-3 animate-pulse" />
+                  <span>Auto-saving...</span>
+                </div>
+              ) : (
+                <div className="flex items-center space-x-2 px-3 py-1.5 bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300 rounded-full text-sm font-medium border border-green-200 dark:border-green-800">
+                  <Check className="w-3 h-3" />
+                  <span>All changes saved</span>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -591,9 +556,8 @@ export default function PipelineFieldsPage() {
           {activeTab === 'active' ? (
             <PipelineFieldBuilder
               pipelineId={pipelineId}
-            fields={fields}
+              fields={fields}
               onFieldsChange={handleFieldsChange}
-              onSave={saveFields}
             />
           ) : (
             <div className="h-full p-6">

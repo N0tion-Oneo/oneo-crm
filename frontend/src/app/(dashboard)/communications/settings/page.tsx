@@ -262,7 +262,9 @@ export default function CommunicationsSettingsPage() {
                                   {feature.replace('_', ' ')}
                                 </span>
                                 {!globallyEnabled && (
-                                  <Info className="w-4 h-4 text-gray-400" title="Not available globally" />
+                                  <div title="Not available globally">
+                                    <Info className="w-4 h-4 text-gray-400" />
+                                  </div>
                                 )}
                               </div>
                               <Switch

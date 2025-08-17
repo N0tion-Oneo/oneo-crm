@@ -72,9 +72,9 @@ export class WhatsAppIdentityHandler {
       return metadata.contact_name;
     }
 
-    // 2. Try contact_phone field (some messages have this)
-    if (metadata.contact_phone && metadata.contact_phone !== message.contact_email) {
-      return metadata.contact_phone;
+    // 2. Try extracting from from/to fields
+    if (metadata.from && metadata.from !== message.contact_email) {
+      return metadata.from.replace('@s.whatsapp.net', '');
     }
 
     // 3. Extract and format phone number from email format
@@ -174,7 +174,7 @@ export class WhatsAppIdentityHandler {
         phone_number: customerMessage.contact_email.replace('@s.whatsapp.net', ''),
         name: this.getContactName(customerMessage, false),
         attendee_id: metadata.sender_attendee_id || '',
-        profile_picture: this.getProfilePicture(customerMessage),
+        profile_picture: this.getProfilePicture(customerMessage) || undefined,
         is_business_account: false
       };
     } catch (error) {
@@ -202,7 +202,7 @@ export class WhatsAppIdentityHandler {
       id: metadata.chat_id || `chat_${customerContact.whatsapp_id}`,
       contact: customerContact,
       last_message: latestMessage,
-      unread_count: messages.filter(m => m.direction === 'inbound' && !m.metadata?.seen).length,
+      unread_count: messages.filter(m => m.direction === 'inbound' && !(m.metadata as any)?.seen).length,
       chat_id: metadata.chat_id || '',
       business_account_id: 'mp9Gis3IRtuh9V5oSxZdSA' // Should be dynamic
     };
@@ -277,7 +277,7 @@ export class WhatsAppIdentityHandler {
         phone_number: message.contact_email.replace('@s.whatsapp.net', ''),
         name: this.getContactName(message, false),
         attendee_id: metadata.sender_attendee_id,
-        profile_picture: this.getProfilePicture(message),
+        profile_picture: this.getProfilePicture(message) || undefined,
         is_business_account: false
       };
 

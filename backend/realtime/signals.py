@@ -23,35 +23,37 @@ def safe_group_send_sync(channel_layer, group_name, message):
     import asyncio
     import threading
     
+    logger.info(f"🔄 WEBSOCKET SEND: Attempting to send message to group '{group_name}' - type: {message.get('type', 'unknown')}")
+    
     try:
         # First approach: use async_to_sync directly (works when no active event loop)
         async_to_sync(channel_layer.group_send)(group_name, message)
-        logger.debug(f"Sent message to group {group_name}: {message.get('type', 'unknown')}")
+        logger.info(f"✅ WEBSOCKET SEND SUCCESS (async_to_sync): {group_name} - {message.get('type', 'unknown')}")
         return
     except RuntimeError as e:
         if "async event loop" in str(e).lower():
             # There's an active event loop - try alternative approaches
-            logger.debug(f"Active event loop detected, trying alternative approaches for {group_name}")
+            logger.info(f"🔄 Active event loop detected, trying alternative approaches for {group_name}")
         else:
-            logger.error(f"Failed to send message to group {group_name}: {e}")
+            logger.error(f"❌ WEBSOCKET SEND FAILED (async_to_sync): {group_name} - {e}")
             return
     except Exception as e:
-        logger.error(f"Failed to send message to group {group_name}: {e}")
+        logger.error(f"❌ WEBSOCKET SEND FAILED (async_to_sync): {group_name} - {e}")
         return
     
     # Second approach: try asyncio.run (works when no event loop at all)
     try:
         asyncio.run(channel_layer.group_send(group_name, message))
-        logger.debug(f"Sent message to group {group_name} (asyncio.run): {message.get('type', 'unknown')}")
+        logger.info(f"✅ WEBSOCKET SEND SUCCESS (asyncio.run): {group_name} - {message.get('type', 'unknown')}")
         return
     except RuntimeError as e:
         if "running event loop" in str(e).lower():
-            logger.debug(f"Event loop already running, trying thread-based approach for {group_name}")
+            logger.info(f"🔄 Event loop already running, trying thread-based approach for {group_name}")
         else:
-            logger.error(f"asyncio.run failed for group {group_name}: {e}")
+            logger.error(f"❌ WEBSOCKET SEND FAILED (asyncio.run): {group_name} - {e}")
             return
     except Exception as e:
-        logger.error(f"asyncio.run failed for group {group_name}: {e}")
+        logger.error(f"❌ WEBSOCKET SEND FAILED (asyncio.run): {group_name} - {e}")
         return
     
     # Third approach: run in a separate thread (works when there's an active event loop)
@@ -64,11 +66,11 @@ def safe_group_send_sync(channel_layer, group_name, message):
         thread.join(timeout=5)  # 5 second timeout
         
         if thread.is_alive():
-            logger.error(f"Thread timeout for group {group_name}")
+            logger.error(f"❌ WEBSOCKET SEND TIMEOUT: {group_name} - thread timed out after 5 seconds")
         else:
-            logger.debug(f"Sent message to group {group_name} (thread): {message.get('type', 'unknown')}")
+            logger.info(f"✅ WEBSOCKET SEND SUCCESS (thread): {group_name} - {message.get('type', 'unknown')}")
     except Exception as e:
-        logger.error(f"Thread approach failed for group {group_name}: {e}")
+        logger.error(f"❌ WEBSOCKET SEND FAILED (thread): {group_name} - {e}")
 
 
 async def safe_group_send(channel_layer, group_name, message):
@@ -326,6 +328,98 @@ if MODELS_AVAILABLE:
             
         except Exception as e:
             logger.error(f"Error handling relationship save signal: {e}")
+
+
+    @receiver(post_save, sender=Field)
+    def handle_field_saved(sender, instance, created, **kwargs):
+        """Handle field creation/update for real-time broadcasting"""
+        try:
+            channel_layer = get_channel_layer()
+            if not channel_layer:
+                return
+            
+            # Create event data
+            event_data = {
+                'type': 'field_created' if created else 'field_updated',
+                'field_id': str(instance.id),
+                'pipeline_id': str(instance.pipeline_id),
+                'name': instance.name,
+                'display_name': getattr(instance, 'display_name', instance.name),
+                'field_type': instance.field_type,
+                'display_order': instance.display_order,
+                'field_group_id': str(instance.field_group_id) if instance.field_group_id else None,
+                'is_visible_in_list': getattr(instance, 'is_visible_in_list', True),
+                'timestamp': time.time()
+            }
+            
+            # Broadcast to pipeline field subscribers
+            pipeline_group = f"pipeline_fields_{instance.pipeline_id}"
+            safe_group_send_sync(channel_layer, pipeline_group, {
+                'type': 'field_update',
+                'data': event_data
+            })
+            
+            # Broadcast to general pipeline subscribers (for field count updates)
+            safe_group_send_sync(channel_layer, "pipeline_updates", {
+                'type': 'field_update',
+                'data': event_data
+            })
+            
+            # Store for SSE subscribers
+            store_sse_message("global_activity", event_data)
+            
+            logger.debug(f"Broadcasted field {'created' if created else 'updated'}: {instance.name} (Pipeline: {instance.pipeline_id})")
+            
+        except Exception as e:
+            logger.error(f"Error handling field save signal: {e}")
+
+
+    @receiver(post_delete, sender=Field)  
+    def handle_field_deleted(sender, instance, **kwargs):
+        """Handle field deletion for real-time broadcasting"""
+        logger.info(f"🔥 FIELD DELETE SIGNAL FIRED: Field {instance.id} ({instance.name}) deleted from pipeline {instance.pipeline_id}")
+        
+        try:
+            channel_layer = get_channel_layer()
+            if not channel_layer:
+                logger.warning(f"📡 No channel layer available for field delete signal")
+                return
+            
+            # Create event data
+            event_data = {
+                'type': 'field_deleted',
+                'field_id': str(instance.id),
+                'pipeline_id': str(instance.pipeline_id),
+                'name': instance.name,
+                'timestamp': time.time()
+            }
+            
+            logger.info(f"📡 Broadcasting field delete to WebSocket groups:")
+            logger.info(f"   🎯 Target group: pipeline_fields_{instance.pipeline_id}")
+            logger.info(f"   📦 Event data: {event_data}")
+            
+            # Broadcast to pipeline field subscribers
+            pipeline_group = f"pipeline_fields_{instance.pipeline_id}"
+            safe_group_send_sync(channel_layer, pipeline_group, {
+                'type': 'field_delete',
+                'data': event_data
+            })
+            
+            # Broadcast to general pipeline subscribers
+            safe_group_send_sync(channel_layer, "pipeline_updates", {
+                'type': 'field_delete', 
+                'data': event_data
+            })
+            
+            # Store for SSE subscribers
+            store_sse_message("global_activity", event_data)
+            
+            logger.info(f"✅ Successfully broadcasted field deleted: {instance.name} (Pipeline: {instance.pipeline_id})")
+            
+        except Exception as e:
+            logger.error(f"❌ Error handling field delete signal: {e}")
+            logger.error(f"❌ Field: {instance.id} ({instance.name})")
+            logger.error(f"❌ Pipeline: {instance.pipeline_id}")
 
 
 def store_sse_message(channel: str, event_data: dict):

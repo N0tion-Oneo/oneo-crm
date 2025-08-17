@@ -100,8 +100,8 @@ const RelationDisplayValue: React.FC<{
       }
       
       // Only lookup record details if authenticated and not in public context
-      const isAuthenticated = user && context !== 'public'
-      const result = await lookupRelationValue(value, targetPipelineId, displayField, isAuthenticated)
+      const isAuthenticated = user && (context as string) !== 'public'
+      const result = await lookupRelationValue(value, targetPipelineId, displayField, Boolean(isAuthenticated))
       setDisplayText(result)
       setLoading(false)
     }
@@ -262,7 +262,7 @@ const EnhancedRelationshipInput: React.FC<FieldRenderProps> = (props) => {
     
     const loadRecords = async () => {
       // Only load records if authenticated and not in public context
-      if (!user || context === 'public') {
+      if (!user || (context as string) === 'public') {
         console.warn('Relation field disabled in public/unauthenticated mode')
         setRecords([])
         setLoading(false)
@@ -297,7 +297,7 @@ const EnhancedRelationshipInput: React.FC<FieldRenderProps> = (props) => {
     
     const loadRelationshipTypes = async () => {
       // Only load relationship types if authenticated and not in public context
-      if (!user || context === 'public') {
+      if (!user || (context as string) === 'public') {
         console.warn('Relationship types disabled in public/unauthenticated mode')
         setRelationshipTypes([])
         setLoadingTypes(false)
@@ -530,7 +530,7 @@ const EnhancedRelationshipInput: React.FC<FieldRenderProps> = (props) => {
       </div>
       
       {/* Add relationship interface */}
-      {!disabled && (allowMultiple || normalizedValue.length === 0) && user && context !== 'public' && (
+      {!disabled && (allowMultiple || normalizedValue.length === 0) && user && (context as string) !== 'public' && (
         <div className={`space-y-2 ${(!canAddMore || (maxRelationships && normalizedValue.length >= maxRelationships)) ? 'sr-only' : ''}`}>
           {maxRelationships && normalizedValue.length > 0 && (
             <div className="text-xs text-gray-500 dark:text-gray-400 mb-2">
@@ -546,7 +546,7 @@ const EnhancedRelationshipInput: React.FC<FieldRenderProps> = (props) => {
               className={`w-full justify-between ${error ? 'border-red-300 dark:border-red-600 focus:border-red-500 focus:ring-red-500 dark:focus:ring-red-400' : ''}`}
             >
               <span className="text-gray-500 dark:text-gray-400">
-                {!user || context === 'public' 
+                {!user || (context as string) === 'public' 
                   ? 'Relation selection disabled in read-only mode'
                   : loading ? 'Loading records...' : `Select ${field.display_name || field.name}... (${records.length} available)`
                 }

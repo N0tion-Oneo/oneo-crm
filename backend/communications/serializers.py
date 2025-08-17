@@ -61,13 +61,14 @@ class ConversationListSerializer(serializers.ModelSerializer):
     
     channel_name = serializers.CharField(source='channel.name', read_only=True)
     contact_name = serializers.SerializerMethodField()
+    primary_contact = serializers.SerializerMethodField()
     last_message_at = serializers.DateTimeField(read_only=True)
     
     class Meta:
         model = Conversation
         fields = [
             'id', 'subject', 'status', 'priority', 'channel_name',
-            'contact_name', 'message_count', 'last_message_at',
+            'contact_name', 'primary_contact', 'message_count', 'last_message_at',
             'created_at', 'updated_at'
         ]
     
@@ -77,8 +78,25 @@ class ConversationListSerializer(serializers.ModelSerializer):
             data = obj.primary_contact_record.data
             first_name = data.get('first_name', '')
             last_name = data.get('last_name', '')
-            return f"{first_name} {last_name}".strip() or data.get('email', 'Unknown')
+            full_name = f"{first_name} {last_name}".strip()
+            
+            # Use full name, or company name, or email as fallback
+            return full_name or data.get('company_name') or data.get('contact_email') or data.get('email', 'Unknown Contact')
         return 'Unknown'
+    
+    def get_primary_contact(self, obj):
+        """Get primary contact details for frontend integration"""
+        if obj.primary_contact_record and obj.primary_contact_record.data:
+            data = obj.primary_contact_record.data
+            contact_name = self.get_contact_name(obj)
+            
+            return {
+                'id': str(obj.primary_contact_record.id),
+                'name': contact_name,
+                'email': data.get('email'),
+                'pipeline_name': obj.primary_contact_record.pipeline.name if obj.primary_contact_record.pipeline else 'Unknown Pipeline'
+            }
+        return None
 
 
 class ConversationDetailSerializer(serializers.ModelSerializer):

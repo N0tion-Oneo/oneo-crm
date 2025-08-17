@@ -93,7 +93,7 @@ const sampleWhatsAppMessages = [
 export const WhatsAppIdentityTest: React.FC = () => {
   const runTests = () => {
     console.log('🧪 WHATSAPP IDENTITY SEPARATION TESTS');
-    console.log('=' * 50);
+    console.log('='.repeat(50));
 
     // Test 1: Business account detection
     console.log('\n📱 Test 1: Business Account Detection');

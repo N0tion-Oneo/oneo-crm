@@ -714,3 +714,381 @@ def periodic_account_resync(self, account_id: str):
     except Exception as e:
         logger.error(f"Failed periodic resync for account {account_id}: {e}")
         return {'success': False, 'error': str(e)}
+
+
+# Automatic Contact Resolution Tasks
+
+@shared_task(bind=True, max_retries=3)
+def resolve_unconnected_conversations_task(self, tenant_schema: str, limit: int = 50):
+    """
+    Process unconnected conversations for automatic contact resolution
+    
+    Args:
+        tenant_schema: Tenant schema to process
+        limit: Maximum number of conversations to process in one batch
+    """
+    try:
+        with schema_context(tenant_schema):
+            from .models import Conversation, Message
+            from .resolvers.contact_identifier import ContactIdentifier
+            from .resolvers.relationship_context import RelationshipContextResolver
+            from django.db import connection as db_connection
+            
+            # Get tenant ID for resolvers
+            tenant_id = db_connection.tenant.id if hasattr(db_connection, 'tenant') else None
+            if not tenant_id:
+                logger.error(f"Could not determine tenant ID for schema {tenant_schema}")
+                return {'success': False, 'error': 'Could not determine tenant ID'}
+            
+            # Initialize resolvers
+            contact_identifier = ContactIdentifier(tenant_id=tenant_id)
+            relationship_resolver = RelationshipContextResolver(tenant_id=tenant_id)
+            
+            # Get unconnected conversations with recent activity
+            unconnected_conversations = Conversation.objects.filter(
+                primary_contact_record__isnull=True,
+                status='active',
+                last_message_at__isnull=False
+            ).select_related('channel').order_by('-last_message_at')[:limit]
+            
+            if not unconnected_conversations:
+                logger.info(f"No unconnected conversations found in {tenant_schema}")
+                return {
+                    'success': True,
+                    'tenant_schema': tenant_schema,
+                    'processed': 0,
+                    'resolved': 0,
+                    'message': 'No unconnected conversations to process'
+                }
+            
+            logger.info(f"Processing {len(unconnected_conversations)} unconnected conversations in {tenant_schema}")
+            
+            resolved_count = 0
+            processed_count = 0
+            
+            for conversation in unconnected_conversations:
+                try:
+                    # Get the most recent inbound message for contact data
+                    recent_message = conversation.messages.filter(
+                        direction='inbound'
+                    ).order_by('-created_at').first()
+                    
+                    if not recent_message:
+                        continue
+                    
+                    processed_count += 1
+                    
+                    # Extract contact data from message
+                    contact_data = extract_contact_data_from_message(recent_message)
+                    
+                    if not contact_data:
+                        continue
+                    
+                    # Attempt contact resolution
+                    contact_record = contact_identifier.identify_contact(contact_data)
+                    
+                    if contact_record:
+                        # Validate domain relationship context
+                        relationship_context = relationship_resolver.get_relationship_context(
+                            contact_record=contact_record,
+                            message_email=contact_data.get('email')
+                        )
+                        
+                        # Only auto-connect if domain validation passes
+                        domain_validated = relationship_context.get('domain_validated', True)
+                        validation_status = relationship_context.get('validation_status')
+                        
+                        if domain_validated and validation_status != 'domain_mismatch_warning':
+                            # Auto-connect conversation to contact
+                            conversation.primary_contact_record = contact_record
+                            
+                            # Update metadata with resolution info
+                            if not conversation.metadata:
+                                conversation.metadata = {}
+                            
+                            conversation.metadata.update({
+                                'auto_resolved': True,
+                                'auto_resolved_at': django_timezone.now().isoformat(),
+                                'resolution_method': 'automatic_background',
+                                'contact_record_id': contact_record.id,
+                                'contact_pipeline_id': contact_record.pipeline.id,
+                                'domain_validated': True,
+                                'relationship_context': relationship_context
+                            })
+                            
+                            conversation.save()
+                            
+                            # Also update the message contact_record
+                            recent_message.contact_record = contact_record
+                            
+                            # Update message metadata
+                            if not recent_message.metadata:
+                                recent_message.metadata = {}
+                            recent_message.metadata.update({
+                                'auto_resolved': True,
+                                'auto_resolved_at': django_timezone.now().isoformat()
+                            })
+                            
+                            recent_message.save()
+                            
+                            resolved_count += 1
+                            
+                            logger.info(f"Auto-resolved conversation {conversation.id} to contact {contact_record.id}")
+                        else:
+                            logger.debug(f"Domain validation failed for conversation {conversation.id}, skipping auto-resolution")
+                
+                except Exception as e:
+                    logger.warning(f"Error processing conversation {conversation.id}: {e}")
+                    continue
+            
+            result = {
+                'success': True,
+                'tenant_schema': tenant_schema,
+                'processed': processed_count,
+                'resolved': resolved_count,
+                'resolution_rate': f"{(resolved_count/processed_count*100):.1f}%" if processed_count > 0 else "0%"
+            }
+            
+            logger.info(f"Contact resolution completed for {tenant_schema}: {resolved_count}/{processed_count} conversations resolved")
+            return result
+            
+    except Exception as e:
+        logger.error(f"Error in resolve_unconnected_conversations_task for {tenant_schema}: {e}")
+        
+        # Retry with exponential backoff
+        if self.request.retries < self.max_retries:
+            raise self.retry(countdown=60 * (2 ** self.request.retries))
+        
+        return {'success': False, 'error': str(e), 'tenant_schema': tenant_schema}
+
+
+@shared_task(bind=True, max_retries=2)
+def resolve_conversation_contact_task(self, conversation_id: str, tenant_schema: str):
+    """
+    Resolve contact for a specific conversation
+    
+    Args:
+        conversation_id: UUID of the conversation to resolve
+        tenant_schema: Tenant schema
+    """
+    try:
+        with schema_context(tenant_schema):
+            from .models import Conversation
+            from .resolvers.contact_identifier import ContactIdentifier
+            from .resolvers.relationship_context import RelationshipContextResolver
+            from django.db import connection as db_connection
+            
+            # Get conversation
+            try:
+                conversation = Conversation.objects.get(id=conversation_id)
+            except Conversation.DoesNotExist:
+                logger.error(f"Conversation {conversation_id} not found in {tenant_schema}")
+                return {'success': False, 'error': 'Conversation not found'}
+            
+            # Skip if already connected
+            if conversation.primary_contact_record:
+                logger.info(f"Conversation {conversation_id} already connected to contact")
+                return {
+                    'success': True,
+                    'message': 'Already connected',
+                    'contact_id': conversation.primary_contact_record.id
+                }
+            
+            # Get tenant ID for resolvers
+            tenant_id = db_connection.tenant.id if hasattr(db_connection, 'tenant') else None
+            if not tenant_id:
+                logger.error(f"Could not determine tenant ID for schema {tenant_schema}")
+                return {'success': False, 'error': 'Could not determine tenant ID'}
+            
+            # Initialize resolvers
+            contact_identifier = ContactIdentifier(tenant_id=tenant_id)
+            relationship_resolver = RelationshipContextResolver(tenant_id=tenant_id)
+            
+            # Get the most recent inbound message
+            recent_message = conversation.messages.filter(
+                direction='inbound'
+            ).order_by('-created_at').first()
+            
+            if not recent_message:
+                logger.info(f"No inbound messages found for conversation {conversation_id}")
+                return {'success': False, 'error': 'No inbound messages found'}
+            
+            # Extract contact data
+            contact_data = extract_contact_data_from_message(recent_message)
+            
+            if not contact_data:
+                logger.info(f"No contact data extracted from conversation {conversation_id}")
+                return {'success': False, 'error': 'No contact data found'}
+            
+            # Attempt contact resolution
+            contact_record = contact_identifier.identify_contact(contact_data)
+            
+            if not contact_record:
+                logger.info(f"No matching contact found for conversation {conversation_id}")
+                return {'success': False, 'error': 'No matching contact found'}
+            
+            # Validate domain relationship context
+            relationship_context = relationship_resolver.get_relationship_context(
+                contact_record=contact_record,
+                message_email=contact_data.get('email')
+            )
+            
+            domain_validated = relationship_context.get('domain_validated', True)
+            validation_status = relationship_context.get('validation_status')
+            
+            # Connect conversation to contact
+            conversation.primary_contact_record = contact_record
+            
+            # Update metadata
+            if not conversation.metadata:
+                conversation.metadata = {}
+            
+            conversation.metadata.update({
+                'auto_resolved': True,
+                'auto_resolved_at': django_timezone.now().isoformat(),
+                'resolution_method': 'targeted_resolution',
+                'contact_record_id': contact_record.id,
+                'contact_pipeline_id': contact_record.pipeline.id,
+                'domain_validated': domain_validated,
+                'validation_status': validation_status,
+                'relationship_context': relationship_context
+            })
+            
+            conversation.save()
+            
+            # Also update the message
+            recent_message.contact_record = contact_record
+            if not recent_message.metadata:
+                recent_message.metadata = {}
+            recent_message.metadata.update({
+                'auto_resolved': True,
+                'auto_resolved_at': django_timezone.now().isoformat()
+            })
+            recent_message.save()
+            
+            logger.info(f"Successfully resolved conversation {conversation_id} to contact {contact_record.id}")
+            
+            return {
+                'success': True,
+                'conversation_id': conversation_id,
+                'contact_id': contact_record.id,
+                'contact_pipeline_id': contact_record.pipeline.id,
+                'domain_validated': domain_validated,
+                'validation_status': validation_status
+            }
+            
+    except Exception as e:
+        logger.error(f"Error in resolve_conversation_contact_task for {conversation_id}: {e}")
+        
+        # Retry with exponential backoff
+        if self.request.retries < self.max_retries:
+            raise self.retry(countdown=30 * (2 ** self.request.retries))
+        
+        return {'success': False, 'error': str(e), 'conversation_id': conversation_id}
+
+
+@shared_task(bind=True)
+def periodic_contact_resolution_task(self):
+    """
+    Periodic task to resolve unconnected conversations across all tenants
+    Runs every 30 minutes to check for new unconnected conversations
+    """
+    try:
+        from django_tenants.utils import get_tenant_model, get_public_schema_name
+        from django.db import connection
+        
+        logger.info("Starting periodic contact resolution across all tenants")
+        
+        tenant_model = get_tenant_model()
+        tenants = tenant_model.objects.exclude(schema_name=get_public_schema_name())
+        
+        total_results = {
+            'tenants_processed': 0,
+            'total_processed': 0,
+            'total_resolved': 0,
+            'tenant_results': []
+        }
+        
+        for tenant in tenants:
+            try:
+                # Process each tenant
+                result = resolve_unconnected_conversations_task.delay(
+                    tenant_schema=tenant.schema_name,
+                    limit=20  # Smaller batch for periodic processing
+                ).get()
+                
+                total_results['tenants_processed'] += 1
+                total_results['total_processed'] += result.get('processed', 0)
+                total_results['total_resolved'] += result.get('resolved', 0)
+                
+                total_results['tenant_results'].append({
+                    'tenant_name': tenant.name,
+                    'schema_name': tenant.schema_name,
+                    'result': result
+                })
+                
+                logger.info(f"Processed tenant {tenant.name}: {result.get('resolved', 0)}/{result.get('processed', 0)} conversations resolved")
+                
+            except Exception as e:
+                logger.error(f"Failed to process tenant {tenant.name}: {e}")
+                total_results['tenant_results'].append({
+                    'tenant_name': tenant.name,
+                    'schema_name': tenant.schema_name,
+                    'result': {'success': False, 'error': str(e)}
+                })
+        
+        # Calculate overall success rate
+        if total_results['total_processed'] > 0:
+            overall_rate = (total_results['total_resolved'] / total_results['total_processed']) * 100
+            total_results['overall_resolution_rate'] = f"{overall_rate:.1f}%"
+        else:
+            total_results['overall_resolution_rate'] = "0%"
+        
+        logger.info(f"Periodic contact resolution completed: {total_results['total_resolved']}/{total_results['total_processed']} conversations resolved across {total_results['tenants_processed']} tenants")
+        
+        return total_results
+        
+    except Exception as e:
+        logger.error(f"Error in periodic_contact_resolution_task: {e}")
+        raise
+
+
+def extract_contact_data_from_message(message) -> dict:
+    """
+    Helper function to extract contact data from a message
+    
+    Args:
+        message: Message instance
+        
+    Returns:
+        dict: Contact data for identification
+    """
+    contact_data = {}
+    
+    # Extract from contact_email field
+    if message.contact_email:
+        contact_data['email'] = message.contact_email
+        
+        # For WhatsApp, contact_email contains phone number
+        if '@s.whatsapp.net' in message.contact_email:
+            contact_data['phone'] = message.contact_email.replace('@s.whatsapp.net', '')
+    
+    # Extract from message metadata
+    if message.metadata:
+        # Name from contact_name or sender info
+        if 'contact_name' in message.metadata:
+            contact_data['name'] = message.metadata['contact_name']
+        elif 'sender' in message.metadata and isinstance(message.metadata['sender'], dict):
+            sender_info = message.metadata['sender']
+            if 'attendee_name' in sender_info:
+                contact_data['name'] = sender_info['attendee_name']
+        
+        # Extract any additional contact data stored in metadata
+        if 'unmatched_contact_data' in message.metadata:
+            additional_data = message.metadata['unmatched_contact_data']
+            contact_data.update(additional_data)
+    
+    # Filter out empty values
+    contact_data = {k: v for k, v in contact_data.items() if v and v.strip()}
+    
+    return contact_data

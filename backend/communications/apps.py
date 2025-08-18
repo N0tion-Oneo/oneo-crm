@@ -10,3 +10,4 @@ class CommunicationsConfig(AppConfig):
         """Initialize communication tracking system when Django starts"""
         # Import signal handlers to register them
         from .tracking import signals
+        from . import signals as communications_signals

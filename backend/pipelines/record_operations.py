@@ -116,19 +116,23 @@ class RecordUtils:
                 except:
                     return f"User #{value}"
             elif isinstance(value, list) and len(value) > 0:
-                # Multiple user IDs - resolve first user + count
+                # Multiple user IDs - resolve all users and return separated by | for frontend chip parsing
                 try:
                     from django.contrib.auth import get_user_model
                     User = get_user_model()
-                    first_user_id = value[0]
-                    first_user = User.objects.get(id=int(first_user_id))
-                    first_name = first_user.first_name + ' ' + first_user.last_name if first_user.first_name else first_user.email
-                    
-                    if len(value) > 1:
-                        return f"{first_name} +{len(value)-1}"
-                    return first_name
+                    user_names = []
+                    for user_id in value:
+                        try:
+                            user = User.objects.get(id=int(user_id))
+                            user_name = user.first_name + ' ' + user.last_name if user.first_name else user.email
+                            user_names.append(user_name)
+                        except:
+                            user_names.append(f"User #{user_id}")
+                    return ' | '.join(user_names)
                 except:
-                    return f"User #{value[0]}" + (f" +{len(value)-1}" if len(value) > 1 else "")
+                    # Fallback to user IDs
+                    user_fallbacks = [f"User #{uid}" for uid in value]
+                    return ' | '.join(user_fallbacks)
             elif isinstance(value, dict):
                 return value.get('name') or value.get('email') or value.get('username') or str(value.get('id', ''))
             return str(value)
@@ -140,34 +144,27 @@ class RecordUtils:
             return str(value)
         
         elif field_type == 'multiselect':
-            # Multiselect: show comma-separated values
+            # Multiselect: return all items separated by | for frontend chip parsing
             if isinstance(value, list):
                 if len(value) == 0:
                     return ''
-                elif len(value) == 1:
-                    item = value[0]
+                # Extract labels/values and return as separate parts for individual chips
+                items = []
+                for item in value:
                     if isinstance(item, dict):
-                        return item.get('label') or item.get('value') or str(item)
-                    return str(item)
-                else:
-                    # Show first item + count
-                    first_item = value[0]
-                    if isinstance(first_item, dict):
-                        first_label = first_item.get('label') or first_item.get('value') or str(first_item)
+                        items.append(item.get('label') or item.get('value') or str(item))
                     else:
-                        first_label = str(first_item)
-                    return f"{first_label} +{len(value)-1}"
+                        items.append(str(item))
+                return ' | '.join(items)
             return str(value)
         
         elif field_type == 'tags':
-            # Tags: show comma-separated or count
+            # Tags: return all items separated by | for frontend chip parsing
             if isinstance(value, list):
                 if len(value) == 0:
                     return ''
-                elif len(value) <= 3:
-                    return ', '.join(str(tag) for tag in value)
-                else:
-                    return f"{', '.join(str(tag) for tag in value[:2])} +{len(value)-2}"
+                # Return each tag as a separate part that will become individual chips
+                return ' | '.join(str(tag) for tag in value)
             return str(value)
         
         elif field_type == 'relation' or field_type == 'relationship':
@@ -253,15 +250,16 @@ class RecordUtils:
                         return item.get('title') or item.get('name') or str(item.get('id', ''))
                     return str(item)
                 else:
-                    # Multiple relations: show first + count
-                    first_item = value[0]
-                    if isinstance(first_item, (int, str)):
-                        first_title = get_relation_display_value(first_item)
-                    elif isinstance(first_item, dict):
-                        first_title = first_item.get('title') or first_item.get('name') or str(first_item.get('id', ''))
-                    else:
-                        first_title = str(first_item)
-                    return f"{first_title} +{len(value)-1}"
+                    # Multiple relations: return all items separated by | for frontend chip parsing
+                    relation_titles = []
+                    for item in value:
+                        if isinstance(item, (int, str)):
+                            relation_titles.append(get_relation_display_value(item))
+                        elif isinstance(item, dict):
+                            relation_titles.append(item.get('title') or item.get('name') or str(item.get('id', '')))
+                        else:
+                            relation_titles.append(str(item))
+                    return ' | '.join(relation_titles)
             elif isinstance(value, dict):
                 return value.get('title') or value.get('name') or str(value.get('id', ''))
             return str(value)
@@ -292,15 +290,15 @@ class RecordUtils:
             if isinstance(value, dict):
                 return value.get('name') or value.get('filename') or 'File'
             elif isinstance(value, list) and len(value) > 0:
-                first_file = value[0]
-                if isinstance(first_file, dict):
-                    first_name = first_file.get('name') or first_file.get('filename') or 'File'
-                else:
-                    first_name = 'File'
-                
-                if len(value) > 1:
-                    return f"{first_name} +{len(value)-1}"
-                return first_name
+                # Multiple files - return all file names separated by | for frontend chip parsing
+                file_names = []
+                for file_item in value:
+                    if isinstance(file_item, dict):
+                        file_name = file_item.get('name') or file_item.get('filename') or 'File'
+                    else:
+                        file_name = 'File'
+                    file_names.append(file_name)
+                return ' | '.join(file_names)
             return 'File'
         
         elif field_type == 'date' or field_type == 'datetime':
@@ -338,11 +336,13 @@ class RecordUtils:
                         if key != 'id' and val:
                             return str(val)
                 elif isinstance(value, list) and len(value) > 0:
-                    # Show first item (formatted) + count
-                    first_item = RecordUtils._format_field_value_for_title(value[0], field_def)
-                    if len(value) > 1:
-                        return f"{first_item} +{len(value)-1}"
-                    return first_item
+                    # Show all items separated by | for frontend chip parsing
+                    formatted_items = []
+                    for item in value:
+                        formatted_item = RecordUtils._format_field_value_for_title(item, field_def)
+                        if formatted_item:  # Only add non-empty items
+                            formatted_items.append(formatted_item)
+                    return ' | '.join(formatted_items) if formatted_items else str(value[0])
                 
                 return str(value)
             

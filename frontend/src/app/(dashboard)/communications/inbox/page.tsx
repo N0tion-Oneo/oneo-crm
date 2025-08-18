@@ -596,6 +596,38 @@ export default function InboxPage() {
     })
   }
 
+  const handleDisconnectContact = async (conversation: Conversation) => {
+    if (!conversation.primary_contact || !conversation.last_message) {
+      console.error('❌ Cannot disconnect: missing conversation data')
+      return
+    }
+
+    try {
+      console.log(`🔄 Disconnecting contact from conversation ${conversation.id}...`)
+      
+      // Call the backend API to disconnect the contact
+      const response = await communicationsApi.disconnectContact(conversation.last_message.id)
+      
+      console.log('✅ Contact disconnected successfully:', response.data)
+      
+      // Refresh conversations to show updated status
+      await loadConversations()
+      await refreshContactResolution()
+      
+      toast({
+        title: "Contact disconnected",
+        description: `Conversation disconnected from ${conversation.primary_contact.name}`,
+      })
+    } catch (error: any) {
+      console.error('❌ Error disconnecting contact:', error)
+      toast({
+        title: "Error",
+        description: error.response?.data?.error || "Failed to disconnect contact",
+        variant: "destructive",
+      })
+    }
+  }
+
   const getMessageTypeIcon = (type: string) => {
     switch (type) {
       case 'email': return <Mail className="w-4 h-4" />
@@ -611,15 +643,15 @@ export default function InboxPage() {
     const safeType = type || 'unknown'
     
     const colors = {
-      email: 'bg-blue-100 text-blue-800',
-      linkedin: 'bg-blue-600 text-white',
-      whatsapp: 'bg-green-100 text-green-800',
-      sms: 'bg-purple-100 text-purple-800',
-      unknown: 'bg-gray-100 text-gray-800'
+      email: 'bg-blue-100 text-blue-800 hover:bg-blue-700 hover:text-white',
+      linkedin: 'bg-blue-600 text-white hover:bg-blue-800',
+      whatsapp: 'bg-green-100 text-green-800 hover:bg-green-700 hover:text-white',
+      sms: 'bg-purple-100 text-purple-800 hover:bg-purple-700 hover:text-white',
+      unknown: 'bg-gray-100 text-gray-800 hover:bg-gray-700 hover:text-white'
     }
     
     return (
-      <Badge className={`${colors[safeType as keyof typeof colors] || colors.unknown} text-xs`}>
+      <Badge className={`${colors[safeType as keyof typeof colors] || colors.unknown} text-xs transition-all duration-200`}>
         {safeType.toUpperCase()}
       </Badge>
     )
@@ -863,18 +895,13 @@ export default function InboxPage() {
                                       needsDomainReview={conversation.needs_domain_review}
                                       className="text-xs"
                                       onClick={() => handleContactAction(conversation)}
+                                      onDisconnect={conversation.primary_contact ? () => handleDisconnectContact(conversation) : undefined}
                                     />
                                   </div>
                                   <span className="text-xs text-gray-500">
                                     {formatTimestamp(conversation.updated_at)}
                                   </span>
                                 </div>
-                                {/* Contact pipeline info */}
-                                {conversation.primary_contact && (
-                                  <div className="text-xs text-gray-500 mt-1 flex items-center">
-                                    <span className="text-blue-600">CRM:</span> {conversation.primary_contact.pipeline_name}
-                                  </div>
-                                )}
                               </div>
                             </div>
                           </div>

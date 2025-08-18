@@ -439,6 +439,90 @@ class MessageViewSet(viewsets.ModelViewSet):
         
         serializer = self.get_serializer(warnings, many=True)
         return Response(serializer.data)
+    
+    @extend_schema(
+        summary="Disconnect conversation from contact",
+        responses={200: {'type': 'object', 'properties': {
+            'status': {'type': 'string'},
+            'conversation_id': {'type': 'string'},
+            'message': {'type': 'string'}
+        }}}
+    )
+    @action(detail=True, methods=['post'])
+    def disconnect_contact(self, request, pk=None):
+        """Disconnect conversation from its linked contact record"""
+        message = self.get_object()
+        conversation = message.conversation
+        
+        if not conversation:
+            return Response(
+                {'error': 'Message has no associated conversation'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        if not conversation.primary_contact_record:
+            return Response(
+                {'error': 'Conversation is not connected to any contact'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            # Store the disconnected contact info for audit trail
+            disconnected_contact = {
+                'contact_id': conversation.primary_contact_record.id,
+                'contact_title': conversation.primary_contact_record.title,
+                'pipeline_name': conversation.primary_contact_record.pipeline.name,
+                'disconnected_at': timezone.now().isoformat(),
+                'disconnected_by': request.user.id if request.user.is_authenticated else None
+            }
+            
+            # Remove the contact connection
+            conversation.primary_contact_record = None
+            
+            # Update metadata to track disconnection
+            if not conversation.metadata:
+                conversation.metadata = {}
+                
+            # Add to disconnection history
+            if 'disconnection_history' not in conversation.metadata:
+                conversation.metadata['disconnection_history'] = []
+            conversation.metadata['disconnection_history'].append(disconnected_contact)
+            
+            # Remove auto-resolution metadata since this is now manually disconnected
+            conversation.metadata.pop('auto_resolved', None)
+            conversation.metadata.pop('auto_resolved_at', None)
+            conversation.metadata.pop('resolution_method', None)
+            
+            # Mark as manually disconnected
+            conversation.metadata['manually_disconnected'] = True
+            conversation.metadata['manually_disconnected_at'] = timezone.now().isoformat()
+            
+            conversation.save()
+            
+            # Also disconnect the message if it was linked to the same contact
+            if message.contact_record and message.contact_record.id == disconnected_contact['contact_id']:
+                message.contact_record = None
+                
+                # Update message metadata
+                if not message.metadata:
+                    message.metadata = {}
+                message.metadata['contact_disconnected'] = True
+                message.metadata['disconnected_at'] = timezone.now().isoformat()
+                
+                message.save()
+            
+            return Response({
+                'status': 'disconnected',
+                'conversation_id': str(conversation.id),
+                'message': f"Conversation disconnected from {disconnected_contact['contact_title']}",
+                'disconnected_contact': disconnected_contact
+            })
+            
+        except Exception as e:
+            return Response(
+                {'error': f'Failed to disconnect contact: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 class CommunicationAnalyticsViewSet(viewsets.ReadOnlyModelViewSet):
@@ -487,3 +571,313 @@ class CommunicationAnalyticsViewSet(viewsets.ReadOnlyModelViewSet):
         ).order_by('date')
         
         return Response(CommunicationAnalyticsSerializer(analytics, many=True).data)
+
+
+# Contact Resolution Monitoring API Views
+
+class ContactResolutionMonitoringView(viewsets.GenericViewSet):
+    """API endpoints for monitoring automatic contact resolution"""
+    
+    permission_classes = [CommunicationPermission]
+    
+    @extend_schema(
+        summary="Get unconnected conversation statistics",
+        responses={200: {'type': 'object', 'properties': {
+            'total_unconnected': {'type': 'integer'},
+            'recent_unconnected': {'type': 'integer'},
+            'auto_resolved_total': {'type': 'integer'},
+            'by_channel_type': {'type': 'array'},
+            'resolution_candidates': {'type': 'integer'}
+        }}}
+    )
+    @action(detail=False, methods=['get'])
+    def stats(self, request):
+        """Get statistics about unconnected conversations"""
+        try:
+            from communications.services.auto_resolution import UnconnectedConversationResolver
+            from django.db import connection as db_connection
+            
+            # Get tenant ID
+            tenant_id = db_connection.tenant.id if hasattr(db_connection, 'tenant') else None
+            if not tenant_id:
+                return Response(
+                    {'error': 'Could not determine tenant context'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Initialize resolver and get stats
+            resolver = UnconnectedConversationResolver(tenant_id=tenant_id)
+            stats = resolver.get_unconnected_conversation_stats()
+            
+            return Response(stats)
+            
+        except Exception as e:
+            return Response(
+                {'error': f'Failed to get statistics: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @extend_schema(
+        summary="Trigger manual contact resolution",
+        request={'type': 'object', 'properties': {
+            'conversation_ids': {'type': 'array', 'items': {'type': 'string'}},
+            'limit': {'type': 'integer', 'default': 50},
+            'dry_run': {'type': 'boolean', 'default': False}
+        }},
+        responses={202: {'type': 'object', 'properties': {
+            'task_id': {'type': 'string'},
+            'status': {'type': 'string'}
+        }}}
+    )
+    @action(detail=False, methods=['post'])
+    def resolve(self, request):
+        """Manually trigger contact resolution"""
+        try:
+            from communications.tasks import resolve_unconnected_conversations_task, resolve_conversation_contact_task
+            from django.db import connection as db_connection
+            
+            # Get tenant schema
+            tenant_schema = db_connection.schema_name if hasattr(db_connection, 'schema_name') else None
+            if not tenant_schema or tenant_schema == 'public':
+                return Response(
+                    {'error': 'Could not determine tenant schema'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            conversation_ids = request.data.get('conversation_ids', [])
+            limit = request.data.get('limit', 50)
+            dry_run = request.data.get('dry_run', False)
+            
+            if dry_run:
+                # For dry run, use the service directly
+                from communications.services.auto_resolution import UnconnectedConversationResolver
+                
+                tenant_id = db_connection.tenant.id if hasattr(db_connection, 'tenant') else None
+                if not tenant_id:
+                    return Response(
+                        {'error': 'Could not determine tenant ID'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                
+                resolver = UnconnectedConversationResolver(tenant_id=tenant_id)
+                
+                if conversation_ids:
+                    result = resolver.resolve_specific_conversations(conversation_ids)
+                else:
+                    result = resolver.resolve_batch(limit=limit, priority_recent=True)
+                
+                return Response({
+                    'status': 'dry_run_completed',
+                    'result': result
+                })
+            
+            if conversation_ids:
+                # Process specific conversations
+                task_results = []
+                for conversation_id in conversation_ids:
+                    task = resolve_conversation_contact_task.delay(
+                        conversation_id=str(conversation_id),
+                        tenant_schema=tenant_schema
+                    )
+                    task_results.append({
+                        'conversation_id': conversation_id,
+                        'task_id': task.id
+                    })
+                
+                return Response({
+                    'status': 'tasks_queued',
+                    'method': 'specific_conversations',
+                    'queued_tasks': len(task_results),
+                    'task_results': task_results
+                }, status=status.HTTP_202_ACCEPTED)
+            else:
+                # Batch processing
+                task = resolve_unconnected_conversations_task.delay(
+                    tenant_schema=tenant_schema,
+                    limit=limit
+                )
+                
+                return Response({
+                    'status': 'task_queued',
+                    'method': 'batch_processing',
+                    'task_id': task.id,
+                    'limit': limit
+                }, status=status.HTTP_202_ACCEPTED)
+                
+        except Exception as e:
+            return Response(
+                {'error': f'Failed to trigger resolution: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @extend_schema(
+        summary="Get resolution candidates for a conversation",
+        parameters=[
+            OpenApiParameter(
+                name='conversation_id',
+                type=str,
+                location=OpenApiParameter.QUERY,
+                required=True,
+                description='Conversation ID to analyze'
+            ),
+            OpenApiParameter(
+                name='limit',
+                type=int,
+                location=OpenApiParameter.QUERY,
+                default=5,
+                description='Maximum candidates to return'
+            )
+        ],
+        responses={200: {'type': 'object', 'properties': {
+            'conversation_id': {'type': 'string'},
+            'candidates': {'type': 'array'}
+        }}}
+    )
+    @action(detail=False, methods=['get'])
+    def candidates(self, request):
+        """Get potential contact resolution candidates for a conversation"""
+        try:
+            conversation_id = request.query_params.get('conversation_id')
+            limit = int(request.query_params.get('limit', 5))
+            
+            if not conversation_id:
+                return Response(
+                    {'error': 'conversation_id parameter is required'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            from communications.services.auto_resolution import UnconnectedConversationResolver
+            from django.db import connection as db_connection
+            
+            # Get tenant ID
+            tenant_id = db_connection.tenant.id if hasattr(db_connection, 'tenant') else None
+            if not tenant_id:
+                return Response(
+                    {'error': 'Could not determine tenant context'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            try:
+                conversation = Conversation.objects.get(id=conversation_id)
+            except Conversation.DoesNotExist:
+                return Response(
+                    {'error': 'Conversation not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Get candidates
+            resolver = UnconnectedConversationResolver(tenant_id=tenant_id)
+            candidates = resolver.get_resolution_candidates(conversation, limit=limit)
+            
+            return Response({
+                'conversation_id': conversation_id,
+                'conversation_subject': conversation.subject or 'No subject',
+                'candidates': candidates
+            })
+            
+        except ValueError:
+            return Response(
+                {'error': 'Invalid limit parameter'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            return Response(
+                {'error': f'Failed to get candidates: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @extend_schema(
+        summary="Get auto-resolution history",
+        parameters=[
+            OpenApiParameter(
+                name='days',
+                type=int,
+                location=OpenApiParameter.QUERY,
+                default=30,
+                description='Days of history to retrieve'
+            ),
+            OpenApiParameter(
+                name='channel_type',
+                type=str,
+                location=OpenApiParameter.QUERY,
+                description='Filter by channel type'
+            )
+        ],
+        responses={200: {'type': 'object', 'properties': {
+            'total_auto_resolved': {'type': 'integer'},
+            'resolution_history': {'type': 'array'},
+            'success_rate': {'type': 'string'},
+            'avg_resolution_time': {'type': 'string'}
+        }}}
+    )
+    @action(detail=False, methods=['get'])
+    def history(self, request):
+        """Get history of automatic contact resolutions"""
+        try:
+            days = int(request.query_params.get('days', 30))
+            channel_type = request.query_params.get('channel_type')
+            
+            # Calculate date range
+            from datetime import timedelta
+            end_date = timezone.now()
+            start_date = end_date - timedelta(days=days)
+            
+            # Build query for auto-resolved conversations
+            query = Conversation.objects.filter(
+                primary_contact_record__isnull=False,
+                metadata__auto_resolved=True,
+                updated_at__gte=start_date
+            ).select_related('primary_contact_record', 'channel')
+            
+            if channel_type:
+                query = query.filter(channel__channel_type=channel_type)
+            
+            auto_resolved_conversations = query.order_by('-updated_at')
+            
+            # Build history data
+            history = []
+            for conversation in auto_resolved_conversations[:100]:  # Limit to 100 recent
+                resolution_data = {
+                    'conversation_id': str(conversation.id),
+                    'resolved_at': conversation.metadata.get('auto_resolved_at'),
+                    'resolution_method': conversation.metadata.get('resolution_method'),
+                    'contact_id': conversation.primary_contact_record.id,
+                    'contact_title': conversation.primary_contact_record.title,
+                    'pipeline_name': conversation.primary_contact_record.pipeline.name,
+                    'channel_type': conversation.channel.channel_type,
+                    'domain_validated': conversation.metadata.get('domain_validated', True)
+                }
+                history.append(resolution_data)
+            
+            # Calculate statistics
+            total_count = auto_resolved_conversations.count()
+            domain_validated_count = auto_resolved_conversations.filter(
+                metadata__domain_validated=True
+            ).count()
+            
+            success_rate = f"{(domain_validated_count / total_count * 100):.1f}%" if total_count > 0 else "0%"
+            
+            return Response({
+                'total_auto_resolved': total_count,
+                'resolution_history': history,
+                'success_rate': success_rate,
+                'date_range': {
+                    'start_date': start_date.isoformat(),
+                    'end_date': end_date.isoformat(),
+                    'days': days
+                },
+                'filters': {
+                    'channel_type': channel_type
+                }
+            })
+            
+        except ValueError:
+            return Response(
+                {'error': 'Invalid days parameter'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            return Response(
+                {'error': f'Failed to get resolution history: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )

@@ -433,6 +433,33 @@ export function ContactResolutionDialog({
            name.includes('position') || name.includes('level') || name.includes('type')
   }
 
+  // Helper function to parse title into primary and secondary parts
+  const parseContactTitle = (title: string) => {
+    if (!title) return { primary: '', secondary: [] }
+    
+    // Split on "|" separator
+    const parts = title.split('|')
+    const primary = parts[0]?.trim() || ''
+    
+    // Process secondary parts - handle arrays by joining them inline
+    const secondary = parts.slice(1)
+      .map(part => part.trim())
+      .filter(part => part.length > 0)
+      .map(part => {
+        // If this looks like an array representation, clean it up for inline display
+        if (part.startsWith('[') && part.endsWith(']')) {
+          // Remove brackets and split on commas, then rejoin with spaces
+          return part.slice(1, -1)
+            .split(',')
+            .map(item => item.trim().replace(/^["']|["']$/g, '')) // Remove quotes
+            .join(', ')
+        }
+        return part
+      })
+    
+    return { primary, secondary }
+  }
+
   // Helper function to get stage/select field for header
   const getStageField = (contact: ContactRecord) => {
     const pipeline = pipelines.find(p => p.id === contact.pipeline_id)
@@ -1001,9 +1028,30 @@ export function ContactResolutionDialog({
                     <CardContent className="space-y-4">
                       <div className="flex items-center justify-between p-4 border rounded-lg">
                         <div>
-                          <h3 className="font-medium">{message.contact_record?.title}</h3>
-                          <p className="text-sm text-gray-600">{message.contact_record?.pipeline_name}</p>
-                          <p className="text-xs text-gray-500">ID: {message.contact_record?.id}</p>
+                          {(() => {
+                            if (!message.contact_record?.title) return null
+                            const { primary, secondary } = parseContactTitle(message.contact_record.title)
+                            return (
+                              <div>
+                                <h3 className="font-medium mb-1">{primary || message.contact_record.title}</h3>
+                                {secondary.length > 0 && (
+                                  <div className="flex flex-wrap gap-1 mb-2">
+                                    {secondary.map((part, index) => (
+                                      <Badge 
+                                        key={index} 
+                                        variant="outline" 
+                                        className="text-xs font-medium px-2 py-1 bg-blue-50 text-blue-700 border-blue-200"
+                                      >
+                                        {part}
+                                      </Badge>
+                                    ))}
+                                  </div>
+                                )}
+                                <p className="text-sm text-gray-600">{message.contact_record?.pipeline_name}</p>
+                                <p className="text-xs text-gray-500">ID: {message.contact_record?.id}</p>
+                              </div>
+                            )
+                          })()}
                         </div>
                         <Button 
                           variant="outline"
@@ -1137,22 +1185,47 @@ export function ContactResolutionDialog({
                               >
                                 {/* Left side: Contact info */}
                                 <div className="flex-1 min-w-0">
-                                  <div className="flex items-center gap-3 mb-2">
-                                    <h4 className="font-semibold text-lg text-gray-900 truncate">{contact.title}</h4>
-                                    <div className="flex items-center gap-2">
-                                      <Badge variant="secondary" className="text-xs font-medium px-2 py-1">
-                                        {contact.pipeline_name}
-                                      </Badge>
-                                      {(() => {
-                                        const stageValue = getStageField(contact)
-                                        return stageValue ? (
-                                          <Badge variant="outline" className="text-xs font-medium px-2 py-1 bg-gray-50 text-gray-700 border-gray-200">
-                                            {stageValue}
-                                          </Badge>
-                                        ) : null
-                                      })()}
-                                    </div>
-                                  </div>
+                                  {(() => {
+                                    const { primary, secondary } = parseContactTitle(contact.title)
+                                    return (
+                                      <div className="mb-2">
+                                        {/* Primary title */}
+                                        <div className="flex items-center gap-3 mb-2">
+                                          <h4 className="font-semibold text-lg text-gray-900 truncate">
+                                            {primary || contact.title}
+                                          </h4>
+                                          <div className="flex items-center gap-2">
+                                            <Badge variant="secondary" className="text-xs font-medium px-2 py-1">
+                                              {contact.pipeline_name}
+                                            </Badge>
+                                            {(() => {
+                                              const stageValue = getStageField(contact)
+                                              return stageValue ? (
+                                                <Badge variant="outline" className="text-xs font-medium px-2 py-1 bg-gray-50 text-gray-700 border-gray-200">
+                                                  {stageValue}
+                                                </Badge>
+                                              ) : null
+                                            })()}
+                                          </div>
+                                        </div>
+                                        
+                                        {/* Secondary title parts as chips */}
+                                        {secondary.length > 0 && (
+                                          <div className="flex flex-wrap gap-1 mb-2">
+                                            {secondary.map((part, index) => (
+                                              <Badge 
+                                                key={index} 
+                                                variant="outline" 
+                                                className="text-xs font-medium px-2 py-1 bg-blue-50 text-blue-700 border-blue-200"
+                                              >
+                                                {part}
+                                              </Badge>
+                                            ))}
+                                          </div>
+                                        )}
+                                      </div>
+                                    )
+                                  })()}
                                   
                                   {/* User assignments underneath the title */}
                                   <div className="flex flex-wrap gap-2 mb-2">

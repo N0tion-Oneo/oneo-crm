@@ -925,6 +925,10 @@ export const communicationsApi = {
     pipeline_id: string
     contact_data: Record<string, any>
   }) => api.post(`/api/v1/messages/${messageId}/create_contact/`, data),
+  
+  // Disconnect contact from conversation
+  disconnectContact: (messageId: string) => 
+    api.post(`/api/v1/messages/${messageId}/disconnect_contact/`),
 }
 
 // Saved Filters API client functions

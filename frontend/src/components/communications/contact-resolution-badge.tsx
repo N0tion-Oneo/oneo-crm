@@ -4,7 +4,7 @@ import { useState } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
-import { User, AlertTriangle, Search, CheckCircle, Building, Mail } from 'lucide-react'
+import { User, AlertTriangle, Search, CheckCircle, Building, Mail, X } from 'lucide-react'
 
 interface ContactRecord {
   id: string
@@ -27,6 +27,7 @@ interface ContactResolutionBadgeProps {
   }
   className?: string
   onClick?: () => void
+  onDisconnect?: () => void
 }
 
 export function ContactResolutionBadge({
@@ -36,32 +37,67 @@ export function ContactResolutionBadge({
   needsDomainReview = false,
   unmatchedData,
   className = '',
-  onClick
+  onClick,
+  onDisconnect
 }: ContactResolutionBadgeProps) {
   const [isHovered, setIsHovered] = useState(false)
+
+  // Helper function to parse title into primary and secondary parts
+  const parseContactTitle = (title: string) => {
+    if (!title) return { primary: '', secondary: [] }
+    
+    const parts = title.split('|')
+    const primary = parts[0]?.trim() || ''
+    
+    // Process secondary parts - handle arrays by joining them inline
+    const secondary = parts.slice(1)
+      .map(part => part.trim())
+      .filter(part => part.length > 0)
+      .map(part => {
+        // If this looks like an array representation, clean it up for inline display
+        if (part.startsWith('[') && part.endsWith(']')) {
+          // Remove brackets and split on commas, then rejoin with spaces
+          return part.slice(1, -1)
+            .split(',')
+            .map(item => item.trim().replace(/^["']|["']$/g, '')) // Remove quotes
+            .join(', ')
+        }
+        return part
+      })
+    
+    return { primary, secondary }
+  }
 
   // Determine badge state and appearance
   const getBadgeConfig = () => {
     // Matched contact with valid domain
     if (contactRecord && domainValidated && !needsDomainReview) {
+      const { primary, secondary } = parseContactTitle(contactRecord.title)
+      const displayTitle = primary || contactRecord.title || 'Contact'
+      
       return {
         variant: 'default' as const,
         icon: <User className="w-3 h-3" />,
-        text: contactRecord.title || 'Contact',
-        subtext: contactRecord.pipeline_name,
+        text: `${displayTitle} • ${contactRecord.pipeline_name}`,
+        subtext: null,
+        secondary: secondary,
         bgColor: 'bg-green-100 text-green-800 border-green-200',
-        tooltip: `Matched to ${contactRecord.title} in ${contactRecord.pipeline_name}`,
+        tooltip: `Matched to ${displayTitle} in ${contactRecord.pipeline_name}`,
         status: 'matched'
       }
     }
 
     // Matched contact but domain validation warning
     if (contactRecord && (!domainValidated || needsDomainReview)) {
+      const { primary, secondary } = parseContactTitle(contactRecord.title)
+      const displayTitle = primary || contactRecord.title || 'Contact'
+      
       return {
         variant: 'secondary' as const,
         icon: <AlertTriangle className="w-3 h-3" />,
-        text: contactRecord.title || 'Contact',
+        text: `${displayTitle} • ${contactRecord.pipeline_name}`,
         subtext: 'Domain Warning',
+        secondary: secondary,
         bgColor: 'bg-yellow-100 text-yellow-800 border-yellow-200',
         tooltip: `Contact matched but domain validation needs review`,
         status: 'domain-warning'
@@ -100,31 +136,69 @@ export function ContactResolutionBadge({
     onClick?.()
   }
 
+  const handleDisconnect = (e: React.MouseEvent) => {
+    e.stopPropagation() // Prevent triggering parent click handlers
+    e.preventDefault()
+    onDisconnect?.()
+  }
+
+  // Determine if disconnect button should be shown
+  const showDisconnect = onDisconnect && contactRecord && (config.status === 'matched' || config.status === 'domain-warning')
+
   const badgeContent = (
     <Badge 
       variant={config.variant}
       className={`
         ${config.bgColor} 
-        ${onClick ? 'cursor-pointer hover:opacity-80 transition-opacity' : ''}
+        ${onClick ? 'cursor-pointer hover:bg-gray-700 hover:text-white transition-all duration-200' : ''}
         ${className}
-        flex items-center gap-1.5 max-w-48
+        flex items-center gap-1.5 max-w-none w-fit relative group px-2 py-1
       `}
       onClick={onClick ? handleClick : undefined}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
     >
-      {config.icon}
-      <div className="flex flex-col items-start min-w-0">
-        <span className="text-xs font-medium truncate">
+      <div className="group-hover:text-white">
+        {config.icon}
+      </div>
+      <div className="flex flex-col items-start flex-1">
+        <span className="text-xs font-medium whitespace-nowrap group-hover:text-white">
           {config.text}
         </span>
         {config.subtext && (
-          <span className="text-xs opacity-75 truncate">
+          <span className="text-xs opacity-75 whitespace-nowrap group-hover:text-white group-hover:opacity-100">
             {config.subtext}
           </span>
         )}
+        {config.secondary && config.secondary.length > 0 && (
+          <div className="flex flex-wrap gap-1 mt-1">
+            {config.secondary.map((part, index) => (
+              <span 
+                key={index}
+                className="inline-block text-[10px] px-1.5 py-0.5 rounded bg-white/20 text-current group-hover:text-white"
+              >
+                {part}
+              </span>
+            ))}
+          </div>
+        )}
       </div>
-      {onClick && isHovered && (
+      
+      {/* Show disconnect button for connected contacts */}
+      {showDisconnect && isHovered && (
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-4 w-4 p-0 ml-1 hover:bg-red-100 text-red-600 hover:text-red-700 transition-colors"
+          onClick={handleDisconnect}
+          title="Disconnect contact"
+        >
+          <X className="w-3 h-3" />
+        </Button>
+      )}
+      
+      {/* Show arrow for clickable badges without disconnect */}
+      {onClick && isHovered && !showDisconnect && (
         <span className="text-xs opacity-75 ml-1">→</span>
       )}
     </Badge>
@@ -139,7 +213,10 @@ export function ContactResolutionBadge({
           </TooltipTrigger>
           <TooltipContent>
             <p>{config.tooltip}</p>
-            <p className="text-xs opacity-75 mt-1">Click to {config.status === 'matched' ? 'view contact' : config.status === 'unmatched' ? 'resolve contact' : 'review validation'}</p>
+            <p className="text-xs opacity-75 mt-1">
+              Click to {config.status === 'matched' ? 'view contact' : config.status === 'unmatched' ? 'resolve contact' : 'review validation'}
+              {showDisconnect && <span className="block">Hover and click X to disconnect</span>}
+            </p>
           </TooltipContent>
         </Tooltip>
       </TooltipProvider>

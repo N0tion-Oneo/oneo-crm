@@ -51,6 +51,12 @@ app.conf.beat_schedule = {
         'task': 'communications.tasks.generate_daily_analytics',
         'schedule': 60 * 60 * 24,  # Daily
         'kwargs': {'date': None}  # Use current date
+    },
+    
+    # Automatic contact resolution for unconnected conversations
+    'automatic-contact-resolution': {
+        'task': 'communications.tasks.periodic_contact_resolution_task',
+        'schedule': 1800.0,  # Every 30 minutes
     }
 }
 
@@ -101,6 +107,11 @@ app.conf.update(
         # Long-running trigger tasks
         'workflows.tasks.process_long_running_trigger': {'queue': 'triggers'},
         'pipelines.tasks.process_bulk_operation': {'queue': 'bulk_operations'},
+        
+        # Contact resolution tasks
+        'communications.tasks.resolve_unconnected_conversations_task': {'queue': 'contact_resolution'},
+        'communications.tasks.resolve_conversation_contact_task': {'queue': 'contact_resolution'},
+        'communications.tasks.periodic_contact_resolution_task': {'queue': 'maintenance'},
     },
     
     # Worker configuration

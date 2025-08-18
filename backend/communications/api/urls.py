@@ -4,7 +4,7 @@ URL patterns for communications API
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from .views import AccountConnectionViewSet
-from ..views import MessageViewSet, ChannelViewSet, ConversationViewSet, CommunicationAnalyticsViewSet
+from ..views import MessageViewSet, ChannelViewSet, ConversationViewSet, CommunicationAnalyticsViewSet, ContactResolutionMonitoringView
 from .account_views import (
     CommunicationConnectionViewSet, 
     request_hosted_auth, 
@@ -62,6 +62,7 @@ router.register(r'messages', MessageViewSet, basename='message')
 router.register(r'channels', ChannelViewSet, basename='channel')
 router.register(r'conversations', ConversationViewSet, basename='conversation')
 router.register(r'analytics', CommunicationAnalyticsViewSet, basename='communication-analytics')
+router.register(r'contact-resolution', ContactResolutionMonitoringView, basename='contact-resolution')
 
 urlpatterns = [
     path('', include(router.urls)),

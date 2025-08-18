@@ -4,7 +4,7 @@ URL patterns for communications API
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from .views import AccountConnectionViewSet
-from ..views import MessageViewSet, ChannelViewSet, ConversationViewSet, CommunicationAnalyticsViewSet, ContactResolutionMonitoringView
+from ..views import MessageViewSet, ChannelViewSet, ConversationViewSet, ContactResolutionMonitoringView
 from .account_views import (
     CommunicationConnectionViewSet, 
     request_hosted_auth, 
@@ -53,6 +53,28 @@ from .local_inbox_views import (
     get_local_conversation_messages,
     get_inbox_stats
 )
+from .unified_inbox_views import (
+    get_unified_inbox,
+    get_record_timeline,
+    get_record_stats,
+    mark_record_conversation_read,
+    get_user_channels,
+    send_message_to_record
+)
+from .threading_views import (
+    create_record_conversation_thread,
+    analyze_record_threading_opportunities,
+    get_record_conversation_threads,
+    bulk_create_conversation_threads
+)
+from .channel_availability_views import (
+    get_record_channel_availability,
+    get_record_channel_recommendations,
+    bulk_analyze_channel_availability,
+    get_user_channel_summary,
+    invalidate_channel_cache
+)
+from ..views import CommunicationAnalyticsViewSet
 
 router = DefaultRouter()
 router.register(r'accounts', AccountConnectionViewSet, basename='account-connection')
@@ -120,4 +142,33 @@ urlpatterns = [
     path('local-inbox/', get_local_unified_inbox, name='local-unified-inbox'),
     path('local-inbox/conversations/<str:conversation_id>/messages/', get_local_conversation_messages, name='local-conversation-messages'),
     path('local-inbox/stats/', get_inbox_stats, name='inbox-stats'),
+    
+    # Unified Record-centric inbox endpoints
+    path('unified-inbox/', get_unified_inbox, name='unified-inbox'),
+    path('records/<int:record_id>/timeline/', get_record_timeline, name='record-timeline'),
+    path('records/<int:record_id>/stats/', get_record_stats, name='record-stats'),
+    path('records/<int:record_id>/mark-read/', mark_record_conversation_read, name='mark-record-read'),
+    path('records/<int:record_id>/send-message/', send_message_to_record, name='send-message-to-record'),
+    path('user-channels/', get_user_channels, name='user-channels'),
+    
+    # Conversation threading endpoints
+    path('records/<int:record_id>/threading/create/', create_record_conversation_thread, name='create-record-thread'),
+    path('records/<int:record_id>/threading/analyze/', analyze_record_threading_opportunities, name='analyze-record-threading'),
+    path('records/<int:record_id>/threading/', get_record_conversation_threads, name='get-record-threads'),
+    path('threading/bulk-create/', bulk_create_conversation_threads, name='bulk-create-threads'),
+    
+    # Channel availability endpoints
+    path('records/<int:record_id>/channels/', get_record_channel_availability, name='record-channel-availability'),
+    path('records/<int:record_id>/channels/recommendations/', get_record_channel_recommendations, name='record-channel-recommendations'),
+    path('channels/bulk-analyze/', bulk_analyze_channel_availability, name='bulk-analyze-channels'),
+    path('channels/user-summary/', get_user_channel_summary, name='user-channel-summary'),
+    path('channels/invalidate-cache/', invalidate_channel_cache, name='invalidate-channel-cache'),
+    
+    # Communication analytics endpoints (handled by ViewSet router above)
+    # Analytics endpoints are automatically available at:
+    # /api/v1/communications/analytics/portfolio_overview/
+    # /api/v1/communications/analytics/{record_id}/record_analytics/
+    # /api/v1/communications/analytics/{record_id}/engagement_timeline/
+    # /api/v1/communications/analytics/{record_id}/health_metrics/
+    # /api/v1/communications/analytics/insights_dashboard/
 ]

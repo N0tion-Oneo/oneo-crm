@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Plus, MessageSquare, CheckCircle, AlertCircle, ExternalLink, Trash2, RotateCcw, Shield, RefreshCw, Settings } from 'lucide-react'
+import { Plus, MessageSquare, CheckCircle, AlertCircle, ExternalLink, Trash2, RotateCcw, Shield, RefreshCw, Settings, TrendingUp } from 'lucide-react'
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -405,6 +405,13 @@ export default function CommunicationsPage() {
                     {unmatchedCount + warningsCount}
                   </Badge>
                 )}
+              </Button>
+            </Link>
+            
+            <Link href="/communications/analytics">
+              <Button variant="outline">
+                <TrendingUp className="w-4 h-4 mr-2" />
+                Analytics
               </Button>
             </Link>
             

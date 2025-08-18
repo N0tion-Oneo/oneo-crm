@@ -881,3 +881,211 @@ class ContactResolutionMonitoringView(viewsets.GenericViewSet):
                 {'error': f'Failed to get resolution history: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+
+# Communication Analytics Views
+
+class CommunicationAnalyticsViewSet(viewsets.ViewSet):
+    """ViewSet for communication analytics"""
+    
+    permission_classes = [permissions.IsAuthenticated, CommunicationPermission]
+    
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        from .services.communication_analytics import CommunicationAnalyticsService
+        self.analytics_service = CommunicationAnalyticsService()
+
+    @action(detail=False, methods=['get'])
+    def portfolio_overview(self, request):
+        """Get portfolio-wide communication analytics"""
+        try:
+            limit = int(request.query_params.get('limit', 20))
+            analytics = self.analytics_service.get_portfolio_analytics(limit=limit)
+            
+            return Response({
+                'success': True,
+                'data': analytics
+            })
+            
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': 'Failed to fetch portfolio analytics'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=True, methods=['get'])
+    def record_analytics(self, request, pk=None):
+        """Get detailed analytics for a specific record"""
+        try:
+            from pipelines.models import Record
+            record = Record.objects.get(pk=pk)
+            days = int(request.query_params.get('days', 30))
+            
+            analytics = self.analytics_service.get_record_analytics(record, days=days)
+            
+            return Response({
+                'success': True,
+                'data': analytics
+            })
+            
+        except Record.DoesNotExist:
+            return Response({
+                'success': False,
+                'error': 'Record not found'
+            }, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': 'Failed to fetch record analytics'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=True, methods=['get'])
+    def engagement_timeline(self, request, pk=None):
+        """Get engagement timeline for a record"""
+        try:
+            from pipelines.models import Record
+            record = Record.objects.get(pk=pk)
+            days = int(request.query_params.get('days', 30))
+            
+            analytics = self.analytics_service.get_record_analytics(record, days=days)
+            
+            # Extract timeline data
+            timeline_data = {
+                'daily_activity': analytics['communication_trends']['daily_message_counts'],
+                'channel_activity': analytics['channel_breakdown'],
+                'response_patterns': analytics['response_patterns']
+            }
+            
+            return Response({
+                'success': True,
+                'data': timeline_data
+            })
+            
+        except Record.DoesNotExist:
+            return Response({
+                'success': False,
+                'error': 'Record not found'
+            }, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': 'Failed to fetch engagement timeline'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=True, methods=['get'])
+    def health_metrics(self, request, pk=None):
+        """Get relationship health metrics for a record"""
+        try:
+            from pipelines.models import Record
+            record = Record.objects.get(pk=pk)
+            days = int(request.query_params.get('days', 30))
+            
+            analytics = self.analytics_service.get_record_analytics(record, days=days)
+            
+            health_data = {
+                'health_score': analytics['relationship_health']['health_score'],
+                'status': analytics['relationship_health']['status'],
+                'metrics': {
+                    'communication_balance': analytics['relationship_health']['communication_balance'],
+                    'response_rate': analytics['relationship_health']['response_rate'],
+                    'initiation_balance': analytics['relationship_health']['initiation_balance'],
+                    'recent_activity': analytics['relationship_health']['recent_activity']
+                },
+                'engagement_score': analytics['engagement_metrics']['engagement_score'],
+                'recommendations': analytics['recommendations']
+            }
+            
+            return Response({
+                'success': True,
+                'data': health_data
+            })
+            
+        except Record.DoesNotExist:
+            return Response({
+                'success': False,
+                'error': 'Record not found'
+            }, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': 'Failed to fetch health metrics'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=False, methods=['get'])
+    def insights_dashboard(self, request):
+        """Get dashboard insights across all records"""
+        try:
+            portfolio_analytics = self.analytics_service.get_portfolio_analytics(limit=50)
+            
+            # Generate insights
+            insights = {
+                'portfolio_health': {
+                    'total_active_records': portfolio_analytics['total_active_records'],
+                    'avg_health_score': portfolio_analytics['portfolio_summary']['avg_health_score'],
+                    'avg_response_rate': portfolio_analytics['portfolio_summary']['avg_response_rate'],
+                    'total_messages': portfolio_analytics['portfolio_summary']['total_messages']
+                },
+                'top_performers': portfolio_analytics['top_records_by_health'][:5],
+                'needs_attention': portfolio_analytics['records_needing_attention'],
+                'key_insights': self._generate_key_insights(portfolio_analytics)
+            }
+            
+            return Response({
+                'success': True,
+                'data': insights
+            })
+            
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': 'Failed to fetch insights dashboard'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    def _generate_key_insights(self, portfolio_analytics):
+        """Generate key insights from portfolio data"""
+        insights = []
+        
+        records = portfolio_analytics['top_records_by_health']
+        if not records:
+            return insights
+        
+        # Health score insights
+        avg_health = portfolio_analytics['portfolio_summary']['avg_health_score']
+        if avg_health > 75:
+            insights.append({
+                'type': 'positive',
+                'title': 'Strong Portfolio Health',
+                'description': f'Your portfolio has an excellent average health score of {avg_health:.1f}%'
+            })
+        elif avg_health < 50:
+            insights.append({
+                'type': 'warning',
+                'title': 'Portfolio Needs Attention',
+                'description': f'Your portfolio health score is {avg_health:.1f}%. Consider reviewing communication strategies.'
+            })
+        
+        # Response rate insights
+        avg_response = portfolio_analytics['portfolio_summary']['avg_response_rate']
+        if avg_response > 70:
+            insights.append({
+                'type': 'positive',
+                'title': 'High Engagement',
+                'description': f'Great job! Your average response rate is {avg_response:.1f}%'
+            })
+        elif avg_response < 30:
+            insights.append({
+                'type': 'action',
+                'title': 'Low Response Rates',
+                'description': f'Response rate is {avg_response:.1f}%. Consider personalizing your outreach approach.'
+            })
+        
+        # Records needing attention
+        attention_count = len(portfolio_analytics['records_needing_attention'])
+        if attention_count > 0:
+            insights.append({
+                'type': 'action',
+                'title': f'{attention_count} Records Need Attention',
+                'description': 'Some relationships may be at risk. Review the "Needs Attention" section.'
+            })
+        
+        return insights

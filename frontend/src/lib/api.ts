@@ -929,6 +929,43 @@ export const communicationsApi = {
   // Disconnect contact from conversation
   disconnectContact: (messageId: string) => 
     api.post(`/api/v1/messages/${messageId}/disconnect_contact/`),
+
+  // Record-centric Unified Inbox API
+  getRecordUnifiedInbox: (params?: {
+    limit?: number
+    offset?: number
+  }) => api.get('/api/v1/communications/unified-inbox/', { params }),
+
+  getRecordTimeline: (recordId: number, params?: {
+    limit?: number
+    offset?: number
+  }) => api.get(`/api/v1/communications/records/${recordId}/timeline/`, { params }),
+
+  getRecordChannelAvailability: (recordId: number) =>
+    api.get(`/api/v1/communications/records/${recordId}/channels/`),
+
+  getRecordChannelRecommendations: (recordId: number) =>
+    api.get(`/api/v1/communications/records/${recordId}/channels/recommendations/`),
+
+  markRecordConversationRead: (recordId: number, channelType: string) =>
+    api.post(`/api/v1/communications/records/${recordId}/mark-read/`, {
+      channel_type: channelType
+    }),
+
+  sendMessageToRecord: (recordId: number, data: {
+    content: string
+    subject?: string
+    channel_type?: string
+    attachments?: any[]
+  }) => api.post(`/api/v1/communications/records/${recordId}/send-message/`, data),
+
+  getUserChannels: () =>
+    api.get('/api/v1/communications/user-channels/'),
+
+  invalidateChannelCache: (recordIds: number[]) =>
+    api.post('/api/v1/communications/channels/invalidate-cache/', {
+      record_ids: recordIds
+    }),
 }
 
 // Saved Filters API client functions

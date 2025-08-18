@@ -9,6 +9,7 @@ export { Badge } from './badge'
 export { Checkbox } from './checkbox'
 export { Switch } from './switch'
 export { Slider } from './slider'
+export { Progress } from './progress'
 export { 
   Select, 
   SelectContent, 
@@ -48,6 +49,9 @@ export { Toast } from './toast'
 export { Toaster } from './toaster'
 export { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './tooltip'
 export { Alert, AlertTitle, AlertDescription } from './alert'
+
+// Avatar Components
+export { Avatar, AvatarFallback, AvatarImage } from './avatar'
 
 // Custom Components
 export { ArrayManager } from './array-manager'

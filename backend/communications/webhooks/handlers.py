@@ -10,6 +10,8 @@ from communications.models import UserChannelConnection, Message, Conversation, 
 from communications.webhooks.routing import account_router
 from communications.resolvers.contact_identifier import ContactIdentifier
 from communications.resolvers.relationship_context import RelationshipContextResolver
+from communications.services.message_normalizer import message_normalizer
+from communications.services.unified_inbox import UnifiedInboxService
 
 logger = logging.getLogger(__name__)
 
@@ -108,7 +110,7 @@ class UnipileWebhookHandler:
         return None
     
     def handle_message_received(self, account_id: str, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Handle incoming message webhook"""
+        """Handle incoming message webhook with unified inbox support"""
         try:
             # Ensure data is a dictionary
             if not isinstance(data, dict):
@@ -121,18 +123,20 @@ class UnipileWebhookHandler:
                 logger.error(f"No user connection found for account {account_id}")
                 return {'success': False, 'error': 'User connection not found'}
             
-            # UniPile webhook data structure has message content at the top level,
-            # not nested under a 'message' object. So we use the entire data object.
-            message_data = data
+            # Normalize message using our unified normalizer
+            normalized_message = message_normalizer.normalize_unipile_message(
+                raw_message=data,
+                channel_type=connection.channel_type
+            )
             
             # Create or get conversation
             conversation = self.get_or_create_conversation(
                 connection, 
-                message_data
+                normalized_message
             )
             
             # Check if message already exists to prevent duplicates
-            external_message_id = message_data.get('message_id')
+            external_message_id = normalized_message.get('external_id') or normalized_message.get('id')
             if external_message_id:
                 existing_message = Message.objects.filter(
                     external_message_id=external_message_id,
@@ -154,29 +158,33 @@ class UnipileWebhookHandler:
             if tenant_id:
                 self._initialize_resolvers(tenant_id)
             
-            # Create message record - real-time processing will only happen if message is actually created
-            message, was_created = self.create_message_record_atomic(
+            # Create message record using normalized data
+            message, was_created = self.create_unified_message_record(
                 connection,
                 conversation,
-                message_data,
+                normalized_message,
                 MessageDirection.INBOUND
             )
             
             if was_created:
                 logger.info(f"Created new inbound message {message.id} for account {account_id}")
+                
+                # Trigger unified inbox real-time update
+                self._trigger_unified_inbox_update(message, conversation, connection.user)
             else:
                 logger.info(f"Message {message.id} already existed (race condition resolved)")
             
-            # Auto-create contact if enabled (skip for now as config model is not implemented)
-            # TODO: Implement tenant_unipile_config model for auto-create contacts setting
-            # if hasattr(connection.user, 'tenant_unipile_config') and connection.user.tenant_unipile_config.auto_create_contacts:
-            #     self.auto_create_contact(message_data, connection)
+            # Auto-create contact if enabled and no contact is linked
+            if was_created and not message.contact_record:
+                self._attempt_auto_contact_resolution(message, normalized_message)
             
             return {
                 'success': True,
                 'message_id': str(message.id),
                 'conversation_id': str(conversation.id),
-                'was_created': was_created
+                'was_created': was_created,
+                'channel_type': connection.channel_type,
+                'normalized': True
             }
             
         except Exception as e:
@@ -774,6 +782,143 @@ class UnipileWebhookHandler:
         except Exception as e:
             logger.warning(f"Failed to trigger attachment processing: {e}")
     
+    def create_unified_message_record(self, connection: UserChannelConnection, conversation: Conversation, 
+                                    normalized_message: Dict[str, Any], direction: str) -> tuple[Message, bool]:
+        """Create unified message record using normalized data"""
+        from django.db import transaction
+        
+        external_message_id = normalized_message.get('external_id') or normalized_message.get('id')
+        
+        # Use database-level atomic transaction to prevent race conditions
+        with transaction.atomic():
+            # Try to get existing message first (with select_for_update to prevent race conditions)
+            existing_message = Message.objects.select_for_update().filter(
+                external_message_id=external_message_id,
+                conversation=conversation
+            ).first()
+            
+            if existing_message:
+                # Message already exists - return without triggering real-time processing
+                return existing_message, False
+            
+            # Create new message using normalized data
+            message = Message.objects.create(
+                channel=conversation.channel,
+                conversation=conversation,
+                contact_record=normalized_message.get('contact_record'),
+                external_message_id=external_message_id,
+                direction=direction,
+                content=normalized_message.get('content', ''),
+                subject=normalized_message.get('subject', ''),
+                contact_email=normalized_message.get('contact_email', ''),
+                contact_phone=normalized_message.get('contact_phone', ''),
+                status=normalized_message.get('status', MessageStatus.DELIVERED),
+                metadata=normalized_message.get('metadata', {}),
+                sent_at=normalized_message.get('sent_at') if direction == MessageDirection.OUTBOUND else None,
+                received_at=normalized_message.get('created_at') if direction == MessageDirection.INBOUND else None
+            )
+            
+            return message, True
+    
+    def _trigger_unified_inbox_update(self, message: Message, conversation: Conversation, user):
+        """Trigger unified inbox real-time update"""
+        try:
+            from channels.layers import get_channel_layer
+            from asgiref.sync import async_to_sync
+            
+            channel_layer = get_channel_layer()
+            if not channel_layer:
+                logger.debug("No channel layer available for unified inbox broadcasting")
+                return
+            
+            # Get contact record if linked
+            contact_record = message.contact_record
+            
+            # Prepare unified inbox update data
+            unified_update = {
+                'type': 'unified_inbox_update',
+                'data': {
+                    'message_id': str(message.id),
+                    'conversation_id': str(conversation.id),
+                    'channel_type': conversation.channel.channel_type if conversation.channel else 'unknown',
+                    'direction': message.direction,
+                    'content_preview': (message.content or '')[:100],
+                    'timestamp': message.created_at.isoformat(),
+                    'contact_record': {
+                        'id': contact_record.id,
+                        'title': contact_record.title,
+                        'pipeline_name': contact_record.pipeline.name
+                    } if contact_record else None,
+                    'unread': message.direction == MessageDirection.INBOUND and message.status != 'read'
+                }
+            }
+            
+            # Broadcast to user's unified inbox room
+            user_inbox_room = f"user_{user.id}_unified_inbox"
+            async_to_sync(channel_layer.group_send)(user_inbox_room, unified_update)
+            
+            # If there's a contact record, also broadcast to record-specific room
+            if contact_record:
+                record_room = f"record_{contact_record.id}_timeline"
+                async_to_sync(channel_layer.group_send)(record_room, unified_update)
+            
+            logger.info(f"Triggered unified inbox update for user {user.id}, message {message.id}")
+            
+        except ImportError as e:
+            logger.warning(f"Could not import channels for unified inbox broadcasting: {e}")
+        except Exception as e:
+            logger.warning(f"Failed to trigger unified inbox update: {e}")
+    
+    def _attempt_auto_contact_resolution(self, message: Message, normalized_message: Dict[str, Any]):
+        """Attempt automatic contact resolution for the message"""
+        try:
+            if not self.contact_identifier:
+                logger.debug("Contact identifier not available for auto-resolution")
+                return
+            
+            # Extract contact data from normalized message
+            contact_data = {
+                'email': normalized_message.get('contact_email'),
+                'phone': normalized_message.get('contact_phone'),
+                'name': normalized_message.get('contact_name'),
+                'channel_type': normalized_message.get('channel_type')
+            }
+            
+            # Filter out None/empty values
+            contact_data = {k: v for k, v in contact_data.items() if v}
+            
+            if not contact_data:
+                logger.debug("No contact data available for auto-resolution")
+                return
+            
+            # Attempt to identify contact
+            contact_record = self.contact_identifier.identify_contact(contact_data)
+            
+            if contact_record:
+                # Link the message to the identified contact
+                message.contact_record = contact_record
+                message.save(update_fields=['contact_record'])
+                
+                # Update conversation if it doesn't have a primary contact
+                if message.conversation and not message.conversation.primary_contact_record:
+                    message.conversation.primary_contact_record = contact_record
+                    message.conversation.save(update_fields=['primary_contact_record'])
+                
+                # Update message metadata to reflect successful resolution
+                if not message.metadata:
+                    message.metadata = {}
+                message.metadata['auto_contact_resolved'] = True
+                message.metadata['contact_record_id'] = contact_record.id
+                message.metadata['resolution_timestamp'] = timezone.now().isoformat()
+                message.save(update_fields=['metadata'])
+                
+                logger.info(f"Auto-resolved message {message.id} to contact record {contact_record.id}")
+            else:
+                logger.debug(f"No matching contact found for message {message.id}")
+                
+        except Exception as e:
+            logger.warning(f"Error in auto contact resolution for message {message.id}: {e}")
+
     def _broadcast_message_with_contact_info(self, message, conversation, contact_name: str, attendee_id: str, connection):
         """Broadcast message with enhanced contact info for real-time updates"""
         try:

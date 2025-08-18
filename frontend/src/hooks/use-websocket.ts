@@ -91,14 +91,7 @@ export function useWebSocket(url: string, options: UseWebSocketOptions = {}) {
       }
 
       ws.onerror = (error) => {
-        console.error('❌ WebSocket: Connection error to', url)
-        console.error('❌ WebSocket: Error details:', {
-          type: error.type || 'unknown',
-          readyState: ws.readyState,
-          url: ws.url,
-          timestamp: new Date().toISOString(),
-          errorEvent: error
-        })
+        console.log('🔌 WebSocket: Connection error to', url)
         setConnectionStatus('error')
         onError?.(error)
       }

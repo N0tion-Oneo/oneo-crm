@@ -91,6 +91,7 @@ export function ContactResolutionDialog({
   onClose,
   onResolutionComplete
 }: ContactResolutionDialogProps) {
+  console.log('🔍 ContactResolutionDialog rendered with:', { message, isOpen })
   const [activeTab, setActiveTab] = useState<'view' | 'connect' | 'create'>('view')
   const [pipelines, setPipelines] = useState<Pipeline[]>([])
   const [searchResults, setSearchResults] = useState<ContactRecord[]>([])

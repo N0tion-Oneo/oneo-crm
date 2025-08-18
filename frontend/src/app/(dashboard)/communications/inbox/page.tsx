@@ -1,15 +1,18 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { MessageSquare, Mail, Phone, Search, Filter, Paperclip, Send, MoreVertical, Archive, Reply, Forward, Star, StarOff } from 'lucide-react'
+import { MessageSquare, Mail, Phone, Search, Filter, Paperclip, Send, MoreVertical, Archive, Reply, Forward, Star, StarOff, Users, TrendingUp, Clock, CheckCircle2, AlertCircle, Plus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Separator } from '@/components/ui/separator'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useToast } from '@/hooks/use-toast'
 import { useAuth } from '@/features/auth/context'
 import { communicationsApi } from '@/lib/api'
@@ -21,7 +24,13 @@ import { RecordDetailDrawer } from '@/components/pipelines/record-detail-drawer'
 import { useContactResolution, useMessageContactStatus } from '@/hooks/use-contact-resolution'
 import { useWebSocket, type RealtimeMessage } from '@/contexts/websocket-context'
 import { pipelinesApi } from '@/lib/api'
+import ConversationTimeline from '@/components/communications/conversation-timeline'
+import CommunicationAnalytics from '@/components/communications/communication-analytics'
+import SmartCompose from '@/components/communications/smart-compose'
+import { useUnifiedInbox } from '@/hooks/use-unified-inbox'
+import { formatDistanceToNow } from 'date-fns'
 
+// Enhanced types that combine old and new functionality
 interface Message {
   id: string
   type: 'email' | 'linkedin' | 'whatsapp' | 'sms'
@@ -51,7 +60,6 @@ interface Message {
   conversation_id: string
   account_id: string
   external_id: string
-  // WhatsApp-specific metadata
   metadata?: {
     contact_name?: string
     sender_attendee_id?: string
@@ -71,7 +79,7 @@ interface Message {
 
 interface Conversation {
   id: string
-  database_id?: string  // UUID used for WebSocket subscriptions
+  database_id?: string
   participants?: Array<{
     name: string
     email?: string
@@ -83,17 +91,61 @@ interface Conversation {
   type: 'email' | 'linkedin' | 'whatsapp' | 'sms'
   created_at: string
   updated_at: string
-  // Contact integration
   primary_contact?: {
     id: string
     name: string
     email?: string
     pipeline_name: string
   }
-  // Contact resolution fields
   needs_manual_resolution?: boolean
   domain_validated?: boolean
   needs_domain_review?: boolean
+}
+
+interface UnifiedRecord {
+  id: number
+  title: string
+  pipeline_name: string
+  total_unread: number
+  last_activity: string
+  preferred_channel: string
+  channels: Record<string, ChannelSummary>
+  available_channels: string[]
+}
+
+interface ChannelSummary {
+  channel_type: string
+  conversation_count: number
+  message_count: number
+  unread_count: number
+  last_activity: string
+  last_message_preview: string
+  threading_info: {
+    has_threads: boolean
+    thread_groups: Array<{
+      id: string
+      type: string
+      strategy: string
+      conversations: number
+    }>
+  }
+}
+
+interface ChannelAvailability {
+  channel_type: string
+  display_name: string
+  status: 'available' | 'limited' | 'historical' | 'unavailable'
+  user_connected: boolean
+  contact_info_available: boolean
+  has_history: boolean
+  priority: number
+  limitations: string[]
+  history?: {
+    total_messages: number
+    last_contact: string
+    response_rate: number
+    engagement_score: number
+  }
 }
 
 interface InboxFilters {
@@ -104,6 +156,10 @@ interface InboxFilters {
 }
 
 export default function InboxPage() {
+  // View mode state: 'conversations' (old style) or 'records' (new unified style)
+  const [viewMode, setViewMode] = useState<'conversations' | 'records'>('records')
+  
+  // Old conversation-based states
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [selectedConversation, setSelectedConversation] = useState<Conversation | null>(null)
   const [messages, setMessages] = useState<Message[]>([])
@@ -118,29 +174,45 @@ export default function InboxPage() {
     account: 'all'
   })
   
-  // Message composer states
+  // Message composer and resolution states
   const [composeDialogOpen, setComposeDialogOpen] = useState(false)
   const [replyingTo, setReplyingTo] = useState<Message | null>(null)
   const [accountConnections, setAccountConnections] = useState<any[]>([])
-  
-  // Contact resolution states
   const [contactResolutionOpen, setContactResolutionOpen] = useState(false)
-  const [selectedMessageForResolution, setSelectedMessageForResolution] = useState<Message | null>(null)
+  const [selectedMessageForResolution, setSelectedMessageForResolution] = useState<any>(null)
   
   // Contact viewing states
   const [contactViewerOpen, setContactViewerOpen] = useState(false)
   const [selectedContactRecord, setSelectedContactRecord] = useState<any>(null)
   const [selectedContactPipeline, setSelectedContactPipeline] = useState<any>(null)
   
-  // WebSocket connection state
+  // WebSocket states
   const [wsStatus, setWsStatus] = useState<string>('disconnected')
   const [conversationSubscriptionId, setConversationSubscriptionId] = useState<string | null>(null)
+  
+  // New unified inbox state
+  const [showSmartCompose, setShowSmartCompose] = useState(false)
   
   const { toast } = useToast()
   const { tenant, user, isAuthenticated, isLoading: authLoading } = useAuth()
   
   // Contact resolution hook
   const { unmatchedCount, warningsCount, refresh: refreshContactResolution } = useContactResolution()
+  
+  // New unified inbox hook (only used in records view mode)
+  const {
+    inboxData,
+    selectedRecord,
+    channelAvailability,
+    loading: unifiedLoading,
+    loadingChannels,
+    fetchInbox,
+    selectRecord,
+    refreshRecord,
+    markAsRead,
+    isConnected: unifiedWSConnected,
+    error: unifiedError
+  } = useUnifiedInbox()
 
   // Real-time message handler
   const handleNewMessage = useCallback((message: any) => {
@@ -283,11 +355,11 @@ export default function InboxPage() {
 
   // Load conversations and account connections
   useEffect(() => {
-    if (isAuthenticated && !authLoading && user && tenant) {
+    if (isAuthenticated && !authLoading && user && tenant && viewMode === 'conversations') {
       loadConversations()
       loadAccountConnections()
     }
-  }, [isAuthenticated, authLoading, user, tenant, filters])
+  }, [isAuthenticated, authLoading, user, tenant, filters, viewMode])
 
   const loadAccountConnections = async () => {
     try {
@@ -301,17 +373,10 @@ export default function InboxPage() {
   const loadConversations = async () => {
     try {
       setLoading(true)
-      // This would be a new API endpoint for unified inbox
       const response = await communicationsApi.getUnifiedInbox(filters)
       const conversations = response.data.conversations || []
       
-      console.log(`📨 Loaded ${conversations.length} conversations:`)
-      conversations.forEach((conv: any, index: number) => {
-        console.log(`   ${index + 1}. Type: ${conv.type}, Participants:`, conv.participants?.map((p: any) => ({ name: p.name, id: p.id })) || 'None')
-        console.log(`      Primary Contact:`, conv.primary_contact ? { name: conv.primary_contact.name, id: conv.primary_contact.id } : 'None')
-        console.log(`      Last Message ID: ${conv.last_message?.id}`)
-      })
-      
+      console.log(`📨 Loaded ${conversations.length} conversations:`)      
       setConversations(conversations)
     } catch (error: any) {
       console.error('Error loading conversations:', error)
@@ -328,7 +393,6 @@ export default function InboxPage() {
   const loadMessages = async (conversationId: string) => {
     try {
       setLoadingMessages(true)
-      // This would be a new API endpoint for conversation messages
       const response = await communicationsApi.getConversationMessages(conversationId)
       setMessages(response.data.messages || [])
     } catch (error: any) {
@@ -355,13 +419,11 @@ export default function InboxPage() {
     
     // Subscribe to real-time updates for this conversation
     if (wsConnected) {
-      // Use database_id for WebSocket subscription (backend broadcasts to conversation_{UUID})
       const subscriptionId = conversation.database_id || conversation.id
       console.log(`🔔 Subscribing to conversation: conversation_${subscriptionId}`)
       const newSubscriptionId = subscribe(`conversation_${subscriptionId}`, (message: RealtimeMessage) => {
         console.log('📨 Conversation message received:', message)
         
-        // Handle new messages in the current conversation - backend sends message data directly
         if (message.type === 'message_update' && message.message) {
           handleNewMessage(message.message)
         }
@@ -421,7 +483,8 @@ export default function InboxPage() {
     }
   }
 
-  const handleContactResolution = (message: Message) => {
+  const handleContactResolution = (message: any) => {
+    console.log('🔍 Opening contact resolution dialog for message:', message)
     setSelectedMessageForResolution(message)
     setContactResolutionOpen(true)
   }
@@ -430,63 +493,41 @@ export default function InboxPage() {
     try {
       console.log('🔍 handleViewContact called with:', contactRecord)
       
-      // First, get all pipelines to find the one that matches the contact's pipeline name
       const pipelinesResponse = await pipelinesApi.list()
       const pipelines = pipelinesResponse.data.results || pipelinesResponse.data || []
-      console.log('📋 Available pipelines:', pipelines.map((p: any) => ({ id: p.id, name: p.name })))
       
-      // Find the pipeline by name or default to the first one
       let basicPipeline = pipelines.find((p: any) => p.name === contactRecord.pipeline_name)
       if (!basicPipeline && pipelines.length > 0) {
-        console.log('⚠️ Pipeline not found by name, using first pipeline')
-        basicPipeline = pipelines[0] // Default to first pipeline if name match fails
+        basicPipeline = pipelines[0]
       }
       
       if (!basicPipeline) {
         throw new Error('No pipelines found')
       }
       
-      console.log('🎯 Selected pipeline:', { id: basicPipeline.id, name: basicPipeline.name })
-      
-      // Load the full pipeline data including fields
       const fullPipelineResponse = await pipelinesApi.get(basicPipeline.id)
       const pipeline = fullPipelineResponse.data
-      console.log('📝 Full pipeline data:', pipeline)
-      console.log('🏷️ Field groups in pipeline:', pipeline.field_groups)
-      console.log('📊 Field groups count:', pipeline.field_groups?.length || 0)
       
-      // Ensure pipeline has fields array
       if (!pipeline.fields || !Array.isArray(pipeline.fields)) {
-        console.log('⚠️ Pipeline fields missing, setting empty array')
         pipeline.fields = []
       }
-      
-      console.log('📊 Pipeline fields count:', pipeline.fields?.length)
-      
-      // Load the full record data
-      console.log(`🔍 Attempting to load record ${contactRecord.id} from pipeline ${pipeline.id} (${pipeline.name})`)
       
       let record = null
       
       try {
         const recordResponse = await pipelinesApi.getRecord(pipeline.id, contactRecord.id)
         record = recordResponse.data
-        console.log('📄 Record data loaded successfully:', record)
       } catch (recordError) {
         console.error('❌ Failed to load record from selected pipeline:', recordError)
         
-        // The record might be in a different pipeline - let's try to find it
-        console.log('🔍 Searching for record in all pipelines...')
         let foundRecord = null
         let foundPipeline = null
         
         for (const testPipeline of pipelines) {
           try {
-            console.log(`   Checking pipeline ${testPipeline.id} (${testPipeline.name})...`)
             const testResponse = await pipelinesApi.getRecord(testPipeline.id, contactRecord.id)
             foundRecord = testResponse.data
             foundPipeline = testPipeline
-            console.log(`✅ Found record in pipeline ${testPipeline.id} (${testPipeline.name})`)
             break
           } catch (e) {
             // Record not in this pipeline, continue searching
@@ -494,15 +535,9 @@ export default function InboxPage() {
         }
         
         if (foundRecord && foundPipeline) {
-          // Load the full pipeline data for the correct pipeline
           const correctPipelineResponse = await pipelinesApi.get(foundPipeline.id)
           pipeline = correctPipelineResponse.data
           record = foundRecord
-          
-          console.log('🎯 Using correct pipeline:', { id: pipeline.id, name: pipeline.name })
-          console.log('🏷️ Field groups in correct pipeline:', pipeline.field_groups)
-          console.log('📊 Field groups count in correct pipeline:', pipeline.field_groups?.length || 0)
-          console.log('📄 Found record data:', record)
         } else {
           throw new Error(`Record ${contactRecord.id} not found in any pipeline`)
         }
@@ -512,51 +547,15 @@ export default function InboxPage() {
         throw new Error('No record data found')
       }
       
-      console.log('📄 Raw record from API:', record)
-      console.log('📊 Record data field:', record.data)
-      
-      // The RecordDetailDrawer expects the record in a specific format
       const formattedRecord = {
-        ...record,  // Include all original fields
+        ...record,
         data: record.data || {},
-        // Ensure required fields are present
         id: record.id,
         title: record.title,
         created_at: record.created_at,
         updated_at: record.updated_at,
         pipeline: record.pipeline
       }
-      
-      console.log('✅ Opening drawer with formatted record:', formattedRecord)
-      console.log('🔧 Record data keys:', Object.keys(formattedRecord.data))
-      
-      // Debug pipeline fields for RecordDetailDrawer mapping
-      console.log('📋 Pipeline fields for mapping:')
-      pipeline.fields?.forEach((field: any, index: number) => {
-        console.log(`   ${index + 1}. "${field.name}" -> "${field.display_name}" (${field.field_type})`)
-        console.log(`      original_slug: ${field.original_slug || 'undefined'}`)
-        
-        // Test the mapping logic that RecordDetailDrawer uses
-        const backendSlug = field.original_slug || field.name
-        let backendValue = formattedRecord.data?.[backendSlug]
-        
-        if (backendValue === undefined) {
-          backendValue = formattedRecord.data?.[field.name]
-        }
-        
-        if (backendValue === undefined && field.original_slug && field.display_name) {
-          const displayNameSlug = field.display_name.toLowerCase().replace(/\s+/g, '_')
-          backendValue = formattedRecord.data?.[displayNameSlug]
-          console.log(`      trying display_name_slug: "${displayNameSlug}" -> found: ${backendValue !== undefined}`)
-        }
-        
-        if (backendValue !== undefined) {
-          const preview = typeof backendValue === 'object' ? JSON.stringify(backendValue).substring(0, 50) + '...' : String(backendValue).substring(0, 50)
-          console.log(`      ✅ MAPPED: ${preview}`)
-        } else {
-          console.log(`      ❌ NO MAPPING FOUND`)
-        }
-      })
       
       setSelectedContactRecord(formattedRecord)
       setSelectedContactPipeline(pipeline)
@@ -572,60 +571,44 @@ export default function InboxPage() {
   }
 
   const handleContactAction = (conversation: any) => {
-    // If conversation has a primary contact, view it. Otherwise, resolve it.
+    console.log('🔍 handleContactAction called with conversation:', conversation)
+    
     if (conversation.primary_contact) {
       handleViewContact(conversation.primary_contact)
     } else {
-      handleContactResolution(conversation.last_message)
+      // Create a message object compatible with ContactResolutionDialog
+      const messageForResolution = {
+        id: conversation.id,
+        contact_email: conversation.last_message?.contact_email || conversation.participants?.[0]?.email || '',
+        needs_manual_resolution: conversation.needs_manual_resolution,
+        domain_validated: conversation.domain_validated,
+        needs_domain_review: conversation.needs_domain_review,
+        unmatched_contact_data: {
+          email: conversation.last_message?.contact_email || conversation.participants?.[0]?.email,
+          name: conversation.participants?.[0]?.name,
+          phone: conversation.last_message?.contact_phone || conversation.participants?.[0]?.phone
+        }
+      }
+      
+      console.log('🔍 Created message for resolution:', messageForResolution)
+      handleContactResolution(messageForResolution)
     }
   }
 
   const handleResolutionComplete = async (messageId: string, contactRecord: any) => {
     console.log(`🔗 Contact resolution completed for message ${messageId}:`, contactRecord)
     
-    // Refresh conversations to show updated contact status
-    console.log(`🔄 Refreshing conversations after contact resolution...`)
-    await loadConversations()
+    if (viewMode === 'conversations') {
+      await loadConversations()
+    } else {
+      await fetchInbox()
+    }
     await refreshContactResolution()
-    
-    console.log(`✅ Refresh completed, conversations should now show connected contact`)
     
     toast({
       title: "Contact resolved",
       description: `Message connected to ${contactRecord.title}`,
     })
-  }
-
-  const handleDisconnectContact = async (conversation: Conversation) => {
-    if (!conversation.primary_contact || !conversation.last_message) {
-      console.error('❌ Cannot disconnect: missing conversation data')
-      return
-    }
-
-    try {
-      console.log(`🔄 Disconnecting contact from conversation ${conversation.id}...`)
-      
-      // Call the backend API to disconnect the contact
-      const response = await communicationsApi.disconnectContact(conversation.last_message.id)
-      
-      console.log('✅ Contact disconnected successfully:', response.data)
-      
-      // Refresh conversations to show updated status
-      await loadConversations()
-      await refreshContactResolution()
-      
-      toast({
-        title: "Contact disconnected",
-        description: `Conversation disconnected from ${conversation.primary_contact.name}`,
-      })
-    } catch (error: any) {
-      console.error('❌ Error disconnecting contact:', error)
-      toast({
-        title: "Error",
-        description: error.response?.data?.error || "Failed to disconnect contact",
-        variant: "destructive",
-      })
-    }
   }
 
   const getMessageTypeIcon = (type: string) => {
@@ -639,22 +622,54 @@ export default function InboxPage() {
   }
 
   const getMessageTypeBadge = (type: string) => {
-    // Handle undefined/null type
     const safeType = type || 'unknown'
     
     const colors = {
-      email: 'bg-blue-100 text-blue-800 hover:bg-blue-700 hover:text-white',
-      linkedin: 'bg-blue-600 text-white hover:bg-blue-800',
-      whatsapp: 'bg-green-100 text-green-800 hover:bg-green-700 hover:text-white',
-      sms: 'bg-purple-100 text-purple-800 hover:bg-purple-700 hover:text-white',
-      unknown: 'bg-gray-100 text-gray-800 hover:bg-gray-700 hover:text-white'
+      email: 'bg-blue-100 text-blue-800',
+      linkedin: 'bg-blue-600 text-white',
+      whatsapp: 'bg-green-100 text-green-800',
+      sms: 'bg-purple-100 text-purple-800',
+      unknown: 'bg-gray-100 text-gray-800'
     }
     
     return (
-      <Badge className={`${colors[safeType as keyof typeof colors] || colors.unknown} text-xs transition-all duration-200`}>
+      <Badge className={`${colors[safeType as keyof typeof colors] || colors.unknown} text-xs`}>
         {safeType.toUpperCase()}
       </Badge>
     )
+  }
+
+  const getChannelIcon = (channelType: string) => {
+    switch (channelType) {
+      case 'whatsapp': return <MessageSquare className="h-4 w-4" />
+      case 'linkedin': return <MessageSquare className="h-4 w-4" />
+      case 'gmail':
+      case 'outlook':
+      case 'mail': return <Mail className="h-4 w-4" />
+      case 'phone': return <Phone className="h-4 w-4" />
+      case 'instagram': return <MessageSquare className="h-4 w-4" />
+      default: return <MessageSquare className="h-4 w-4" />
+    }
+  }
+
+  const getChannelColor = (channelType: string) => {
+    switch (channelType) {
+      case 'whatsapp': return 'bg-green-500'
+      case 'linkedin': return 'bg-blue-600'
+      case 'gmail': return 'bg-red-500'
+      case 'outlook': return 'bg-blue-500'
+      case 'instagram': return 'bg-purple-500'
+      default: return 'bg-gray-500'
+    }
+  }
+
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'available': return 'text-green-600 bg-green-50 border-green-200'
+      case 'limited': return 'text-yellow-600 bg-yellow-50 border-yellow-200'
+      case 'historical': return 'text-blue-600 bg-blue-50 border-blue-200'
+      default: return 'text-gray-600 bg-gray-50 border-gray-200'
+    }
   }
 
   const formatTimestamp = (timestamp: string) => {
@@ -671,7 +686,9 @@ export default function InboxPage() {
     }
   }
 
-  if (loading) {
+  const currentLoading = viewMode === 'conversations' ? loading : unifiedLoading
+
+  if (currentLoading) {
     return (
       <div className="p-6">
         <div className="max-w-full mx-auto">
@@ -706,500 +723,703 @@ export default function InboxPage() {
                 </div>
               )}
             </div>
-            <p className="text-gray-600 dark:text-gray-400">All your communications in one place</p>
+            <p className="text-gray-600 dark:text-gray-400">
+              {viewMode === 'conversations' ? 'Channel-based conversation view' : 'Record-centric unified view'}
+            </p>
           </div>
           
           <div className="flex items-center space-x-2">
+            {/* View Mode Toggle */}
+            <div className="flex items-center space-x-1">
+              <Button
+                variant={viewMode === 'conversations' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setViewMode('conversations')}
+              >
+                <MessageSquare className="w-4 h-4 mr-2" />
+                Conversations
+              </Button>
+              <Button
+                variant={viewMode === 'records' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setViewMode('records')}
+              >
+                <Users className="w-4 h-4 mr-2" />
+                Records
+              </Button>
+            </div>
+            
             {/* WebSocket Status Indicator */}
             <div className="flex items-center space-x-2 text-sm">
               <div className={`w-2 h-2 rounded-full ${
-                wsConnected ? 'bg-green-500' : 'bg-red-500'
+                (viewMode === 'conversations' ? wsConnected : unifiedWSConnected) ? 'bg-green-500' : 'bg-red-500'
               }`}></div>
               <span className="text-gray-600 dark:text-gray-400">
-                {wsConnected ? 'Real-time' : 'Offline'}
+                {(viewMode === 'conversations' ? wsConnected : unifiedWSConnected) ? 'Real-time' : 'Offline'}
               </span>
             </div>
             
-            <Button variant="outline" onClick={() => setComposeDialogOpen(true)}>
+            <Button variant="outline" onClick={() => {
+              if (viewMode === 'conversations') {
+                setComposeDialogOpen(true)
+              } else {
+                setShowSmartCompose(true)
+              }
+            }}>
               <Send className="w-4 h-4 mr-2" />
               Compose
             </Button>
           </div>
         </div>
 
-        {/* Filters */}
-        <Card className="mb-4">
-          <CardContent className="p-4">
-            <div className="flex items-center space-x-4">
-              <div className="flex-1">
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
-                  <Input
-                    placeholder="Search conversations..."
-                    value={filters.search}
-                    onChange={(e) => setFilters(prev => ({ ...prev, search: e.target.value }))}
-                    className="pl-10"
-                  />
-                </div>
-              </div>
-              
-              <Select value={filters.type} onValueChange={(value: any) => setFilters(prev => ({ ...prev, type: value }))}>
-                <SelectTrigger className="w-32">
-                  <SelectValue placeholder="Type" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Types</SelectItem>
-                  <SelectItem value="email">Email</SelectItem>
-                  <SelectItem value="linkedin">LinkedIn</SelectItem>
-                  <SelectItem value="whatsapp">WhatsApp</SelectItem>
-                  <SelectItem value="sms">SMS</SelectItem>
-                </SelectContent>
-              </Select>
-              
-              <Select value={filters.status} onValueChange={(value: any) => setFilters(prev => ({ ...prev, status: value }))}>
-                <SelectTrigger className="w-32">
-                  <SelectValue placeholder="Status" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All</SelectItem>
-                  <SelectItem value="unread">Unread</SelectItem>
-                  <SelectItem value="starred">Starred</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Main Content */}
-        <div className="flex-1 grid grid-cols-12 gap-4 min-h-0">
-          {/* Conversations List */}
-          <div className="col-span-4">
-            <Card className="h-full">
-              <CardHeader className="pb-3">
-                <CardTitle className="text-lg">Conversations</CardTitle>
-                <CardDescription>
-                  {conversations.length} conversation{conversations.length !== 1 ? 's' : ''}
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="p-0">
-                <ScrollArea className="h-[calc(100vh-300px)]">
-                  {conversations.length === 0 ? (
-                    <div className="p-8 text-center text-gray-500">
-                      <MessageSquare className="w-12 h-12 mx-auto mb-4 text-gray-400" />
-                      <p>No conversations found</p>
+        {/* Render based on view mode */}
+        {viewMode === 'conversations' ? (
+          <>
+            {/* Original Conversations View */}
+            {/* Filters */}
+            <Card className="mb-4">
+              <CardContent className="p-4">
+                <div className="flex items-center space-x-4">
+                  <div className="flex-1">
+                    <div className="relative">
+                      <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
+                      <Input
+                        placeholder="Search conversations..."
+                        value={filters.search}
+                        onChange={(e) => setFilters(prev => ({ ...prev, search: e.target.value }))}
+                        className="pl-10"
+                      />
                     </div>
-                  ) : (
-                    <div className="space-y-1">
-                      {conversations.map((conversation) => (
-                        <div
-                          key={conversation.id}
-                          className={`p-4 cursor-pointer border-b hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors ${
-                            selectedConversation?.id === conversation.id ? 'bg-blue-50 dark:bg-blue-900/20 border-l-4 border-l-blue-500' : ''
-                          }`}
-                          onClick={() => handleConversationSelect(conversation)}
-                        >
-                          <div className="flex items-start justify-between">
-                            <div className="flex items-start space-x-3 flex-1 min-w-0">
-                              {/* Profile Picture */}
-                              {conversation.type === 'whatsapp' ? (
-                                (() => {
-                                  // Get customer contact (never business) from conversation
-                                  const customerContact = WhatsAppIdentityHandler.getCustomerContactFromConversation([conversation.last_message] as any);
+                  </div>
+                  
+                  <Select value={filters.type} onValueChange={(value: any) => setFilters(prev => ({ ...prev, type: value }))}>
+                    <SelectTrigger className="w-32">
+                      <SelectValue placeholder="Type" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Types</SelectItem>
+                      <SelectItem value="email">Email</SelectItem>
+                      <SelectItem value="linkedin">LinkedIn</SelectItem>
+                      <SelectItem value="whatsapp">WhatsApp</SelectItem>
+                      <SelectItem value="sms">SMS</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  
+                  <Select value={filters.status} onValueChange={(value: any) => setFilters(prev => ({ ...prev, status: value }))}>
+                    <SelectTrigger className="w-32">
+                      <SelectValue placeholder="Status" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All</SelectItem>
+                      <SelectItem value="unread">Unread</SelectItem>
+                      <SelectItem value="starred">Starred</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Main Content */}
+            <div className="flex-1 grid grid-cols-12 gap-4 min-h-0">
+              {/* Conversations List */}
+              <div className="col-span-4">
+                <Card className="h-full">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-lg">Conversations</CardTitle>
+                    <CardDescription>
+                      {conversations.length} conversation{conversations.length !== 1 ? 's' : ''}
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="p-0">
+                    <ScrollArea className="h-[calc(100vh-300px)]">
+                      {conversations.length === 0 ? (
+                        <div className="p-8 text-center text-gray-500">
+                          <MessageSquare className="w-12 h-12 mx-auto mb-4 text-gray-400" />
+                          <p>No conversations found</p>
+                        </div>
+                      ) : (
+                        <div className="space-y-1">
+                          {conversations.map((conversation) => (
+                            <div
+                              key={conversation.id}
+                              className={`p-4 cursor-pointer border-b hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors ${
+                                selectedConversation?.id === conversation.id ? 'bg-blue-50 dark:bg-blue-900/20 border-l-4 border-l-blue-500' : ''
+                              }`}
+                              onClick={() => handleConversationSelect(conversation)}
+                            >
+                              <div className="flex items-start justify-between">
+                                <div className="flex items-start space-x-3 flex-1 min-w-0">
+                                  {/* Profile Picture */}
+                                  <div className="w-10 h-10 rounded-full bg-gray-200 flex items-center justify-center flex-shrink-0">
+                                    {getMessageTypeIcon(conversation.type)}
+                                  </div>
                                   
-                                  if (!customerContact) {
-                                    return (
-                                      <div className="w-10 h-10 rounded-full bg-gray-300 flex items-center justify-center text-sm font-medium flex-shrink-0">
-                                        ?
-                                      </div>
-                                    );
-                                  }
-                                  
-                                  return (
-                                    <div className="w-10 h-10 rounded-full bg-gray-300 flex items-center justify-center text-sm font-medium overflow-hidden flex-shrink-0">
-                                      {customerContact.profile_picture ? (
-                                        <img 
-                                          src={customerContact.profile_picture} 
-                                          alt={customerContact.name}
-                                          className="w-full h-full object-cover"
-                                          onError={(e) => {
-                                            e.currentTarget.style.display = 'none';
-                                            const sibling = e.currentTarget.nextElementSibling as HTMLElement;
-                                            if (sibling) sibling.style.display = 'flex';
-                                          }}
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center justify-between mb-1">
+                                      <div className="flex items-center space-x-2">
+                                        <h3 className={`text-sm font-medium truncate ${
+                                          conversation.unread_count > 0 ? 'font-semibold' : ''
+                                        }`}>
+                                          {conversation.participants?.[0]?.name || 'Unknown'}
+                                        </h3>
+                                        {getMessageTypeBadge(conversation.type)}
+                                        {/* Contact Resolution Badge */}
+                                        <ContactResolutionBadge
+                                          contactRecord={conversation.primary_contact ? {
+                                            id: conversation.primary_contact.id,
+                                            title: conversation.primary_contact.name,
+                                            pipeline_id: '',
+                                            pipeline_name: conversation.primary_contact.pipeline_name,
+                                            data: {}
+                                          } : null}
+                                          needsResolution={conversation.needs_manual_resolution}
+                                          domainValidated={conversation.domain_validated}
+                                          needsDomainReview={conversation.needs_domain_review}
+                                          className="text-xs"
+                                          onClick={() => handleContactAction(conversation)}
                                         />
-                                      ) : null}
-                                      <span className={`${customerContact.profile_picture ? 'hidden' : 'flex'} items-center justify-center w-full h-full`}>
-                                        {customerContact.name?.charAt(0).toUpperCase() || '?'}
+                                      </div>
+                                      <span className="text-xs text-gray-500 flex-shrink-0 ml-2">
+                                        {formatTimestamp(conversation.updated_at)}
                                       </span>
                                     </div>
-                                  );
-                                })()
-                              ) : (
-                                <div className="w-10 h-10 rounded-full bg-gray-300 flex items-center justify-center text-sm font-medium flex-shrink-0">
-                                  {(conversation.participants?.[0]?.name || 'Unknown').charAt(0).toUpperCase()}
-                                </div>
-                              )}
-                              
-                              <div className="flex-1 min-w-0">
-                                <div className="flex items-center space-x-2 mb-1">
-                                  {getMessageTypeIcon(conversation.type)}
-                                  <span className={`font-medium truncate ${conversation.unread_count > 0 ? 'font-bold' : ''}`}>
-                                    {conversation.type === 'whatsapp' && conversation.last_message ? (
-                                      (() => {
-                                        // Get customer contact from conversation (never business)
-                                        const customerContact = WhatsAppIdentityHandler.getCustomerContactFromConversation([conversation.last_message] as any);
-                                        
-                                        if (!customerContact) {
-                                          console.warn('⚠️ No customer contact found in conversation');
-                                          return 'Unknown Contact';
-                                        }
-                                        
-                                        return customerContact.name || 'Unknown Contact';
-                                      })()
-                                    ) : (
-                                      conversation.participants?.[0]?.name || 'Unknown'
-                                    )}
-                                  </span>
-                                  {conversation.unread_count > 0 && (
-                                    <Badge variant="destructive" className="text-xs">
-                                      {conversation.unread_count}
-                                    </Badge>
-                                  )}
-                                </div>
-                                <p className={`text-sm text-gray-600 dark:text-gray-400 truncate ${conversation.unread_count > 0 ? 'font-semibold' : ''}`}>
-                                  {conversation.type === 'whatsapp' && conversation.last_message ? (
-                                    (() => {
-                                      const message = conversation.last_message as any;
-                                      const isFromBusiness = WhatsAppIdentityHandler.isBusinessAccount(message.contact_email);
-                                      const directionLabel = message.direction === 'outbound' || isFromBusiness ? 'You: ' : '';
-                                      return `${directionLabel}${message.subject || message.content}`;
-                                    })()
-                                  ) : (
-                                    conversation.last_message?.subject || conversation.last_message?.content
-                                  )}
-                                </p>
-                                <div className="flex items-center justify-between mt-1">
-                                  <div className="flex items-center space-x-2">
-                                    {getMessageTypeBadge(conversation.type)}
-                                    {/* Contact Resolution Badge */}
-                                    <ContactResolutionBadge
-                                      contactRecord={conversation.primary_contact ? {
-                                        id: conversation.primary_contact.id,
-                                        title: conversation.primary_contact.name,
-                                        pipeline_id: '',
-                                        pipeline_name: conversation.primary_contact.pipeline_name,
-                                        data: {}
-                                      } : null}
-                                      needsResolution={conversation.needs_manual_resolution}
-                                      domainValidated={conversation.domain_validated}
-                                      needsDomainReview={conversation.needs_domain_review}
-                                      className="text-xs"
-                                      onClick={() => handleContactAction(conversation)}
-                                      onDisconnect={conversation.primary_contact ? () => handleDisconnectContact(conversation) : undefined}
-                                    />
+                                    
+                                    {/* Contact Resolution Status */}
+                                    <div className="flex items-center justify-between mb-2">
+                                      <ContactResolutionIndicator 
+                                        conversation={conversation}
+                                        onAction={() => handleContactAction(conversation)}
+                                      />
+                                      
+                                      {conversation.unread_count > 0 && (
+                                        <Badge variant="destructive" className="text-xs ml-2">
+                                          {conversation.unread_count}
+                                        </Badge>
+                                      )}
+                                    </div>
+                                    
+                                    <p className={`text-sm text-gray-600 dark:text-gray-400 truncate ${
+                                      conversation.unread_count > 0 ? 'font-medium' : ''
+                                    }`}>
+                                      {conversation.last_message?.content || 'No messages'}
+                                    </p>
                                   </div>
-                                  <span className="text-xs text-gray-500">
-                                    {formatTimestamp(conversation.updated_at)}
-                                  </span>
                                 </div>
                               </div>
                             </div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </ScrollArea>
-              </CardContent>
-            </Card>
-          </div>
-
-          {/* Message Thread */}
-          <div className="col-span-8">
-            <Card className="h-full flex flex-col">
-              {selectedConversation ? (
-                <>
-                  {/* Conversation Header */}
-                  <CardHeader className="pb-3">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <CardTitle className="flex items-center space-x-2">
-                          {getMessageTypeIcon(selectedConversation.type)}
-                          <span>
-                            {(() => {
-                              // Special handling for WhatsApp to show customer name, never business
-                              if (selectedConversation.type === 'whatsapp' && selectedConversation.last_message) {
-                                const customerContact = WhatsAppIdentityHandler.getCustomerContactFromConversation([selectedConversation.last_message] as any);
-                                return customerContact?.name || 'Unknown Contact';
-                              }
-                              return selectedConversation.participants?.[0]?.name;
-                            })()}
-                          </span>
-                          {getMessageTypeBadge(selectedConversation.type)}
-                        </CardTitle>
-                        <CardDescription>
-                          {(() => {
-                            // For WhatsApp, show phone number instead of email
-                            if (selectedConversation.type === 'whatsapp' && selectedConversation.last_message) {
-                              const message = selectedConversation.last_message as any;
-                              const phoneNumber = message.contact_email?.replace('@s.whatsapp.net', '');
-                              return phoneNumber ? `+${phoneNumber}` : selectedConversation.participants?.[0]?.email;
-                            }
-                            return selectedConversation.participants?.[0]?.email;
-                          })()}
-                        </CardDescription>
-                      </div>
-                      <div className="flex items-center space-x-2">
-                        <Button variant="outline" size="sm">
-                          <Star className="w-4 h-4" />
-                        </Button>
-                        <Button variant="outline" size="sm">
-                          <Archive className="w-4 h-4" />
-                        </Button>
-                        <Button variant="outline" size="sm">
-                          <MoreVertical className="w-4 h-4" />
-                        </Button>
-                      </div>
-                    </div>
-                  </CardHeader>
-
-                  <Separator />
-
-                  {/* Messages */}
-                  <CardContent className="flex-1 p-0">
-                    <ScrollArea className="h-[calc(100vh-400px)] p-4">
-                      {loadingMessages ? (
-                        <div className="text-center py-8">
-                          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto"></div>
-                          <p className="mt-2 text-sm text-gray-600">Loading messages...</p>
-                        </div>
-                      ) : messages.length === 0 ? (
-                        <div className="text-center py-8 text-gray-500">
-                          <MessageSquare className="w-8 h-8 mx-auto mb-2 text-gray-400" />
-                          <p>No messages in this conversation</p>
-                        </div>
-                      ) : (
-                        <div className="space-y-4">
-                          {messages.map((message) => {
-                            // Use WhatsApp identity handling for WhatsApp messages
-                            const messageDisplay = message.type === 'whatsapp' 
-                              ? WhatsAppIdentityHandler.formatMessageDisplay(message as any, user?.email)
-                              : {
-                                  senderName: message.sender.name,
-                                  isFromBusiness: false,
-                                  isFromCurrentUser: message.sender.email === user?.email,
-                                  displayAvatar: message.sender.avatar
-                                };
-
-                            return (
-                              <div
-                                key={message.id}
-                                className={`flex ${messageDisplay.isFromCurrentUser ? 'justify-end' : 'justify-start'}`}
-                              >
-                                <div className="flex items-start space-x-2 max-w-[70%]">
-                                  {/* Profile picture for customer messages */}
-                                  {!messageDisplay.isFromCurrentUser && (
-                                    <div className="w-8 h-8 rounded-full bg-gray-300 flex items-center justify-center text-xs font-medium overflow-hidden">
-                                      {messageDisplay.displayAvatar ? (
-                                        <img 
-                                          src={messageDisplay.displayAvatar} 
-                                          alt={messageDisplay.senderName}
-                                          className="w-full h-full object-cover"
-                                          onError={(e) => {
-                                            // Fallback to initials if image fails
-                                            const target = e.currentTarget as HTMLImageElement;
-                                            const nextElement = target.nextElementSibling as HTMLElement;
-                                            target.style.display = 'none';
-                                            if (nextElement) nextElement.style.display = 'block';
-                                          }}
-                                        />
-                                      ) : null}
-                                      <span className={messageDisplay.displayAvatar ? 'hidden' : 'block'}>
-                                        {messageDisplay.senderName.charAt(0).toUpperCase()}
-                                      </span>
-                                    </div>
-                                  )}
-                                  
-                                  <div className={`${
-                                    messageDisplay.isFromCurrentUser 
-                                      ? 'bg-blue-500 text-white' 
-                                      : 'bg-gray-100 dark:bg-gray-800'
-                                  } rounded-lg p-3`}>
-                                    {/* Sender name for non-current user messages */}
-                                    {!messageDisplay.isFromCurrentUser && message.type === 'whatsapp' && (
-                                      <div className="font-medium text-xs mb-1 text-gray-600 dark:text-gray-400">
-                                        {messageDisplay.senderName}
-                                      </div>
-                                    )}
-                                    
-                                    {message.subject && (
-                                      <div className="font-medium text-sm mb-1 border-b border-gray-200 dark:border-gray-700 pb-1">
-                                        {message.subject}
-                                      </div>
-                                    )}
-                                    <div className="text-sm whitespace-pre-wrap">
-                                      {message.content}
-                                    </div>
-                                    
-                                    {/* WhatsApp delivery status */}
-                                    {message.type === 'whatsapp' && message.metadata?.delivery_status && messageDisplay.isFromCurrentUser && (
-                                      <div className="text-xs opacity-70 mt-1">
-                                        {message.metadata.delivery_status === 'delivered' && '✓✓'}
-                                        {message.metadata.delivery_status === 'read' && '✓✓ Read'}
-                                        {message.metadata.delivery_status === 'sent' && '✓'}
-                                      </div>
-                                    )}
-                                    
-                                    {message.attachments && message.attachments.length > 0 && (
-                                      <div className="mt-2 pt-2 border-t border-gray-200 dark:border-gray-700">
-                                        {message.attachments.map((attachment, index) => (
-                                          <div key={index} className="flex items-center space-x-2 text-xs">
-                                            <Paperclip className="w-3 h-3" />
-                                            <span>{attachment.name}</span>
-                                          </div>
-                                        ))}
-                                      </div>
-                                    )}
-                                    <div className="text-xs opacity-70 mt-1">
-                                      {formatTimestamp(message.timestamp)}
-                                    </div>
-                                  </div>
-                                </div>
-                              </div>
-                            );
-                          })}
+                          ))}
                         </div>
                       )}
                     </ScrollArea>
                   </CardContent>
-
-                  <Separator />
-
-                  {/* Reply Area */}
-                  <div className="p-4">
-                    <div className="flex items-end space-x-2">
-                      <div className="flex-1">
+                </Card>
+              </div>
+              
+              {/* Messages View */}
+              <div className="col-span-8">
+                {selectedConversation ? (
+                  <Card className="h-full flex flex-col">
+                    <CardHeader className="pb-3">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center space-x-3">
+                          <div className="w-8 h-8 rounded-full bg-gray-200 flex items-center justify-center">
+                            {getMessageTypeIcon(selectedConversation.type)}
+                          </div>
+                          <div>
+                            <CardTitle className="text-lg">
+                              {selectedConversation.participants?.[0]?.name || 'Unknown'}
+                            </CardTitle>
+                            <div className="text-sm text-muted-foreground">
+                              {getMessageTypeBadge(selectedConversation.type)}
+                            </div>
+                          </div>
+                        </div>
+                        
+                        <div className="flex items-center space-x-2">
+                          <ContactResolutionBadge 
+                            conversation={selectedConversation}
+                            onResolve={() => handleContactResolution(selectedConversation.last_message)}
+                            onViewContact={() => handleViewContact(selectedConversation.primary_contact)}
+                          />
+                          <Button variant="ghost" size="sm">
+                            <MoreVertical className="w-4 h-4" />
+                          </Button>
+                        </div>
+                      </div>
+                    </CardHeader>
+                    
+                    {/* Messages */}
+                    <CardContent className="flex-1 p-0 overflow-hidden">
+                      <ScrollArea className="h-full p-4">
+                        {loadingMessages ? (
+                          <div className="flex items-center justify-center h-32">
+                            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+                          </div>
+                        ) : (
+                          <div className="space-y-4">
+                            {messages.map((message) => (
+                              <div key={message.id} className={`flex ${
+                                message.direction === 'outbound' ? 'justify-end' : 'justify-start'
+                              }`}>
+                                <div className={`max-w-xs lg:max-w-md px-4 py-2 rounded-lg ${
+                                  message.direction === 'outbound' 
+                                    ? 'bg-blue-500 text-white' 
+                                    : 'bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-white'
+                                }`}>
+                                  {message.subject && (
+                                    <div className="font-semibold text-sm mb-1">
+                                      {message.subject}
+                                    </div>
+                                  )}
+                                  <div className="text-sm">
+                                    {message.content}
+                                  </div>
+                                  <div className={`text-xs mt-1 ${
+                                    message.direction === 'outbound' 
+                                      ? 'text-blue-100' 
+                                      : 'text-gray-500'
+                                  }`}>
+                                    {formatTimestamp(message.timestamp)}
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </ScrollArea>
+                    </CardContent>
+                    
+                    {/* Reply Box */}
+                    <div className="p-4 border-t">
+                      <div className="flex space-x-2">
                         <Textarea
-                          placeholder={`Reply to ${selectedConversation.participants?.[0]?.name || 'Contact'}...`}
+                          placeholder="Type your reply..."
                           value={replyText}
                           onChange={(e) => setReplyText(e.target.value)}
-                          className="min-h-[80px]"
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                          className="flex-1 min-h-[80px]"
+                          onKeyPress={(e) => {
+                            if (e.key === 'Enter' && !e.shiftKey) {
+                              e.preventDefault()
                               handleSendReply()
                             }
                           }}
                         />
-                      </div>
-                      <div className="flex flex-col space-y-2">
-                        <Button variant="outline" size="sm">
-                          <Paperclip className="w-4 h-4" />
-                        </Button>
-                        <Button onClick={handleSendReply} disabled={!replyText.trim()}>
-                          <Send className="w-4 h-4" />
-                        </Button>
+                        <div className="flex flex-col space-y-2">
+                          <Button
+                            onClick={handleSendReply}
+                            disabled={!replyText.trim() || composing}
+                            size="sm"
+                          >
+                            <Send className="w-4 h-4" />
+                          </Button>
+                          <Button variant="ghost" size="sm">
+                            <Paperclip className="w-4 h-4" />
+                          </Button>
+                        </div>
                       </div>
                     </div>
-                    <div className="flex items-center justify-between mt-2">
-                      <div className="flex space-x-2">
-                        <Button 
-                          variant="ghost" 
-                          size="sm"
-                          onClick={() => {
-                            setReplyingTo(messages[messages.length - 1])
-                            setComposeDialogOpen(true)
-                          }}
-                        >
-                          <Reply className="w-4 h-4 mr-1" />
-                          Reply
-                        </Button>
-                        <Button variant="ghost" size="sm">
-                          <Forward className="w-4 h-4 mr-1" />
-                          Forward
-                        </Button>
+                  </Card>
+                ) : (
+                  <Card className="h-full">
+                    <CardContent className="flex items-center justify-center h-full">
+                      <div className="text-center text-gray-500">
+                        <MessageSquare className="w-12 h-12 mx-auto mb-4 text-gray-400" />
+                        <p>Select a conversation to view messages</p>
                       </div>
-                      <p className="text-xs text-gray-500">
-                        Press Cmd+Enter to send
-                      </p>
+                    </CardContent>
+                  </Card>
+                )}
+              </div>
+            </div>
+          </>
+        ) : (
+          <>
+            {/* New Records View */}
+            <div className="flex h-full">
+              {/* Left Panel - Record List */}
+              <div className="w-1/3 border-r bg-white">
+                <div className="p-4 border-b">
+                  <div className="flex items-center justify-between mb-4">
+                    <h2 className="text-lg font-semibold">Records</h2>
+                    <Button size="sm" variant="outline">
+                      <Filter className="h-4 w-4" />
+                    </Button>
+                  </div>
+                  
+                  {/* Search */}
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+                    <Input
+                      placeholder="Search records..."
+                      className="pl-10"
+                    />
+                  </div>
+                  
+                  {/* Tabs */}
+                  <Tabs defaultValue="all" className="mt-4">
+                    <TabsList className="grid w-full grid-cols-3">
+                      <TabsTrigger value="all">All</TabsTrigger>
+                      <TabsTrigger value="unread">Unread</TabsTrigger>
+                      <TabsTrigger value="recent">Recent</TabsTrigger>
+                    </TabsList>
+                  </Tabs>
+                </div>
+
+                {/* Records List */}
+                <ScrollArea className="flex-1">
+                  <div className="p-2">
+                    {inboxData?.records.map((record) => (
+                      <Card 
+                        key={record.id}
+                        className={`mb-2 cursor-pointer transition-colors hover:bg-gray-50 ${
+                          selectedRecord?.id === record.id ? 'ring-2 ring-blue-500' : ''
+                        }`}
+                        onClick={() => selectRecord(record)}
+                      >
+                        <CardContent className="p-4">
+                          <div className="flex items-start justify-between">
+                            <div className="flex-1">
+                              <div className="flex items-center gap-2 mb-1">
+                                <h3 className="font-medium text-sm">{record.title}</h3>
+                                {record.total_unread > 0 && (
+                                  <Badge variant="destructive" className="text-xs">
+                                    {record.total_unread}
+                                  </Badge>
+                                )}
+                              </div>
+                              
+                              <p className="text-xs text-gray-500 mb-2">{record.pipeline_name}</p>
+                              
+                              {/* Channel indicators */}
+                              <div className="flex items-center gap-1 mb-2">
+                                {record.available_channels.map((channelType) => (
+                                  <div 
+                                    key={channelType}
+                                    className={`p-1 rounded-full text-white ${getChannelColor(channelType)}`}
+                                    title={channelType}
+                                  >
+                                    {getChannelIcon(channelType)}
+                                  </div>
+                                ))}
+                              </div>
+                              
+                              {/* Last activity */}
+                              <div className="flex items-center gap-1 text-xs text-gray-400">
+                                <Clock className="h-3 w-3" />
+                                {formatDistanceToNow(new Date(record.last_activity), { addSuffix: true })}
+                              </div>
+                            </div>
+                            
+                            <Button variant="ghost" size="sm">
+                              <MoreVertical className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    )) || []}
+                  </div>
+                </ScrollArea>
+              </div>
+
+              {/* Right Panel - Record Details */}
+              <div className="flex-1 flex flex-col">
+                {selectedRecord ? (
+                  <>
+                    {/* Header */}
+                    <div className="p-6 border-b bg-white">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <h1 className="text-xl font-semibold">{selectedRecord.title}</h1>
+                          <p className="text-gray-500">{selectedRecord.pipeline_name}</p>
+                        </div>
+                        
+                        <div className="flex items-center gap-2">
+                          <Button variant="outline" size="sm">
+                            <Star className="h-4 w-4" />
+                          </Button>
+                          <Button variant="outline" size="sm">
+                            <Archive className="h-4 w-4" />
+                          </Button>
+                          <Button size="sm" onClick={() => setShowSmartCompose(true)}>
+                            <Plus className="h-4 w-4 mr-2" />
+                            New Message
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Content Area */}
+                    <div className="flex-1 overflow-hidden">
+                      <Tabs defaultValue="timeline" className="h-full flex flex-col">
+                        <TabsList className="mx-6 mt-4">
+                          <TabsTrigger value="timeline">Timeline</TabsTrigger>
+                          <TabsTrigger value="channels">Channels</TabsTrigger>
+                          <TabsTrigger value="analytics">Analytics</TabsTrigger>
+                        </TabsList>
+                        
+                        <TabsContent value="timeline" className="flex-1 m-6 mt-4">
+                          {/* Show messages from all conversations for this Record */}
+                          <div className="h-full flex flex-col">
+                            <div className="mb-4">
+                              <h3 className="text-lg font-semibold mb-2">Conversation History</h3>
+                              <p className="text-gray-600 text-sm">All messages across channels for {selectedRecord.title}</p>
+                            </div>
+                            
+                            <ScrollArea className="flex-1 border rounded-lg">
+                              <div className="p-4 space-y-4">
+                                {/* Get conversations for this Record and display messages */}
+                                {inboxData?.conversations
+                                  ?.filter(conv => conv.primary_contact?.id === selectedRecord.id)
+                                  ?.map(conversation => (
+                                    <div key={conversation.id} className="space-y-2">
+                                      <div className="flex items-center gap-2 mb-2">
+                                        {getChannelIcon(conversation.type)}
+                                        <Badge variant="outline" className="text-xs">
+                                          {conversation.type?.toUpperCase()}
+                                        </Badge>
+                                        <span className="text-xs text-gray-500">
+                                          {conversation.updated_at ? formatDistanceToNow(new Date(conversation.updated_at)) + ' ago' : ''}
+                                        </span>
+                                      </div>
+                                      
+                                      {/* Last message preview */}
+                                      {conversation.last_message && (
+                                        <Card className="border-l-4 border-l-blue-500">
+                                          <CardContent className="p-3">
+                                            <div className="flex justify-between items-start mb-1">
+                                              <span className="text-sm font-medium">
+                                                {conversation.last_message.direction === 'inbound' ? 
+                                                  conversation.last_message.sender?.name || 'Unknown' : 'You'
+                                                }
+                                              </span>
+                                              <span className="text-xs text-gray-500">
+                                                {conversation.last_message.timestamp ? 
+                                                  formatDistanceToNow(new Date(conversation.last_message.timestamp)) + ' ago' : ''
+                                                }
+                                              </span>
+                                            </div>
+                                            <p className="text-sm text-gray-700">
+                                              {conversation.last_message.subject && (
+                                                <span className="font-medium">{conversation.last_message.subject}: </span>
+                                              )}
+                                              {conversation.last_message.content || 'No content'}
+                                            </p>
+                                            {conversation.unread_count > 0 && (
+                                              <Badge variant="destructive" className="text-xs mt-2">
+                                                {conversation.unread_count} unread
+                                              </Badge>
+                                            )}
+                                            
+                                            {/* Button to load full conversation */}
+                                            <Button 
+                                              variant="ghost" 
+                                              size="sm" 
+                                              className="mt-2"
+                                              onClick={() => {
+                                                // Load messages for this conversation
+                                                setSelectedConversation(conversation)
+                                                loadMessages(conversation.id)
+                                                // Switch to conversations view to see full timeline
+                                                setViewMode('conversations')
+                                              }}
+                                            >
+                                              View Full Conversation
+                                            </Button>
+                                          </CardContent>
+                                        </Card>
+                                      )}
+                                    </div>
+                                  )) || []
+                                }
+                                
+                                {(!inboxData?.conversations?.filter(conv => conv.primary_contact?.id === selectedRecord.id)?.length) && (
+                                  <div className="text-center text-gray-500 py-8">
+                                    No conversations found for this contact
+                                  </div>
+                                )}
+                              </div>
+                            </ScrollArea>
+                          </div>
+                        </TabsContent>
+                        
+                        <TabsContent value="channels" className="flex-1 m-6 mt-4">
+                          <Card className="h-full">
+                            <CardHeader>
+                              <CardTitle className="flex items-center gap-2">
+                                <Users className="h-5 w-5" />
+                                Channel Availability
+                              </CardTitle>
+                            </CardHeader>
+                            <CardContent>
+                              <ScrollArea className="h-96">
+                                <div className="space-y-4">
+                                  {channelAvailability.map((channel) => (
+                                    <div key={channel.channel_type} className="border rounded-lg p-4">
+                                      <div className="flex items-center justify-between mb-2">
+                                        <div className="flex items-center gap-3">
+                                          <div className={`p-2 rounded-full text-white ${getChannelColor(channel.channel_type)}`}>
+                                            {getChannelIcon(channel.channel_type)}
+                                          </div>
+                                          <div>
+                                            <h4 className="font-medium">{channel.display_name}</h4>
+                                            <p className="text-sm text-gray-500">Priority {channel.priority}</p>
+                                          </div>
+                                        </div>
+                                        
+                                        <Badge className={getStatusColor(channel.status)}>
+                                          {channel.status}
+                                        </Badge>
+                                      </div>
+                                      
+                                      <div className="grid grid-cols-2 gap-4 text-sm">
+                                        <div className="flex items-center gap-2">
+                                          {channel.user_connected ? (
+                                            <CheckCircle2 className="h-4 w-4 text-green-500" />
+                                          ) : (
+                                            <AlertCircle className="h-4 w-4 text-red-500" />
+                                          )}
+                                          <span>User Connected</span>
+                                        </div>
+                                        
+                                        <div className="flex items-center gap-2">
+                                          {channel.contact_info_available ? (
+                                            <CheckCircle2 className="h-4 w-4 text-green-500" />
+                                          ) : (
+                                            <AlertCircle className="h-4 w-4 text-red-500" />
+                                          )}
+                                          <span>Contact Info</span>
+                                        </div>
+                                        
+                                        {channel.has_history && (
+                                          <div className="flex items-center gap-2">
+                                            <TrendingUp className="h-4 w-4 text-blue-500" />
+                                            <span>Has History</span>
+                                          </div>
+                                        )}
+                                      </div>
+                                      
+                                      {channel.history && (
+                                        <div className="mt-3 pt-3 border-t">
+                                          <div className="grid grid-cols-3 gap-4 text-sm">
+                                            <div>
+                                              <p className="text-gray-500">Messages</p>
+                                              <p className="font-medium">{channel.history.total_messages}</p>
+                                            </div>
+                                            <div>
+                                              <p className="text-gray-500">Response Rate</p>
+                                              <p className="font-medium">{channel.history.response_rate.toFixed(1)}%</p>
+                                            </div>
+                                            <div>
+                                              <p className="text-gray-500">Engagement</p>
+                                              <p className="font-medium">{channel.history.engagement_score.toFixed(1)}</p>
+                                            </div>
+                                          </div>
+                                        </div>
+                                      )}
+                                      
+                                      {channel.limitations.length > 0 && (
+                                        <div className="mt-3 pt-3 border-t">
+                                          <p className="text-sm text-gray-500 mb-1">Limitations:</p>
+                                          <ul className="text-sm text-red-600">
+                                            {channel.limitations.map((limitation, index) => (
+                                              <li key={index}>• {limitation}</li>
+                                            ))}
+                                          </ul>
+                                        </div>
+                                      )}
+                                    </div>
+                                  ))}
+                                </div>
+                              </ScrollArea>
+                            </CardContent>
+                          </Card>
+                        </TabsContent>
+                        
+                        <TabsContent value="analytics" className="flex-1 m-6 mt-4">
+                          <CommunicationAnalytics 
+                            recordId={selectedRecord.id}
+                            recordTitle={selectedRecord.title}
+                            className="h-full"
+                          />
+                        </TabsContent>
+                      </Tabs>
+                    </div>
+                  </>
+                ) : (
+                  <div className="flex-1 flex items-center justify-center text-gray-500">
+                    <div className="text-center">
+                      <MessageSquare className="h-12 w-12 mx-auto mb-4 text-gray-300" />
+                      <p>Select a record to view communication timeline</p>
                     </div>
                   </div>
-                </>
-              ) : (
-                <CardContent className="flex-1 flex items-center justify-center">
-                  <div className="text-center text-gray-500">
-                    <MessageSquare className="w-16 h-16 mx-auto mb-4 text-gray-400" />
-                    <h3 className="text-lg font-medium mb-2">Select a conversation</h3>
-                    <p>Choose a conversation from the left to start messaging</p>
-                  </div>
-                </CardContent>
-              )}
-            </Card>
-          </div>
-        </div>
+                )}
+              </div>
+            </div>
+          </>
+        )}
 
-        {/* Message Composer Dialog */}
-        <MessageComposer
-          open={composeDialogOpen}
-          onOpenChange={(open) => {
-            setComposeDialogOpen(open)
-            if (!open) {
-              setReplyingTo(null)
-            }
-          }}
-          conversationId={replyingTo ? selectedConversation?.id : undefined}
-          recipientType={replyingTo ? 'reply' : 'new'}
-          defaultRecipient={replyingTo ? {
-            name: replyingTo.sender.name,
-            email: replyingTo.sender.email,
-            platform: replyingTo.type,
-            platform_id: replyingTo.sender.platform_id
-          } : undefined}
-          accountConnections={accountConnections}
-        />
-
-        {/* Contact Resolution Dialog */}
-        <ContactResolutionDialog
-          message={selectedMessageForResolution}
-          isOpen={contactResolutionOpen}
-          onClose={() => {
-            setContactResolutionOpen(false)
-            setSelectedMessageForResolution(null)
-          }}
-          onResolutionComplete={handleResolutionComplete}
-        />
-
-        {/* Contact Detail Viewer/Editor */}
-        {selectedContactRecord && selectedContactPipeline && (
-          <RecordDetailDrawer
-            record={selectedContactRecord}
-            pipeline={selectedContactPipeline}
-            isOpen={contactViewerOpen}
-            onClose={() => {
-              setContactViewerOpen(false)
-              setSelectedContactRecord(null)
-              setSelectedContactPipeline(null)
-            }}
-            onSave={async (updatedRecord) => {
-              try {
-                console.log('💾 Saving updated contact:', updatedRecord)
-                await pipelinesApi.updateRecord(selectedContactPipeline.id, updatedRecord.id, updatedRecord)
-                toast({
-                  title: "Contact updated",
-                  description: "Contact information has been saved successfully",
-                })
-                // Optionally refresh the conversation list to show updated contact info
-                await loadConversations()
-              } catch (error) {
-                console.error('Error saving contact:', error)
-                toast({
-                  title: "Error",
-                  description: "Failed to save contact updates",
-                  variant: "destructive",
-                })
+        {/* Dialogs and Modals */}
+        {composeDialogOpen && (
+          <MessageComposer
+            open={composeDialogOpen}
+            onClose={() => setComposeDialogOpen(false)}
+            onSent={() => {
+              setComposeDialogOpen(false)
+              if (viewMode === 'conversations') {
+                loadConversations()
+              } else {
+                fetchInbox()
               }
             }}
-            isReadOnly={false}
+            connections={accountConnections}
           />
+        )}
+
+        {contactResolutionOpen && selectedMessageForResolution && (
+          <ContactResolutionDialog
+            isOpen={contactResolutionOpen}
+            onClose={() => {
+              setContactResolutionOpen(false)
+              setSelectedMessageForResolution(null)
+            }}
+            message={selectedMessageForResolution}
+            onResolutionComplete={handleResolutionComplete}
+          />
+        )}
+
+        {contactViewerOpen && selectedContactRecord && selectedContactPipeline && (
+          <RecordDetailDrawer
+            isOpen={contactViewerOpen}
+            onClose={() => setContactViewerOpen(false)}
+            record={selectedContactRecord}
+            pipeline={selectedContactPipeline}
+          />
+        )}
+
+        {/* Smart Compose Dialog for Records View */}
+        {showSmartCompose && selectedRecord && (
+          <div 
+            className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
+            onClick={(e) => {
+              if (e.target === e.currentTarget) {
+                setShowSmartCompose(false)
+              }
+            }}
+          >
+            <div className="max-w-4xl w-full mx-4 max-h-[90vh] overflow-auto">
+              <SmartCompose
+                recordId={selectedRecord.id}
+                recordTitle={selectedRecord.title}
+                onSent={(messageId, channel) => {
+                  console.log('Message sent:', messageId, 'via', channel)
+                  setShowSmartCompose(false)
+                  fetchInbox()
+                }}
+                onCancel={() => setShowSmartCompose(false)}
+                className="shadow-xl"
+              />
+            </div>
+          </div>
         )}
       </div>
     </div>

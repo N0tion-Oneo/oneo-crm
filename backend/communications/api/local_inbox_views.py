@@ -18,6 +18,49 @@ from ..models import (
 logger = logging.getLogger(__name__)
 
 
+def _get_contact_name(contact_record):
+    """
+    Extract contact name from various possible fields in the contact record data.
+    Tries multiple field names commonly used for contact names.
+    """
+    if not contact_record or not contact_record.data:
+        return 'Unknown'
+    
+    data = contact_record.data
+    
+    # Try different possible name fields in order of preference
+    name_fields = [
+        'name',           # Standard name field
+        'company_name',   # Company name for business contacts
+        'full_name',      # Full name field
+        'contact_name',   # Contact name field
+        'first_name',     # Combine first and last names
+        'title',          # Use record title as fallback
+    ]
+    
+    # First, try to get a complete name from single fields
+    for field in name_fields:
+        if field in data and data[field]:
+            return str(data[field]).strip()
+    
+    # Try to combine first and last name if they exist
+    first_name = data.get('first_name', '').strip()
+    last_name = data.get('last_name', '').strip()
+    if first_name and last_name:
+        return f"{first_name} {last_name}"
+    elif first_name:
+        return first_name
+    elif last_name:
+        return last_name
+    
+    # Try using the record title as a fallback
+    if hasattr(contact_record, 'title') and contact_record.title:
+        return contact_record.title
+    
+    # Final fallback
+    return 'Unknown'
+
+
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def get_local_unified_inbox(request):
@@ -243,8 +286,9 @@ def get_local_unified_inbox(request):
                 'connection': connection_info,
                 'primary_contact': {
                     'id': str(conv.primary_contact_record.id),
-                    'name': conv.primary_contact_record.data.get('name', 'Unknown'),
-                    'email': conv.primary_contact_record.data.get('email', ''),
+                    'name': _get_contact_name(conv.primary_contact_record),
+                    'email': conv.primary_contact_record.data.get('email', conv.primary_contact_record.data.get('contact_email', '')),
+                    'pipeline_name': conv.primary_contact_record.pipeline.name if conv.primary_contact_record.pipeline else 'Unknown Pipeline'
                 } if conv.primary_contact_record else None,
                 'last_message': latest_message,
                 'message_count': conv.total_messages,

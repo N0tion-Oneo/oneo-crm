@@ -102,8 +102,22 @@ export function ContactResolutionDialog({
   const [showRecordDrawer, setShowRecordDrawer] = useState(false)
   const [drawerMode, setDrawerMode] = useState<'view' | 'create'>('view')
   const [overrideReason, setOverrideReason] = useState('')
+  const [expandedCards, setExpandedCards] = useState<Set<string>>(new Set())
   
   const { toast } = useToast()
+
+  // Toggle card expansion
+  const toggleCardExpansion = (contactId: string) => {
+    setExpandedCards(prev => {
+      const newSet = new Set(prev)
+      if (newSet.has(contactId)) {
+        newSet.delete(contactId)
+      } else {
+        newSet.add(contactId)
+      }
+      return newSet
+    })
+  }
 
   // Debounced search function
   const debouncedSearchContacts = useCallback(
@@ -336,14 +350,15 @@ export function ContactResolutionDialog({
   // Helper function to get field icon based on field type and name
   const getFieldIcon = (fieldName: string, fieldType: string) => {
     const name = fieldName.toLowerCase()
+    const type = fieldType.toLowerCase()
     
     // Email fields
-    if (name.includes('email') || fieldType === 'email') {
+    if (name.includes('email') || type === 'email') {
       return <Mail className="w-3 h-3" />
     }
     
     // Phone fields
-    if (name.includes('phone') || name.includes('mobile') || name.includes('tel') || fieldType === 'phone') {
+    if (name.includes('phone') || name.includes('mobile') || name.includes('tel') || type === 'phone') {
       return <Phone className="w-3 h-3" />
     }
     
@@ -353,8 +368,58 @@ export function ContactResolutionDialog({
     }
     
     // URL/LinkedIn fields
-    if (name.includes('linkedin') || name.includes('url') || name.includes('website') || fieldType === 'url') {
+    if (name.includes('linkedin') || name.includes('url') || name.includes('website') || type === 'url') {
       return <LinkIcon className="w-3 h-3" />
+    }
+    
+    // User assignment fields
+    if (type === 'user' || name.includes('assigned') || name.includes('owner')) {
+      return <User className="w-3 h-3" />
+    }
+    
+    // Currency/Value fields
+    if (type === 'currency' || name.includes('value') || name.includes('amount') || name.includes('revenue')) {
+      return <span className="w-3 h-3 text-xs">💰</span>
+    }
+    
+    // Date fields
+    if (type === 'date' || type === 'datetime' || name.includes('date')) {
+      return <span className="w-3 h-3 text-xs">📅</span>
+    }
+    
+    // Location/Address fields
+    if (type === 'address' || name.includes('address') || name.includes('location')) {
+      return <span className="w-3 h-3 text-xs">📍</span>
+    }
+    
+    // Tag fields
+    if (type === 'tags' || name.includes('tag')) {
+      return <span className="w-3 h-3 text-xs">🏷️</span>
+    }
+    
+    // Interview/Meeting fields
+    if (name.includes('interview') || name.includes('meeting') || name.includes('appointment')) {
+      return <span className="w-3 h-3 text-xs">📅</span>
+    }
+    
+    // Description/Summary/AI fields
+    if (name.includes('description') || name.includes('summary') || name.includes('intro') || type === 'ai' || type === 'ai_field') {
+      return <span className="w-3 h-3 text-xs">📝</span>
+    }
+    
+    // Website fields
+    if (name.includes('website') || name.includes('domain') || name.includes('site')) {
+      return <span className="w-3 h-3 text-xs">🌐</span>
+    }
+    
+    // Application/Count fields
+    if (name.includes('applied') || name.includes('applications') || name.includes('count')) {
+      return <span className="w-3 h-3 text-xs">📊</span>
+    }
+    
+    // Button fields
+    if (type === 'button') {
+      return <span className="w-3 h-3 text-xs">🔘</span>
     }
     
     // Default user icon
@@ -368,23 +433,158 @@ export function ContactResolutionDialog({
            name.includes('position') || name.includes('level') || name.includes('type')
   }
 
+  // Helper function to get stage/select field for header
+  const getStageField = (contact: ContactRecord) => {
+    const pipeline = pipelines.find(p => p.id === contact.pipeline_id)
+    
+    if (!pipeline || !pipeline.fields || !Array.isArray(pipeline.fields)) {
+      return null
+    }
+
+    // Look for stage, status, or select fields
+    const stageField = pipeline.fields.find(field => {
+      const name = field.name.toLowerCase()
+      const type = field.field_type.toLowerCase()
+      const label = (field.label || '').toLowerCase()
+      
+      return (
+        name.includes('stage') || 
+        name.includes('status') || 
+        name.includes('pipeline') ||
+        type === 'select' ||
+        label.includes('stage') ||
+        label.includes('status')
+      )
+    })
+
+    if (!stageField) return null
+
+    // Try to get the value
+    const possibleKeys = [
+      stageField.name,
+      stageField.name.toLowerCase().replace(/\s+/g, '_'),
+      stageField.name.toLowerCase().replace(/\s+/g, ''),
+      stageField.label?.toLowerCase().replace(/\s+/g, '_'),
+    ].filter(Boolean)
+    
+    let value = null
+    for (const key of possibleKeys) {
+      if (contact.data[key] !== undefined && contact.data[key] !== null && contact.data[key] !== '') {
+        value = contact.data[key]
+        break
+      }
+    }
+
+    return value ? String(value) : null
+  }
+
+  // Helper function to render user assignment fields for header
+  const renderUserFields = (contact: ContactRecord) => {
+    const pipeline = pipelines.find(p => p.id === contact.pipeline_id)
+    
+    if (!pipeline || !pipeline.fields || !Array.isArray(pipeline.fields)) {
+      return []
+    }
+
+    const userFields: JSX.Element[] = []
+    
+    // Get user assignment fields
+    const userAssignmentFields = pipeline.fields.filter(field => {
+      const name = field.name.toLowerCase()
+      const type = field.field_type.toLowerCase()
+      const label = (field.label || '').toLowerCase()
+      
+      return (
+        type === 'user' || 
+        name.includes('assigned') || 
+        name.includes('owner') || 
+        name.includes('agent') ||
+        label.includes('assigned') || 
+        label.includes('owner') ||
+        label.includes('agent')
+      )
+    })
+
+    userAssignmentFields.forEach(field => {
+      // Try multiple ways to map field names to data keys
+      const possibleKeys = [
+        field.name,
+        field.name.toLowerCase().replace(/\s+/g, '_'),
+        field.name.toLowerCase().replace(/\s+/g, ''),
+        field.label?.toLowerCase().replace(/\s+/g, '_'),
+      ].filter(Boolean)
+      
+      let value = null
+      let matchedKey = null
+      
+      for (const key of possibleKeys) {
+        if (contact.data[key] !== undefined && contact.data[key] !== null) {
+          value = contact.data[key]
+          matchedKey = key
+          break
+        }
+      }
+      
+      if (value) {
+        const fieldForResolver = {
+          name: field.name,
+          field_type: field.field_type,
+          display_name: field.label || field.name,
+          ...field
+        }
+        
+        try {
+          const formattedValue = FieldResolver.formatValue(fieldForResolver, value, 'table')
+          
+          userFields.push(
+            <div key={field.name} className="inline-flex items-center gap-1">
+              {typeof formattedValue === 'string' ? (
+                <span className="text-sm font-medium text-gray-800">{formattedValue}</span>
+              ) : (
+                <div className="inline-flex items-center gap-1">{formattedValue}</div>
+              )}
+            </div>
+          )
+        } catch (error) {
+          console.error(`Error formatting user field ${field.name}:`, error)
+        }
+      }
+    })
+
+    return userFields
+  }
+
   // Helper function to render contact fields dynamically
   const renderContactFields = (contact: ContactRecord) => {
     const pipeline = pipelines.find(p => p.id === contact.pipeline_id)
     
     if (!pipeline) {
       console.error('Pipeline not found for contact:', contact.pipeline_id, 'Available pipelines:', pipelines.map(p => ({ id: p.id, name: p.name })))
-      return []
+      return [
+        <div key="error" className="text-center py-3 text-gray-500 text-sm">
+          <span className="inline-flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-amber-500" />
+            Pipeline not found
+          </span>
+        </div>
+      ]
     }
     
     if (!pipeline.fields || !Array.isArray(pipeline.fields)) {
       console.warn('Pipeline fields not loaded or invalid:', pipeline)
-      return []
+      return [
+        <div key="no-fields" className="text-center py-3 text-gray-500 text-sm">
+          <span className="inline-flex items-center gap-2">
+            <Info className="w-4 h-4 text-blue-500" />
+            No fields configured
+          </span>
+        </div>
+      ]
     }
 
     const contactFields: JSX.Element[] = []
     
-    // Get important fields to display (contact-related fields)
+    // Get important fields to display - expanded to show more field data
     const priorityFields = pipeline.fields.filter(field => {
       const name = field.name.toLowerCase()
       const type = field.field_type.toLowerCase()
@@ -405,7 +605,37 @@ export function ContactResolutionDialog({
         name.includes('address') || type === 'address' || label.includes('address') ||
         // Name fields (for person contacts)
         name.includes('name') || name.includes('title') || name.includes('first') || name.includes('last') ||
-        label.includes('name') || label.includes('title')
+        label.includes('name') || label.includes('title') ||
+        // Job/Role fields
+        name.includes('job') || name.includes('position') || name.includes('role') || name.includes('department') ||
+        label.includes('job') || label.includes('position') || label.includes('role') ||
+        // Stage/Status fields
+        name.includes('stage') || name.includes('pipeline') || label.includes('stage') ||
+        // Value/Revenue fields
+        name.includes('value') || name.includes('revenue') || name.includes('deal') || name.includes('amount') ||
+        type === 'currency' || label.includes('value') || label.includes('revenue') ||
+        // User assignment fields - REMOVED from priorityFields since they go in header
+        // type === 'user' || name.includes('assigned') || name.includes('owner') || label.includes('assigned') ||
+        // Date fields
+        type === 'date' || type === 'datetime' || name.includes('date') || name.includes('created') || name.includes('updated') ||
+        // Tag fields
+        type === 'tags' || name.includes('tag') || label.includes('tag') ||
+        // Location fields
+        name.includes('location') || name.includes('city') || name.includes('country') || name.includes('region') ||
+        // Industry/Category fields
+        name.includes('industry') || name.includes('category') || name.includes('sector') || label.includes('industry') ||
+        // Contact method fields
+        name.includes('skype') || name.includes('slack') || name.includes('whatsapp') || name.includes('telegram') ||
+        // Size/Scale fields
+        name.includes('size') || name.includes('employees') || name.includes('headcount') || label.includes('size') ||
+        // Interview/Meeting fields
+        name.includes('interview') || name.includes('meeting') || name.includes('appointment') ||
+        // Description/Summary fields
+        name.includes('description') || name.includes('summary') || name.includes('intro') ||
+        // Website/Domain fields
+        name.includes('website') || name.includes('domain') || name.includes('site') ||
+        // Application/Numbers fields
+        name.includes('applied') || name.includes('applications') || name.includes('count')
       ) && !isContextField(field.name)
     })
 
@@ -439,7 +669,35 @@ export function ContactResolutionDialog({
       
       // Debug field matching in development
       if (process.env.NODE_ENV === 'development' && value) {
-        console.log(`✅ Found value for field "${field.name}" using key "${matchedKey}": ${value}`)
+        console.log(`✅ Found value for field "${field.name}" using key "${matchedKey}":`, value)
+        console.log(`🔍 Value type: ${typeof value}, Field type: ${field.field_type}`)
+        if (typeof value === 'object') {
+          console.log(`🔍 Object keys:`, Object.keys(value))
+        }
+        // Test the FieldResolver specifically for this field
+        try {
+          const fieldForResolver = {
+            name: field.name,
+            field_type: field.field_type,
+            display_name: field.label || field.name,
+            ...field
+          }
+          const testFormatted = FieldResolver.formatValue(fieldForResolver, value, 'table')
+          console.log(`🔍 FieldResolver result for ${field.name}:`, testFormatted)
+          console.log(`🔍 FieldResolver result type:`, typeof testFormatted)
+          
+          // Check if it's object object
+          if (typeof testFormatted === 'string' && testFormatted.includes('[object Object]')) {
+            console.error(`🚨 FOUND [object Object] for field ${field.name}!`, {
+              fieldType: field.field_type,
+              value,
+              fieldForResolver,
+              result: testFormatted
+            })
+          }
+        } catch (error) {
+          console.error(`❌ FieldResolver error for ${field.name}:`, error)
+        }
       }
       
       if (value) {
@@ -453,23 +711,68 @@ export function ContactResolutionDialog({
         }
         
         // Format the value properly using the field system (using 'table' context for compact display)
-        const formattedValue = FieldResolver.formatValue(fieldForResolver, value, 'table')
+        let formattedValue = FieldResolver.formatValue(fieldForResolver, value, 'table')
+        
+        // CRITICAL: Detect and fix [object Object] issues
+        if (typeof formattedValue === 'string' && formattedValue.includes('[object Object]')) {
+          console.error(`🚨 CRITICAL: [object Object] detected for field ${field.name}!`, {
+            fieldType: field.field_type,
+            originalValue: value,
+            formattedValue,
+            field: fieldForResolver
+          })
+          
+          // Emergency fallback based on field type
+          if (field.field_type === 'phone' && typeof value === 'object' && value.country_code && value.number) {
+            formattedValue = `${value.country_code} ${value.number}`
+            console.log(`🔧 Emergency phone fix applied: ${formattedValue}`)
+          } else if (field.field_type === 'currency' && typeof value === 'object' && value.amount && value.currency) {
+            formattedValue = `${value.currency} ${value.amount}`
+            console.log(`🔧 Emergency currency fix applied: ${formattedValue}`)
+          } else if (Array.isArray(value)) {
+            formattedValue = value.join(', ')
+            console.log(`🔧 Emergency array fix applied: ${formattedValue}`)
+          } else if (typeof value === 'object') {
+            formattedValue = `[Object with keys: ${Object.keys(value).join(', ')}]`
+            console.log(`🔧 Emergency object debug applied: ${formattedValue}`)
+          } else {
+            formattedValue = String(value)
+          }
+        }
         
         contactFields.push(
-          <div key={field.name} className="flex items-center gap-2 text-sm text-gray-600">
-            {getFieldIcon(field.name, field.field_type)}
-            <span className="text-xs text-gray-500 min-w-0 flex-shrink-0">{field.label || field.name}:</span>
-            <div className="truncate min-w-0 flex-1">
-              {typeof formattedValue === 'string' ? (
-                <span>{formattedValue}</span>
-              ) : (
-                <div className="inline-flex items-center gap-1">{formattedValue}</div>
-              )}
+          <div key={field.name} className="flex items-start gap-2 text-sm">
+            <div className="flex-shrink-0 mt-0.5">
+              {getFieldIcon(field.name, field.field_type)}
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="text-xs font-medium text-gray-500 mb-1">
+                {field.label || field.name}
+              </div>
+              <div className="text-gray-900 break-words">
+                {typeof formattedValue === 'string' ? (
+                  <span className="font-medium">{formattedValue}</span>
+                ) : (
+                  <div className="inline-flex items-center gap-1 flex-wrap">{formattedValue}</div>
+                )}
+              </div>
             </div>
           </div>
         )
       }
     })
+
+    // If no contact fields were found, show a helpful message
+    if (contactFields.length === 0) {
+      return [
+        <div key="no-data" className="col-span-2 text-center py-4 text-gray-500 text-sm">
+          <span className="inline-flex items-center gap-2">
+            <User className="w-4 h-4" />
+            No contact details available
+          </span>
+        </div>
+      ]
+    }
 
     return contactFields
   }
@@ -490,8 +793,24 @@ export function ContactResolutionDialog({
 
     const badges: JSX.Element[] = []
     
-    // Get context fields (status, role, etc.)
-    const contextFields = pipeline.fields.filter(field => isContextField(field.name))
+    // Get context fields (status, role, etc.) but exclude stage fields since they're in header
+    const contextFields = pipeline.fields.filter(field => {
+      const name = field.name.toLowerCase()
+      const type = field.field_type.toLowerCase()
+      const label = (field.label || '').toLowerCase()
+      
+      // Exclude stage/status fields that are already shown in header
+      const isStageField = (
+        name.includes('stage') || 
+        name.includes('status') || 
+        name.includes('pipeline') ||
+        type === 'select' ||
+        label.includes('stage') ||
+        label.includes('status')
+      )
+      
+      return isContextField(field.name) && !isStageField
+    })
     
     contextFields.forEach(field => {
       // Try multiple ways to map field names to data keys
@@ -523,7 +842,7 @@ export function ContactResolutionDialog({
         const formattedValue = FieldResolver.formatValue(fieldForResolver, value, 'table')
         
         badges.push(
-          <Badge key={field.name} variant="secondary" className="text-xs">
+          <Badge key={field.name} variant="outline" className="text-xs font-medium px-2 py-1 bg-gray-50 text-gray-700 border-gray-200">
             {field.name.toLowerCase().includes('location') ? '📍 ' : ''}
             {typeof formattedValue === 'string' ? (
               formattedValue
@@ -802,60 +1121,121 @@ export function ContactResolutionDialog({
                   {!isSearching && searchResults.length > 0 && (
                     <div className="space-y-2">
                       <Label>Search Results</Label>
-                      <div className="space-y-3 max-h-80 overflow-y-auto">
-                        {searchResults.map((contact) => (
-                          <div 
-                            key={contact.id}
-                            className="flex items-start justify-between p-4 border rounded-lg hover:bg-gray-50 transition-colors"
-                          >
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2 mb-2">
-                                <h4 className="font-semibold text-gray-900 truncate">{contact.title}</h4>
-                                <Badge variant="outline" className="text-xs">
-                                  {contact.pipeline_name}
-                                </Badge>
-                              </div>
-                              
-                              {/* Contact Details */}
-                              <div className="space-y-1 mb-3">
-                                {renderContactFields(contact)}
+                      <div className="space-y-4 max-h-80 overflow-y-auto">
+                        {searchResults.map((contact) => {
+                          const isExpanded = expandedCards.has(contact.id)
+                          
+                          return (
+                            <div 
+                              key={contact.id}
+                              className="group relative bg-white border border-gray-200 rounded-xl shadow-sm hover:shadow-md hover:border-gray-300 transition-all duration-200 overflow-hidden"
+                            >
+                              {/* Header - Always Visible */}
+                              <div 
+                                className="flex items-center justify-between p-4 cursor-pointer"
+                                onClick={() => toggleCardExpansion(contact.id)}
+                              >
+                                {/* Left side: Contact info */}
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center gap-3 mb-2">
+                                    <h4 className="font-semibold text-lg text-gray-900 truncate">{contact.title}</h4>
+                                    <div className="flex items-center gap-2">
+                                      <Badge variant="secondary" className="text-xs font-medium px-2 py-1">
+                                        {contact.pipeline_name}
+                                      </Badge>
+                                      {(() => {
+                                        const stageValue = getStageField(contact)
+                                        return stageValue ? (
+                                          <Badge variant="outline" className="text-xs font-medium px-2 py-1 bg-gray-50 text-gray-700 border-gray-200">
+                                            {stageValue}
+                                          </Badge>
+                                        ) : null
+                                      })()}
+                                    </div>
+                                  </div>
+                                  
+                                  {/* User assignments underneath the title */}
+                                  <div className="flex flex-wrap gap-2 mb-2">
+                                    {renderUserFields(contact)}
+                                  </div>
+                                  
+                                  {/* Additional context badges below users */}
+                                  <div className="flex flex-wrap gap-1">
+                                    {renderContextBadges(contact)}
+                                  </div>
+                                </div>
+                                
+                                {/* Right side: Actions only */}
+                                <div className="flex items-center gap-2 ml-4">
+                                  <Button 
+                                    size="sm"
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      handleConnectContact(contact)
+                                    }}
+                                    disabled={loading}
+                                    className="px-4 py-2 font-medium"
+                                  >
+                                    Connect
+                                  </Button>
+                                  <Button 
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      handleViewContact(contact)
+                                    }}
+                                    disabled={loading}
+                                    className="px-3 py-2"
+                                  >
+                                    <User className="w-4 h-4" />
+                                  </Button>
+                                  
+                                  {/* Expand/Collapse Arrow */}
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    className="px-2 py-2 text-gray-400 hover:text-gray-600"
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      toggleCardExpansion(contact.id)
+                                    }}
+                                  >
+                                    <svg 
+                                      className={`w-4 h-4 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`}
+                                      fill="none" 
+                                      stroke="currentColor" 
+                                      viewBox="0 0 24 24"
+                                    >
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                                    </svg>
+                                  </Button>
+                                </div>
                               </div>
 
-                              {/* Additional Context */}
-                              <div className="flex flex-wrap gap-1">
-                                {renderContextBadges(contact)}
-                              </div>
+                              {/* Collapsible Details */}
+                              {isExpanded && (
+                                <div className="border-t border-gray-100">
+                                  <div className="p-4">
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3">
+                                      {renderContactFields(contact)}
+                                    </div>
 
-                              {/* Match Indicators */}
-                              {hasUnmatchedData && (
-                                <div className="mt-2 pt-2 border-t border-gray-100">
-                                  {renderMatchIndicators(contact, hasUnmatchedData)}
+                                    {/* Match Indicators */}
+                                    {hasUnmatchedData && (
+                                      <div className="mt-4 pt-3 border-t border-gray-100">
+                                        {renderMatchIndicators(contact, hasUnmatchedData)}
+                                      </div>
+                                    )}
+                                  </div>
                                 </div>
                               )}
+
+                              {/* Hover indicator */}
+                              <div className="absolute inset-x-0 bottom-0 h-1 bg-gradient-to-r from-blue-500 to-purple-500 transform scale-x-0 group-hover:scale-x-100 transition-transform duration-200 origin-left"></div>
                             </div>
-                            
-                            <div className="flex flex-col gap-2 ml-4">
-                              <Button 
-                                size="sm"
-                                onClick={() => handleConnectContact(contact)}
-                                disabled={loading}
-                                className="whitespace-nowrap"
-                              >
-                                Connect
-                              </Button>
-                              <Button 
-                                size="sm"
-                                variant="outline"
-                                onClick={() => handleViewContact(contact)}
-                                disabled={loading}
-                                className="whitespace-nowrap"
-                              >
-                                <User className="w-3 h-3 mr-1" />
-                                View
-                              </Button>
-                            </div>
-                          </div>
-                        ))}
+                          )
+                        })}
                       </div>
                     </div>
                   )}

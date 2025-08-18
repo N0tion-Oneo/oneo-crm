@@ -6,6 +6,7 @@ import { useAuth } from '@/features/auth/context'
 import { ArrowLeft, AlertCircle, ChevronRight, Settings, Database, Sparkles, Archive, RotateCcw, Check, Clock } from 'lucide-react'
 import { PipelineFieldBuilder } from '@/components/pipelines/pipeline-field-builder'
 import { DeletedFieldsList } from '@/components/pipelines/deleted-fields-list'
+import { PipelineTitleConfiguration } from '@/components/pipelines/pipeline-title-configuration'
 import { FieldConfigCacheProvider } from '@/contexts/FieldConfigCacheContext'
 import { pipelinesApi } from '@/lib/api'
 import { useAutoSaveFields } from '@/hooks/use-auto-save-fields'
@@ -69,6 +70,11 @@ interface Pipeline {
   name: string
   description: string
   fields: PipelineField[]
+  settings?: {
+    title_field?: {
+      template?: string
+    }
+  }
 }
 
 export default function PipelineFieldsPage() {
@@ -86,7 +92,7 @@ export default function PipelineFieldsPage() {
   const [error, setError] = useState<string | null>(null)
   
   // Tab management
-  const [activeTab, setActiveTab] = useState<'active' | 'deleted'>('active')
+  const [activeTab, setActiveTab] = useState<'active' | 'deleted' | 'settings'>('active')
   const [deletedFieldsLoading, setDeletedFieldsLoading] = useState(false)
   
   // Auto-save hook with validation
@@ -179,6 +185,7 @@ export default function PipelineFieldsPage() {
           id: pipelineResponse.data.id?.toString() || pipelineId,
           name: pipelineResponse.data.name || 'Unknown Pipeline',
           description: pipelineResponse.data.description || '',
+          settings: pipelineResponse.data.settings || {},
           fields: (fieldsData || []).map((field: any, index: number) => ({
             id: field.id?.toString() || `field_${index}`,
             name: field.slug || field.name || `field_${index}`,
@@ -495,6 +502,7 @@ export default function PipelineFieldsPage() {
         </div>
       </div>
 
+
       {/* Tab Navigation */}
       <div className="px-6 pb-6">
         <div className="bg-white dark:bg-gray-800 rounded-t-xl shadow-sm border border-gray-200 dark:border-gray-700 border-b-0">
@@ -534,6 +542,18 @@ export default function PipelineFieldsPage() {
                   {deletedFields.length}
                 </div>
               </button>
+              
+              <button
+                onClick={() => setActiveTab('settings')}
+                className={`flex items-center space-x-2 pb-2 border-b-2 font-medium text-sm transition-colors ${
+                  activeTab === 'settings'
+                    ? 'border-green-500 text-green-600 dark:text-green-400'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'
+                }`}
+              >
+                <Settings className="w-4 h-4" />
+                <span>Pipeline Settings</span>
+              </button>
             </div>
 
             {activeTab === 'deleted' && (
@@ -559,7 +579,7 @@ export default function PipelineFieldsPage() {
               fields={fields}
               onFieldsChange={handleFieldsChange}
             />
-          ) : (
+          ) : activeTab === 'deleted' ? (
             <div className="h-full p-6">
               <DeletedFieldsList
                 pipelineId={pipelineId}
@@ -569,7 +589,23 @@ export default function PipelineFieldsPage() {
                 onFieldRestored={handleFieldRestored}
               />
             </div>
-          )}
+          ) : activeTab === 'settings' ? (
+            <div className="h-full p-6">
+              <PipelineTitleConfiguration
+                pipeline={pipeline}
+                onTemplateChange={(template) => {
+                  // Update local pipeline state
+                  setPipeline(prev => prev ? {
+                    ...prev,
+                    settings: {
+                      ...prev.settings,
+                      title_field: { template }
+                    }
+                  } : null)
+                }}
+              />
+            </div>
+          ) : null}
         </div>
       </div>
       </div>

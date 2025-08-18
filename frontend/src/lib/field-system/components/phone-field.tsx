@@ -329,8 +329,19 @@ export const PhoneFieldComponent: FieldComponent = {
         const displayPhone = `${value.country_code || ''} ${value.number || ''}`.trim()
         return displayPhone || '[Invalid phone format]'
       }
-      // Last resort - try to stringify
-      return JSON.stringify(value)
+      
+      // Try to extract phone-like properties from unknown objects
+      const phoneKeys = ['phone', 'phoneNumber', 'number', 'tel', 'telephone']
+      for (const key of phoneKeys) {
+        if (value[key]) {
+          console.warn('🚨 Found phone-like property in unknown object:', { key, value: value[key], fullObject: value })
+          return String(value[key])
+        }
+      }
+      
+      // If we can't extract anything meaningful, show debug info instead of [object Object]
+      console.error('🚨 Phone field received unrecognized object format:', value)
+      return `[Unknown phone format: ${Object.keys(value).join(', ')}]`
     }
     
     // Handle string phone numbers

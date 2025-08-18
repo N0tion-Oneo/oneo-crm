@@ -191,15 +191,33 @@ class FieldSerializer(serializers.ModelSerializer):
 class PipelineSerializer(serializers.ModelSerializer):
     """Pipeline serializer with related data"""
     fields = FieldSerializer(many=True, read_only=True)
+    field_groups = serializers.SerializerMethodField()
     record_count = serializers.IntegerField(read_only=True)
     created_by = UserSerializer(read_only=True)
+    
+    def get_field_groups(self, obj):
+        """Get field groups for this pipeline"""
+        field_groups = obj.field_groups.all()
+        # Manually serialize field groups to avoid circular import
+        return [
+            {
+                'id': fg.id,
+                'name': fg.name,
+                'description': fg.description,
+                'color': fg.color,
+                'icon': fg.icon,
+                'display_order': fg.display_order,
+                'field_count': fg.fields.count()
+            }
+            for fg in field_groups
+        ]
     
     class Meta:
         model = Pipeline
         fields = [
             'id', 'name', 'slug', 'description', 'icon', 'color',
             'pipeline_type', 'access_level', 'is_active', 'settings', 'record_count',
-            'fields', 'created_by', 'created_at', 'updated_at'
+            'fields', 'field_groups', 'created_by', 'created_at', 'updated_at'
         ]
         read_only_fields = ['slug', 'record_count']
     
@@ -238,6 +256,22 @@ class RecordSerializer(serializers.ModelSerializer):
             'created_by', 'updated_by', 'created_at', 'updated_at'
         ]
         read_only_fields = ['title']
+    
+    def to_representation(self, instance):
+        """Override to dynamically generate title using current pipeline template"""
+        from pipelines.record_operations import RecordUtils
+        
+        data = super().to_representation(instance)
+        
+        # For basic serializer, just use the raw data since we don't have dynamic fields
+        # The formatting function should handle basic field types adequately
+        data['title'] = RecordUtils.generate_title(
+            instance.data, 
+            instance.pipeline.name,
+            instance.pipeline
+        )
+        
+        return data
     
     def create(self, validated_data):
         request = self.context.get('request')
@@ -362,6 +396,34 @@ class DynamicRecordSerializer(serializers.ModelSerializer):
             'created_by', 'updated_by', 'created_at', 'updated_at'
         ]
         read_only_fields = ['title', 'pipeline']
+    
+    def to_representation(self, instance):
+        """Override to dynamically generate title using current pipeline template"""
+        from pipelines.record_operations import RecordUtils
+        
+        data = super().to_representation(instance)
+        
+        # Extract the processed field data from the serialized response
+        # This contains resolved values (user names, relation titles, etc.)
+        processed_data = {}
+        for key, value in data.items():
+            if key not in ['id', 'pipeline', 'created_by', 'updated_by', 'created_at', 'updated_at', 'status', 'title']:
+                processed_data[key] = value
+        
+        # Also include the raw data as fallback for fields not in the serializer
+        if hasattr(instance, 'data') and instance.data:
+            for key, value in instance.data.items():
+                if key not in processed_data:
+                    processed_data[key] = value
+        
+        # Generate title dynamically using processed field values
+        data['title'] = RecordUtils.generate_title(
+            processed_data, 
+            instance.pipeline.name,
+            instance.pipeline
+        )
+        
+        return data
     
     def __init__(self, *args, **kwargs):
         self.pipeline = kwargs.pop('pipeline', None)

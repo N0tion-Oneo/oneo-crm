@@ -307,8 +307,8 @@ class MessageViewSet(viewsets.ModelViewSet):
                 
                 message.save()
                 
-                # Update conversation if no primary contact set
-                if message.conversation and not message.conversation.primary_contact_record:
+                # Update conversation primary contact (always update on manual connection)
+                if message.conversation:
                     message.conversation.primary_contact_record = contact_record
                     message.conversation.metadata = message.conversation.metadata or {}
                     message.conversation.metadata['relationship_context'] = relationship_context
@@ -326,6 +326,13 @@ class MessageViewSet(viewsets.ModelViewSet):
                 message.contact_record = contact_record
                 message.metadata.pop('needs_manual_resolution', None)
                 message.save()
+                
+                # Update conversation primary contact
+                if message.conversation:
+                    message.conversation.primary_contact_record = contact_record
+                    message.conversation.metadata = message.conversation.metadata or {}
+                    message.conversation.metadata.pop('needs_manual_resolution', None)
+                    message.conversation.save()
                 
                 return Response({
                     'status': 'connected',
@@ -384,8 +391,8 @@ class MessageViewSet(viewsets.ModelViewSet):
             message.metadata.pop('needs_manual_resolution', None)
             message.save()
             
-            # Update conversation
-            if message.conversation and not message.conversation.primary_contact_record:
+            # Update conversation primary contact (always update on manual creation)
+            if message.conversation:
                 message.conversation.primary_contact_record = contact_record
                 message.conversation.metadata = message.conversation.metadata or {}
                 message.conversation.metadata.pop('needs_manual_resolution', None)

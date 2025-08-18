@@ -17,8 +17,10 @@ import { MessageComposer } from '@/components/communications/message-composer'
 import { WhatsAppIdentityHandler } from '@/components/communications/WhatsAppIdentityHandler'
 import { ContactResolutionBadge, ContactResolutionIndicator } from '@/components/communications/contact-resolution-badge'
 import { ContactResolutionDialog } from '@/components/communications/contact-resolution-dialog'
+import { RecordDetailDrawer } from '@/components/pipelines/record-detail-drawer'
 import { useContactResolution, useMessageContactStatus } from '@/hooks/use-contact-resolution'
 import { useWebSocket, type RealtimeMessage } from '@/contexts/websocket-context'
+import { pipelinesApi } from '@/lib/api'
 
 interface Message {
   id: string
@@ -124,6 +126,11 @@ export default function InboxPage() {
   // Contact resolution states
   const [contactResolutionOpen, setContactResolutionOpen] = useState(false)
   const [selectedMessageForResolution, setSelectedMessageForResolution] = useState<Message | null>(null)
+  
+  // Contact viewing states
+  const [contactViewerOpen, setContactViewerOpen] = useState(false)
+  const [selectedContactRecord, setSelectedContactRecord] = useState<any>(null)
+  const [selectedContactPipeline, setSelectedContactPipeline] = useState<any>(null)
   
   // WebSocket connection state
   const [wsStatus, setWsStatus] = useState<string>('disconnected')
@@ -419,6 +426,160 @@ export default function InboxPage() {
     setContactResolutionOpen(true)
   }
 
+  const handleViewContact = async (contactRecord: any) => {
+    try {
+      console.log('🔍 handleViewContact called with:', contactRecord)
+      
+      // First, get all pipelines to find the one that matches the contact's pipeline name
+      const pipelinesResponse = await pipelinesApi.list()
+      const pipelines = pipelinesResponse.data.results || pipelinesResponse.data || []
+      console.log('📋 Available pipelines:', pipelines.map((p: any) => ({ id: p.id, name: p.name })))
+      
+      // Find the pipeline by name or default to the first one
+      let basicPipeline = pipelines.find((p: any) => p.name === contactRecord.pipeline_name)
+      if (!basicPipeline && pipelines.length > 0) {
+        console.log('⚠️ Pipeline not found by name, using first pipeline')
+        basicPipeline = pipelines[0] // Default to first pipeline if name match fails
+      }
+      
+      if (!basicPipeline) {
+        throw new Error('No pipelines found')
+      }
+      
+      console.log('🎯 Selected pipeline:', { id: basicPipeline.id, name: basicPipeline.name })
+      
+      // Load the full pipeline data including fields
+      const fullPipelineResponse = await pipelinesApi.get(basicPipeline.id)
+      const pipeline = fullPipelineResponse.data
+      console.log('📝 Full pipeline data:', pipeline)
+      console.log('🏷️ Field groups in pipeline:', pipeline.field_groups)
+      console.log('📊 Field groups count:', pipeline.field_groups?.length || 0)
+      
+      // Ensure pipeline has fields array
+      if (!pipeline.fields || !Array.isArray(pipeline.fields)) {
+        console.log('⚠️ Pipeline fields missing, setting empty array')
+        pipeline.fields = []
+      }
+      
+      console.log('📊 Pipeline fields count:', pipeline.fields?.length)
+      
+      // Load the full record data
+      console.log(`🔍 Attempting to load record ${contactRecord.id} from pipeline ${pipeline.id} (${pipeline.name})`)
+      
+      let record = null
+      
+      try {
+        const recordResponse = await pipelinesApi.getRecord(pipeline.id, contactRecord.id)
+        record = recordResponse.data
+        console.log('📄 Record data loaded successfully:', record)
+      } catch (recordError) {
+        console.error('❌ Failed to load record from selected pipeline:', recordError)
+        
+        // The record might be in a different pipeline - let's try to find it
+        console.log('🔍 Searching for record in all pipelines...')
+        let foundRecord = null
+        let foundPipeline = null
+        
+        for (const testPipeline of pipelines) {
+          try {
+            console.log(`   Checking pipeline ${testPipeline.id} (${testPipeline.name})...`)
+            const testResponse = await pipelinesApi.getRecord(testPipeline.id, contactRecord.id)
+            foundRecord = testResponse.data
+            foundPipeline = testPipeline
+            console.log(`✅ Found record in pipeline ${testPipeline.id} (${testPipeline.name})`)
+            break
+          } catch (e) {
+            // Record not in this pipeline, continue searching
+          }
+        }
+        
+        if (foundRecord && foundPipeline) {
+          // Load the full pipeline data for the correct pipeline
+          const correctPipelineResponse = await pipelinesApi.get(foundPipeline.id)
+          pipeline = correctPipelineResponse.data
+          record = foundRecord
+          
+          console.log('🎯 Using correct pipeline:', { id: pipeline.id, name: pipeline.name })
+          console.log('🏷️ Field groups in correct pipeline:', pipeline.field_groups)
+          console.log('📊 Field groups count in correct pipeline:', pipeline.field_groups?.length || 0)
+          console.log('📄 Found record data:', record)
+        } else {
+          throw new Error(`Record ${contactRecord.id} not found in any pipeline`)
+        }
+      }
+      
+      if (!record) {
+        throw new Error('No record data found')
+      }
+      
+      console.log('📄 Raw record from API:', record)
+      console.log('📊 Record data field:', record.data)
+      
+      // The RecordDetailDrawer expects the record in a specific format
+      const formattedRecord = {
+        ...record,  // Include all original fields
+        data: record.data || {},
+        // Ensure required fields are present
+        id: record.id,
+        title: record.title,
+        created_at: record.created_at,
+        updated_at: record.updated_at,
+        pipeline: record.pipeline
+      }
+      
+      console.log('✅ Opening drawer with formatted record:', formattedRecord)
+      console.log('🔧 Record data keys:', Object.keys(formattedRecord.data))
+      
+      // Debug pipeline fields for RecordDetailDrawer mapping
+      console.log('📋 Pipeline fields for mapping:')
+      pipeline.fields?.forEach((field: any, index: number) => {
+        console.log(`   ${index + 1}. "${field.name}" -> "${field.display_name}" (${field.field_type})`)
+        console.log(`      original_slug: ${field.original_slug || 'undefined'}`)
+        
+        // Test the mapping logic that RecordDetailDrawer uses
+        const backendSlug = field.original_slug || field.name
+        let backendValue = formattedRecord.data?.[backendSlug]
+        
+        if (backendValue === undefined) {
+          backendValue = formattedRecord.data?.[field.name]
+        }
+        
+        if (backendValue === undefined && field.original_slug && field.display_name) {
+          const displayNameSlug = field.display_name.toLowerCase().replace(/\s+/g, '_')
+          backendValue = formattedRecord.data?.[displayNameSlug]
+          console.log(`      trying display_name_slug: "${displayNameSlug}" -> found: ${backendValue !== undefined}`)
+        }
+        
+        if (backendValue !== undefined) {
+          const preview = typeof backendValue === 'object' ? JSON.stringify(backendValue).substring(0, 50) + '...' : String(backendValue).substring(0, 50)
+          console.log(`      ✅ MAPPED: ${preview}`)
+        } else {
+          console.log(`      ❌ NO MAPPING FOUND`)
+        }
+      })
+      
+      setSelectedContactRecord(formattedRecord)
+      setSelectedContactPipeline(pipeline)
+      setContactViewerOpen(true)
+    } catch (error) {
+      console.error('❌ Error loading contact details:', error)
+      toast({
+        title: "Error",
+        description: "Failed to load contact details",
+        variant: "destructive",
+      })
+    }
+  }
+
+  const handleContactAction = (conversation: any) => {
+    // If conversation has a primary contact, view it. Otherwise, resolve it.
+    if (conversation.primary_contact) {
+      handleViewContact(conversation.primary_contact)
+    } else {
+      handleContactResolution(conversation.last_message)
+    }
+  }
+
   const handleResolutionComplete = async (messageId: string, contactRecord: any) => {
     console.log(`🔗 Contact resolution completed for message ${messageId}:`, contactRecord)
     
@@ -701,7 +862,7 @@ export default function InboxPage() {
                                       domainValidated={conversation.domain_validated}
                                       needsDomainReview={conversation.needs_domain_review}
                                       className="text-xs"
-                                      onClick={() => handleContactResolution(conversation.last_message)}
+                                      onClick={() => handleContactAction(conversation)}
                                     />
                                   </div>
                                   <span className="text-xs text-gray-500">
@@ -979,6 +1140,40 @@ export default function InboxPage() {
           }}
           onResolutionComplete={handleResolutionComplete}
         />
+
+        {/* Contact Detail Viewer/Editor */}
+        {selectedContactRecord && selectedContactPipeline && (
+          <RecordDetailDrawer
+            record={selectedContactRecord}
+            pipeline={selectedContactPipeline}
+            isOpen={contactViewerOpen}
+            onClose={() => {
+              setContactViewerOpen(false)
+              setSelectedContactRecord(null)
+              setSelectedContactPipeline(null)
+            }}
+            onSave={async (updatedRecord) => {
+              try {
+                console.log('💾 Saving updated contact:', updatedRecord)
+                await pipelinesApi.updateRecord(selectedContactPipeline.id, updatedRecord.id, updatedRecord)
+                toast({
+                  title: "Contact updated",
+                  description: "Contact information has been saved successfully",
+                })
+                // Optionally refresh the conversation list to show updated contact info
+                await loadConversations()
+              } catch (error) {
+                console.error('Error saving contact:', error)
+                toast({
+                  title: "Error",
+                  description: "Failed to save contact updates",
+                  variant: "destructive",
+                })
+              }
+            }}
+            isReadOnly={false}
+          />
+        )}
       </div>
     </div>
   )

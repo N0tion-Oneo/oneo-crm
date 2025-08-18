@@ -495,6 +495,15 @@ export function RecordDetailDrawer({
 
   // Group fields by field_group and organize them
   const groupedFields = useMemo(() => {
+    console.log('🔧 RecordDetailDrawer: Grouping fields')
+    console.log('  Pipeline field_groups:', pipeline.field_groups)
+    console.log('  Pipeline field_groups count:', pipeline.field_groups?.length || 0)
+    console.log('  Visible fields count:', visibleFields.length)
+    console.log('  Sample fields with groups:')
+    visibleFields.slice(0, 5).forEach(field => {
+      console.log(`    - ${field.name}: field_group=${field.field_group}`)
+    })
+    
     const groups = new Map<string | null, RecordField[]>()
     
     // Organize visible fields by group
@@ -612,8 +621,8 @@ export function RecordDetailDrawer({
           backendValue = record.data?.[field.name]
         }
         
-        if (backendValue === undefined && field.original_slug && field.display_name) {
-          // Try with display_name or slug transformations
+        if (backendValue === undefined && field.display_name) {
+          // Try with display_name slug transformation
           const displayNameSlug = field.display_name.toLowerCase().replace(/\s+/g, '_')
           backendValue = record.data?.[displayNameSlug]
         }

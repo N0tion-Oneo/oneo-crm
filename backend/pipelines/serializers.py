@@ -3,7 +3,7 @@ Serializers for pipeline system API
 """
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
-from .models import Pipeline, Field, Record, PipelineTemplate
+from .models import Pipeline, Field, Record, PipelineTemplate, FieldGroup
 from .field_types import FieldType, validate_field_config
 from .validation import validate_record_data
 
@@ -23,7 +23,7 @@ class FieldSerializer(serializers.ModelSerializer):
             'display_name', 'help_text', 'enforce_uniqueness', 'create_index', 
             'is_searchable', 'is_ai_field', 'display_order', 'is_visible_in_list', 
             'is_visible_in_detail', 'is_visible_in_public_forms', 'is_visible_in_shared_list_and_detail_views',
-            'ai_config', 'is_active', 'deletion_status',
+            'ai_config', 'field_group', 'is_active', 'deletion_status',
             'is_deleted', 'deleted_at', 'scheduled_for_hard_delete',
             'created_at', 'updated_at'
         ]
@@ -217,9 +217,29 @@ class FieldMigrationSerializer(serializers.Serializer):
         return value
 
 
+class FieldGroupSerializer(serializers.ModelSerializer):
+    """Serializer for field groups"""
+    field_count = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = FieldGroup
+        fields = [
+            'id', 'name', 'description', 'color', 'icon', 
+            'display_order', 'field_count'
+        ]
+    
+    def get_field_count(self, obj):
+        """Get count of fields in this group"""
+        print(f'🔍 FieldGroupSerializer.get_field_count called for group: {obj.name}')
+        count = obj.fields.count()
+        print(f'   Field count: {count}')
+        return count
+
+
 class PipelineSerializer(serializers.ModelSerializer):
     """Serializer for pipelines"""
     fields = FieldSerializer(many=True, read_only=True)
+    field_groups = FieldGroupSerializer(many=True, read_only=True)
     created_by = serializers.StringRelatedField(read_only=True)
     
     class Meta:
@@ -229,7 +249,7 @@ class PipelineSerializer(serializers.ModelSerializer):
             'field_schema', 'view_config', 'settings', 'pipeline_type',
             'template', 'access_level', 'permission_config', 'is_active',
             'is_system', 'record_count', 'last_record_created',
-            'created_by', 'created_at', 'updated_at', 'fields'
+            'created_by', 'created_at', 'updated_at', 'fields', 'field_groups'
         ]
         read_only_fields = [
             'id', 'slug', 'field_schema', 'record_count', 'last_record_created',
@@ -292,6 +312,21 @@ class RecordSerializer(serializers.ModelSerializer):
             'id', 'title', 'ai_summary', 'ai_score', 'created_at', 'updated_at',
             'version', 'pipeline_name', 'is_deleted'
         ]
+    
+    def to_representation(self, instance):
+        """Override to dynamically generate title using current pipeline template"""
+        from .record_operations import RecordUtils
+        
+        data = super().to_representation(instance)
+        
+        # Generate title dynamically using current pipeline template
+        data['title'] = RecordUtils.generate_title(
+            instance.data, 
+            instance.pipeline.name,
+            instance.pipeline
+        )
+        
+        return data
     
     def validate_data(self, value):
         """Validate record data against pipeline schema"""

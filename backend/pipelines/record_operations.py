@@ -57,22 +57,296 @@ class RecordUtils:
     """Utility operations for records"""
     
     @staticmethod
-    def generate_title(record_data: Dict[str, Any], pipeline_name: str) -> str:
-        """Generate display title from record data"""
-        # Look for common title fields
-        title_fields = ['name', 'title', 'subject', 'company', 'company_name', 'full_name', 'first_name']
+    def generate_title(record_data: Dict[str, Any], pipeline_name: str, pipeline=None) -> str:
+        """Generate display title from record data using configurable template"""
+        import re
         
-        for field_slug in title_fields:
-            if field_slug in record_data and record_data[field_slug]:
-                return str(record_data[field_slug])[:500]
+        # Get the title template from pipeline settings
+        if pipeline:
+            template = pipeline.get_title_template()
+        else:
+            # Fallback if no pipeline provided (shouldn't happen in normal usage)
+            template = '{name}'
         
-        # Fallback to first non-empty field
-        for key, value in record_data.items():
-            if value and isinstance(value, (str, int, float)):
-                return f"{key}: {str(value)[:100]}"
+        # Get field definitions for proper formatting
+        field_definitions = {}
+        if pipeline:
+            for field in pipeline.fields.all():
+                field_definitions[field.slug] = field
         
-        # Final fallback
-        return f"{pipeline_name} Record #New"
+        # Replace {field_name} placeholders with actual values or empty strings
+        title = template
+        for field_name, value in record_data.items():
+            placeholder = f'{{{field_name}}}'
+            if placeholder in title:
+                # Get field definition for proper formatting
+                field_def = field_definitions.get(field_name)
+                field_value = RecordUtils._format_field_value_for_title(value, field_def)
+                title = title.replace(placeholder, field_value)
+        
+        # Clean up any remaining unreplaced placeholders (for fields that don't exist)
+        title = re.sub(r'\{[^}]+\}', '', title)
+        
+        # If title is empty or just whitespace, use pipeline name as fallback
+        title = title.strip()
+        if not title:
+            return f"{pipeline_name} Record"
+        
+        # Truncate to max length
+        return title[:500]
+    
+    @staticmethod
+    def _format_field_value_for_title(value, field_def=None) -> str:
+        """Format a field value for display in record title"""
+        if value is None or value == '':
+            return ''
+        
+        field_type = field_def.field_type if field_def else None
+        
+        # Handle different field types
+        if field_type == 'user':
+            # User field: resolve user IDs to names
+            if isinstance(value, (int, str)):
+                # Single user ID - resolve to name
+                try:
+                    from django.contrib.auth import get_user_model
+                    User = get_user_model()
+                    user = User.objects.get(id=int(value))
+                    return user.first_name + ' ' + user.last_name if user.first_name else user.email
+                except:
+                    return f"User #{value}"
+            elif isinstance(value, list) and len(value) > 0:
+                # Multiple user IDs - resolve first user + count
+                try:
+                    from django.contrib.auth import get_user_model
+                    User = get_user_model()
+                    first_user_id = value[0]
+                    first_user = User.objects.get(id=int(first_user_id))
+                    first_name = first_user.first_name + ' ' + first_user.last_name if first_user.first_name else first_user.email
+                    
+                    if len(value) > 1:
+                        return f"{first_name} +{len(value)-1}"
+                    return first_name
+                except:
+                    return f"User #{value[0]}" + (f" +{len(value)-1}" if len(value) > 1 else "")
+            elif isinstance(value, dict):
+                return value.get('name') or value.get('email') or value.get('username') or str(value.get('id', ''))
+            return str(value)
+        
+        elif field_type == 'select':
+            # Select field: show the actual option value
+            if isinstance(value, dict):
+                return value.get('label') or value.get('value') or str(value)
+            return str(value)
+        
+        elif field_type == 'multiselect':
+            # Multiselect: show comma-separated values
+            if isinstance(value, list):
+                if len(value) == 0:
+                    return ''
+                elif len(value) == 1:
+                    item = value[0]
+                    if isinstance(item, dict):
+                        return item.get('label') or item.get('value') or str(item)
+                    return str(item)
+                else:
+                    # Show first item + count
+                    first_item = value[0]
+                    if isinstance(first_item, dict):
+                        first_label = first_item.get('label') or first_item.get('value') or str(first_item)
+                    else:
+                        first_label = str(first_item)
+                    return f"{first_label} +{len(value)-1}"
+            return str(value)
+        
+        elif field_type == 'tags':
+            # Tags: show comma-separated or count
+            if isinstance(value, list):
+                if len(value) == 0:
+                    return ''
+                elif len(value) <= 3:
+                    return ', '.join(str(tag) for tag in value)
+                else:
+                    return f"{', '.join(str(tag) for tag in value[:2])} +{len(value)-2}"
+            return str(value)
+        
+        elif field_type == 'relation' or field_type == 'relationship':
+            # Relation field: resolve related record IDs using configured display field
+            # Get the configured display field from field configuration
+            display_field = 'title'  # Default fallback
+            if field_def and field_def.field_config:
+                display_field = field_def.field_config.get('display_field', 'title')
+                print(f"🔍 RELATION DEBUG: field_def.slug='{field_def.slug}', field_config={field_def.field_config}, display_field='{display_field}'")
+            
+            def get_relation_display_value(record_id):
+                """Get display value for a single related record - matches frontend getDisplayValue logic"""
+                try:
+                    from .models import Record
+                    related_record = Record.objects.get(id=int(record_id))
+                    
+                    # Try to get the configured display field from record.data (like frontend line 165)
+                    if display_field and related_record.data and display_field in related_record.data:
+                        value = related_record.data[display_field]
+                        
+                        # Handle different value types properly (like frontend lines 169-172)
+                        if value is None or value == '' or value == '':
+                            # Fallback if field is empty (like frontend line 170)
+                            return related_record.title or f"Record #{record_id}"
+                        
+                        # Recursively format the display field value if it's complex
+                        # Get the field definition for the display field in the target pipeline
+                        target_field_def = None
+                        try:
+                            target_field_def = related_record.pipeline.fields.get(slug=display_field)
+                        except:
+                            pass
+                        return RecordUtils._format_field_value_for_title(value, target_field_def)
+                    
+                    # Try to find the field by searching for similar names (like frontend lines 176-191)
+                    if display_field and related_record.data:
+                        data_keys = list(related_record.data.keys())
+                        
+                        # Look for exact match (case insensitive) (like frontend line 180)
+                        exact_match = next((key for key in data_keys if key.lower() == display_field.lower()), None)
+                        if exact_match and related_record.data[exact_match] not in [None, '', '']:
+                            value = related_record.data[exact_match]
+                            try:
+                                target_field_def = related_record.pipeline.fields.get(slug=exact_match)
+                            except:
+                                target_field_def = None
+                            return RecordUtils._format_field_value_for_title(value, target_field_def)
+                        
+                        # Look for slug-like match (convert display name to slug) (like frontend line 186)
+                        import re
+                        slugified = re.sub(r'[^a-z0-9]', '_', display_field.lower())
+                        slugified = re.sub(r'_+', '_', slugified)
+                        slug_match = next((key for key in data_keys if key == slugified), None)
+                        if slug_match and related_record.data[slug_match] not in [None, '', '']:
+                            value = related_record.data[slug_match]
+                            try:
+                                target_field_def = related_record.pipeline.fields.get(slug=slug_match)
+                            except:
+                                target_field_def = None
+                            return RecordUtils._format_field_value_for_title(value, target_field_def)
+                    
+                    # Fallback to record.title if it exists (like frontend line 194)
+                    if related_record.title:
+                        return related_record.title
+                    
+                    # Final fallback to record ID (like frontend line 199)
+                    return f"Record #{record_id}"
+                except:
+                    return f"Record #{record_id}"
+            
+            if isinstance(value, (int, str)):
+                # Single relation ID
+                return get_relation_display_value(value)
+            elif isinstance(value, list):
+                if len(value) == 0:
+                    return ''
+                elif len(value) == 1:
+                    # Single item in list
+                    item = value[0]
+                    if isinstance(item, (int, str)):
+                        return get_relation_display_value(item)
+                    elif isinstance(item, dict):
+                        return item.get('title') or item.get('name') or str(item.get('id', ''))
+                    return str(item)
+                else:
+                    # Multiple relations: show first + count
+                    first_item = value[0]
+                    if isinstance(first_item, (int, str)):
+                        first_title = get_relation_display_value(first_item)
+                    elif isinstance(first_item, dict):
+                        first_title = first_item.get('title') or first_item.get('name') or str(first_item.get('id', ''))
+                    else:
+                        first_title = str(first_item)
+                    return f"{first_title} +{len(value)-1}"
+            elif isinstance(value, dict):
+                return value.get('title') or value.get('name') or str(value.get('id', ''))
+            return str(value)
+        
+        elif field_type == 'currency':
+            # Currency: add currency symbol
+            if isinstance(value, dict):
+                amount = value.get('amount', 0)
+                currency = value.get('currency', 'USD')
+                return f"{currency} {amount}"
+            return str(value)
+        
+        elif field_type == 'address':
+            # Address: show street + city or formatted address
+            if isinstance(value, dict):
+                if 'formatted' in value:
+                    return value['formatted']
+                elif 'street' in value and 'city' in value:
+                    return f"{value['street']}, {value['city']}"
+                elif 'street' in value:
+                    return value['street']
+                elif 'city' in value:
+                    return value['city']
+            return str(value)
+        
+        elif field_type == 'file':
+            # File: show filename
+            if isinstance(value, dict):
+                return value.get('name') or value.get('filename') or 'File'
+            elif isinstance(value, list) and len(value) > 0:
+                first_file = value[0]
+                if isinstance(first_file, dict):
+                    first_name = first_file.get('name') or first_file.get('filename') or 'File'
+                else:
+                    first_name = 'File'
+                
+                if len(value) > 1:
+                    return f"{first_name} +{len(value)-1}"
+                return first_name
+            return 'File'
+        
+        elif field_type == 'date' or field_type == 'datetime':
+            # Date: format nicely
+            if isinstance(value, str):
+                try:
+                    from datetime import datetime
+                    if 'T' in value:  # ISO datetime
+                        dt = datetime.fromisoformat(value.replace('Z', '+00:00'))
+                        return dt.strftime('%Y-%m-%d %H:%M')
+                    else:  # Date only
+                        dt = datetime.fromisoformat(value)
+                        return dt.strftime('%Y-%m-%d')
+                except:
+                    pass
+            return str(value)
+        
+        elif field_type == 'boolean':
+            # Boolean: show Yes/No
+            if isinstance(value, bool):
+                return 'Yes' if value else 'No'
+            return str(value)
+        
+        else:
+            # Default: convert to string
+            if isinstance(value, (dict, list)):
+                # For complex objects, try to find a meaningful representation
+                if isinstance(value, dict):
+                    # Try common display fields
+                    for key in ['name', 'title', 'label', 'display_name', 'value']:
+                        if key in value and value[key]:
+                            return str(value[key])
+                    # Fallback to first non-id field
+                    for key, val in value.items():
+                        if key != 'id' and val:
+                            return str(val)
+                elif isinstance(value, list) and len(value) > 0:
+                    # Show first item (formatted) + count
+                    first_item = RecordUtils._format_field_value_for_title(value[0], field_def)
+                    if len(value) > 1:
+                        return f"{first_item} +{len(value)-1}"
+                    return first_item
+                
+                return str(value)
+            
+            return str(value)
     
     @staticmethod
     def get_changed_fields(old_data: Dict[str, Any], new_data: Dict[str, Any]) -> List[str]:
@@ -441,11 +715,14 @@ class RecordOperationManager:
                 # Step 2: Validate and merge data
                 self.change_manager.validate_and_merge_data(self.record, change_context)
                 
-                # Step 3: Generate title if not provided
+                # Step 3: Generate title if not provided (for database storage only)
+                # Note: Titles are now generated dynamically in serializer, but we still
+                # store a basic title for database queries and admin interface
                 if not self.record.title:
                     self.record.title = RecordUtils.generate_title(
                         self.record.data, 
-                        self.record.pipeline.name
+                        self.record.pipeline.name,
+                        self.record.pipeline
                     )
                 
                 # Step 4: Update version if data changed

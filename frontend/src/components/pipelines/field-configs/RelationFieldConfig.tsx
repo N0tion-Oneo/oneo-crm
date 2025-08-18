@@ -29,6 +29,7 @@ interface Pipeline {
 interface PipelineField {
   id: string
   name: string
+  slug: string
   display_name: string
   field_type: string
 }
@@ -216,7 +217,7 @@ export const RelationFieldConfig = React.memo(function RelationFieldConfig({
               <SelectContent>
                 {Array.isArray(targetPipelineFields) && targetPipelineFields.length > 0 ? (
                   targetPipelineFields.map((field) => (
-                    <SelectItem key={field.id} value={field.name}>
+                    <SelectItem key={field.id} value={field.slug}>
                       {field.display_name || field.name} ({field.field_type})
                     </SelectItem>
                   ))

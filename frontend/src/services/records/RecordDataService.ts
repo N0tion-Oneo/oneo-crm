@@ -336,31 +336,13 @@ export class RecordDataService {
     return response.data.results.map((record: any) => {
       let label: string | null = null
       
-      // Use configured display field
+      // Use configured display field for relations
       if (displayFieldSlug && record.data?.[displayFieldSlug]) {
         label = record.data[displayFieldSlug]
       }
-      // Fallback to common field names
+      // For general record display, trust the backend-generated title
       else {
-        label = record.data?.name || 
-               record.data?.title || 
-               record.data?.company_name ||
-               record.data?.first_name || 
-               record.data?.email ||
-               record.title
-      }
-      
-      // Use first non-empty field if still no label
-      if (!label && record.data) {
-        const dataValues = Object.values(record.data).filter(v => v && String(v).trim())
-        if (dataValues.length > 0) {
-          label = String(dataValues[0])
-        }
-      }
-      
-      // Final fallback
-      if (!label) {
-        label = `Record ${record.id}`
+        label = record.title || `Record ${record.id}`
       }
       
       return {

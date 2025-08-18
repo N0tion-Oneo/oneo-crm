@@ -334,6 +334,92 @@ class Pipeline(models.Model):
         """Get all AI fields for this pipeline"""
         return self.fields.filter(is_ai_field=True)
     
+    def get_title_template(self) -> str:
+        """Get the title template for records in this pipeline"""
+        title_config = self.settings.get('title_field', {})
+        template = title_config.get('template')
+        
+        if template:
+            return template
+        
+        # Auto-generate default template based on pipeline type and available fields
+        return self._generate_default_title_template()
+    
+    def set_title_template(self, template: str):
+        """Set the title template for records in this pipeline"""
+        if 'title_field' not in self.settings:
+            self.settings['title_field'] = {}
+        
+        self.settings['title_field']['template'] = template
+        self.save(update_fields=['settings'])
+        
+        # Note: No need to regenerate record titles since they're now dynamic
+    
+    def get_title_field_config(self) -> dict:
+        """Get the title field data configuration for this pipeline"""
+        title_config = self.settings.get('title_field', {})
+        return {
+            'template': title_config.get('template', ''),
+            'primary_field': title_config.get('primary_field', None),
+            'secondary_field': title_config.get('secondary_field', None)
+        }
+    
+    def set_title_field_config(self, primary_field: str = None, secondary_field: str = None):
+        """Set the primary and secondary fields for title display"""
+        if 'title_field' not in self.settings:
+            self.settings['title_field'] = {}
+        
+        if primary_field:
+            self.settings['title_field']['primary_field'] = primary_field
+        if secondary_field:
+            self.settings['title_field']['secondary_field'] = secondary_field
+            
+        self.save(update_fields=['settings'])
+    
+    def _generate_default_title_template(self) -> str:
+        """Generate a sensible default title template based on pipeline type and fields"""
+        # Get available field slugs
+        field_slugs = list(self.fields.filter(is_deleted=False).values_list('slug', flat=True))
+        
+        # Default templates based on pipeline type
+        if self.pipeline_type == 'contacts':
+            if 'first_name' in field_slugs and 'last_name' in field_slugs:
+                return '{first_name} {last_name}'
+            elif 'full_name' in field_slugs:
+                return '{full_name}'
+            elif 'name' in field_slugs:
+                return '{name}'
+        elif self.pipeline_type == 'companies':
+            if 'company_name' in field_slugs:
+                return '{company_name}'
+            elif 'name' in field_slugs:
+                return '{name}'
+        elif self.pipeline_type == 'deals':
+            if 'deal_name' in field_slugs and 'amount' in field_slugs:
+                return '{deal_name} - ${amount}'
+            elif 'deal_name' in field_slugs:
+                return '{deal_name}'
+            elif 'name' in field_slugs:
+                return '{name}'
+        elif self.pipeline_type == 'support':
+            if 'subject' in field_slugs:
+                return '{subject}'
+            elif 'title' in field_slugs:
+                return '{title}'
+        
+        # Generic fallback - find first text-like field
+        text_fields = ['name', 'title', 'subject', 'company_name', 'full_name', 'first_name']
+        for field_slug in text_fields:
+            if field_slug in field_slugs:
+                return f'{{{field_slug}}}'
+        
+        # Final fallback - use first available field
+        if field_slugs:
+            return f'{{{field_slugs[0]}}}'
+        
+        # No fields available
+        return '{name}'
+    
     def clone(self, new_name: str, created_by: User) -> 'Pipeline':
         """Clone this pipeline with all its fields"""
         # Create new pipeline

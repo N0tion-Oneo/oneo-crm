@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Phone Field Formatting Test</title>
+    <style>
+        body { font-family: system-ui, -apple-system, sans-serif; margin: 20px; }
+        .test-case { border: 1px solid #ddd; margin: 10px 0; padding: 15px; border-radius: 8px; }
+        .success { color: #059669; }
+        .error { color: #dc2626; }
+        .result { background: #f8fafc; border: 1px solid #e2e8f0; padding: 10px; margin: 10px 0; border-radius: 4px; }
+    </style>
+</head>
+<body>
+    <h1>Phone Field Formatting Test</h1>
+    <p>Testing phone field formatting with your actual data structure</p>
+
+    <div class="test-case">
+        <h3>Test 1: Valid Phone Object (Primary)</h3>
+        <strong>Input:</strong> <code>{"number": "787654329", "country_code": "+27"}</code><br>
+        <strong>Expected:</strong> +27 787654329 (clickable link)<br>
+        <div class="result" id="test1"></div>
+    </div>
+
+    <div class="test-case">
+        <h3>Test 2: Valid Phone Object (Work)</h3>
+        <strong>Input:</strong> <code>{"number": "7973689572", "country_code": "+44"}</code><br>
+        <strong>Expected:</strong> +44 7973689572 (clickable link)<br>
+        <div class="result" id="test2"></div>
+    </div>
+
+    <div class="test-case">
+        <h3>Test 3: Invalid Object (Should NOT show [object Object])</h3>
+        <strong>Input:</strong> <code>{"invalid": "data", "format": "wrong"}</code><br>
+        <strong>Expected:</strong> [Unknown phone format: invalid, format]<br>
+        <div class="result" id="test3"></div>
+    </div>
+
+    <div class="test-case">
+        <h3>Test 4: String Phone Number</h3>
+        <strong>Input:</strong> <code>"+1 555 123 4567"</code><br>
+        <strong>Expected:</strong> Formatted phone string<br>
+        <div class="result" id="test4"></div>
+    </div>
+
+    <script>
+        // Simulate the phone field formatValue function
+        function formatPhoneValue(value, context = 'table') {
+            // Handle phone objects with null/empty numbers
+            if (typeof value === 'object' && value !== null && value.country_code !== undefined && value.number !== undefined) {
+                if (value.number === null || value.number === undefined || value.number === '') {
+                    return context === 'table' ? '<span style="color: #9ca3af; font-style: italic;">—</span>' : '';
+                }
+                
+                // For phone objects, format as country code + number
+                const displayPhone = `${value.country_code} ${value.number}`;
+                
+                if (context === 'table') {
+                    return `<a href="tel:${displayPhone.replace(/\\s/g, '')}" style="color: #2563eb; text-decoration: underline;">${displayPhone}</a>`;
+                }
+                
+                return displayPhone;
+            }
+            
+            if (value === null || value === undefined || value === '') {
+                return context === 'table' ? '<span style="color: #9ca3af; font-style: italic;">—</span>' : '';
+            }
+            
+            // Handle any other object types or unknown formats
+            if (typeof value === 'object' && value !== null) {
+                // If it's an object but not a proper phone object, try to extract something meaningful
+                if (value.country_code || value.number) {
+                    const displayPhone = `${value.country_code || ''} ${value.number || ''}`.trim();
+                    return displayPhone || '[Invalid phone format]';
+                }
+                
+                // Try to extract phone-like properties from unknown objects
+                const phoneKeys = ['phone', 'phoneNumber', 'number', 'tel', 'telephone'];
+                for (const key of phoneKeys) {
+                    if (value[key]) {
+                        console.warn('🚨 Found phone-like property in unknown object:', { key, value: value[key], fullObject: value });
+                        return String(value[key]);
+                    }
+                }
+                
+                // If we can't extract anything meaningful, show debug info instead of [object Object]
+                console.error('🚨 Phone field received unrecognized object format:', value);
+                return `[Unknown phone format: ${Object.keys(value).join(', ')}]`;
+            }
+            
+            // Handle string phone numbers
+            const phoneStr = String(value);
+            
+            if (context === 'table') {
+                return `<a href="tel:${phoneStr.replace(/\\s/g, '')}" style="color: #2563eb; text-decoration: underline;">${phoneStr}</a>`;
+            }
+            
+            return phoneStr;
+        }
+
+        // Run tests
+        const tests = [
+            {
+                id: 'test1',
+                value: {"number": "787654329", "country_code": "+27"},
+                expected: '+27 787654329'
+            },
+            {
+                id: 'test2', 
+                value: {"number": "7973689572", "country_code": "+44"},
+                expected: '+44 7973689572'
+            },
+            {
+                id: 'test3',
+                value: {"invalid": "data", "format": "wrong"},
+                expected: '[Unknown phone format: invalid, format]'
+            },
+            {
+                id: 'test4',
+                value: "+1 555 123 4567",
+                expected: '+1 555 123 4567'
+            }
+        ];
+
+        tests.forEach(test => {
+            const result = formatPhoneValue(test.value, 'table');
+            const element = document.getElementById(test.id);
+            const isSuccess = result.includes(test.expected);
+            
+            element.innerHTML = `
+                <div class="${isSuccess ? 'success' : 'error'}">
+                    <strong>Result:</strong> ${result}<br>
+                    <strong>Status:</strong> ${isSuccess ? '✅ PASS' : '❌ FAIL'}
+                </div>
+            `;
+        });
+
+        console.log('🔍 All phone field tests completed');
+    </script>
+</body>
+</html>

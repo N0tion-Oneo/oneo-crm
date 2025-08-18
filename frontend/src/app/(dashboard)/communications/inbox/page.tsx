@@ -15,6 +15,9 @@ import { useAuth } from '@/features/auth/context'
 import { communicationsApi } from '@/lib/api'
 import { MessageComposer } from '@/components/communications/message-composer'
 import { WhatsAppIdentityHandler } from '@/components/communications/WhatsAppIdentityHandler'
+import { ContactResolutionBadge, ContactResolutionIndicator } from '@/components/communications/contact-resolution-badge'
+import { ContactResolutionDialog } from '@/components/communications/contact-resolution-dialog'
+import { useContactResolution, useMessageContactStatus } from '@/hooks/use-contact-resolution'
 import { useWebSocket, type RealtimeMessage } from '@/contexts/websocket-context'
 
 interface Message {
@@ -85,6 +88,10 @@ interface Conversation {
     email?: string
     pipeline_name: string
   }
+  // Contact resolution fields
+  needs_manual_resolution?: boolean
+  domain_validated?: boolean
+  needs_domain_review?: boolean
 }
 
 interface InboxFilters {
@@ -114,12 +121,19 @@ export default function InboxPage() {
   const [replyingTo, setReplyingTo] = useState<Message | null>(null)
   const [accountConnections, setAccountConnections] = useState<any[]>([])
   
+  // Contact resolution states
+  const [contactResolutionOpen, setContactResolutionOpen] = useState(false)
+  const [selectedMessageForResolution, setSelectedMessageForResolution] = useState<Message | null>(null)
+  
   // WebSocket connection state
   const [wsStatus, setWsStatus] = useState<string>('disconnected')
   const [conversationSubscriptionId, setConversationSubscriptionId] = useState<string | null>(null)
   
   const { toast } = useToast()
   const { tenant, user, isAuthenticated, isLoading: authLoading } = useAuth()
+  
+  // Contact resolution hook
+  const { unmatchedCount, warningsCount, refresh: refreshContactResolution } = useContactResolution()
 
   // Real-time message handler
   const handleNewMessage = useCallback((message: any) => {
@@ -282,7 +296,16 @@ export default function InboxPage() {
       setLoading(true)
       // This would be a new API endpoint for unified inbox
       const response = await communicationsApi.getUnifiedInbox(filters)
-      setConversations(response.data.conversations || [])
+      const conversations = response.data.conversations || []
+      
+      console.log(`📨 Loaded ${conversations.length} conversations:`)
+      conversations.forEach((conv: any, index: number) => {
+        console.log(`   ${index + 1}. Type: ${conv.type}, Participants:`, conv.participants?.map((p: any) => ({ name: p.name, id: p.id })) || 'None')
+        console.log(`      Primary Contact:`, conv.primary_contact ? { name: conv.primary_contact.name, id: conv.primary_contact.id } : 'None')
+        console.log(`      Last Message ID: ${conv.last_message?.id}`)
+      })
+      
+      setConversations(conversations)
     } catch (error: any) {
       console.error('Error loading conversations:', error)
       toast({
@@ -391,6 +414,27 @@ export default function InboxPage() {
     }
   }
 
+  const handleContactResolution = (message: Message) => {
+    setSelectedMessageForResolution(message)
+    setContactResolutionOpen(true)
+  }
+
+  const handleResolutionComplete = async (messageId: string, contactRecord: any) => {
+    console.log(`🔗 Contact resolution completed for message ${messageId}:`, contactRecord)
+    
+    // Refresh conversations to show updated contact status
+    console.log(`🔄 Refreshing conversations after contact resolution...`)
+    await loadConversations()
+    await refreshContactResolution()
+    
+    console.log(`✅ Refresh completed, conversations should now show connected contact`)
+    
+    toast({
+      title: "Contact resolved",
+      description: `Message connected to ${contactRecord.title}`,
+    })
+  }
+
   const getMessageTypeIcon = (type: string) => {
     switch (type) {
       case 'email': return <Mail className="w-4 h-4" />
@@ -452,7 +496,23 @@ export default function InboxPage() {
       <div className="max-w-full mx-auto h-full flex flex-col">
         <div className="flex items-center justify-between mb-6">
           <div>
-            <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Unified Inbox</h1>
+            <div className="flex items-center gap-3">
+              <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Unified Inbox</h1>
+              {(unmatchedCount > 0 || warningsCount > 0) && (
+                <div className="flex gap-2">
+                  {unmatchedCount > 0 && (
+                    <Badge variant="destructive" className="text-xs">
+                      {unmatchedCount} Unmatched
+                    </Badge>
+                  )}
+                  {warningsCount > 0 && (
+                    <Badge variant="secondary" className="text-xs bg-yellow-100 text-yellow-800">
+                      {warningsCount} Warnings
+                    </Badge>
+                  )}
+                </div>
+              )}
+            </div>
             <p className="text-gray-600 dark:text-gray-400">All your communications in one place</p>
           </div>
           
@@ -628,12 +688,21 @@ export default function InboxPage() {
                                 <div className="flex items-center justify-between mt-1">
                                   <div className="flex items-center space-x-2">
                                     {getMessageTypeBadge(conversation.type)}
-                                    {/* Contact Integration Display */}
-                                    {conversation.primary_contact && (
-                                      <Badge variant="outline" className="text-xs bg-blue-50 text-blue-700 border-blue-200">
-                                        📋 {conversation.primary_contact.name}
-                                      </Badge>
-                                    )}
+                                    {/* Contact Resolution Badge */}
+                                    <ContactResolutionBadge
+                                      contactRecord={conversation.primary_contact ? {
+                                        id: conversation.primary_contact.id,
+                                        title: conversation.primary_contact.name,
+                                        pipeline_id: '',
+                                        pipeline_name: conversation.primary_contact.pipeline_name,
+                                        data: {}
+                                      } : null}
+                                      needsResolution={conversation.needs_manual_resolution}
+                                      domainValidated={conversation.domain_validated}
+                                      needsDomainReview={conversation.needs_domain_review}
+                                      className="text-xs"
+                                      onClick={() => handleContactResolution(conversation.last_message)}
+                                    />
                                   </div>
                                   <span className="text-xs text-gray-500">
                                     {formatTimestamp(conversation.updated_at)}
@@ -898,6 +967,17 @@ export default function InboxPage() {
             platform_id: replyingTo.sender.platform_id
           } : undefined}
           accountConnections={accountConnections}
+        />
+
+        {/* Contact Resolution Dialog */}
+        <ContactResolutionDialog
+          message={selectedMessageForResolution}
+          isOpen={contactResolutionOpen}
+          onClose={() => {
+            setContactResolutionOpen(false)
+            setSelectedMessageForResolution(null)
+          }}
+          onResolutionComplete={handleResolutionComplete}
         />
       </div>
     </div>

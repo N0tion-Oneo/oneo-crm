@@ -236,6 +236,202 @@ class MessageViewSet(viewsets.ModelViewSet):
             'queued': message_count,
             'message': f'{message_count} messages queued for sending'
         }, status=status.HTTP_202_ACCEPTED)
+    
+    @extend_schema(
+        summary="Connect message to existing contact",
+        request={'type': 'object', 'properties': {
+            'contact_id': {'type': 'integer'},
+            'override_domain_validation': {'type': 'boolean', 'default': False},
+            'override_reason': {'type': 'string'}
+        }},
+        responses={200: {'type': 'object', 'properties': {
+            'status': {'type': 'string'},
+            'contact_id': {'type': 'integer'},
+            'domain_validated': {'type': 'boolean'}
+        }}}
+    )
+    @action(detail=True, methods=['post'])
+    def connect_contact(self, request, pk=None):
+        """Manually connect a message to an existing contact with domain validation"""
+        from communications.resolvers.relationship_context import RelationshipContextResolver
+        from django.db import connection as db_connection
+        
+        message = self.get_object()
+        contact_id = request.data.get('contact_id')
+        override_domain_validation = request.data.get('override_domain_validation', False)
+        
+        if not contact_id:
+            return Response(
+                {'error': 'contact_id is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            contact_record = Record.objects.get(id=contact_id, is_deleted=False)
+            
+            # Initialize relationship resolver with tenant context
+            tenant_id = db_connection.tenant.id if hasattr(db_connection, 'tenant') else None
+            if tenant_id:
+                relationship_resolver = RelationshipContextResolver(tenant_id=tenant_id)
+                
+                # Perform domain validation
+                message_email = message.metadata.get('unmatched_contact_data', {}).get('email')
+                if not message_email:
+                    # Extract from message metadata
+                    sender_info = message.metadata.get('sender', {})
+                    message_email = sender_info.get('email') if isinstance(sender_info, dict) else None
+                
+                relationship_context = relationship_resolver.get_relationship_context(contact_record, message_email)
+                
+                # Warn if domain doesn't match but allow override
+                if not relationship_context['domain_validated'] and not override_domain_validation:
+                    return Response({
+                        'warning': 'domain_mismatch',
+                        'message': f"Email domain doesn't match contact's related pipeline records. Are you sure?",
+                        'domain_details': {
+                            'message_domain': relationship_context['message_domain'],
+                            'pipeline_context': relationship_context['pipeline_context']
+                        },
+                        'requires_override': True
+                    }, status=status.HTTP_400_BAD_REQUEST)
+                
+                # Connect contact
+                message.contact_record = contact_record
+                message.metadata['relationship_context'] = relationship_context
+                message.metadata['domain_validated'] = relationship_context['domain_validated']
+                message.metadata.pop('needs_manual_resolution', None)
+                
+                if not relationship_context['domain_validated']:
+                    message.metadata['domain_override_by'] = request.user.id
+                    message.metadata['domain_override_reason'] = request.data.get('override_reason', '')
+                
+                message.save()
+                
+                # Update conversation if no primary contact set
+                if message.conversation and not message.conversation.primary_contact_record:
+                    message.conversation.primary_contact_record = contact_record
+                    message.conversation.metadata = message.conversation.metadata or {}
+                    message.conversation.metadata['relationship_context'] = relationship_context
+                    message.conversation.metadata['domain_validated'] = relationship_context['domain_validated']
+                    message.conversation.metadata.pop('needs_manual_resolution', None)
+                    message.conversation.save()
+                
+                return Response({
+                    'status': 'connected',
+                    'contact_id': contact_id,
+                    'domain_validated': relationship_context['domain_validated']
+                })
+            else:
+                # No tenant context, connect without validation
+                message.contact_record = contact_record
+                message.metadata.pop('needs_manual_resolution', None)
+                message.save()
+                
+                return Response({
+                    'status': 'connected',
+                    'contact_id': contact_id,
+                    'domain_validated': True
+                })
+                
+        except Record.DoesNotExist:
+            return Response({'error': 'Contact not found'}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @extend_schema(
+        summary="Create new contact from message data",
+        request={'type': 'object', 'properties': {
+            'pipeline_id': {'type': 'integer'},
+            'contact_data': {'type': 'object'}
+        }},
+        responses={201: {'type': 'object', 'properties': {
+            'status': {'type': 'string'},
+            'contact_id': {'type': 'integer'},
+            'contact_data': {'type': 'object'}
+        }}}
+    )
+    @action(detail=True, methods=['post'])
+    def create_contact(self, request, pk=None):
+        """Create a new contact record from unmatched communication data"""
+        message = self.get_object()
+        pipeline_id = request.data.get('pipeline_id')
+        contact_data = request.data.get('contact_data', {})
+        
+        if not pipeline_id:
+            return Response(
+                {'error': 'pipeline_id is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Merge with unmatched contact data from message
+        unmatched_data = message.metadata.get('unmatched_contact_data', {})
+        merged_data = {**unmatched_data, **contact_data}
+        
+        try:
+            from pipelines.models import Pipeline
+            pipeline = Pipeline.objects.get(id=pipeline_id)
+            
+            # Create new contact record
+            contact_record = Record.objects.create(
+                pipeline=pipeline,
+                title=merged_data.get('name', merged_data.get('email', 'Unknown Contact')),
+                data=merged_data,
+                created_by=request.user
+            )
+            
+            # Connect to message
+            message.contact_record = contact_record
+            message.metadata.pop('needs_manual_resolution', None)
+            message.save()
+            
+            # Update conversation
+            if message.conversation and not message.conversation.primary_contact_record:
+                message.conversation.primary_contact_record = contact_record
+                message.conversation.metadata = message.conversation.metadata or {}
+                message.conversation.metadata.pop('needs_manual_resolution', None)
+                message.conversation.save()
+            
+            return Response({
+                'status': 'created',
+                'contact_id': contact_record.id,
+                'contact_data': contact_record.data
+            }, status=status.HTTP_201_CREATED)
+            
+        except Pipeline.DoesNotExist:
+            return Response({'error': 'Pipeline not found'}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @extend_schema(
+        summary="Get messages needing manual contact resolution",
+        responses={200: MessageSerializer(many=True)}
+    )
+    @action(detail=False, methods=['get'])
+    def unmatched_contacts(self, request):
+        """Get list of messages that need manual contact resolution"""
+        unmatched_messages = Message.objects.filter(
+            contact_record__isnull=True,
+            metadata__needs_manual_resolution=True
+        ).select_related('conversation', 'channel').order_by('-created_at')
+        
+        serializer = self.get_serializer(unmatched_messages, many=True)
+        return Response(serializer.data)
+    
+    @extend_schema(
+        summary="Get messages with domain validation warnings",
+        responses={200: MessageSerializer(many=True)}
+    )
+    @action(detail=False, methods=['get'])
+    def domain_validation_warnings(self, request):
+        """Get communications with domain validation warnings"""
+        warnings = Message.objects.filter(
+            metadata__needs_domain_review=True
+        ).exclude(
+            contact_record__is_deleted=True
+        ).select_related('conversation', 'channel', 'contact_record').order_by('-created_at')
+        
+        serializer = self.get_serializer(warnings, many=True)
+        return Response(serializer.data)
 
 
 class CommunicationAnalyticsViewSet(viewsets.ReadOnlyModelViewSet):

@@ -47,6 +47,7 @@ export { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from './
 export { Toast } from './toast'
 export { Toaster } from './toaster'
 export { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './tooltip'
+export { Alert, AlertTitle, AlertDescription } from './alert'
 
 // Custom Components
 export { ArrayManager } from './array-manager'

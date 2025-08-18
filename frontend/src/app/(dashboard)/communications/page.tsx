@@ -12,6 +12,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useToast } from '@/hooks/use-toast'
 import { useAuth } from '@/features/auth/context'
+import { useContactResolution } from '@/hooks/use-contact-resolution'
 import { communicationsApi } from '@/lib/api'
 
 interface ChannelConnection {
@@ -59,6 +60,9 @@ export default function CommunicationsPage() {
   
   const { toast } = useToast()
   const { tenant, user, isAuthenticated, isLoading: authLoading } = useAuth()
+  
+  // Contact resolution hook for unmatched count
+  const { unmatchedCount, warningsCount } = useContactResolution()
 
   const providers = [
     { value: 'linkedin', label: 'LinkedIn', icon: '💼' },
@@ -390,9 +394,17 @@ export default function CommunicationsPage() {
           
           <div className="flex space-x-2">
             <Link href="/communications/inbox">
-              <Button variant="outline">
+              <Button variant="outline" className="relative">
                 <MessageSquare className="w-4 h-4 mr-2" />
                 Inbox
+                {(unmatchedCount > 0 || warningsCount > 0) && (
+                  <Badge 
+                    variant="destructive" 
+                    className="absolute -top-2 -right-2 h-5 w-5 rounded-full p-0 flex items-center justify-center text-xs"
+                  >
+                    {unmatchedCount + warningsCount}
+                  </Badge>
+                )}
               </Button>
             </Link>
             

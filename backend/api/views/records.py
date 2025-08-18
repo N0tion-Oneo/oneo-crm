@@ -1,7 +1,7 @@
 """
 Record API views with dynamic schema adaptation
 """
-from rest_framework import viewsets, status, permissions
+from rest_framework import viewsets, status, permissions, filters
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
@@ -25,7 +25,7 @@ class RecordViewSet(viewsets.ModelViewSet):
     Dynamic record API that adapts to pipeline schema
     """
     permission_classes = [RecordPermission]
-    filter_backends = [DjangoFilterBackend]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     search_fields = ['title', 'data']
     ordering_fields = ['title', 'status', 'created_at', 'updated_at']
     ordering = ['-updated_at']
@@ -132,9 +132,23 @@ class RecordViewSet(viewsets.ModelViewSet):
         # Skip standard DRF filtering as it's not working due to dual instance issue
         # queryset = super().filter_queryset(queryset)
         
+        # Handle search parameter first (most important for contact resolution)
+        search_query = self.request.query_params.get('search')
+        if search_query:
+            from django.db.models import Q
+            queryset = queryset.filter(
+                Q(title__icontains=search_query) |
+                Q(data__icontains=search_query)
+            )
+            print(f"🔍 Applied search filter for '{search_query}', resulting queryset count: {queryset.count()}")
+
         # Handle custom JSONB field filtering directly for ALL field types
         for param_name, param_value in self.request.query_params.items():
             if not param_value:  # Skip empty parameters
+                continue
+            
+            # Skip search parameter as we handled it above
+            if param_name == 'search':
                 continue
                 
             try:

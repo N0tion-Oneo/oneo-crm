@@ -68,6 +68,12 @@ class MessagePermission(permissions.BasePermission):
             return True  # Object-level check in has_object_permission
         elif view.action in ['reply', 'forward']:
             return True  # Object-level check in has_object_permission
+        elif view.action in ['unmatched_contacts', 'domain_validation_warnings']:
+            # Contact resolution actions - require communication read access
+            return permission_manager.has_permission('action', 'communications', 'read')
+        elif view.action in ['connect_contact', 'create_contact']:
+            # Contact resolution actions - require communication update access
+            return True  # Object-level check in has_object_permission
         
         return False
     
@@ -89,6 +95,9 @@ class MessagePermission(permissions.BasePermission):
             return permission_manager.has_permission('action', 'communications', 'delete')
         elif view.action in ['reply', 'forward']:
             return permission_manager.has_permission('action', 'communications', 'send')
+        elif view.action in ['connect_contact', 'create_contact']:
+            # Contact resolution actions require communications update permission
+            return permission_manager.has_permission('action', 'communications', 'update')
         
         return False
 

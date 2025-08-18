@@ -5,8 +5,11 @@ import logging
 from typing import Dict, Any, Optional
 from datetime import datetime, timedelta
 from django.utils import timezone
+from django.db import connection as db_connection
 from communications.models import UserChannelConnection, Message, Conversation, ChannelType, MessageDirection, MessageStatus
 from communications.webhooks.routing import account_router
+from communications.resolvers.contact_identifier import ContactIdentifier
+from communications.resolvers.relationship_context import RelationshipContextResolver
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +18,10 @@ class UnipileWebhookHandler:
     """Handles different types of UniPile webhook events"""
     
     def __init__(self):
+        # Initialize contact resolution services
+        # Note: tenant_id will be set from request context when processing webhooks
+        self.contact_identifier = None
+        self.relationship_resolver = None
         self.event_handlers = {
             'message.received': self.handle_message_received,
             'message.sent': self.handle_message_sent,
@@ -33,6 +40,12 @@ class UnipileWebhookHandler:
             'permissions': self.handle_permissions_error,
             'error': self.handle_account_error,
         }
+    
+    def _initialize_resolvers(self, tenant_id: int):
+        """Initialize contact and relationship resolvers with tenant context"""
+        if not self.contact_identifier or not self.relationship_resolver:
+            self.contact_identifier = ContactIdentifier(tenant_id=tenant_id)
+            self.relationship_resolver = RelationshipContextResolver(tenant_id=tenant_id)
     
     def process_webhook(self, event_type: str, data: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -134,6 +147,12 @@ class UnipileWebhookHandler:
                         'conversation_id': str(conversation.id),
                         'note': 'Message already exists, skipped duplicate'
                     }
+            
+            # Initialize contact resolution services with tenant context
+            from django.db import connection as db_connection
+            tenant_id = db_connection.tenant.id if hasattr(db_connection, 'tenant') else None
+            if tenant_id:
+                self._initialize_resolvers(tenant_id)
             
             # Create message record - real-time processing will only happen if message is actually created
             message, was_created = self.create_message_record_atomic(
@@ -411,7 +430,7 @@ class UnipileWebhookHandler:
     
     def create_message_record_internal(self, connection: UserChannelConnection, conversation: Conversation, 
                             message_data: Dict[str, Any], direction: str) -> Message:
-        """Create message record from webhook data with real-time enhancements"""
+        """Create message record from webhook data with real-time enhancements and contact resolution"""
         
         # Extract sender info from UniPile webhook format
         sender_info = message_data.get('sender', {})
@@ -432,6 +451,40 @@ class UnipileWebhookHandler:
         # Override the direction parameter with our corrected logic
         direction = actual_direction
         
+        # NEW: Contact resolution using pipeline relationship domain validation
+        contact_record = None
+        relationship_context = None
+        
+        if self.contact_identifier and actual_direction == MessageDirection.INBOUND:
+            # Extract contact data for identification
+            contact_data = {
+                'email': sender_info.get('email') if isinstance(sender_info, dict) else None,
+                'phone': sender_email if '@s.whatsapp.net' in sender_email else None,
+                'name': sender_info.get('attendee_name', '') if isinstance(sender_info, dict) else '',
+                'linkedin_url': message_data.get('linkedin_url'),  # May be None
+                'website': message_data.get('website')  # May be None
+            }
+            
+            # Filter out None values
+            contact_data = {k: v for k, v in contact_data.items() if v}
+            
+            try:
+                # Identify contact using duplicate rules with domain validation
+                contact_record = self.contact_identifier.identify_contact(contact_data)
+                
+                if contact_record and self.relationship_resolver:
+                    # Get relationship context with domain validation
+                    relationship_context = self.relationship_resolver.get_relationship_context(
+                        contact_record=contact_record,
+                        message_email=contact_data.get('email')
+                    )
+                    
+                    logger.info(f"Contact resolution for message: contact={contact_record.id}, domain_validated={relationship_context.get('domain_validated', True)}")
+                
+            except Exception as e:
+                logger.warning(f"Error in contact resolution: {e}")
+                # Continue without contact resolution if it fails
+        
         # Extract message content and metadata 
         message_content = message_data.get('message', '')  # This is the actual text content
         
@@ -440,10 +493,34 @@ class UnipileWebhookHandler:
         if isinstance(sender_info, dict):
             contact_name = sender_info.get('attendee_name', '')
         
-        # Create enhanced metadata with contact name for better display
+        # Create enhanced metadata with contact name and resolution context
         enhanced_metadata = dict(message_data)  # Copy all webhook data
         if contact_name and contact_name != sender_email:
             enhanced_metadata['contact_name'] = contact_name
+        
+        # Add contact resolution metadata
+        if contact_record:
+            enhanced_metadata['contact_resolved'] = True
+            enhanced_metadata['contact_record_id'] = contact_record.id
+            enhanced_metadata['contact_pipeline_id'] = contact_record.pipeline.id
+            enhanced_metadata['contact_pipeline_name'] = contact_record.pipeline.name
+            
+            if relationship_context:
+                enhanced_metadata['relationship_context'] = relationship_context
+                enhanced_metadata['domain_validated'] = relationship_context.get('domain_validated', True)
+                
+                # Flag potential domain mismatches for review
+                if relationship_context.get('validation_status') == 'domain_mismatch_warning':
+                    enhanced_metadata['needs_domain_review'] = True
+                    enhanced_metadata['domain_mismatch_details'] = {
+                        'message_domain': relationship_context.get('message_domain'),
+                        'pipeline_context': relationship_context.get('pipeline_context', [])
+                    }
+        else:
+            # No contact match found - add data for manual resolution
+            if actual_direction == MessageDirection.INBOUND and contact_data:
+                enhanced_metadata['unmatched_contact_data'] = contact_data
+                enhanced_metadata['needs_manual_resolution'] = True
         
         # REAL-TIME ENHANCEMENT: Add attendee_id for profile picture fetching
         attendee_id = sender_info.get('attendee_id', '') if isinstance(sender_info, dict) else ''
@@ -464,6 +541,7 @@ class UnipileWebhookHandler:
         message = Message.objects.create(
             channel=conversation.channel,
             conversation=conversation,
+            contact_record=contact_record,  # NEW: Link to resolved contact
             external_message_id=message_data.get('message_id'),
             direction=direction,
             content=message_content,
@@ -474,6 +552,20 @@ class UnipileWebhookHandler:
             sent_at=timezone.now() if direction == MessageDirection.OUTBOUND else None,
             received_at=timezone.now() if direction == MessageDirection.INBOUND else None
         )
+        
+        # Update conversation with resolved contact context
+        if contact_record and not conversation.primary_contact_record:
+            conversation.primary_contact_record = contact_record
+            
+            # Add relationship context to conversation metadata
+            if relationship_context:
+                if not conversation.metadata:
+                    conversation.metadata = {}
+                conversation.metadata['relationship_context'] = relationship_context
+                conversation.metadata['domain_validated'] = relationship_context.get('domain_validated', True)
+            
+            conversation.save(update_fields=['primary_contact_record', 'metadata'])
+            logger.info(f"Updated conversation {conversation.id} with primary contact {contact_record.id}")
         
         # REAL-TIME ENHANCEMENT: Broadcast message with contact info immediately
         # This will only happen for actually created messages, not duplicates

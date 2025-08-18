@@ -44,6 +44,9 @@ api.interceptors.request.use(
       const fullUrl = `${config.baseURL}${config.url}`
       console.log(`🟠 API STEP 1: HTTP Request Outgoing`)
       console.log(`   🌐 ${config.method?.toUpperCase()} ${fullUrl}`)
+      if (config.params) {
+        console.log(`   📝 Query Params:`, config.params)
+      }
     }
     
     // Add JWT token if available
@@ -905,6 +908,23 @@ export const communicationsApi = {
     api.get('/api/v1/communications/calendar/', {
       params: { account_id: accountId }
     }),
+
+  // Contact Resolution API
+  getUnmatchedContacts: () => 
+    api.get('/api/v1/messages/unmatched_contacts/'),
+
+  getDomainValidationWarnings: () =>
+    api.get('/api/v1/messages/domain_validation_warnings/'),
+
+  connectContact: (messageId: string, data: {
+    contact_id: string
+    override_reason?: string
+  }) => api.post(`/api/v1/messages/${messageId}/connect_contact/`, data),
+
+  createContact: (messageId: string, data: {
+    pipeline_id: string
+    contact_data: Record<string, any>
+  }) => api.post(`/api/v1/messages/${messageId}/create_contact/`, data),
 }
 
 // Saved Filters API client functions

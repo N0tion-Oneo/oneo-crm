@@ -131,18 +131,27 @@ class ConversationDetailSerializer(serializers.ModelSerializer):
 
 
 class MessageSerializer(serializers.ModelSerializer):
-    """Serializer for messages"""
+    """Serializer for messages with contact resolution information"""
     
     channel_name = serializers.CharField(source='channel.name', read_only=True)
     contact_name = serializers.SerializerMethodField()
+    contact_info = serializers.SerializerMethodField()
+    unmatched_contact_data = serializers.SerializerMethodField()
+    needs_manual_resolution = serializers.SerializerMethodField()
+    needs_domain_review = serializers.SerializerMethodField()
+    domain_validated = serializers.SerializerMethodField()
+    relationship_context = serializers.SerializerMethodField()
     
     class Meta:
         model = Message
         fields = [
-            'id', 'channel', 'channel_name', 'conversation', 'direction',
-            'content', 'subject', 'contact_email', 'contact_name',
+            'id', 'channel', 'channel_name', 'conversation', 'contact_record', 'direction',
+            'content', 'subject', 'contact_email', 'contact_name', 'contact_info',
             'status', 'external_message_id', 'sent_at', 'received_at',
-            'metadata', 'created_at', 'updated_at'
+            'metadata', 'created_at', 'updated_at',
+            # Contact resolution fields
+            'unmatched_contact_data', 'needs_manual_resolution', 'needs_domain_review',
+            'domain_validated', 'relationship_context'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
     
@@ -154,6 +163,47 @@ class MessageSerializer(serializers.ModelSerializer):
             last_name = data.get('last_name', '')
             return f"{first_name} {last_name}".strip() or obj.contact_email
         return obj.contact_email or 'Unknown'
+    
+    def get_contact_info(self, obj):
+        """Get full contact information when resolved"""
+        if obj.contact_record:
+            return {
+                'id': obj.contact_record.id,
+                'title': obj.contact_record.title,
+                'pipeline_id': obj.contact_record.pipeline.id,
+                'pipeline_name': obj.contact_record.pipeline.name,
+                'data': obj.contact_record.data
+            }
+        return None
+    
+    def get_unmatched_contact_data(self, obj):
+        """Get unmatched contact data for manual resolution"""
+        return obj.metadata.get('unmatched_contact_data') if obj.metadata else None
+    
+    def get_needs_manual_resolution(self, obj):
+        """Check if message needs manual contact resolution"""
+        return obj.metadata.get('needs_manual_resolution', False) if obj.metadata else False
+    
+    def get_needs_domain_review(self, obj):
+        """Check if message needs domain validation review"""
+        return obj.metadata.get('needs_domain_review', False) if obj.metadata else False
+    
+    def get_domain_validated(self, obj):
+        """Get domain validation status"""
+        return obj.metadata.get('domain_validated', True) if obj.metadata else True
+    
+    def get_relationship_context(self, obj):
+        """Get relationship context for domain validation"""
+        if obj.metadata and 'relationship_context' in obj.metadata:
+            context = obj.metadata['relationship_context']
+            # Return summarized context for API response
+            return {
+                'domain_validated': context.get('domain_validated', True),
+                'validation_status': context.get('validation_status', 'unknown'),
+                'message_domain': context.get('message_domain'),
+                'pipeline_context': context.get('pipeline_context', [])
+            }
+        return None
 
 
 class MessageCreateSerializer(serializers.ModelSerializer):

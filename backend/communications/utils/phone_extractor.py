@@ -361,3 +361,239 @@ def extract_whatsapp_message_sender(webhook_data: dict) -> dict:
     }
     
     return result
+
+
+def extract_whatsapp_attachments_from_webhook(webhook_data: dict) -> list:
+    """
+    Extract attachment information from WhatsApp webhook data
+    
+    WhatsApp attachments can be in various formats:
+    - Images, videos, documents, audio files
+    - Location sharing, contacts
+    - Stickers and other media types
+    
+    Args:
+        webhook_data: Raw webhook data from UniPile
+        
+    Returns:
+        List of attachment dictionaries with format:
+        [
+            {
+                'id': str,               # Unique attachment ID
+                'filename': str,         # Original filename
+                'content_type': str,     # MIME type
+                'size': int,            # File size in bytes
+                'url': str,             # Download URL (if available)
+                'type': str,            # 'image', 'video', 'document', 'audio', 'location', 'contact'
+                'thumbnail_url': str,   # Thumbnail URL (for images/videos)
+                'metadata': dict        # Additional metadata
+            }
+        ]
+    """
+    if not isinstance(webhook_data, dict):
+        return []
+    
+    attachments = []
+    
+    # Check for attachments in the main webhook data
+    if 'attachments' in webhook_data and isinstance(webhook_data['attachments'], list):
+        for attachment in webhook_data['attachments']:
+            if isinstance(attachment, dict):
+                attachments.append(_format_whatsapp_attachment(attachment))
+    
+    # Check for media in the message body
+    body = webhook_data.get('body', {})
+    if isinstance(body, dict):
+        # Look for media fields
+        media_fields = ['image', 'video', 'document', 'audio', 'sticker']
+        for media_type in media_fields:
+            if media_type in body and isinstance(body[media_type], dict):
+                media_data = body[media_type]
+                attachment = _format_whatsapp_attachment(media_data, media_type=media_type)
+                if attachment:
+                    attachments.append(attachment)
+        
+        # Check for location sharing
+        if 'location' in body and isinstance(body['location'], dict):
+            location_data = body['location']
+            attachment = {
+                'id': f"location_{webhook_data.get('id', 'unknown')}",
+                'filename': 'Shared Location',
+                'content_type': 'application/geo+json',
+                'size': 0,
+                'url': '',
+                'type': 'location',
+                'thumbnail_url': '',
+                'metadata': {
+                    'latitude': location_data.get('latitude'),
+                    'longitude': location_data.get('longitude'),
+                    'name': location_data.get('name', ''),
+                    'address': location_data.get('address', '')
+                }
+            }
+            attachments.append(attachment)
+        
+        # Check for contact sharing
+        if 'contacts' in body and isinstance(body['contacts'], list):
+            for i, contact in enumerate(body['contacts']):
+                if isinstance(contact, dict):
+                    attachment = {
+                        'id': f"contact_{webhook_data.get('id', 'unknown')}_{i}",
+                        'filename': f"{contact.get('name', {}).get('formatted_name', 'Contact')}.vcf",
+                        'content_type': 'text/vcard',
+                        'size': 0,
+                        'url': '',
+                        'type': 'contact',
+                        'thumbnail_url': '',
+                        'metadata': {
+                            'name': contact.get('name', {}),
+                            'phones': contact.get('phones', []),
+                            'emails': contact.get('emails', []),
+                            'organization': contact.get('org', {})
+                        }
+                    }
+                    attachments.append(attachment)
+    
+    # Look for alternative attachment structures
+    if 'media' in webhook_data and isinstance(webhook_data['media'], dict):
+        media_data = webhook_data['media']
+        attachment = _format_whatsapp_attachment(media_data)
+        if attachment:
+            attachments.append(attachment)
+    
+    logger.debug(f"Extracted {len(attachments)} WhatsApp attachments from webhook")
+    return attachments
+
+
+def _format_whatsapp_attachment(attachment_data: dict, media_type: str = None) -> dict:
+    """
+    Format WhatsApp attachment data into standardized format
+    
+    Args:
+        attachment_data: Raw attachment data from webhook
+        media_type: Optional media type hint ('image', 'video', etc.)
+        
+    Returns:
+        Formatted attachment dictionary or None if invalid
+    """
+    if not isinstance(attachment_data, dict):
+        return None
+    
+    # Extract attachment details
+    attachment_id = attachment_data.get('id', attachment_data.get('file_id', ''))
+    filename = attachment_data.get('filename', attachment_data.get('name', ''))
+    content_type = attachment_data.get('mime_type', attachment_data.get('content_type', ''))
+    size = attachment_data.get('file_size', attachment_data.get('size', 0))
+    url = attachment_data.get('url', attachment_data.get('download_url', ''))
+    thumbnail_url = attachment_data.get('thumbnail_url', '')
+    
+    # Determine attachment type from content type or media type hint
+    attachment_type = _determine_attachment_type(content_type, media_type, filename)
+    
+    # Generate filename if not provided
+    if not filename and attachment_id:
+        extension = _get_file_extension_from_mime_type(content_type)
+        filename = f"{attachment_type}_{attachment_id}{extension}"
+    
+    # Ensure we have required fields
+    if not attachment_id and not filename:
+        logger.warning("WhatsApp attachment missing both ID and filename - skipping")
+        return None
+    
+    # Create standardized attachment object
+    formatted_attachment = {
+        'id': attachment_id or f"unnamed_{hash(str(attachment_data))}",
+        'filename': filename or 'Unknown File',
+        'content_type': content_type or 'application/octet-stream',
+        'size': int(size) if size else 0,
+        'url': url,
+        'type': attachment_type,
+        'thumbnail_url': thumbnail_url,
+        'metadata': {
+            'original_data': attachment_data,
+            'caption': attachment_data.get('caption', ''),
+            'sha256': attachment_data.get('sha256', ''),
+            'encrypted_hash': attachment_data.get('enc_hash', '')
+        }
+    }
+    
+    return formatted_attachment
+
+
+def _determine_attachment_type(content_type: str, media_type_hint: str = None, filename: str = '') -> str:
+    """
+    Determine attachment type from content type, media hint, or filename
+    
+    Returns: 'image', 'video', 'document', 'audio', 'location', 'contact', or 'unknown'
+    """
+    # Use media type hint if provided
+    if media_type_hint:
+        type_mapping = {
+            'image': 'image',
+            'video': 'video', 
+            'document': 'document',
+            'audio': 'audio',
+            'sticker': 'image',
+            'location': 'location',
+            'contact': 'contact'
+        }
+        if media_type_hint in type_mapping:
+            return type_mapping[media_type_hint]
+    
+    # Determine from content type
+    if content_type:
+        if content_type.startswith('image/'):
+            return 'image'
+        elif content_type.startswith('video/'):
+            return 'video'
+        elif content_type.startswith('audio/'):
+            return 'audio'
+        elif content_type in ['text/vcard', 'application/vcard']:
+            return 'contact'
+        elif content_type == 'application/geo+json':
+            return 'location'
+        else:
+            return 'document'
+    
+    # Determine from filename extension
+    if filename:
+        filename_lower = filename.lower()
+        image_exts = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp']
+        video_exts = ['.mp4', '.avi', '.mov', '.webm', '.mkv', '.3gp']
+        audio_exts = ['.mp3', '.wav', '.ogg', '.m4a', '.aac', '.opus']
+        
+        for ext in image_exts:
+            if filename_lower.endswith(ext):
+                return 'image'
+        for ext in video_exts:
+            if filename_lower.endswith(ext):
+                return 'video'
+        for ext in audio_exts:
+            if filename_lower.endswith(ext):
+                return 'audio'
+        if filename_lower.endswith('.vcf'):
+            return 'contact'
+        
+        # Default to document for other files
+        return 'document'
+    
+    return 'unknown'
+
+
+def _get_file_extension_from_mime_type(mime_type: str) -> str:
+    """Get appropriate file extension for a MIME type"""
+    mime_to_ext = {
+        'image/jpeg': '.jpg',
+        'image/png': '.png',
+        'image/gif': '.gif',
+        'image/webp': '.webp',
+        'video/mp4': '.mp4',
+        'video/webm': '.webm',
+        'audio/mpeg': '.mp3',
+        'audio/wav': '.wav',
+        'audio/ogg': '.ogg',
+        'application/pdf': '.pdf',
+        'text/plain': '.txt',
+        'text/vcard': '.vcf'
+    }
+    return mime_to_ext.get(mime_type, '')

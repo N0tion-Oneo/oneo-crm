@@ -83,22 +83,44 @@ class UnipileClient:
                     timeout=aiohttp.ClientTimeout(total=30)
                 ) as response:
                     
-                    response_data = await response.json()
+                    # Check content type to determine how to parse response
+                    content_type = response.headers.get('content-type', '').lower()
                     
-                    if response.status in [200, 201]:  # Accept both 200 OK and 201 Created
-                        return response_data
-                    elif response.status == 401:
-                        raise UnipileAuthenticationError(
-                            f"Authentication failed: {response_data.get('message', 'Invalid access token')}"
-                        )
-                    elif response.status == 429:
-                        raise UnipileRateLimitError(
-                            f"Rate limit exceeded: {response_data.get('message', 'Too many requests')}"
-                        )
+                    if content_type.startswith('image/') or 'binary' in content_type or 'octet-stream' in content_type:
+                        # Handle binary data (images, files, etc.)
+                        if response.status in [200, 201]:
+                            binary_data = await response.read()
+                            # Return binary data with metadata
+                            return {
+                                'binary_data': binary_data,
+                                'content_type': content_type,
+                                'content_length': len(binary_data)
+                            }
+                        else:
+                            # For binary endpoints, we still need error info, try to read as text
+                            try:
+                                error_text = await response.text()
+                                raise UnipileConnectionError(f"API request failed ({response.status}): {error_text}")
+                            except:
+                                raise UnipileConnectionError(f"API request failed ({response.status}): Binary endpoint error")
                     else:
-                        raise UnipileConnectionError(
-                            f"API request failed ({response.status}): {response_data.get('message', 'Unknown error')}"
-                        )
+                        # Handle JSON data (normal API responses)
+                        response_data = await response.json()
+                        
+                        if response.status in [200, 201]:  # Accept both 200 OK and 201 Created
+                            return response_data
+                        elif response.status == 401:
+                            raise UnipileAuthenticationError(
+                                f"Authentication failed: {response_data.get('message', 'Invalid access token')}"
+                            )
+                        elif response.status == 429:
+                            raise UnipileRateLimitError(
+                                f"Rate limit exceeded: {response_data.get('message', 'Too many requests')}"
+                            )
+                        else:
+                            raise UnipileConnectionError(
+                                f"API request failed ({response.status}): {response_data.get('message', 'Unknown error')}"
+                            )
                         
         except aiohttp.ClientError as e:
             raise UnipileConnectionError(f"Network error: {str(e)}")
@@ -308,7 +330,8 @@ class UnipileAccountClient:
     async def resync_account(self, account_id: str) -> Dict[str, Any]:
         """Resynchronize account messaging data"""
         try:
-            response = await self.client._make_request('POST', f'accounts/{account_id}/resync')
+            # Correct endpoint per Unipile API docs: GET /api/v1/accounts/{account_id}/sync
+            response = await self.client._make_request('GET', f'accounts/{account_id}/sync')
             return response
         except Exception as e:
             logger.error(f"Failed to resync account {account_id}: {e}")
@@ -389,16 +412,26 @@ class UnipileMessagingClient:
         """Get all messages with pagination"""
         try:
             params = {'limit': limit}
+            
+            # Use correct endpoint based on whether chat_id is provided
             if chat_id:
-                params['chat_id'] = chat_id
-            if account_id:
-                params['account_id'] = account_id
+                # For specific chat: use /api/v1/chats/{chat_id}/messages
+                endpoint = f'chats/{chat_id}/messages'
+                # Don't include chat_id in params when it's in the URL path
+                if account_id:
+                    params['account_id'] = account_id
+            else:
+                # For all messages across chats: use /api/v1/messages
+                endpoint = 'messages'
+                if account_id:
+                    params['account_id'] = account_id
+                    
             if cursor:
                 params['cursor'] = cursor
             if since:
                 params['since'] = since
                 
-            response = await self.client._make_request('GET', 'messages', params=params)
+            response = await self.client._make_request('GET', endpoint, params=params)
             return response
         except Exception as e:
             logger.error(f"Failed to get messages: {e}")
@@ -462,7 +495,8 @@ class UnipileMessagingClient:
             if cursor:
                 params['cursor'] = cursor
                 
-            response = await self.client._make_request('GET', 'attendees', params=params)
+            # Correct endpoint per Unipile API docs: GET /api/v1/chat_attendees
+            response = await self.client._make_request('GET', 'chat_attendees', params=params)
             return response
         except Exception as e:
             logger.error(f"Failed to get attendees: {e}")
@@ -593,6 +627,10 @@ class UnipileRequestClient:
     async def put(self, endpoint: str, data: Optional[Dict] = None) -> Dict[str, Any]:
         """Make custom PUT request"""
         return await self.client._make_request('PUT', endpoint, data=data)
+    
+    async def patch(self, endpoint: str, data: Optional[Dict] = None) -> Dict[str, Any]:
+        """Make custom PATCH request"""
+        return await self.client._make_request('PATCH', endpoint, data=data)
     
     async def delete(self, endpoint: str) -> Dict[str, Any]:
         """Make custom DELETE request"""

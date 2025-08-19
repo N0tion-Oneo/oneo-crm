@@ -61,6 +61,72 @@ def _get_contact_name(contact_record):
     return 'Unknown'
 
 
+def _extract_message_attachments(message, channel_type):
+    """
+    Extract attachments from message metadata using channel-specific extractors
+    
+    Args:
+        message: Message instance with metadata
+        channel_type: Type of channel ('gmail', 'outlook', 'whatsapp', etc.)
+        
+    Returns:
+        List of attachment dictionaries
+    """
+    if not message.metadata or not message.metadata.get('raw_webhook_data'):
+        return []
+    
+    raw_data = message.metadata['raw_webhook_data']
+    
+    try:
+        if channel_type in ['gmail', 'outlook', 'mail']:
+            # Use email attachment extractor
+            from communications.utils.email_extractor import extract_email_attachments
+            attachments = extract_email_attachments(raw_data)
+            
+            # Standardize email attachment format to match frontend expectations
+            standardized_attachments = []
+            for attachment in attachments:
+                standardized_attachments.append({
+                    'id': attachment.get('attachment_id', ''),
+                    'filename': attachment.get('filename', 'attachment'),
+                    'content_type': attachment.get('content_type', 'application/octet-stream'),
+                    'size': attachment.get('size', 0),
+                    'url': attachment.get('download_url', ''),
+                    'type': _determine_attachment_type_from_mime(attachment.get('content_type', '')),
+                    'thumbnail_url': '',
+                    'metadata': {
+                        'original_data': attachment
+                    }
+                })
+            return standardized_attachments
+            
+        else:
+            # Use WhatsApp attachment extractor
+            from communications.utils.phone_extractor import extract_whatsapp_attachments_from_webhook
+            return extract_whatsapp_attachments_from_webhook(raw_data)
+            
+    except Exception as e:
+        logger.error(f"Error extracting attachments from {channel_type} message: {e}")
+        return []
+
+
+def _determine_attachment_type_from_mime(mime_type):
+    """Helper to determine attachment type from MIME type for emails"""
+    if not mime_type:
+        return 'document'
+    
+    if mime_type.startswith('image/'):
+        return 'image'
+    elif mime_type.startswith('video/'):
+        return 'video'
+    elif mime_type.startswith('audio/'):
+        return 'audio'
+    elif mime_type == 'text/vcard':
+        return 'contact'
+    else:
+        return 'document'
+
+
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def get_local_unified_inbox(request):
@@ -540,7 +606,7 @@ def get_local_conversation_messages(request, conversation_id):
                     'name': 'You',  # Default recipient name
                     'email': ''  # We don't have recipient email stored
                 },
-                'attachments': msg.metadata.get('attachments', []) if msg.metadata else [],
+                'attachments': _extract_message_attachments(msg, conversation.channel.channel_type),
                 # Keep original fields for backward compatibility
                 'external_message_id': msg.external_message_id,
                 'direction': msg.direction,

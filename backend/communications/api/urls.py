@@ -78,6 +78,19 @@ from .channel_availability_views import (
     invalidate_channel_cache
 )
 from ..views import CommunicationAnalyticsViewSet
+from .whatsapp_views import (
+    get_whatsapp_accounts,
+    get_whatsapp_chats,
+    get_chat_messages,
+    send_message as send_whatsapp_message,
+    update_chat,
+    get_whatsapp_attendees,
+    sync_whatsapp_data,
+    get_attendee_picture,
+    get_message_attachment,
+    sync_chat_history,
+    get_chat_sync_status
+)
 
 router = DefaultRouter()
 router.register(r'accounts', AccountConnectionViewSet, basename='account-connection')
@@ -180,4 +193,17 @@ urlpatterns = [
     # /api/v1/communications/analytics/{record_id}/engagement_timeline/
     # /api/v1/communications/analytics/{record_id}/health_metrics/
     # /api/v1/communications/analytics/insights_dashboard/
+    
+    # WhatsApp-specific endpoints for Unipile integration
+    path('whatsapp/accounts/', get_whatsapp_accounts, name='whatsapp-accounts'),
+    path('whatsapp/chats/', get_whatsapp_chats, name='whatsapp-chats'),
+    path('whatsapp/chats/<str:chat_id>/messages/', get_chat_messages, name='whatsapp-chat-messages'),
+    path('whatsapp/chats/<str:chat_id>/send/', send_whatsapp_message, name='whatsapp-send-message'),
+    path('whatsapp/chats/<str:chat_id>/', update_chat, name='whatsapp-update-chat'),
+    path('whatsapp/attendees/', get_whatsapp_attendees, name='whatsapp-attendees'),
+    path('whatsapp/attendees/<str:attendee_id>/picture/', get_attendee_picture, name='whatsapp-attendee-picture'),
+    path('whatsapp/messages/<str:message_id>/attachments/<str:attachment_id>/', get_message_attachment, name='whatsapp-message-attachment'),
+    path('whatsapp/sync/', sync_whatsapp_data, name='whatsapp-sync'),
+    path('whatsapp/chats/<str:chat_id>/sync/', sync_chat_history, name='whatsapp-chat-sync'),
+    path('whatsapp/chats/<str:chat_id>/sync/status/', get_chat_sync_status, name='whatsapp-chat-sync-status'),
 ]

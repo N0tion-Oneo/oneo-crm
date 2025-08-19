@@ -30,6 +30,9 @@ import SmartCompose from '@/components/communications/smart-compose'
 import { useUnifiedInbox } from '@/hooks/use-unified-inbox'
 import { MessageContent } from '@/components/MessageContent'
 import { formatDistanceToNow } from 'date-fns'
+import GmailInbox from '@/components/communications/GmailInbox'
+import WhatsAppInbox from '@/components/communications/WhatsAppInbox'
+import LinkedInInbox from '@/components/communications/LinkedInInbox'
 
 // Enhanced types that combine old and new functionality
 interface Message {
@@ -167,6 +170,9 @@ interface InboxFilters {
 }
 
 export default function InboxPage() {
+  // Channel-specific inbox state
+  const [activeChannelTab, setActiveChannelTab] = useState<'unified' | 'gmail' | 'whatsapp' | 'linkedin'>('unified')
+  
   // View mode state: 'conversations' (old style) or 'records' (new unified style)
   const [viewMode, setViewMode] = useState<'conversations' | 'records'>('records')
   
@@ -853,7 +859,7 @@ export default function InboxPage() {
         <div className="flex items-center justify-between px-6 py-4 flex-shrink-0 border-b bg-white dark:bg-gray-900 dark:border-gray-700">
           <div>
             <div className="flex items-center gap-3">
-              <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Unified Inbox</h1>
+              <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Communications Inbox</h1>
               {(unmatchedCount > 0 || warningsCount > 0) && (
                 <div className="flex gap-2">
                   {unmatchedCount > 0 && (
@@ -870,7 +876,10 @@ export default function InboxPage() {
               )}
             </div>
             <p className="text-gray-600 dark:text-gray-400">
-              {viewMode === 'conversations' ? 'Channel-based conversation view' : 'Record-centric unified view'}
+              {activeChannelTab === 'unified' 
+                ? (viewMode === 'conversations' ? 'Channel-based conversation view' : 'Record-centric unified view')
+                : `${activeChannelTab.charAt(0).toUpperCase() + activeChannelTab.slice(1)} messages and conversations`
+              }
             </p>
           </div>
           
@@ -918,6 +927,44 @@ export default function InboxPage() {
           </div>
         </div>
 
+        {/* Channel Tabs */}
+        <div className="px-6 py-2 border-b bg-white dark:bg-gray-900 dark:border-gray-700">
+          <Tabs value={activeChannelTab} onValueChange={(value) => setActiveChannelTab(value as any)}>
+            <TabsList className="grid w-full grid-cols-4">
+              <TabsTrigger value="unified" className="flex items-center gap-2">
+                <MessageSquare className="w-4 h-4" />
+                Unified
+              </TabsTrigger>
+              <TabsTrigger value="gmail" className="flex items-center gap-2">
+                <Mail className="w-4 h-4" />
+                Gmail
+              </TabsTrigger>
+              <TabsTrigger value="whatsapp" className="flex items-center gap-2">
+                <MessageSquare className="w-4 h-4" />
+                WhatsApp
+              </TabsTrigger>
+              <TabsTrigger value="linkedin" className="flex items-center gap-2">
+                <MessageSquare className="w-4 h-4" />
+                LinkedIn
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
+        </div>
+
+        {/* Render based on active channel tab */}
+        {activeChannelTab === 'unified' ? (
+          renderUnifiedInbox()
+        ) : (
+          renderChannelSpecificInbox(activeChannelTab)
+        )}
+      </div>
+    </div>
+  )
+
+  // Unified inbox render function
+  function renderUnifiedInbox() {
+    return (
+      <>
         {/* Render based on view mode */}
         {viewMode === 'conversations' ? (
           <>
@@ -1901,7 +1948,54 @@ export default function InboxPage() {
             </div>
           </div>
         )}
-      </div>
-    </div>
-  )
+      </>
+    )
+  }
+
+  // Channel-specific inbox render function
+  function renderChannelSpecificInbox(channel: string) {
+    const containerHeight = 'calc(100vh - 180px)' // Adjust for header and tabs
+    
+    switch (channel) {
+      case 'gmail':
+        return (
+          <div style={{ height: containerHeight }}>
+            <GmailInbox className="h-full" />
+          </div>
+        )
+      case 'whatsapp':
+        return (
+          <div style={{ height: containerHeight }}>
+            <WhatsAppInbox className="h-full" />
+          </div>
+        )
+      case 'linkedin':
+        return (
+          <div style={{ height: containerHeight }}>
+            <LinkedInInbox className="h-full" />
+          </div>
+        )
+      default:
+        return (
+          <div className="p-6">
+            <Card>
+              <CardContent className="p-8 text-center">
+                <div className="mb-4">
+                  <MessageSquare className="w-16 h-16 mx-auto text-gray-400" />
+                </div>
+                <h2 className="text-2xl font-bold mb-2">
+                  {channel.charAt(0).toUpperCase() + channel.slice(1)} Inbox
+                </h2>
+                <p className="text-gray-600 mb-6">
+                  Channel-specific inbox for {channel} messages with optimized layout and features.
+                </p>
+                <Badge variant="outline" className="bg-blue-50 text-blue-700">
+                  Coming Soon
+                </Badge>
+              </CardContent>
+            </Card>
+          </div>
+        )
+    }
+  }
 }

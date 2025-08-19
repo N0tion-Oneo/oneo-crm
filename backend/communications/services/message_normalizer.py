@@ -284,10 +284,10 @@ class ChannelMessageNormalizer:
         normalized['metadata']['normalized_at'] = timezone.now().isoformat()
         normalized['metadata']['normalizer_version'] = '1.0'
         
-        # Preserve raw webhook data for debugging (first 1000 chars to avoid huge metadata)
+        # Preserve raw webhook data for attachment extraction and debugging
         if normalized.get('channel_specific_data'):
-            raw_data_str = str(normalized['channel_specific_data'])[:1000]
-            normalized['metadata']['raw_webhook_data'] = raw_data_str
+            # Store the full webhook data for processing, not just a truncated string
+            normalized['metadata']['raw_webhook_data'] = normalized['channel_specific_data']
         
         return normalized
     
@@ -474,21 +474,31 @@ class ChannelMessageNormalizer:
         return str(from_field) if from_field else ''
     
     def _extract_email_attachments(self, raw_message: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Extract email attachments"""
-        attachments = raw_message.get('attachments', [])
-        if not isinstance(attachments, list):
+        """Extract email attachments using dedicated email extractor"""
+        try:
+            from communications.utils.email_extractor import extract_email_attachments
+            attachments = extract_email_attachments(raw_message)
+            
+            # Standardize format for the normalizer
+            standardized_attachments = []
+            for attachment in attachments:
+                standardized_attachments.append({
+                    'id': attachment.get('attachment_id', ''),
+                    'filename': attachment.get('filename', 'attachment'),
+                    'content_type': attachment.get('content_type', 'application/octet-stream'),
+                    'size': attachment.get('size', 0),
+                    'url': attachment.get('download_url', ''),
+                    'type': self._determine_attachment_type_from_mime(attachment.get('content_type', '')),
+                    'thumbnail_url': '',
+                    'metadata': {
+                        'original_data': attachment
+                    }
+                })
+            return standardized_attachments
+            
+        except Exception as e:
+            self.logger.error(f"Error extracting email attachments: {e}")
             return []
-        
-        return [
-            {
-                'filename': att.get('filename', 'attachment'),
-                'content_type': att.get('content_type', 'application/octet-stream'),
-                'size': att.get('size', 0),
-                'attachment_id': att.get('id'),
-                'download_url': att.get('download_url')
-            }
-            for att in attachments
-        ]
     
     def _extract_linkedin_attachments(self, raw_message: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Extract LinkedIn attachments"""
@@ -496,22 +506,14 @@ class ChannelMessageNormalizer:
         return []
     
     def _extract_whatsapp_media(self, raw_message: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Extract WhatsApp media attachments"""
-        media = raw_message.get('media', [])
-        if not isinstance(media, list):
-            media = [raw_message.get('media')] if raw_message.get('media') else []
-        
-        return [
-            {
-                'filename': m.get('filename', 'media'),
-                'content_type': m.get('mime_type', 'application/octet-stream'),
-                'media_type': m.get('type', 'unknown'),
-                'size': m.get('size', 0),
-                'media_id': m.get('id'),
-                'download_url': m.get('url')
-            }
-            for m in media if m
-        ]
+        """Extract WhatsApp media attachments using dedicated WhatsApp extractor"""
+        try:
+            from communications.utils.phone_extractor import extract_whatsapp_attachments_from_webhook
+            return extract_whatsapp_attachments_from_webhook(raw_message)
+            
+        except Exception as e:
+            self.logger.error(f"Error extracting WhatsApp attachments: {e}")
+            return []
     
     def _extract_social_media(self, raw_message: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Extract social media attachments"""
@@ -586,6 +588,22 @@ class ChannelMessageNormalizer:
             return clean_content
         
         return clean_content[:max_length - 3] + '...'
+    
+    def _determine_attachment_type_from_mime(self, mime_type: str) -> str:
+        """Helper to determine attachment type from MIME type"""
+        if not mime_type:
+            return 'document'
+        
+        if mime_type.startswith('image/'):
+            return 'image'
+        elif mime_type.startswith('video/'):
+            return 'video'
+        elif mime_type.startswith('audio/'):
+            return 'audio'
+        elif mime_type == 'text/vcard':
+            return 'contact'
+        else:
+            return 'document'
     
     def _create_error_message(self, raw_message: Dict[str, Any], channel_type: str, error: str) -> Dict[str, Any]:
         """Create error message when normalization fails"""

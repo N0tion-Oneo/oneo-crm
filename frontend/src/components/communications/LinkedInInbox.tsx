@@ -9,7 +9,7 @@ import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
+import { SafeAvatar } from '@/components/communications/SafeAvatar'
 import { useToast } from '@/hooks/use-toast'
 import { MessageContent } from '@/components/MessageContent'
 import { formatDistanceToNow } from 'date-fns'
@@ -521,12 +521,12 @@ export default function LinkedInInbox({ className }: LinkedInInboxProps) {
                     onClick={() => handleChatSelect(chat)}
                   >
                     <div className="flex items-start space-x-3">
-                      <Avatar className="w-12 h-12">
-                        <AvatarImage src={chat.attendees[0]?.picture_url} />
-                        <AvatarFallback className="bg-blue-100 text-blue-700 font-semibold">
-                          {chat.attendees[0]?.name?.charAt(0) || 'L'}
-                        </AvatarFallback>
-                      </Avatar>
+                      <SafeAvatar
+                        src={chat.attendees[0]?.picture_url}
+                        fallbackText={chat.attendees[0]?.name?.charAt(0) || 'L'}
+                        className="w-12 h-12"
+                        fallbackClassName="bg-blue-100 text-blue-700 font-semibold"
+                      />
                       
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center justify-between mb-1">
@@ -605,12 +605,12 @@ export default function LinkedInInbox({ className }: LinkedInInboxProps) {
               <div className="p-4 bg-white dark:bg-gray-800 border-b">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
-                    <Avatar className="w-12 h-12">
-                      <AvatarImage src={selectedChat.attendees[0]?.picture_url} />
-                      <AvatarFallback className="bg-blue-100 text-blue-700 font-semibold">
-                        {selectedChat.attendees[0]?.name?.charAt(0) || 'L'}
-                      </AvatarFallback>
-                    </Avatar>
+                    <SafeAvatar
+                      src={selectedChat.attendees[0]?.picture_url}
+                      fallbackText={selectedChat.attendees[0]?.name?.charAt(0) || 'L'}
+                      className="w-12 h-12"
+                      fallbackClassName="bg-blue-100 text-blue-700 font-semibold"
+                    />
                     <div>
                       <div className="flex items-center gap-2">
                         <h2 className="font-semibold">{selectedChat.attendees[0]?.name || 'Unknown'}</h2>

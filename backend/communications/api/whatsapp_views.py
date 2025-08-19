@@ -76,9 +76,28 @@ def get_whatsapp_accounts(request):
                 'last_sync_at': connection.last_sync_at.isoformat() if connection.last_sync_at else None
             }
             
-            # TODO: Re-enable Unipile API calls once basic functionality is working
-            # For now, just use the connection data to avoid API issues
-            logger.info(f"Using connection data only for account {connection.id}")
+            # Get real account status from UniPile API
+            try:
+                if connection.unipile_account_id:
+                    client = unipile_service.get_client()
+                    account_info = async_to_sync(client.account.get_account)(connection.unipile_account_id)
+                    
+                    # Update with real UniPile data
+                    account_data.update({
+                        'phone': account_info.get('phone', account_data['phone']),
+                        'is_business': account_info.get('is_business_account', False),
+                        'status': 'active' if account_info.get('status') == 'authenticated' else 'error',
+                        'name': account_info.get('name', account_data['name']),
+                        'picture_url': account_info.get('profile_picture_url')
+                    })
+                    
+                    logger.info(f"Updated account {connection.id} with UniPile data: {account_info.get('phone', 'no phone')}")
+                else:
+                    logger.warning(f"No UniPile account ID for connection {connection.id}")
+                    
+            except Exception as api_error:
+                logger.warning(f"Failed to get UniPile account info for {connection.id}: {api_error}")
+                # Continue with basic connection data if UniPile API fails
             
             accounts.append(account_data)
         
@@ -120,11 +139,12 @@ def get_whatsapp_chats(request):
         chats_data = async_to_sync(client.messaging.get_all_chats)(
             account_id=account_id,
             limit=limit,
-            cursor=cursor
+            cursor=cursor,
+            account_type='WHATSAPP'
         )
         
-        # Unipile API returns 'items' not 'chats'
-        chats = chats_data.get('items', chats_data.get('chats', []))
+        # Unipile consistently returns 'items' in API responses
+        chats = chats_data.get('items', [])
         
         # We'll fetch attendees per chat instead of using global attendees
         # This ensures we get the correct attendee info for each chat
@@ -332,8 +352,9 @@ def get_chat_messages(request, chat_id):
     limit = int(request.GET.get('limit', 20))  # Default to 20 messages for better performance
     cursor = request.GET.get('cursor')
     since = request.GET.get('since')
+    sender_id = request.GET.get('sender_id')  # Support UniPile sender_id parameter
     
-    logger.info(f"📨 Parameters: limit={limit}, cursor={cursor}, since={since}")
+    logger.info(f"📨 Parameters: limit={limit}, cursor={cursor}, since={since}, sender_id={sender_id}")
     
     try:
         client = unipile_service.get_client()
@@ -344,12 +365,13 @@ def get_chat_messages(request, chat_id):
             chat_id=chat_id,
             limit=limit,
             cursor=cursor,
-            since=since
+            since=since,
+            sender_id=sender_id
         )
         
         logger.info(f"📨 Unipile response: {messages_data}")
-        # Fix: Unipile returns 'items' not 'messages'
-        messages = messages_data.get('items', messages_data.get('messages', []))
+        # Unipile consistently returns 'items' in API responses
+        messages = messages_data.get('items', [])
         logger.info(f"📨 Extracted messages count: {len(messages)}")
         transformed_messages = []
         
@@ -367,9 +389,9 @@ def get_chat_messages(request, chat_id):
                     'mime_type': att.get('mime_type') or att.get('content_type')
                 })
             
-            # Determine direction from is_sender field
-            is_sender = msg_data.get('is_sender', 0)
-            direction = 'out' if is_sender else 'in'
+            # Use unified direction logic
+            from communications.utils.message_direction import determine_whatsapp_direction
+            direction = determine_whatsapp_direction(msg_data)
             
             
             transformed_message = {
@@ -400,23 +422,24 @@ def get_chat_messages(request, chat_id):
         })
         
     except UnipileConnectionError as e:
-        if "404" in str(e) or "Cannot GET" in str(e) or "Unknown error" in str(e):
-            # Messages endpoint might not exist for this chat - return empty list gracefully
-            logger.warning(f"Messages endpoint not available for chat {chat_id}: {e}")
+        logger.error(f"UniPile connection error getting messages for chat {chat_id}: {e}")
+        
+        # For 404 errors, this might be a valid empty chat
+        if "404" in str(e) or "Cannot GET" in str(e):
             return Response({
                 'success': True,
                 'messages': [],
                 'total': 0,
                 'cursor': None,
                 'has_more': False,
-                'message': 'Messages not available for this chat'
+                'warning': f'Chat {chat_id} has no accessible messages'
             })
         else:
-            # Other connection errors
-            logger.error(f"Unipile connection error getting messages: {e}")
+            # Other connection errors should be reported properly
             return Response({
                 'success': False,
-                'error': 'Failed to connect to messaging service'
+                'error': f'Failed to connect to UniPile API: {str(e)}',
+                'error_type': 'connection_error'
             }, status=status.HTTP_503_SERVICE_UNAVAILABLE)
     except Exception as e:
         logger.error(f"Failed to get chat messages: {e}")
@@ -477,6 +500,36 @@ def send_message(request, chat_id):
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def test_mark_read_formats(request, chat_id):
+    """Test different mark-as-read API formats to find what works with UniPile"""
+    try:
+        logger.info(f"🧪 Testing mark-as-read formats for chat {chat_id}")
+        
+        # Use the test function from SDK
+        result = async_to_sync(unipile_service.test_mark_read_formats)(chat_id)
+        
+        return Response({
+            'success': result.get('success', False),
+            'chat_id': chat_id,
+            'test_results': result.get('test_results', []),
+            'working_formats': result.get('working_formats', []),
+            'summary': {
+                'total_tested': len(result.get('test_results', [])),
+                'successful': len(result.get('working_formats', [])),
+                'failed': len(result.get('test_results', [])) - len(result.get('working_formats', []))
+            }
+        })
+        
+    except Exception as e:
+        logger.error(f"Failed to test mark-read formats for chat {chat_id}: {e}")
+        return Response({
+            'success': False,
+            'error': str(e)
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
 @api_view(['PATCH'])
 @permission_classes([IsAuthenticated])
 def update_chat(request, chat_id):
@@ -493,19 +546,120 @@ def update_chat(request, chat_id):
         if 'unread_count' in data:
             # If setting unread_count to 0, mark as read
             if data['unread_count'] == 0:
-                unipile_data['action'] = 'mark_as_read'
+                unipile_data = {'action': 'mark_read'}
             else:
-                unipile_data['action'] = 'mark_as_unread'
+                unipile_data = {'action': 'mark_unread'}
         elif 'action' in data:
             # Direct action specified
-            unipile_data['action'] = data['action']
+            unipile_data = {'action': data['action']}
         else:
-            # Unknown action format
+            # Unknown action format - try to infer from data
             logger.warning(f"🔄 Unknown chat update format: {data}")
             unipile_data = data
         
+        # Handle mark as read specifically
+        if unipile_data.get('action') == 'mark_read':
+            # Get account_id from request data
+            account_id = data.get('account_id')
+            if not account_id:
+                return Response({
+                    'success': False,
+                    'error': 'account_id is required for marking chat as read'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Use the centralized mark_chat_as_read method
+            result = async_to_sync(unipile_service.mark_chat_as_read)(
+                account_id=account_id,
+                chat_id=chat_id
+            )
+            
+            # Log the full result for debugging
+            logger.info(f"🔍 DEBUG: mark_chat_as_read result: {result}")
+            
+            if result.get('success'):
+                logger.info(f"✅ UniPile API successfully marked chat {chat_id} as read")
+                
+                # Update local database to persist read status
+                try:
+                    from communications.models import Conversation, Message, MessageStatus, MessageDirection
+                    
+                    # Find the conversation by external_thread_id (chat_id)
+                    conversation = Conversation.objects.filter(
+                        external_thread_id=chat_id
+                    ).first()
+                    
+                    if conversation:
+                        # Mark all inbound messages in this conversation as read
+                        updated_count = Message.objects.filter(
+                            conversation=conversation,
+                            direction=MessageDirection.INBOUND,
+                            status__in=[MessageStatus.SENT, MessageStatus.DELIVERED]
+                        ).update(status=MessageStatus.READ)
+                        
+                        logger.info(f"✅ Marked {updated_count} local messages as read for chat {chat_id}")
+                    else:
+                        logger.warning(f"⚠️ No local conversation found for chat {chat_id}")
+                        
+                except Exception as db_error:
+                    logger.error(f"❌ Failed to update local database: {db_error}")
+                
+                # Trigger real-time update for marked as read
+                try:
+                    from communications.tasks import mark_chat_read_realtime
+                    mark_chat_read_realtime.delay(
+                        account_id=None,  # Will be determined from context
+                        chat_id=chat_id,
+                        conversation_id=chat_id  # Use chat_id as conversation_id for WhatsApp
+                    )
+                except Exception as task_error:
+                    logger.warning(f"⚠️ Failed to trigger real-time update: {task_error}")
+                
+                return Response({
+                    'success': True,
+                    'message': 'Chat marked as read successfully',
+                    'chat': {
+                        'id': chat_id,
+                        'unread_count': 0,
+                        'updated': True
+                    },
+                    'debug': {
+                        'unipile_response': result.get('response'),
+                        'api_call': 'success'
+                    }
+                })
+            else:
+                # Handle the failure properly
+                error_message = result.get('error', 'Unknown error')
+                error_type = result.get('error_type', 'UnknownError')
+                
+                logger.error(f"❌ UniPile API failed to mark chat {chat_id} as read: {error_message}")
+                
+                # Determine appropriate status code based on error type
+                if 'API request failed (400)' in error_message:
+                    # UniPile returned 400 - bad request (e.g., chat already read, doesn't exist)
+                    response_status = status.HTTP_400_BAD_REQUEST
+                elif 'API request failed (404)' in error_message:
+                    # UniPile returned 404 - chat not found
+                    response_status = status.HTTP_404_NOT_FOUND
+                elif 'connection' in error_message.lower() or 'timeout' in error_message.lower():
+                    # Connection issues - service unavailable
+                    response_status = status.HTTP_503_SERVICE_UNAVAILABLE
+                else:
+                    # True internal error
+                    response_status = status.HTTP_500_INTERNAL_SERVER_ERROR
+                
+                return Response({
+                    'success': False,
+                    'error': f'Failed to mark chat as read: {error_message}',
+                    'details': {
+                        'error_type': error_type,
+                        'chat_id': chat_id,
+                        'unipile_response': result.get('response')
+                    }
+                }, status=response_status)
+        
         try:
-            # Try the PATCH request with Unipile API
+            # For other actions, try the generic PATCH request
             response = async_to_sync(client.request.patch)(f'chats/{chat_id}', data=unipile_data)
             logger.info(f"🔄 Chat update response: {response}")
             
@@ -515,25 +669,13 @@ def update_chat(request, chat_id):
             })
             
         except Exception as patch_error:
-            # If PATCH fails, it might not be supported for WhatsApp
+            # If PATCH fails, it might not be supported for this action
             logger.warning(f"🔄 PATCH failed for WhatsApp chat {chat_id}: {patch_error}")
             
-            # For WhatsApp, marking as read often happens automatically when messages are fetched
-            # Return success to prevent UI errors
-            if 'mark_as_read' in str(unipile_data.get('action', '')):
-                logger.info(f"🔄 Simulating mark-as-read success for WhatsApp chat {chat_id}")
-                return Response({
-                    'success': True,
-                    'message': 'WhatsApp messages are marked as read when fetched',
-                    'chat': {
-                        'id': chat_id,
-                        'unread_count': 0,
-                        'updated': True
-                    }
-                })
-            else:
-                # For other actions, re-raise the error
-                raise patch_error
+            return Response(
+                {'error': f'Action not supported: {patch_error}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
         
     except Exception as e:
         logger.error(f"Failed to update chat {chat_id}: {e}")
@@ -567,8 +709,8 @@ def get_whatsapp_attendees(request):
             cursor=cursor
         )
         
-        # Fix: Unipile returns 'items' not 'attendees'
-        attendees = attendees_data.get('items', attendees_data.get('attendees', []))
+        # Unipile consistently returns 'items' in API responses
+        attendees = attendees_data.get('items', [])
         transformed_attendees = []
         
         for attendee_data in attendees:
@@ -598,23 +740,24 @@ def get_whatsapp_attendees(request):
         })
         
     except UnipileConnectionError as e:
+        logger.error(f"UniPile connection error getting attendees for account {account_id}: {e}")
+        
+        # For 404 errors, account might not have attendees yet
         if "404" in str(e) or "Cannot GET" in str(e):
-            # Attendees endpoint doesn't exist - return empty list gracefully
-            logger.warning(f"Attendees endpoint not available for account {account_id}: {e}")
             return Response({
                 'success': True,
                 'attendees': [],
                 'total': 0,
                 'cursor': None,
                 'has_more': False,
-                'message': 'Attendees endpoint not available for this account'
+                'warning': f'Account {account_id} has no accessible attendees'
             })
         else:
-            # Other connection errors
-            logger.error(f"Unipile connection error getting attendees: {e}")
+            # Report connection errors properly
             return Response({
                 'success': False,
-                'error': 'Failed to connect to messaging service'
+                'error': f'Failed to connect to UniPile API: {str(e)}',
+                'error_type': 'connection_error'
             }, status=status.HTTP_503_SERVICE_UNAVAILABLE)
     except Exception as e:
         logger.error(f"Failed to get WhatsApp attendees: {e}")

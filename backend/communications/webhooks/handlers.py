@@ -137,16 +137,16 @@ class UnipileWebhookHandler:
             # Simple approach: store raw webhook data and extract what we need
             from communications.utils.phone_extractor import (
                 extract_whatsapp_phone_from_webhook,
-                determine_whatsapp_direction,
                 extract_whatsapp_conversation_id,
                 extract_whatsapp_contact_name
             )
+            from communications.utils.message_direction import determine_message_direction
             
             # Extract basic info directly from raw webhook data
             external_message_id = data.get('id') or data.get('message_id')
             conversation_id = extract_whatsapp_conversation_id(data)
             phone_number = extract_whatsapp_phone_from_webhook(data)
-            direction = determine_whatsapp_direction(data)
+            direction = determine_message_direction(data, 'whatsapp')
             contact_name = extract_whatsapp_contact_name(data)
             message_content = data.get('message', data.get('text', data.get('body', '')))
             
@@ -322,6 +322,27 @@ class UnipileWebhookHandler:
                         message.status = MessageStatus.READ
                         message.save()
                         logger.info(f"Updated message {message.id} status to read")
+                        
+                        # Trigger real-time update for message read status
+                        try:
+                            from channels.layers import get_channel_layer
+                            from asgiref.sync import async_to_sync
+                            
+                            channel_layer = get_channel_layer()
+                            if channel_layer:
+                                async_to_sync(channel_layer.group_send)(
+                                    f"conversation_{message.conversation.id}",
+                                    {
+                                        'type': 'message_read_update',
+                                        'message_id': str(message.id),
+                                        'external_message_id': external_message_id,
+                                        'status': 'read',
+                                        'read_at': timezone.now().isoformat()
+                                    }
+                                )
+                        except Exception as ws_error:
+                            logger.warning(f"Failed to send real-time read update: {ws_error}")
+                        
                     else:
                         logger.info(f"Read receipt for inbound message {message.id} - no status update needed")
                     

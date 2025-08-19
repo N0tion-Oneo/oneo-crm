@@ -10,7 +10,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
+import { SafeAvatar } from '@/components/communications/SafeAvatar'
 import { useToast } from '@/hooks/use-toast'
 import { MessageContent } from '@/components/MessageContent'
 import { formatDistanceToNow } from 'date-fns'
@@ -125,7 +125,7 @@ interface WhatsAppInboxProps {
 export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
   const [chats, setChats] = useState<WhatsAppChat[]>([])
   const [selectedChat, setSelectedChat] = useState<WhatsAppChat | null>(null)
-  const [attendees, setAttendees] = useState<WhatsAppAttendee[]>([])
+  // Attendees are now included directly in chat data, no separate state needed
   const [messages, setMessages] = useState<WhatsAppMessage[]>([])
   const [loading, setLoading] = useState(true)
   const [loadingMessages, setLoadingMessages] = useState(false)
@@ -223,138 +223,21 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
     }
   }
 
-  // Load profile picture for an attendee
-  const loadAttendeeProfilePicture = async (attendeeId: string): Promise<string | null> => {
-    try {
-      const response = await api.get(`/api/v1/communications/whatsapp/attendees/${attendeeId}/picture/`)
-      
-      if (response.data?.success && response.data?.picture_url) {
-        return response.data.picture_url
-      }
-      
-      if (response.data?.success && response.data?.picture_data) {
-        // Create blob URL from base64 data
-        const base64Data = response.data.picture_data
-        const mimeType = 'image/jpeg' // Default to JPEG for WhatsApp profile pics
-        const blob = new Blob([Uint8Array.from(atob(base64Data), c => c.charCodeAt(0))], { type: mimeType })
-        return URL.createObjectURL(blob)
-      }
-      
-      return null
-    } catch (error) {
-      console.error(`Failed to load profile picture for attendee ${attendeeId}:`, error)
-      return null
-    }
-  }
+  // Profile pictures are now loaded efficiently on the backend with chat data
 
-  // Global cache for picture URLs to prevent any duplicate requests across all components
-  const pictureLoadingCache = useRef<Map<string, Promise<string | null>>>(new Map())
-  const pictureUrlCache = useRef<Map<string, string | null>>(new Map())
-
-  // Enhanced avatar component that loads profile pictures on demand
-  const EnhancedAvatar = ({ chat, size = 'w-10 h-10', loadOnMount = false }: { chat: WhatsAppChat, size?: string, loadOnMount?: boolean }) => {
-    const [profilePictureUrl, setProfilePictureUrl] = useState<string | null>(() => {
-      // Initialize with cached URL if available, otherwise use chat.picture_url
-      const attendeeToLoad = chat.attendees[0]
-      if (attendeeToLoad?.id && pictureUrlCache.current.has(attendeeToLoad.id)) {
-        return pictureUrlCache.current.get(attendeeToLoad.id)
-      }
-      return chat.picture_url || null
-    })
-    const [loading, setLoading] = useState(false)
-
-    useEffect(() => {
-      // Only load automatically if explicitly requested (for selected chat)
-      if (!loadOnMount) return
-
-      const loadProfilePicture = async () => {
-        // For group chats, try to get the first attendee's picture
-        const attendeeToLoad = chat.attendees[0]
-        if (!attendeeToLoad?.id) return
-
-        const cacheKey = attendeeToLoad.id
-
-        // Check if we already have a cached URL
-        if (pictureUrlCache.current.has(cacheKey)) {
-          const cachedUrl = pictureUrlCache.current.get(cacheKey)
-          if (cachedUrl !== profilePictureUrl) {
-            setProfilePictureUrl(cachedUrl)
-          }
-          return
-        }
-
-        // Skip if we already have a picture
-        if (profilePictureUrl) {
-          // Cache the current URL
-          pictureUrlCache.current.set(cacheKey, profilePictureUrl)
-          return
-        }
-
-        // Check if we're already loading this picture
-        if (pictureLoadingCache.current.has(cacheKey)) {
-          // Wait for existing request to complete
-          try {
-            const cachedResult = await pictureLoadingCache.current.get(cacheKey)!
-            if (cachedResult) {
-              setProfilePictureUrl(cachedResult)
-              pictureUrlCache.current.set(cacheKey, cachedResult)
-            }
-          } catch (error) {
-            console.error('Error waiting for cached picture request:', error)
-          }
-          return
-        }
-
-        console.log(`🖼️ Loading profile picture for attendee: ${cacheKey}`)
-        setLoading(true)
-        
-        // Create and cache the request promise
-        const loadPromise = loadAttendeeProfilePicture(attendeeToLoad.id).finally(() => {
-          // Remove from cache when done (whether success or failure)
-          pictureLoadingCache.current.delete(cacheKey)
-          setLoading(false)
-        })
-        
-        pictureLoadingCache.current.set(cacheKey, loadPromise)
-
-        try {
-          const pictureUrl = await loadPromise
-          if (pictureUrl) {
-            setProfilePictureUrl(pictureUrl)
-            // Cache the result for future use
-            pictureUrlCache.current.set(cacheKey, pictureUrl)
-            
-            // Update the chat object in state
-            setChats(prev => prev.map(c => 
-              c.id === chat.id 
-                ? { ...c, picture_url: pictureUrl }
-                : c
-            ))
-          } else {
-            // Cache null result to prevent future requests
-            pictureUrlCache.current.set(cacheKey, null)
-          }
-        } catch (error) {
-          console.error('Error loading profile picture:', error)
-          // Cache null result to prevent retrying failed requests
-          pictureUrlCache.current.set(cacheKey, null)
-        }
-      }
-
-      loadProfilePicture()
-    }, [chat.id, loadOnMount]) // Removed profilePictureUrl from deps to prevent unnecessary re-runs
-
+  // Enhanced avatar component using SafeAvatar for error handling
+  const EnhancedAvatar = ({ chat, size = 'w-10 h-10' }: { chat: WhatsAppChat, size?: string }) => {
+    // Use picture_url from chat data (loaded efficiently on backend)
+    const pictureUrl = chat.picture_url || chat.attendees[0]?.picture_url
+    const fallbackText = chat.is_group ? 'G' : (chat.name?.charAt(0) || chat.attendees[0]?.name?.charAt(0) || 'W')
+    
     return (
-      <Avatar className={size}>
-        <AvatarImage src={profilePictureUrl || undefined} />
-        <AvatarFallback className="bg-green-100 text-green-700">
-          {loading ? (
-            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-green-500"></div>
-          ) : (
-            chat.is_group ? 'G' : (chat.name?.charAt(0) || chat.attendees[0]?.name?.charAt(0) || 'W')
-          )}
-        </AvatarFallback>
-      </Avatar>
+      <SafeAvatar
+        src={pictureUrl}
+        fallbackText={fallbackText}
+        className={size}
+        fallbackClassName="bg-green-100 text-green-700"
+      />
     )
   }
 
@@ -484,11 +367,16 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
       // Load initial batch of chats (10 conversations)
       await loadMoreChats(connections, true)
       
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to load WhatsApp data:', error)
+      
+      // Show specific error based on response
+      const errorMessage = error.response?.data?.error || error.message || 'Unknown error occurred'
+      const errorType = error.response?.data?.error_type
+      
       toast({
-        title: "Failed to load WhatsApp data",
-        description: "Please check your connection and try again.",
+        title: errorType === 'connection_error' ? "Connection Error" : "Failed to load WhatsApp data",
+        description: errorMessage,
         variant: "destructive",
       })
     } finally {
@@ -507,98 +395,83 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
       if (accountsToUse.length === 0) return
 
       const allChats: WhatsAppChat[] = []
-      const allAttendees: WhatsAppAttendee[] = []
       let newCursor = chatCursor
+      let hasMoreData = false
 
-      for (const account of accountsToUse) {
-        try {
-          // Get chats for this account with pagination
-          const chatsResponse = await api.get('/api/v1/communications/whatsapp/chats/', {
-            params: { 
-              account_id: account.id,
-              limit: 10, // Load 10 conversations at a time
-              ...(chatCursor && { cursor: chatCursor })
-            }
-          })
-          
-          const accountChats = chatsResponse.data?.chats || []
-          newCursor = chatsResponse.data?.cursor
-          const hasMore = chatsResponse.data?.has_more || false
-          
-          // Update pagination state
-          setHasMoreChats(hasMore)
-          
-          // Transform API response to WhatsApp chat format
-          for (const chatData of accountChats) {
-            const transformedChat: WhatsAppChat = {
-              id: chatData.id,
-              provider_chat_id: chatData.provider_chat_id || chatData.chat_id,
-              name: chatData.name || chatData.title,
-              picture_url: chatData.picture_url,
-              is_group: chatData.is_group || false,
-              is_muted: chatData.is_muted || false,
-              is_pinned: chatData.is_pinned || false,
-              is_archived: chatData.is_archived || false,
-              unread_count: chatData.unread_count || 0,
-              last_message_date: chatData.last_message_date || chatData.updated_at,
-              account_id: account.id,
-              attendees: (chatData.attendees || []).map((att: any) => ({
-                id: att.id,
-                name: att.name,
-                phone: att.phone,
-                picture_url: att.picture_url,
-                is_admin: att.is_admin || false
-              })),
-              latest_message: chatData.latest_message ? {
-                id: chatData.latest_message.id,
-                text: chatData.latest_message.text || chatData.latest_message.content,
-                type: mapMessageType(chatData.latest_message.type),
-                direction: chatData.latest_message.direction,
-                chat_id: chatData.id,
-                date: chatData.latest_message.date || chatData.latest_message.created_at,
-                status: chatData.latest_message.status || 'sent',
-                attendee_id: chatData.latest_message.attendee_id,
-                attachments: chatData.latest_message.attachments || [],
-                account_id: account.id
-              } : undefined,
-              member_count: chatData.member_count
-            }
-            
-            allChats.push(transformedChat)
+      // For multi-account setups, we need to handle pagination differently
+      // We'll load from the first account that still has more data
+      const accountToLoad = accountsToUse[0] // For now, load from first account
+      
+      console.log(`🔄 Loading chats for account ${accountToLoad.id}, cursor: ${chatCursor}`)
+      
+      try {
+        // Get chats for this account with pagination
+        const chatsResponse = await api.get('/api/v1/communications/whatsapp/chats/', {
+          params: { 
+            account_id: accountToLoad.id,
+            limit: 15, // Load 15 chats consistently
+            ...(chatCursor && { cursor: chatCursor })
           }
-
-          // Load attendees only for initial load to avoid repeated calls
-          if (isInitialLoad) {
-            const attendeesResponse = await api.get('/api/v1/communications/whatsapp/attendees/', {
-              params: { account_id: account.id }
-            })
-            
-            const accountAttendees = attendeesResponse.data?.attendees || []
-            
-            // Transform attendees
-            for (const attendeeData of accountAttendees) {
-              const transformedAttendee: WhatsAppAttendee = {
-                id: attendeeData.id,
-                name: attendeeData.name,
-                phone: attendeeData.phone,
-                picture_url: attendeeData.picture_url,
-                provider_id: attendeeData.provider_id,
-                is_business_account: attendeeData.is_business_account || false,
-                status: attendeeData.status,
-                last_seen: attendeeData.last_seen,
-                account_id: account.id
-              }
-              
-              allAttendees.push(transformedAttendee)
-            }
+        })
+        
+        console.log(`📊 Chat response for account ${accountToLoad.id}:`, chatsResponse.data)
+        
+        const accountChats = chatsResponse.data?.chats || []
+        newCursor = chatsResponse.data?.cursor
+        hasMoreData = chatsResponse.data?.has_more || false
+        
+        console.log(`📊 Account ${accountToLoad.id}: loaded ${accountChats.length} chats, cursor: ${newCursor}, hasMore: ${hasMoreData}`)
+        
+        // Update pagination state based on this account's response
+        setHasMoreChats(hasMoreData)
+          
+        // Transform API response to WhatsApp chat format
+        for (const chatData of accountChats) {
+          const transformedChat: WhatsAppChat = {
+            id: chatData.id,
+            provider_chat_id: chatData.provider_chat_id || chatData.chat_id,
+            name: chatData.name || chatData.title,
+            picture_url: chatData.picture_url,
+            is_group: chatData.is_group || false,
+            is_muted: chatData.is_muted || false,
+            is_pinned: chatData.is_pinned || false,
+            is_archived: chatData.is_archived || false,
+            unread_count: chatData.unread_count || 0,
+            last_message_date: chatData.last_message_date || chatData.updated_at,
+            account_id: accountToLoad.id,
+            attendees: (chatData.attendees || []).map((att: any) => ({
+              id: att.id,
+              name: att.name,
+              phone: att.phone,
+              picture_url: att.picture_url,
+              provider_id: att.provider_id,
+              is_admin: att.is_admin || false,
+              is_business_account: att.is_business_account || false
+            })),
+            latest_message: chatData.latest_message ? {
+              id: chatData.latest_message.id,
+              text: chatData.latest_message.text || chatData.latest_message.content,
+              type: mapMessageType(chatData.latest_message.type),
+              direction: chatData.latest_message.direction,
+              chat_id: chatData.id,
+              date: chatData.latest_message.date || chatData.latest_message.created_at,
+              status: chatData.latest_message.status || 'sent',
+              attendee_id: chatData.latest_message.attendee_id,
+              attachments: chatData.latest_message.attachments || [],
+              account_id: accountToLoad.id
+            } : undefined,
+            member_count: chatData.member_count
           }
           
-        } catch (error) {
-          console.error(`Failed to load data for WhatsApp account ${account.id}:`, error)
+          allChats.push(transformedChat)
         }
+        
+      } catch (error) {
+        console.error(`Failed to load data for WhatsApp account ${accountToLoad.id}:`, error)
       }
 
       // Update cursor for next page
+      console.log(`🔄 Updating pagination: cursor=${newCursor}, hasMore=${hasMoreData}`)
       setChatCursor(newCursor)
 
       // Sort chats by last message date (most recent first)
@@ -606,9 +479,10 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
       
       // Append to existing chats or replace for initial load
       if (isInitialLoad) {
+        console.log(`🔄 Initial load: setting ${allChats.length} chats`)
         setChats(allChats)
-        setAttendees(allAttendees)
       } else {
+        console.log(`🔄 Loading more: appending ${allChats.length} chats to existing list`)
         setChats(prev => [...prev, ...allChats])
       }
       
@@ -740,23 +614,35 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
       if (chat.unread_count > 0) {
         try {
           await api.patch(`/api/v1/communications/whatsapp/chats/${chat.id}/`, {
-            read: true
+            unread_count: 0,
+            account_id: chat.account_id
           })
           
-          // Update local state
+          // Update local state immediately for better UX
           setChats(prev => prev.map(c =>
             c.id === chat.id ? { ...c, unread_count: 0 } : c
           ))
+          
+          // Also update the current chat's unread count if it's the selected one
+          if (selectedChat?.id === chat.id) {
+            setSelectedChat(prev => prev ? { ...prev, unread_count: 0 } : prev)
+          }
         } catch (error) {
           console.error('Failed to mark chat as read:', error)
         }
       }
       
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to load messages:', error)
+      
+      // Show specific error based on response
+      const errorMessage = error.response?.data?.error || error.message || 'Could not load messages'
+      const errorType = error.response?.data?.error_type
+      const isConnectionError = errorType === 'connection_error'
+      
       toast({
-        title: "Failed to load messages",
-        description: "Could not load messages for this chat.",
+        title: isConnectionError ? "Connection Error" : "Failed to load messages",
+        description: errorMessage,
         variant: "destructive",
       })
       setMessages([])
@@ -883,11 +769,13 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
       // Restore the text if sending failed
       setReplyText(messageText)
       
-      // Show specific error message if available
+      // Show specific error message based on response
       const errorMessage = error.response?.data?.error || error.message || "An error occurred while sending your message."
+      const errorType = error.response?.data?.error_type
+      const isConnectionError = errorType === 'connection_error'
       
       toast({
-        title: "Failed to send message",
+        title: isConnectionError ? "Connection Error" : "Failed to send message",
         description: errorMessage,
         variant: "destructive",
       })
@@ -994,14 +882,21 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
       <div className="flex-1 grid grid-cols-12 gap-0 min-h-0">
         {/* Conversation List */}
         <div className="col-span-4 border-r bg-white dark:bg-gray-900 flex flex-col min-h-0">
-          <ScrollArea 
-            className="flex-1"
-            onScrollCapture={(e) => {
+          <div 
+            className="flex-1 overflow-y-auto"
+            onScroll={(e) => {
               const target = e.target as HTMLDivElement
               const { scrollTop, scrollHeight, clientHeight } = target
+              const distanceFromBottom = scrollHeight - scrollTop - clientHeight
+              
+              // Debug scroll position (throttle to avoid spam)
+              if (Math.random() < 0.1) { // Only log 10% of scroll events
+                console.log(`📜 Scroll: ${distanceFromBottom}px from bottom, hasMore: ${hasMoreChats}, loading: ${loadingMoreChats}`)
+              }
               
               // Check if user scrolled near bottom (within 100px)
-              if (scrollHeight - scrollTop - clientHeight < 100 && hasMoreChats && !loadingMoreChats) {
+              if (distanceFromBottom < 100 && hasMoreChats && !loadingMoreChats) {
+                console.log('🔄 Triggering loadMoreChats from scroll')
                 loadMoreChats()
               }
             }}
@@ -1023,7 +918,7 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
                   >
                     <div className="flex items-start space-x-3">
                       <div className="relative">
-                        <EnhancedAvatar chat={chat} loadOnMount={false} />
+                        <EnhancedAvatar chat={chat} />
                         {/* Pin indicator */}
                         {chat.is_pinned && (
                           <div className="absolute -top-1 -right-1 w-3 h-3 rounded-full bg-green-500 border border-white" />
@@ -1119,7 +1014,7 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
                 )}
               </div>
             )}
-          </ScrollArea>
+          </div>
         </div>
 
         {/* Chat View */}
@@ -1130,7 +1025,7 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
               <div className="flex-shrink-0 p-4 bg-white dark:bg-gray-800 border-b">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
-                    <EnhancedAvatar chat={selectedChat} loadOnMount={true} />
+                    <EnhancedAvatar chat={selectedChat} />
                     <div>
                       <h2 className="font-semibold">
                         {selectedChat.name || selectedChat.attendees[0]?.name || 'Unknown'}

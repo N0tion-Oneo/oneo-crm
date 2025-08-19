@@ -376,15 +376,25 @@ class UnipileMessagingClient:
         self, 
         account_id: Optional[str] = None,
         cursor: Optional[str] = None,
-        limit: int = 20
+        limit: int = 20,
+        account_type: Optional[str] = None
     ) -> Dict[str, Any]:
-        """Get all chats with pagination"""
+        """Get all chats with pagination
+        
+        Args:
+            account_id: Optional account ID to filter by specific account
+            cursor: Pagination cursor from previous request  
+            limit: Number of chats to return (default 20)
+            account_type: Channel type (WHATSAPP, LINKEDIN, MESSENGER, TELEGRAM, etc.)
+        """
         try:
             params = {'limit': limit}
             if account_id:
                 params['account_id'] = account_id
             if cursor:
                 params['cursor'] = cursor
+            if account_type:
+                params['account_type'] = account_type
                 
             response = await self.client._make_request('GET', 'chats', params=params)
             return response
@@ -407,9 +417,19 @@ class UnipileMessagingClient:
         account_id: Optional[str] = None,
         cursor: Optional[str] = None,
         limit: int = 50,
-        since: Optional[str] = None
+        since: Optional[str] = None,
+        sender_id: Optional[str] = None
     ) -> Dict[str, Any]:
-        """Get all messages with pagination"""
+        """Get all messages with pagination
+        
+        Args:
+            chat_id: Optional chat ID to get messages for specific chat
+            account_id: Optional account ID to filter by specific account
+            cursor: Pagination cursor from previous request
+            limit: Number of messages to return (default 50)
+            since: Optional timestamp to get messages since
+            sender_id: Optional sender ID for message filtering (UniPile format)
+        """
         try:
             params = {'limit': limit}
             
@@ -430,6 +450,8 @@ class UnipileMessagingClient:
                 params['cursor'] = cursor
             if since:
                 params['since'] = since
+            if sender_id:
+                params['sender_id'] = sender_id
                 
             response = await self.client._make_request('GET', endpoint, params=params)
             return response
@@ -1409,8 +1431,13 @@ class UnipileService:
     def __init__(self):
         self._client = None  # Single global client
     
-    def get_client(self) -> UnipileClient:
-        """Get or create global UniPile client"""
+    def get_client(self, dsn: str = None, access_token: str = None) -> UnipileClient:
+        """Get or create UniPile client (global or tenant-specific)"""
+        # If dsn and access_token provided, create tenant-specific client
+        if dsn and access_token:
+            return UnipileClient(dsn, access_token)
+        
+        # Otherwise use global client
         if self._client is None:
             # Import the global config directly from settings module
             from oneo_crm.settings import unipile_settings as global_config
@@ -1850,6 +1877,221 @@ class UnipileService:
                 'processed_count': 0
             }
     
+    async def test_mark_read_formats(self, chat_id: str) -> Dict[str, Any]:
+        """Test different mark-as-read API formats to find the working one"""
+        from django.db import connection
+        
+        # Different action formats to try
+        test_formats = [
+            {'action': 'mark_read'},
+            {'action': 'read'},
+            {'action': 'mark_as_read'},
+            {'action': 'seen'},
+            {'read': True},
+            {'unread': False},
+            {'status': 'read'},
+            {'mark_read': True}
+        ]
+        
+        results = []
+        
+        try:
+            tenant = connection.tenant
+            tenant_config = tenant.unipile_config
+            client = self.get_client(tenant_config.dsn, tenant_config.get_access_token())
+            
+            for i, format_data in enumerate(test_formats):
+                try:
+                    logger.info(f"🧪 Testing format {i+1}/{len(test_formats)}: {format_data}")
+                    
+                    response = await client.request.patch(f'chats/{chat_id}', data=format_data)
+                    
+                    result = {
+                        'format': format_data,
+                        'success': True,
+                        'response': response,
+                        'error': None
+                    }
+                    
+                    logger.info(f"✅ Format {i+1} succeeded: {format_data}")
+                    
+                except Exception as e:
+                    result = {
+                        'format': format_data,
+                        'success': False,
+                        'response': None,
+                        'error': str(e)
+                    }
+                    
+                    logger.warning(f"❌ Format {i+1} failed: {format_data} - {e}")
+                
+                results.append(result)
+                
+                # Small delay between requests to avoid rate limiting
+                await asyncio.sleep(0.1)
+            
+            return {
+                'success': True,
+                'test_results': results,
+                'working_formats': [r for r in results if r['success']]
+            }
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to test mark-read formats: {e}")
+            return {
+                'success': False,
+                'error': str(e),
+                'test_results': results
+            }
+
+    async def verify_chat_read_status(self, account_id: str, chat_id: str) -> Dict[str, Any]:
+        """Verify a chat's read status by fetching it from UniPile API"""
+        from django.db import connection
+        
+        try:
+            tenant = connection.tenant
+            tenant_config = tenant.unipile_config
+            client = self.get_client(tenant_config.dsn, tenant_config.get_access_token())
+            
+            # Fetch the specific chat to check its unread count
+            logger.info(f"🔍 Verifying read status for chat {chat_id}")
+            response = await client.request.get(f'chats/{chat_id}')
+            
+            if isinstance(response, dict):
+                unread_count = response.get('unread_count', 0)
+                logger.info(f"📊 Chat {chat_id} unread count: {unread_count}")
+                
+                return {
+                    'success': True,
+                    'chat_id': chat_id,
+                    'unread_count': unread_count,
+                    'is_read': unread_count == 0,
+                    'response': response
+                }
+            else:
+                return {
+                    'success': False,
+                    'error': 'Invalid response format',
+                    'response': response
+                }
+                
+        except Exception as e:
+            logger.error(f"❌ Failed to verify chat {chat_id} read status: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+
+    async def mark_chat_as_read(self, account_id: str, chat_id: str) -> Dict[str, Any]:
+        """Mark a WhatsApp chat as read using UniPile API with verification"""
+        from django.db import connection
+        
+        try:
+            # Get tenant config and client using correct pattern
+            from communications.models import TenantUniPileConfig
+            
+            try:
+                tenant_config = TenantUniPileConfig.get_or_create_for_tenant()
+                if tenant_config.is_configured():
+                    # Get credentials from tenant config (which delegates to global settings)
+                    credentials = tenant_config.get_api_credentials()
+                    client = self.get_client(credentials['dsn'], credentials['api_key'])
+                else:
+                    # Fallback to global unipile config
+                    client = self.get_client()
+            except Exception:
+                # If tenant config fails, use global config
+                client = self.get_client()
+            
+            # Enhanced logging for debugging
+            logger.info(f"🔍 DEBUG: Attempting to mark chat as read")
+            logger.info(f"🔍 DEBUG: Chat ID: {chat_id}")
+            logger.info(f"🔍 DEBUG: Account ID: {account_id}")
+            
+            # Get initial read status for comparison
+            initial_status = await self.verify_chat_read_status(account_id, chat_id)
+            initial_unread = initial_status.get('unread_count', 0) if initial_status.get('success') else 'unknown'
+            logger.info(f"📊 Initial unread count: {initial_unread}")
+            
+            # Prepare request data with correct UniPile format
+            request_data = {
+                'action': 'setReadStatus',
+                'value': True
+            }
+            if account_id:
+                request_data['account_id'] = account_id
+            logger.info(f"🔍 DEBUG: Request data: {request_data}")
+            logger.info(f"🔍 DEBUG: Making PATCH request to: chats/{chat_id}")
+            
+            # Use UniPile PATCH endpoint to mark chat as read
+            response = await client.request.patch(f'chats/{chat_id}', data=request_data)
+            
+            # Log the full response for debugging
+            logger.info(f"🔍 DEBUG: UniPile API Response: {response}")
+            logger.info(f"🔍 DEBUG: Response type: {type(response)}")
+            
+            # Verify the change by fetching the chat again
+            await asyncio.sleep(0.5)  # Small delay to allow API to process
+            verification = await self.verify_chat_read_status(account_id, chat_id)
+            final_unread = verification.get('unread_count', 0) if verification.get('success') else 'unknown'
+            
+            logger.info(f"📊 Final unread count: {final_unread}")
+            logger.info(f"🔄 Change detected: {initial_unread} → {final_unread}")
+            
+            # Check if the change was successful
+            if isinstance(response, dict):
+                # Determine success based on both API response and verification
+                api_success = response.get('success', True)  # Assume success if not explicitly false
+                verification_success = verification.get('success') and verification.get('unread_count', 0) == 0
+                
+                if api_success:
+                    logger.info(f"✅ UniPile API call succeeded for chat {chat_id}")
+                    return {
+                        'success': True,
+                        'chat_id': chat_id,
+                        'response': response,
+                        'verification': {
+                            'initial_unread': initial_unread,
+                            'final_unread': final_unread,
+                            'change_detected': initial_unread != final_unread,
+                            'fully_read': verification_success
+                        }
+                    }
+                else:
+                    logger.error(f"❌ UniPile API returned error for chat {chat_id}: {response}")
+                    return {
+                        'success': False,
+                        'chat_id': chat_id,
+                        'error': response.get('error', 'Unknown error'),
+                        'response': response,
+                        'verification': verification
+                    }
+            else:
+                logger.info(f"✅ UniPile API returned non-dict response (assuming success): {response}")
+                return {
+                    'success': True,
+                    'chat_id': chat_id,
+                    'response': response,
+                    'verification': {
+                        'initial_unread': initial_unread,
+                        'final_unread': final_unread,
+                        'change_detected': initial_unread != final_unread
+                    }
+                }
+            
+        except Exception as e:
+            logger.error(f"❌ UniPile mark-as-read API call failed for chat {chat_id}: {str(e)}")
+            logger.error(f"❌ Exception type: {type(e)}")
+            logger.error(f"❌ Exception details: {e}")
+            
+            # Don't mask the error - return the actual failure
+            return {
+                'success': False,
+                'chat_id': chat_id,
+                'error': str(e),
+                'error_type': type(e).__name__
+            }
+
     async def disconnect_account(self, user_channel_connection) -> Dict[str, Any]:
         """Disconnect user's account"""
         from django.db import connection

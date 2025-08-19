@@ -9,7 +9,7 @@ import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
+import { SafeAvatar } from '@/components/communications/SafeAvatar'
 import { useToast } from '@/hooks/use-toast'
 import { MessageContent } from '@/components/MessageContent'
 import { formatDistanceToNow } from 'date-fns'
@@ -330,12 +330,12 @@ export default function GmailInbox({ className }: GmailInboxProps) {
                     <CardContent className="p-4">
                       <div className="flex items-start justify-between">
                         <div className="flex items-start space-x-3 flex-1 min-w-0">
-                          <Avatar className="w-8 h-8 flex-shrink-0">
-                            <AvatarImage src="" />
-                            <AvatarFallback className="bg-red-100 text-red-700 text-xs">
-                              {thread.participants[0]?.name?.charAt(0) || thread.participants[0]?.address?.charAt(0)?.toUpperCase() || 'E'}
-                            </AvatarFallback>
-                          </Avatar>
+                          <SafeAvatar
+                            src=""
+                            fallbackText={thread.participants[0]?.name?.charAt(0) || thread.participants[0]?.address?.charAt(0)?.toUpperCase() || 'E'}
+                            className="w-8 h-8 flex-shrink-0"
+                            fallbackClassName="bg-red-100 text-red-700 text-xs"
+                          />
                           
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center justify-between mb-1">
@@ -402,12 +402,12 @@ export default function GmailInbox({ className }: GmailInboxProps) {
               <div className="p-4 border-b">
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center gap-3">
-                    <Avatar className="w-10 h-10">
-                      <AvatarImage src="" />
-                      <AvatarFallback className="bg-red-100 text-red-700">
-                        {selectedThread.participants[0]?.name?.charAt(0) || selectedThread.participants[0]?.address?.charAt(0)?.toUpperCase() || 'E'}
-                      </AvatarFallback>
-                    </Avatar>
+                    <SafeAvatar
+                      src=""
+                      fallbackText={selectedThread.participants[0]?.name?.charAt(0) || selectedThread.participants[0]?.address?.charAt(0)?.toUpperCase() || 'E'}
+                      className="w-10 h-10"
+                      fallbackClassName="bg-red-100 text-red-700"
+                    />
                     <div>
                       <h2 className="text-lg font-bold">{selectedThread.subject}</h2>
                       <p className="text-sm text-gray-600">

@@ -339,13 +339,17 @@ def periodic_message_sync_task(self):
         logger.info("Starting periodic message sync")
         
         # Sync all active connections (not initial sync, just recent messages)
-        result = sync_all_active_connections_task.delay(
+        task_result = sync_all_active_connections_task.delay(
             initial_sync=False,
             days_back=1  # Only sync last day for periodic sync
-        ).get()
+        )
         
-        logger.info(f"Periodic sync completed: {result['successful_syncs']}/{result['total_connections']} connections synced")
-        return result
+        logger.info(f"Periodic sync task scheduled: {task_result.id}")
+        return {
+            'success': True, 
+            'task_id': task_result.id,
+            'message': 'Periodic sync task scheduled successfully'
+        }
     
     except Exception as e:
         logger.error(f"Error in periodic_message_sync_task: {e}")
@@ -1069,9 +1073,15 @@ def extract_contact_data_from_message(message) -> dict:
     if message.contact_email:
         contact_data['email'] = message.contact_email
         
-        # For WhatsApp, contact_email contains phone number
+        # For WhatsApp, contact_email contains phone number (legacy support)
         if '@s.whatsapp.net' in message.contact_email:
-            contact_data['phone'] = message.contact_email.replace('@s.whatsapp.net', '')
+            phone_number = message.contact_email.replace('@s.whatsapp.net', '')
+            # Format with country code (add + prefix)
+            contact_data['phone'] = f"+{phone_number}" if phone_number else ''
+    
+    # Extract from contact_phone field (new approach - already formatted with +)
+    if message.contact_phone:
+        contact_data['phone'] = message.contact_phone
     
     # Extract from message metadata
     if message.metadata:

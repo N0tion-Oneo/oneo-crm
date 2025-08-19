@@ -1067,12 +1067,12 @@ class UnipileEmailClient:
                 'account_id': account_id,
                 'folder': folder,
                 'limit': limit,
-                'unread_only': unread_only
+                'unread_only': str(unread_only).lower()  # Convert boolean to string for URL parameters
             }
             if cursor:
                 params['cursor'] = cursor
                 
-            response = await self.client._make_request('GET', 'mails', params=params)
+            response = await self.client._make_request('GET', 'emails', params=params)
             return response
         except Exception as e:
             logger.error(f"Failed to get emails: {e}")
@@ -1105,22 +1105,48 @@ class UnipileEmailClient:
             if attachments:
                 data['attachments'] = attachments
                 
-            response = await self.client._make_request('POST', 'mails/send', data=data)
+            response = await self.client._make_request('POST', 'emails', data=data)
             return response
         except Exception as e:
             logger.error(f"Failed to send email: {e}")
             raise
     
     async def mark_as_read(self, account_id: str, email_ids: List[str]) -> Dict[str, Any]:
-        """Mark emails as read"""
+        """Mark emails as read using individual email update API calls"""
         try:
-            data = {
+            results = []
+            
+            for email_id in email_ids:
+                # Update each email individually using PUT /emails/{email_id}
+                data = {
+                    'is_read': True  # Mark as read
+                }
+                
+                try:
+                    response = await self.client._make_request('PUT', f'emails/{email_id}', data=data)
+                    results.append({
+                        'email_id': email_id,
+                        'success': True,
+                        'response': response
+                    })
+                except Exception as email_error:
+                    logger.error(f"Failed to mark email {email_id} as read: {email_error}")
+                    results.append({
+                        'email_id': email_id,
+                        'success': False,
+                        'error': str(email_error)
+                    })
+            
+            # Return summary of results
+            successful_count = sum(1 for result in results if result['success'])
+            return {
                 'account_id': account_id,
-                'email_ids': email_ids,
-                'read': True
+                'total_emails': len(email_ids),
+                'successful': successful_count,
+                'failed': len(email_ids) - successful_count,
+                'results': results
             }
-            response = await self.client._make_request('POST', 'mails/mark', data=data)
-            return response
+            
         except Exception as e:
             logger.error(f"Failed to mark emails as read: {e}")
             raise

@@ -1,0 +1,520 @@
+"""
+Dedicated Email Webhook Handler for UniPile Gmail Integration
+Handles the complexity of email processing separate from WhatsApp
+"""
+import logging
+from typing import Dict, Any, Optional
+from datetime import datetime
+from django.utils import timezone
+from django.db import transaction
+
+from communications.models import (
+    UserChannelConnection, Message, Conversation, Channel, 
+    ChannelType, MessageDirection, MessageStatus
+)
+from communications.utils.email_extractor import (
+    extract_email_from_webhook,
+    extract_email_subject_from_webhook,
+    extract_email_name_from_webhook,
+    determine_email_direction,
+    extract_email_thread_id,
+    extract_email_message_id,
+    extract_email_attachments,
+    extract_email_folder_labels,
+    extract_email_recipients_info,
+    extract_email_sender_info,
+    get_display_name_or_email
+)
+
+logger = logging.getLogger(__name__)
+
+
+class EmailWebhookHandler:
+    """Specialized handler for email webhook events from UniPile"""
+    
+    def __init__(self):
+        # Email-specific business email for direction detection
+        self.business_email = 'josh@oneo.africa'  # TODO: Make configurable per tenant
+    
+    def handle_email_received(self, account_id: str, webhook_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Handle incoming email webhook with full email complexity support
+        
+        Args:
+            account_id: UniPile account ID
+            webhook_data: Raw email webhook data from UniPile
+            
+        Returns:
+            Dict with processing result
+        """
+        try:
+            logger.info(f"Processing email webhook for account {account_id}")
+            
+            # Get user connection
+            from communications.webhooks.routing import account_router
+            connection = account_router.get_user_connection(account_id)
+            if not connection:
+                logger.error(f"No user connection found for account {account_id}")
+                return {'success': False, 'error': 'User connection not found'}
+            
+            # Validate that this is actually an email connection
+            if connection.channel_type not in ['gmail', 'outlook', 'mail', 'email']:
+                logger.warning(f"Account {account_id} is not an email account: {connection.channel_type}")
+                return {'success': False, 'error': f'Invalid channel type for email: {connection.channel_type}'}
+            
+            # Extract email-specific data using our email extractors
+            normalized_email = self._normalize_email_webhook(webhook_data)
+            
+            # Check for duplicate emails
+            external_message_id = normalized_email['message_id']
+            if external_message_id:
+                existing_message = Message.objects.filter(
+                    external_message_id=external_message_id
+                ).first()
+                
+                if existing_message:
+                    logger.info(f"Email {external_message_id} already exists (ID: {existing_message.id}), skipping duplicate")
+                    return {
+                        'success': True,
+                        'message_id': str(existing_message.id),
+                        'conversation_id': str(existing_message.conversation.id),
+                        'note': 'Email already exists, skipped duplicate'
+                    }
+            
+            # Get or create email conversation
+            conversation = self._get_or_create_email_conversation(connection, normalized_email)
+            
+            # Create email message record
+            message, was_created = self._create_email_message_record(
+                connection, conversation, normalized_email, webhook_data
+            )
+            
+            if was_created:
+                logger.info(f"Created new email message {message.id} for account {account_id}")
+                
+                # Trigger real-time updates
+                self._trigger_email_real_time_update(message, conversation, connection.user)
+            else:
+                logger.info(f"Email message {message.id} already existed")
+            
+            # Auto-resolve contact if enabled
+            if was_created and not message.contact_record:
+                self._attempt_email_contact_resolution(message, normalized_email)
+            
+            return {
+                'success': True,
+                'message_id': str(message.id),
+                'conversation_id': str(conversation.id),
+                'was_created': was_created,
+                'channel_type': connection.channel_type,
+                'email_specific': True,
+                'subject': normalized_email['subject'],
+                'thread_id': normalized_email['thread_id']
+            }
+            
+        except Exception as e:
+            logger.error(f"Error handling email received for account {account_id}: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return {'success': False, 'error': str(e)}
+    
+    def _normalize_email_webhook(self, webhook_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Normalize email webhook data using our email extractors
+        
+        Returns:
+            Dict with normalized email data
+        """
+        # Use our email extraction utilities
+        contact_email = extract_email_from_webhook(webhook_data, self.business_email)
+        contact_name = extract_email_name_from_webhook(webhook_data, self.business_email)
+        subject = extract_email_subject_from_webhook(webhook_data)
+        direction = determine_email_direction(webhook_data, self.business_email)
+        thread_id = extract_email_thread_id(webhook_data)
+        message_id = extract_email_message_id(webhook_data)
+        attachments = extract_email_attachments(webhook_data)
+        folder_labels = extract_email_folder_labels(webhook_data)
+        recipients_info = extract_email_recipients_info(webhook_data)
+        sender_info = extract_email_sender_info(webhook_data)
+        
+        # Extract email content (handle both HTML and text)
+        email_content = webhook_data.get('body', '')
+        if isinstance(email_content, dict):
+            # UniPile format: {"text": "...", "html": "..."}
+            content = email_content.get('text', email_content.get('html', ''))
+        else:
+            # Simple string format
+            content = str(email_content)
+        
+        # Create display name
+        display_name = get_display_name_or_email(contact_name, contact_email)
+        
+        # Determine message status based on folder/labels
+        status = MessageStatus.DELIVERED
+        if folder_labels['read']:
+            status = MessageStatus.READ
+        elif direction == MessageDirection.OUTBOUND:
+            status = MessageStatus.SENT
+        
+        # Parse timestamp
+        timestamp = webhook_data.get('date')
+        if timestamp:
+            try:
+                if isinstance(timestamp, str):
+                    # Parse ISO format: "2025-08-19T04:15:22.000Z"
+                    parsed_time = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+                else:
+                    parsed_time = timestamp
+            except (ValueError, AttributeError):
+                parsed_time = timezone.now()
+        else:
+            parsed_time = timezone.now()
+        
+        return {
+            'contact_email': contact_email,
+            'contact_name': contact_name,
+            'display_name': display_name,
+            'subject': subject,
+            'content': content,
+            'direction': direction,
+            'thread_id': thread_id,
+            'message_id': message_id,
+            'status': status,
+            'attachments': attachments,
+            'folder': folder_labels['folder'],
+            'labels': folder_labels['labels'],
+            'read': folder_labels['read'],
+            'recipients': recipients_info,
+            'sender_info': sender_info,
+            'timestamp': parsed_time,
+            'raw_webhook_data': webhook_data
+        }
+    
+    def _get_or_create_email_conversation(self, connection: UserChannelConnection, 
+                                        normalized_email: Dict[str, Any]) -> Conversation:
+        """
+        Get or create email conversation using thread ID
+        Email conversations are grouped by thread_id (email threading)
+        """
+        thread_id = normalized_email['thread_id']
+        
+        # Try to find existing conversation by thread ID
+        if thread_id:
+            conversation = Conversation.objects.filter(
+                external_thread_id=thread_id,
+                channel__unipile_account_id=connection.unipile_account_id
+            ).first()
+            if conversation:
+                return conversation
+        
+        # Create new email conversation
+        channel, _ = Channel.objects.get_or_create(
+            unipile_account_id=connection.unipile_account_id,
+            channel_type=connection.channel_type,
+            defaults={
+                'name': f"Gmail - {connection.account_name}",
+                'auth_status': connection.auth_status,
+                'created_by': connection.user
+            }
+        )
+        
+        # Create meaningful subject for conversation
+        email_subject = normalized_email['subject']
+        display_name = normalized_email['display_name']
+        
+        if email_subject:
+            conversation_subject = f"Email: {email_subject}"
+        elif display_name:
+            conversation_subject = f"Email from {display_name}"
+        else:
+            conversation_subject = "Email conversation"
+        
+        conversation = Conversation.objects.create(
+            channel=channel,
+            external_thread_id=thread_id or f"email_{normalized_email['message_id']}",
+            subject=conversation_subject,
+            status='active',
+            metadata={
+                'email_thread': True,
+                'original_subject': email_subject,
+                'participants': [normalized_email['contact_email']] if normalized_email['contact_email'] else []
+            }
+        )
+        
+        logger.info(f"Created email conversation {conversation.id} with thread ID {thread_id}")
+        return conversation
+    
+    def _create_email_message_record(self, connection: UserChannelConnection, 
+                                   conversation: Conversation, normalized_email: Dict[str, Any],
+                                   raw_webhook_data: Dict[str, Any]) -> tuple[Message, bool]:
+        """
+        Create email message record with full email metadata
+        """
+        with transaction.atomic():
+            # Check for existing message (prevent duplicates)
+            existing_message = Message.objects.select_for_update().filter(
+                external_message_id=normalized_email['message_id'],
+                conversation=conversation
+            ).first()
+            
+            if existing_message:
+                return existing_message, False
+            
+            # Prepare email-specific metadata
+            email_metadata = {
+                'raw_webhook_data': raw_webhook_data,
+                'email_specific': True,
+                'folder': normalized_email['folder'],
+                'labels': normalized_email['labels'],
+                'read_status': normalized_email['read'],
+                'recipients': normalized_email['recipients'],
+                'sender_info': normalized_email['sender_info'],
+                'attachment_count': len(normalized_email['attachments']),
+                'has_attachments': len(normalized_email['attachments']) > 0,
+                'processed_at': timezone.now().isoformat(),
+                'processing_version': 'email_v1.0'
+            }
+            
+            # Add attachment details
+            if normalized_email['attachments']:
+                email_metadata['attachments'] = normalized_email['attachments']
+            
+            # Create email message
+            message = Message.objects.create(
+                channel=conversation.channel,
+                conversation=conversation,
+                external_message_id=normalized_email['message_id'],
+                direction=normalized_email['direction'],
+                content=normalized_email['content'],
+                subject=normalized_email['subject'],
+                contact_email=normalized_email['contact_email'],
+                contact_phone='',  # Emails don't have phone numbers
+                status=normalized_email['status'],
+                metadata=email_metadata,
+                sent_at=normalized_email['timestamp'] if normalized_email['direction'] == MessageDirection.OUTBOUND else None,
+                received_at=normalized_email['timestamp'] if normalized_email['direction'] == MessageDirection.INBOUND else None
+            )
+            
+            logger.info(f"Created email message {message.id}: {normalized_email['direction']} "
+                       f"from {normalized_email['contact_email']} "
+                       f"subject: {normalized_email['subject'][:50]}")
+            
+            return message, True
+    
+    def _attempt_email_contact_resolution(self, message: Message, normalized_email: Dict[str, Any]):
+        """
+        Attempt to resolve email contact using email address and name
+        """
+        try:
+            # Import here to avoid circular imports
+            from communications.resolvers.contact_identifier import ContactIdentifier
+            
+            contact_identifier = ContactIdentifier(tenant_id=1)  # TODO: Get actual tenant ID
+            
+            # Prepare contact data for email resolution
+            contact_data = {
+                'email': normalized_email['contact_email'],
+                'name': normalized_email['contact_name'],
+                'channel_type': 'email'
+            }
+            
+            # Filter out empty values
+            contact_data = {k: v for k, v in contact_data.items() if v}
+            
+            if contact_data:
+                contact_record = contact_identifier.identify_contact(contact_data)
+                
+                if contact_record:
+                    # Link message to contact
+                    message.contact_record = contact_record
+                    message.save(update_fields=['contact_record'])
+                    
+                    # Update conversation if needed
+                    if not message.conversation.primary_contact_record:
+                        message.conversation.primary_contact_record = contact_record
+                        message.conversation.save(update_fields=['primary_contact_record'])
+                    
+                    # Update metadata
+                    if not message.metadata:
+                        message.metadata = {}
+                    message.metadata['email_contact_resolved'] = True
+                    message.metadata['contact_record_id'] = contact_record.id
+                    message.save(update_fields=['metadata'])
+                    
+                    logger.info(f"Auto-resolved email message {message.id} to contact {contact_record.id}")
+                else:
+                    logger.debug(f"No matching contact found for email {normalized_email['contact_email']}")
+            
+        except Exception as e:
+            logger.warning(f"Error in email contact resolution for message {message.id}: {e}")
+    
+    def _trigger_email_real_time_update(self, message: Message, conversation: Conversation, user):
+        """
+        Trigger real-time updates for email messages in unified inbox
+        """
+        try:
+            from channels.layers import get_channel_layer
+            from asgiref.sync import async_to_sync
+            
+            channel_layer = get_channel_layer()
+            if not channel_layer:
+                logger.debug("No channel layer available for email broadcasting")
+                return
+            
+            # Prepare email message data for frontend
+            message_data = {
+                'type': 'message_update',
+                'message': {
+                    'id': str(message.id),
+                    'type': 'email',  # Important: email type for proper frontend handling
+                    'subject': message.subject,  # Email-specific: subject line
+                    'content': message.content,
+                    'direction': message.direction,
+                    'contact_email': message.contact_email,
+                    'sender': {
+                        'name': message.metadata.get('sender_info', {}).get('name', 'Unknown') if message.metadata else 'Unknown',
+                        'email': message.contact_email,
+                        'avatar': None  # TODO: Email avatars/Gravatar
+                    },
+                    'recipient': {
+                        'name': 'Business',
+                        'email': self.business_email
+                    },
+                    'timestamp': message.created_at.isoformat(),
+                    'is_read': message.metadata.get('read_status', False) if message.metadata else False,
+                    'is_starred': False,  # TODO: Email starring
+                    'conversation_id': str(conversation.id),
+                    'account_id': conversation.channel.unipile_account_id,
+                    'external_id': message.external_message_id,
+                    'metadata': {
+                        'email_thread_id': conversation.external_thread_id,
+                        'folder': message.metadata.get('folder', '') if message.metadata else '',
+                        'labels': message.metadata.get('labels', []) if message.metadata else [],
+                        'recipients': message.metadata.get('recipients', {}) if message.metadata else {},
+                        'attachment_count': message.metadata.get('attachment_count', 0) if message.metadata else 0
+                    },
+                    'channel': {
+                        'name': conversation.channel.name,
+                        'channel_type': 'email'
+                    },
+                    'attachments': message.metadata.get('attachments', []) if message.metadata else []
+                }
+            }
+            
+            # Broadcast to conversation room
+            room_name = f"conversation_{conversation.id}"
+            async_to_sync(channel_layer.group_send)(room_name, message_data)
+            
+            # Broadcast to inbox for conversation list updates
+            inbox_room = f"channel_{conversation.channel.id}"
+            async_to_sync(channel_layer.group_send)(inbox_room, {
+                'type': 'new_conversation',
+                'conversation': {
+                    'id': str(conversation.id),
+                    'last_message': message_data['message'],
+                    'unread_count': conversation.messages.filter(
+                        direction=MessageDirection.INBOUND,
+                        status__in=[MessageStatus.DELIVERED, MessageStatus.SENT]
+                    ).exclude(status=MessageStatus.READ).count(),
+                    'type': 'email',
+                    'created_at': conversation.created_at.isoformat(),
+                    'updated_at': timezone.now().isoformat(),
+                    'participants': [{
+                        'name': message.metadata.get('sender_info', {}).get('name', 'Unknown') if message.metadata else 'Unknown',
+                        'email': message.contact_email,
+                        'platform': 'email'
+                    }] if message.contact_email else []
+                }
+            })
+            
+            logger.info(f"Broadcasted real-time email message to rooms: {room_name}, {inbox_room}")
+            
+        except Exception as e:
+            logger.warning(f"Failed to broadcast real-time email message: {e}")
+    
+    def handle_email_sent(self, account_id: str, webhook_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Handle outbound email confirmation webhook
+        """
+        try:
+            external_message_id = webhook_data.get('message_id') or webhook_data.get('id')
+            
+            if external_message_id:
+                message = Message.objects.filter(
+                    external_message_id=external_message_id
+                ).first()
+                
+                if message:
+                    message.status = MessageStatus.SENT
+                    message.sent_at = timezone.now()
+                    message.save(update_fields=['status', 'sent_at'])
+                    
+                    logger.info(f"Updated email message {message.id} status to sent")
+                    return {'success': True, 'message_id': str(message.id)}
+            
+            logger.warning(f"No email message record found for external ID {external_message_id}")
+            return {'success': True, 'note': 'No local email message record to update'}
+            
+        except Exception as e:
+            logger.error(f"Error handling email sent for account {account_id}: {e}")
+            return {'success': False, 'error': str(e)}
+    
+    def handle_email_delivered(self, account_id: str, webhook_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Handle email delivery confirmation webhook
+        """
+        try:
+            external_message_id = webhook_data.get('message_id') or webhook_data.get('id')
+            
+            if external_message_id:
+                message = Message.objects.filter(
+                    external_message_id=external_message_id
+                ).first()
+                
+                if message:
+                    message.status = MessageStatus.DELIVERED
+                    message.save(update_fields=['status'])
+                    
+                    logger.info(f"Updated email message {message.id} status to delivered")
+                    return {'success': True, 'message_id': str(message.id)}
+            
+            logger.warning(f"No email message record found for external ID {external_message_id}")
+            return {'success': True, 'note': 'No local email message record to update'}
+            
+        except Exception as e:
+            logger.error(f"Error handling email delivered for account {account_id}: {e}")
+            return {'success': False, 'error': str(e)}
+    
+    def handle_email_read(self, account_id: str, webhook_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Handle email read receipt webhook
+        """
+        try:
+            external_message_id = webhook_data.get('message_id') or webhook_data.get('id')
+            
+            if external_message_id:
+                message = Message.objects.filter(
+                    external_message_id=external_message_id
+                ).first()
+                
+                if message:
+                    # For outbound emails, mark as read when recipient reads it
+                    if message.direction == MessageDirection.OUTBOUND:
+                        message.status = MessageStatus.READ
+                        message.save(update_fields=['status'])
+                        logger.info(f"Updated outbound email message {message.id} status to read")
+                    else:
+                        logger.info(f"Read receipt for inbound email message {message.id}")
+                    
+                    return {'success': True, 'message_id': str(message.id)}
+            
+            logger.warning(f"No email message record found for external ID {external_message_id}")
+            return {'success': True, 'note': 'No local email message record to update'}
+            
+        except Exception as e:
+            logger.error(f"Error handling email read for account {account_id}: {e}")
+            return {'success': False, 'error': str(e)}
+
+
+# Global email handler instance
+email_webhook_handler = EmailWebhookHandler()

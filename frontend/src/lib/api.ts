@@ -721,7 +721,7 @@ export const communicationsApi = {
     api.get(`/api/v1/communications/local-inbox/conversations/${conversationId}/messages/`),
   
   markConversationAsRead: (conversationId: string) =>
-    api.post(`/api/v1/communications/conversations/${conversationId}/mark-read/`),
+    api.post(`/api/v1/communications/local-inbox/conversations/${conversationId}/mark-read/`),
   
   sendMessage: (data: {
     conversation_id?: string
@@ -730,7 +730,7 @@ export const communicationsApi = {
     attachments?: any[]
     recipient?: string
     subject?: string
-  }) => api.post('/api/v1/communications/messages/send/', data),
+  }) => api.post('/api/v1/communications/inbox/send-message/', data),
 
   // Attachment management
   uploadAttachment: (formData: FormData) => {
@@ -763,7 +763,7 @@ export const communicationsApi = {
     attachments?: any[]
     recipient?: string
     subject?: string
-  }) => api.post('/api/v1/communications/messages/send-with-attachments/', data),
+  }) => api.post('/api/v1/communications/inbox/send-message-with-attachments/', data),
 
   deleteAttachment: (attachmentId: string) => 
     api.delete(`/api/v1/communications/attachments/${attachmentId}/`),

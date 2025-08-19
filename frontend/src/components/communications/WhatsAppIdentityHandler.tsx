@@ -56,7 +56,7 @@ export class WhatsAppIdentityHandler {
   }
 
   /**
-   * Extract contact name from WhatsApp metadata with enhanced fallback logic
+   * Extract contact name using provider logic - the contact we're speaking to
    */
   static getContactName(message: WhatsAppMessage, isBusinessSide: boolean = false): string {
     // If this is the business side, show business name
@@ -64,23 +64,64 @@ export class WhatsAppIdentityHandler {
       return "OneOTalent Business";
     }
 
-    // For customer contacts, try various name sources
+    // For customer contacts, use provider logic - always get the contact we're speaking to
     const metadata = message.metadata || {};
+    const rawWebhookData = metadata.raw_webhook_data || {};
     
-    // 1. Try contact_name from metadata
-    if (metadata.contact_name && metadata.contact_name !== message.contact_email) {
+    // 1. Try contact_name from metadata (extracted using provider logic)
+    if (metadata.contact_name && 
+        metadata.contact_name !== message.contact_email &&
+        !metadata.contact_name.includes('@s.whatsapp.net') &&
+        !metadata.contact_name.match(/^\d+$/)) {
       return metadata.contact_name;
     }
 
-    // 2. Try extracting from from/to fields
-    if (metadata.from && metadata.from !== message.contact_email) {
-      return metadata.from.replace('@s.whatsapp.net', '');
+    // 2. Extract from raw webhook data using provider logic
+    if (rawWebhookData.provider_chat_id) {
+      const providerChatId = rawWebhookData.provider_chat_id;
+      
+      // Find attendee matching provider_chat_id
+      const attendees = rawWebhookData.attendees || [];
+      for (const attendee of attendees) {
+        if (attendee.attendee_provider_id === providerChatId && 
+            attendee.attendee_name &&
+            attendee.attendee_name !== attendee.attendee_provider_id &&
+            !attendee.attendee_name.includes('@s.whatsapp.net') &&
+            !attendee.attendee_name.match(/^\d+$/)) {
+          return attendee.attendee_name;
+        }
+      }
+      
+      // Check if sender matches provider_chat_id (inbound case)
+      const sender = rawWebhookData.sender;
+      if (sender && sender.attendee_provider_id === providerChatId &&
+          sender.attendee_name &&
+          sender.attendee_name !== sender.attendee_provider_id &&
+          !sender.attendee_name.includes('@s.whatsapp.net') &&
+          !sender.attendee_name.match(/^\d+$/)) {
+        return sender.attendee_name;
+      }
     }
 
-    // 3. Extract and format phone number from email format
-    const contactEmail = message.contact_email;
-    if (contactEmail && contactEmail.includes('@s.whatsapp.net')) {
-      const phoneNumber = contactEmail.replace('@s.whatsapp.net', '');
+    // 3. Extract and format phone number from contact_phone field (new approach)
+    let phoneNumber = message.contact_phone;
+    
+    // Fallback to contact_email format for legacy messages
+    if (!phoneNumber) {
+      const contactEmail = message.contact_email;
+      if (contactEmail && contactEmail.includes('@s.whatsapp.net')) {
+        phoneNumber = contactEmail.replace('@s.whatsapp.net', '');
+        // Add country code formatting if not present
+        if (!phoneNumber.startsWith('+')) {
+          phoneNumber = `+${phoneNumber}`;
+        }
+      }
+    }
+    
+    // 4. Check known contact mapping if we have a phone number
+    if (phoneNumber) {
+      // Remove + prefix for lookup
+      const cleanPhone = phoneNumber.replace('+', '');
       
       // Known contact mapping (based on our analysis)
       const knownContacts: Record<string, string> = {
@@ -93,21 +134,22 @@ export class WhatsAppIdentityHandler {
       };
       
       // Check if this is a known contact
-      if (knownContacts[phoneNumber]) {
-        return knownContacts[phoneNumber];
+      if (knownContacts[cleanPhone]) {
+        return knownContacts[cleanPhone];
       }
       
       // Format phone number nicely (South African format)
-      if (phoneNumber.startsWith('27') && phoneNumber.length === 11) {
-        return `+${phoneNumber.slice(0, 2)} ${phoneNumber.slice(2, 5)} ${phoneNumber.slice(5, 8)} ${phoneNumber.slice(8)}`;
+      if (cleanPhone.startsWith('27') && cleanPhone.length === 11) {
+        return `+${cleanPhone.slice(0, 2)} ${cleanPhone.slice(2, 5)} ${cleanPhone.slice(5, 8)} ${cleanPhone.slice(8)}`;
       }
       
       // Format UK numbers
-      if (phoneNumber.startsWith('44') && phoneNumber.length >= 10) {
-        return `+${phoneNumber.slice(0, 2)} ${phoneNumber.slice(2, 5)} ${phoneNumber.slice(5, 8)} ${phoneNumber.slice(8)}`;
+      if (cleanPhone.startsWith('44') && cleanPhone.length >= 10) {
+        return `+${cleanPhone.slice(0, 2)} ${cleanPhone.slice(2, 5)} ${cleanPhone.slice(5, 8)} ${cleanPhone.slice(8)}`;
       }
       
-      return `+${phoneNumber}`;
+      // Return formatted phone with + prefix
+      return phoneNumber.startsWith('+') ? phoneNumber : `+${phoneNumber}`;
     }
 
     // 4. Fallback to email/ID or unknown

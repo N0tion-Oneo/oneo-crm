@@ -352,13 +352,54 @@ class MessageSyncService:
             ).first()
             
             if existing_message:
-                # Update metadata for existing message
-                existing_message.metadata.update({
-                    'unipile_data': message_data,
-                    'last_sync': django_timezone.now().isoformat()
-                })
-                existing_message.save(update_fields=['metadata'])
-                return existing_message
+                # Merge webhook data with existing API-sent message data
+                # Preserve API-sent metadata while adding webhook data
+                current_metadata = existing_message.metadata or {}
+                
+                # Check if this is an API-sent message
+                is_api_sent = current_metadata.get('sent_via_api', False)
+                
+                if is_api_sent:
+                    # Preserve API metadata and merge webhook data
+                    merged_metadata = current_metadata.copy()
+                    merged_metadata.update({
+                        'raw_webhook_data': message_data,
+                        'webhook_processed_at': django_timezone.now().isoformat(),
+                        'last_sync': django_timezone.now().isoformat(),
+                        # Add extracted contact info from webhook if not present
+                        'extracted_phone': self._extract_phone_from_webhook(message_data),
+                    })
+                    
+                    # Update contact info if webhook has better data
+                    webhook_contact_name = self._extract_contact_name_from_webhook(message_data, user_channel_connection)
+                    if webhook_contact_name and not merged_metadata.get('contact_name'):
+                        merged_metadata['contact_name'] = webhook_contact_name
+                    
+                    existing_message.metadata = merged_metadata
+                    
+                    # Update status and timestamps from webhook (webhook wins for delivery status)
+                    webhook_status = self._extract_status_from_webhook(message_data)
+                    if webhook_status:
+                        existing_message.status = webhook_status
+                    
+                    # Update contact_phone field if webhook has better data
+                    webhook_phone = self._extract_phone_from_webhook(message_data)
+                    if webhook_phone and not existing_message.contact_phone:
+                        existing_message.contact_phone = webhook_phone
+                    
+                    existing_message.save(update_fields=['metadata', 'status', 'contact_phone'])
+                    
+                    logger.info(f"Merged webhook data with API-sent message {existing_message.id}")
+                    return existing_message
+                
+                else:
+                    # Regular webhook-only message update
+                    existing_message.metadata.update({
+                        'unipile_data': message_data,
+                        'last_sync': django_timezone.now().isoformat()
+                    })
+                    existing_message.save(update_fields=['metadata'])
+                    return existing_message
             
             # Extract message details
             content = message_data.get('text') or message_data.get('content') or ''
@@ -573,6 +614,67 @@ class MessageSyncService:
                 'success': False,
                 'error': str(e)
             }
+    
+    def _extract_phone_from_webhook(self, message_data: Dict[str, Any]) -> Optional[str]:
+        """Extract phone number from webhook data using provider logic"""
+        try:
+            provider_chat_id = message_data.get('provider_chat_id', '')
+            if '@s.whatsapp.net' in provider_chat_id:
+                phone_number = provider_chat_id.replace('@s.whatsapp.net', '')
+                clean_phone = ''.join(c for c in phone_number if c.isdigit())
+                if len(clean_phone) >= 7:
+                    return f"+{clean_phone}"
+            return None
+        except Exception as e:
+            logger.error(f"Error extracting phone from webhook: {e}")
+            return None
+    
+    def _extract_contact_name_from_webhook(self, message_data: Dict[str, Any], connection: UserChannelConnection) -> Optional[str]:
+        """Extract contact name from webhook data using provider logic"""
+        try:
+            provider_chat_id = message_data.get('provider_chat_id')
+            if not provider_chat_id:
+                return None
+            
+            # Find attendee matching provider_chat_id (the contact we're speaking to)
+            attendees = message_data.get('attendees', [])
+            for attendee in attendees:
+                if attendee.get('attendee_provider_id') == provider_chat_id:
+                    attendee_name = attendee.get('attendee_name', '')
+                    # Validate it's not a phone/ID
+                    if attendee_name and not ('@s.whatsapp.net' in attendee_name or attendee_name.isdigit()):
+                        return attendee_name
+            
+            # Also check sender if it matches provider_chat_id (inbound case)
+            sender = message_data.get('sender', {})
+            if sender.get('attendee_provider_id') == provider_chat_id:
+                sender_name = sender.get('attendee_name', '')
+                if sender_name and not ('@s.whatsapp.net' in sender_name or sender_name.isdigit()):
+                    return sender_name
+            
+            return None
+        except Exception as e:
+            logger.error(f"Error extracting contact name from webhook: {e}")
+            return None
+    
+    def _extract_status_from_webhook(self, message_data: Dict[str, Any]) -> Optional[str]:
+        """Extract message status from webhook data"""
+        try:
+            # Check webhook event type or status indicators
+            event = message_data.get('event', '')
+            
+            if event == 'message_delivered' or message_data.get('delivered'):
+                return MessageStatus.DELIVERED
+            elif event == 'message_read' or message_data.get('read'):
+                return MessageStatus.READ
+            elif event == 'message_sent':
+                return MessageStatus.SENT
+            
+            # Default to sent for outbound messages
+            return MessageStatus.SENT
+        except Exception as e:
+            logger.error(f"Error extracting status from webhook: {e}")
+            return None
 
 
 # Global service instance

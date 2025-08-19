@@ -23,9 +23,11 @@ from .provider_views import (
 )
 from .inbox_views import (
     get_unified_inbox,
-    get_conversation_messages,
     mark_conversation_as_read,
     send_message
+)
+from .conversation_messages import (
+    get_conversation_messages
 )
 from .attachment_views import (
     AttachmentUploadView,
@@ -51,7 +53,8 @@ from .message_sync_views import (
 from .local_inbox_views import (
     get_local_unified_inbox,
     get_local_conversation_messages,
-    get_inbox_stats
+    get_inbox_stats,
+    mark_local_conversation_as_read
 )
 from .unified_inbox_views import (
     get_unified_inbox,
@@ -80,13 +83,24 @@ router = DefaultRouter()
 router.register(r'accounts', AccountConnectionViewSet, basename='account-connection')
 router.register(r'connections', CommunicationConnectionViewSet, basename='communication-connection')
 router.register(r'drafts', MessageDraftViewSet, basename='message-draft')
-router.register(r'messages', MessageViewSet, basename='message')
 router.register(r'channels', ChannelViewSet, basename='channel')
 router.register(r'conversations', ConversationViewSet, basename='conversation')
 router.register(r'analytics', CommunicationAnalyticsViewSet, basename='communication-analytics')
 router.register(r'contact-resolution', ContactResolutionMonitoringView, basename='contact-resolution')
 
+# Register messages ViewSet AFTER function-based views to avoid conflicts
+router.register(r'messages', MessageViewSet, basename='message')
+
 urlpatterns = [
+    # Draft endpoints (MUST come before router to avoid conflicts with /drafts/{id}/ pattern)
+    path('drafts/auto-save/', auto_save_draft, name='auto-save-draft'),
+    path('drafts/manual-save/', save_manual_draft, name='save-manual-draft'),
+    path('drafts/context/', get_draft_for_context, name='get-draft-for-context'),
+    path('drafts/<uuid:draft_id>/delete/', delete_draft, name='delete-draft'),
+    path('drafts/cleanup/', cleanup_stale_drafts, name='cleanup-stale-drafts'),
+    path('draft-settings/', DraftSettingsView.as_view(), name='draft-settings'),
+    
+    # Router URLs (includes /drafts/ ViewSet, but specific paths above take precedence)
     path('', include(router.urls)),
     
     # Account management endpoints for frontend (non-conflicting paths)
@@ -108,24 +122,18 @@ urlpatterns = [
     path('providers/<str:provider_type>/features/', get_provider_features, name='provider-features'),
     path('tenant-config/', update_tenant_config, name='update-tenant-config'),
     
+    # Message sending endpoints (MUST come before router to avoid conflicts with ViewSet actions)
+    path('inbox/send-message/', send_message, name='send-message'),
+    path('inbox/send-message-with-attachments/', send_message_with_attachments, name='send-message-with-attachments'),
+    
     # Unified Inbox endpoints
     path('inbox/', get_unified_inbox, name='unified-inbox'),
     path('conversations/<str:conversation_id>/messages/', get_conversation_messages, name='conversation-messages'),
     path('conversations/<str:conversation_id>/mark-read/', mark_conversation_as_read, name='mark-conversation-read'),
-    path('messages/send/', send_message, name='send-message'),
     
     # Attachment endpoints
     path('attachments/upload/', AttachmentUploadView.as_view(), name='attachment-upload'),
-    path('messages/send-with-attachments/', send_message_with_attachments, name='send-message-with-attachments'),
     path('attachments/<str:attachment_id>/', delete_attachment, name='delete-attachment'),
-    
-    # Draft endpoints
-    path('drafts/auto-save/', auto_save_draft, name='auto-save-draft'),
-    path('drafts/manual-save/', save_manual_draft, name='save-manual-draft'),
-    path('drafts/context/', get_draft_for_context, name='get-draft-for-context'),
-    path('drafts/<uuid:draft_id>/delete/', delete_draft, name='delete-draft'),
-    path('drafts/cleanup/', cleanup_stale_drafts, name='cleanup-stale-drafts'),
-    path('draft-settings/', DraftSettingsView.as_view(), name='draft-settings'),
     
     # Message sync endpoints
     path('sync/messages/', sync_account_messages, name='sync-all-messages'),
@@ -141,6 +149,7 @@ urlpatterns = [
     # Local inbox endpoints (using synced database messages)
     path('local-inbox/', get_local_unified_inbox, name='local-unified-inbox'),
     path('local-inbox/conversations/<str:conversation_id>/messages/', get_local_conversation_messages, name='local-conversation-messages'),
+    path('local-inbox/conversations/<str:conversation_id>/mark-read/', mark_local_conversation_as_read, name='local-mark-conversation-read'),
     path('local-inbox/stats/', get_inbox_stats, name='inbox-stats'),
     
     # Unified Record-centric inbox endpoints

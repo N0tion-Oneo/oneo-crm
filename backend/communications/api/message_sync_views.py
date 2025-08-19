@@ -210,66 +210,23 @@ def sync_all_messages(request):
 
 
 @api_view(['POST'])
+@permission_classes([])  # No authentication required for webhooks
 def webhook_message_received(request):
     """
     Handle incoming UniPile webhook for new messages
     This endpoint receives webhooks routed from the global side to tenant side
     
-    NOTE: This will be called from the global webhook router with tenant context
+    NOTE: This endpoint is DEPRECATED in favor of the main webhook handler
+    It's kept for backwards compatibility but should not be used.
     """
-    try:
-        webhook_data = request.data
-        
-        # Extract relevant information from webhook
-        event_type = webhook_data.get('event_type')
-        account_id = webhook_data.get('account_id')
-        message_data = webhook_data.get('data', {})
-        
-        logger.info(f"Received UniPile webhook: {event_type} for account {account_id}")
-        
-        if event_type not in ['message_received', 'message_sent', 'message_delivered', 'message_read']:
-            return Response({'status': 'ignored', 'reason': 'not a message event'})
-        
-        if not account_id:
-            return Response(
-                {'error': 'Missing account_id in webhook data'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Find the user channel connection for this UniPile account
-        try:
-            connection = UserChannelConnection.objects.get(
-                unipile_account_id=account_id,
-                is_active=True
-            )
-        except UserChannelConnection.DoesNotExist:
-            logger.warning(f"No active connection found for UniPile account {account_id}")
-            return Response({
-                'status': 'ignored', 
-                'reason': f'no active connection for account {account_id}'
-            })
-        
-        # Process the webhook message
-        result = async_to_sync(_process_webhook_message)(connection, event_type, message_data)
-        
-        if result['success']:
-            return Response({
-                'status': 'processed',
-                'message_id': result.get('message_id'),
-                'event_type': event_type
-            })
-        else:
-            return Response(
-                {'error': result.get('error', 'Failed to process webhook')},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-        
-    except Exception as e:
-        logger.error(f"Failed to process UniPile webhook: {e}")
-        return Response(
-            {'error': 'Failed to process webhook', 'details': str(e)},
-            status=status.HTTP_500_INTERNAL_SERVER_ERROR
-        )
+    
+    # DEPRECATED: This endpoint is redundant with the main webhook handler
+    # Return early to prevent duplicate processing
+    logger.warning("webhook_message_received endpoint is deprecated, use main webhook handler instead")
+    return Response({
+        'status': 'deprecated',
+        'message': 'This endpoint is deprecated. Use the main webhook handler instead.'
+    })
 
 
 async def _process_webhook_message(

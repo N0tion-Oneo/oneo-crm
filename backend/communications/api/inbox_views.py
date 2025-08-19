@@ -63,8 +63,8 @@ def get_unified_inbox(request):
                 if message_type != 'all' and connection.channel_type != message_type:
                     continue
                 
-                # Get conversations from this channel
-                channel_conversations = get_channel_conversations(
+                # Get conversations from stored data with provider logic (Approach 2)
+                channel_conversations = get_channel_conversations_from_stored_data(
                     connection, search, status_filter, limit
                 )
                 
@@ -116,13 +116,156 @@ def get_unified_inbox(request):
         )
 
 
-def get_channel_conversations(
+def get_channel_conversations_from_stored_data(
     connection: UserChannelConnection, 
     search: str, 
     status_filter: str, 
     limit: int
 ) -> List[Dict[str, Any]]:
-    """Get conversations from a specific channel connection"""
+    """Get conversations from stored messages using provider logic (Approach 2)"""
+    try:
+        from django.db.models import Max, Count, Q
+        from communications.models import Conversation, Message
+        from communications.utils.phone_extractor import get_display_name_or_phone
+        
+        # Get conversations for this connection's channel that have messages
+        conversations_qs = Conversation.objects.filter(
+            channel__unipile_account_id=connection.unipile_account_id,
+            channel__channel_type=connection.channel_type,
+            messages__isnull=False  # Only conversations with messages
+        ).annotate(
+            latest_message_at=Max('messages__created_at'),
+            calculated_unread_count=Count('messages', filter=Q(messages__status='delivered', messages__direction='inbound'))
+        ).distinct().order_by('-latest_message_at')
+        
+        conversations = []
+        
+        for conversation in conversations_qs[:limit * 2]:  # Get extra for filtering
+            # Get the latest message for preview
+            latest_message = conversation.messages.order_by('-created_at').first()
+            if not latest_message:
+                continue
+            
+            # Extract contact info using NEW group chat-aware provider logic
+            contact_name = None
+            contact_phone = None
+            contact_provider_id = None
+            
+            # Method 1: Use stored contact data from message metadata
+            if latest_message.metadata and latest_message.metadata.get('contact_name'):
+                stored_name = latest_message.metadata['contact_name']
+                # Validate it's not a phone/ID
+                if not ('@s.whatsapp.net' in stored_name or stored_name.isdigit() or len(stored_name) > 20):
+                    contact_name = stored_name
+            
+            # Method 2: Extract using NEW group chat-aware provider logic
+            if not contact_name and latest_message.metadata and latest_message.metadata.get('raw_webhook_data'):
+                raw_data = latest_message.metadata['raw_webhook_data']
+                
+                # Use our updated provider logic functions
+                from communications.utils.phone_extractor import (
+                    extract_whatsapp_contact_name,
+                    extract_whatsapp_phone_from_webhook
+                )
+                
+                # Extract contact name (handles both 1-on-1 and group chats)
+                extracted_name = extract_whatsapp_contact_name(raw_data)
+                if extracted_name:
+                    contact_name = extracted_name
+                
+                # Extract contact phone (empty for group chats, phone for 1-on-1)
+                extracted_phone = extract_whatsapp_phone_from_webhook(raw_data)
+                if extracted_phone:
+                    contact_phone = extracted_phone
+                    contact_provider_id = contact_phone.replace('+', '') + '@s.whatsapp.net'
+                elif raw_data.get('is_group'):
+                    # For group chats, use group ID as provider_id
+                    contact_provider_id = raw_data.get('provider_chat_id', '')
+            
+            # Method 3: Use contact_phone field from message
+            if not contact_phone and latest_message.contact_phone:
+                contact_phone = latest_message.contact_phone
+                if not contact_provider_id:
+                    contact_provider_id = contact_phone.replace('+', '') + '@s.whatsapp.net' if connection.channel_type == 'whatsapp' else contact_phone
+            
+            # Method 4: Format phone as fallback name for 1-on-1 chats only
+            if not contact_name and contact_phone:
+                contact_name = get_display_name_or_phone('', contact_phone)
+            
+            # Method 5: Skip conversations without any contact information
+            if not contact_name:
+                # Skip conversations that we can't identify
+                # This filters out legacy conversations with missing data
+                continue
+            
+            # Apply search filter
+            if search and search.lower() not in (
+                (contact_name or '').lower() + 
+                (latest_message.content or '').lower() +
+                (contact_phone or '').lower()
+            ):
+                continue
+            
+            # Create conversation object with provider logic
+            conversation_data = {
+                'id': f"{connection.channel_type}_{conversation.id}",
+                'external_id': conversation.external_thread_id,
+                'type': connection.channel_type,
+                'participants': [
+                    {
+                        'name': contact_name or 'Unknown Contact',
+                        'email': latest_message.contact_email if latest_message.contact_email else None,
+                        'avatar': None,  # Could extract from raw_webhook_data if needed
+                        'platform': connection.channel_type,
+                        'platform_id': contact_provider_id,
+                        'provider_id': contact_provider_id
+                    }
+                ] if contact_name or contact_phone else [],
+                'last_message': {
+                    'id': str(latest_message.id),
+                    'type': connection.channel_type,
+                    'content': latest_message.content or '',
+                    'sender': {
+                        'name': contact_name if latest_message.direction == 'inbound' else 'You',
+                        'platform_id': contact_provider_id if latest_message.direction == 'inbound' else connection.unipile_account_id
+                    },
+                    'timestamp': latest_message.created_at.isoformat() if latest_message.created_at else None,
+                    'is_read': latest_message.status in ['read', 'delivered'],
+                    'attachments': []  # Could extract from raw_webhook_data if needed
+                },
+                'unread_count': conversation.calculated_unread_count,
+                'message_count': conversation.message_count,
+                'created_at': conversation.created_at.isoformat() if conversation.created_at else None,
+                'updated_at': conversation.last_message_at.isoformat() if conversation.last_message_at else None
+            }
+            
+            # Apply status filter
+            if status_filter == 'unread' and conversation.calculated_unread_count == 0:
+                continue
+            elif status_filter == 'starred':
+                # TODO: Implement starred conversations in stored data
+                continue
+            
+            conversations.append(conversation_data)
+            
+            if len(conversations) >= limit:
+                break
+        
+        return conversations
+        
+    except Exception as e:
+        logger.error(f"Error getting stored conversations for {connection.channel_type}: {e}")
+        # Fallback to live API if stored data fails
+        return get_channel_conversations_live_api(connection, search, status_filter, limit)
+
+
+def get_channel_conversations_live_api(
+    connection: UserChannelConnection, 
+    search: str, 
+    status_filter: str, 
+    limit: int
+) -> List[Dict[str, Any]]:
+    """Get conversations from live UniPile API (fallback method)"""
     try:
         client = unipile_service.get_client()
         
@@ -154,22 +297,60 @@ def get_channel_conversations(
                 ):
                     continue
                 
-                # Create conversation object
+                # Create conversation object using provider logic
+                # For WhatsApp, the provider_chat_id represents the contact we're speaking to
+                provider_chat_id = chat.get('provider_chat_id') or chat.get('id')
+                
+                # Find the contact (provider) from attendees
+                contact_participant = None
+                for att in chat.get('attendees', []):
+                    att_provider_id = att.get('attendee_provider_id') or att.get('id')
+                    # For WhatsApp, match the provider_chat_id (contact we're speaking to)
+                    if connection.channel_type == 'whatsapp':
+                        if att_provider_id == provider_chat_id:
+                            contact_participant = att
+                            break
+                    else:
+                        # For other platforms, exclude business account
+                        if att.get('id') != connection.unipile_account_id:
+                            contact_participant = att
+                            break
+                
+                # Create participants array with the contact
+                participants = []
+                if contact_participant:
+                    # Use provider logic for name extraction
+                    contact_name = contact_participant.get('attendee_name') or contact_participant.get('display_name') or contact_participant.get('username')
+                    contact_provider_id = contact_participant.get('attendee_provider_id') or contact_participant.get('id')
+                    
+                    # Don't use phone numbers or JIDs as names
+                    if contact_name and ('@s.whatsapp.net' in contact_name or contact_name.isdigit()):
+                        contact_name = None
+                    
+                    # Fallback to formatted phone for WhatsApp
+                    if not contact_name and connection.channel_type == 'whatsapp' and contact_provider_id:
+                        if '@s.whatsapp.net' in contact_provider_id:
+                            phone = contact_provider_id.replace('@s.whatsapp.net', '')
+                            # Format phone with country code
+                            clean_phone = ''.join(c for c in phone if c.isdigit())
+                            if len(clean_phone) >= 7:
+                                from communications.utils.phone_extractor import get_display_name_or_phone
+                                contact_name = get_display_name_or_phone('', f"+{clean_phone}")
+                    
+                    participants.append({
+                        'name': contact_name or 'Unknown Contact',
+                        'email': contact_participant.get('email'),
+                        'avatar': contact_participant.get('profile_picture_url'),
+                        'platform': connection.channel_type,
+                        'platform_id': contact_participant.get('id'),
+                        'provider_id': contact_provider_id
+                    })
+                
                 conversation = {
                     'id': f"{connection.channel_type}_{chat.get('id')}",
                     'external_id': chat.get('id'),
                     'type': connection.channel_type,
-                    'participants': [
-                        {
-                            'name': att.get('display_name', att.get('username', 'Unknown')),
-                            'email': att.get('email'),
-                            'avatar': att.get('profile_picture_url'),
-                            'platform': connection.channel_type,
-                            'platform_id': att.get('id')
-                        }
-                        for att in chat.get('attendees', [])
-                        if att.get('id') != connection.unipile_account_id  # Exclude self
-                    ],
+                    'participants': participants,
                     'last_message': {
                         'id': last_message.get('id'),
                         'type': connection.channel_type,
@@ -289,96 +470,111 @@ def get_channel_conversations(
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def get_conversation_messages(request, conversation_id):
-    """Get messages for a specific conversation"""
+    """Get messages for a specific conversation from database records"""
     try:
-        # Parse conversation ID to get channel type and external ID
-        if '_' not in conversation_id:
-            return Response(
-                {'error': 'Invalid conversation ID format'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+        # Import models here to avoid circular imports
+        from communications.models import Message, Conversation
         
-        channel_type, external_id = conversation_id.split('_', 1)
+        # Try to find conversation by UUID first
+        import uuid
+        import re
+        uuid_pattern = r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
         
-        # Find the user's connection for this channel
-        try:
-            connection = UserChannelConnection.objects.get(
-                user=request.user,
-                channel_type=channel_type,
-                auth_status='authenticated',
-                account_status='active'
-            )
-        except UserChannelConnection.DoesNotExist:
-            return Response(
-                {'error': 'Channel connection not found'},
-                status=status.HTTP_404_NOT_FOUND
-            )
+        conversation = None
         
-        client = unipile_service.get_client()
+        if re.match(uuid_pattern, conversation_id, re.IGNORECASE):
+            # UUID format - look up conversation directly
+            try:
+                conversation = Conversation.objects.select_related('channel').get(id=conversation_id)
+            except Conversation.DoesNotExist:
+                return Response(
+                    {'error': 'Conversation not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+        else:
+            # Legacy format: channel_type_external_id
+            if '_' not in conversation_id:
+                return Response(
+                    {'error': 'Invalid conversation ID format'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            channel_type, external_id = conversation_id.split('_', 1)
+            
+            # Find the user's connection for this channel
+            try:
+                connection = UserChannelConnection.objects.get(
+                    user=request.user,
+                    channel_type=channel_type,
+                    auth_status='authenticated',
+                    account_status='active'
+                )
+            except UserChannelConnection.DoesNotExist:
+                return Response(
+                    {'error': 'Channel connection not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Find conversation by external thread ID
+            try:
+                conversation = Conversation.objects.select_related('channel').get(
+                    external_thread_id=external_id,
+                    channel__unipile_account_id=connection.unipile_account_id
+                )
+            except Conversation.DoesNotExist:
+                return Response(
+                    {'error': 'Conversation not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+        
+        # Get messages from database
+        db_messages = Message.objects.filter(
+            conversation=conversation
+        ).order_by('created_at')
+        
         messages = []
         
-        if channel_type in ['linkedin', 'whatsapp', 'instagram', 'messenger', 'telegram']:
-            # Get chat messages
-            messages_response = async_to_sync(client.messaging.get_all_messages)(
-                chat_id=external_id,
-                limit=100
-            )
+        # Convert database messages to API format
+        for msg in db_messages:
+            # Determine message type based on channel
+            msg_type = 'email' if conversation.channel.channel_type in ['gmail', 'outlook', 'mail'] else conversation.channel.channel_type
             
-            for msg in messages_response.get('messages', []):
-                messages.append({
-                    'id': msg.get('id'),
-                    'type': channel_type,
-                    'content': msg.get('text', ''),
-                    'sender': {
-                        'name': msg.get('sender', {}).get('display_name', 'Unknown'),
-                        'email': msg.get('sender', {}).get('email'),
-                        'platform_id': msg.get('sender', {}).get('id')
-                    },
-                    'timestamp': msg.get('timestamp'),
-                    'is_read': msg.get('is_read', False),
-                    'attachments': msg.get('attachments', []),
-                    'conversation_id': conversation_id,
-                    'account_id': connection.unipile_account_id,
-                    'external_id': msg.get('id')
-                })
-        
-        elif channel_type in ['gmail', 'outlook', 'mail']:
-            # Get email thread messages
-            emails_response = async_to_sync(client.email.get_emails)(
-                account_id=connection.unipile_account_id,
-                limit=100
-            )
+            # Extract sender information
+            sender_name = 'Unknown'
+            sender_email = None
             
-            # Filter emails by thread ID
-            for email in emails_response.get('emails', []):
-                if email.get('thread_id') == external_id or email.get('id') == external_id:
-                    messages.append({
-                        'id': email.get('id'),
-                        'type': channel_type,
-                        'subject': email.get('subject'),
-                        'content': email.get('body', ''),
-                        'sender': {
-                            'name': email.get('sender', {}).get('name', 'Unknown'),
-                            'email': email.get('sender', {}).get('email')
-                        },
-                        'recipient': {
-                            'name': email.get('recipient', {}).get('name', 'Unknown'),
-                            'email': email.get('recipient', {}).get('email')
-                        },
-                        'timestamp': email.get('timestamp'),
-                        'is_read': email.get('is_read', False),
-                        'attachments': email.get('attachments', []),
-                        'conversation_id': conversation_id,
-                        'account_id': connection.unipile_account_id,
-                        'external_id': email.get('id')
-                    })
+            if msg.metadata and isinstance(msg.metadata, dict):
+                sender_info = msg.metadata.get('sender_info', {})
+                sender_name = sender_info.get('name', 'Unknown')
+                sender_email = sender_info.get('email')
+            
+            message_data = {
+                'id': str(msg.id),
+                'type': msg_type,
+                'subject': getattr(msg, 'subject', ''),
+                'content': msg.content,
+                'direction': msg.direction.value if hasattr(msg.direction, 'value') else str(msg.direction),
+                'sender': {
+                    'name': sender_name,
+                    'email': sender_email
+                },
+                'timestamp': msg.created_at.isoformat(),
+                'is_read': msg.status.value == 'READ' if hasattr(msg.status, 'value') else str(msg.status) == 'READ',
+                'attachments': [],  # TODO: Extract from metadata if needed
+                'conversation_id': str(conversation.id),
+                'account_id': conversation.channel.unipile_account_id,
+                'external_id': msg.external_message_id or str(msg.id),
+                'metadata': msg.metadata  # Include full metadata for frontend processing
+            }
+            
+            messages.append(message_data)
         
-        # Sort messages by timestamp
+        # Sort messages by timestamp  
         messages.sort(key=lambda x: x.get('timestamp', ''))
         
         return Response({
             'messages': messages,
-            'conversation_id': conversation_id,
+            'conversation_id': str(conversation.id),
             'total_count': len(messages)
         })
         
@@ -514,20 +710,29 @@ def send_message(request):
         message_type = data.get('type')
         attachments = data.get('attachments', [])
         
-        if not all([conversation_id, content, message_type]):
+        # Debug logging
+        logger.info(f"Send message request data: {data}")
+        logger.info(f"conversation_id: {conversation_id}, content: {content and content[:50]}, type: {message_type}")
+        
+        if not all([content, message_type]):
             return Response(
-                {'error': 'Missing required fields'},
+                {'error': 'Missing required fields: content and type are required'},
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        # Parse conversation ID
-        if '_' not in conversation_id:
+        # Parse conversation ID or use message type for new messages
+        if conversation_id and '_' in conversation_id:
+            # Existing conversation
+            channel_type, external_id = conversation_id.split('_', 1)
+        elif not conversation_id and message_type:
+            # New message - use message type as channel type
+            channel_type = message_type
+            external_id = None
+        else:
             return Response(
-                {'error': 'Invalid conversation ID format'},
+                {'error': 'Invalid conversation ID format or message type'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
-        channel_type, external_id = conversation_id.split('_', 1)
         
         # Find the user's connection
         try:
@@ -578,16 +783,36 @@ def send_message(request):
                     }
                 )
                 
-                # Create message record with proper contact_email for recipient
-                # For WhatsApp, extract recipient from external_id
-                recipient_email = ''
+                # Create message record with provider logic for recipient
+                # For WhatsApp, extract recipient info using provider logic
+                contact_phone = ''
+                contact_name = ''
+                
                 if channel_type == 'whatsapp' and external_id:
                     # external_id should be the WhatsApp chat ID (recipient's phone number)
                     if '@s.whatsapp.net' in external_id:
-                        recipient_email = external_id
-                    else:
-                        # Convert phone number to WhatsApp format if needed
-                        recipient_email = f"{external_id}@s.whatsapp.net" if external_id.isdigit() else external_id
+                        # Extract phone number and format with country code
+                        phone_number = external_id.replace('@s.whatsapp.net', '')
+                        clean_phone = ''.join(c for c in phone_number if c.isdigit())
+                        if len(clean_phone) >= 7:
+                            contact_phone = f"+{clean_phone}"
+                    elif external_id.isdigit():
+                        # Direct phone number
+                        contact_phone = f"+{external_id}"
+                    
+                    # Try to get contact name from existing messages in this conversation
+                    if conversation:
+                        existing_message = conversation.messages.filter(
+                            direction=MessageDirection.INBOUND
+                        ).order_by('-created_at').first()
+                        
+                        if existing_message and existing_message.metadata:
+                            contact_name = existing_message.metadata.get('contact_name', '')
+                    
+                    # Fallback to formatted phone if no name found
+                    if not contact_name and contact_phone:
+                        from communications.utils.phone_extractor import get_display_name_or_phone
+                        contact_name = get_display_name_or_phone('', contact_phone)
                 
                 message = Message.objects.create(
                     conversation=conversation,
@@ -596,9 +821,22 @@ def send_message(request):
                     direction=MessageDirection.OUTBOUND,
                     status=MessageStatus.SENT,
                     content=content,
-                    contact_email=recipient_email,  # Set the recipient's contact email
+                    contact_phone=contact_phone,  # Use contact_phone with country code
+                    contact_email='',  # Empty for WhatsApp
                     sent_at=timezone.now(),
-                    metadata={'attachments': attachments} if attachments else {}
+                    metadata={
+                        'contact_name': contact_name,
+                        'processing_version': '2.0_simplified',
+                        'sent_via_api': True,
+                        'attachments': attachments,
+                        'raw_api_response': result,  # Store the raw UniPile API response
+                        'api_request_data': {
+                            'chat_id': external_id,
+                            'text': content,
+                            'attachments': attachments,
+                            'account_id': connection.unipile_account_id
+                        }
+                    }
                 )
                 
                 logger.info(f"Created local message record {message.id} for sent message")
@@ -607,14 +845,113 @@ def send_message(request):
                 logger.error(f"Failed to create local message record: {e}")
                 # Don't fail the send operation, just log the error
         
-        elif channel_type in ['gmail', 'outlook', 'mail']:
-            # For email, we need recipient information
-            # This is a simplified implementation - in practice, you'd extract
-            # recipients from the original conversation
-            return Response(
-                {'error': 'Email replies not yet implemented in unified inbox'},
-                status=status.HTTP_501_NOT_IMPLEMENTED
+        elif channel_type in ['gmail', 'outlook', 'mail', 'email']:
+            # Send email (reply or new)
+            subject = data.get('subject', 'New Message' if not external_id else 'Re: Conversation')
+            to_emails = data.get('to', [])
+            cc_emails = data.get('cc', [])
+            bcc_emails = data.get('bcc', [])
+            recipient = data.get('recipient', '')
+            
+            # If no to_emails but recipient is provided, use recipient
+            if not to_emails and recipient:
+                to_emails = [recipient] if isinstance(recipient, str) else recipient
+            
+            # If no recipients provided and we have a conversation, try to extract from conversation context
+            if not to_emails and external_id:
+                # For email conversations, external_id is typically the thread_id
+                # We need to look up the original conversation to get participants
+                try:
+                    from communications.models import Conversation, Message
+                    conversation = Conversation.objects.filter(
+                        external_thread_id=external_id,
+                        channel__unipile_account_id=connection.unipile_account_id
+                    ).first()
+                    
+                    if conversation:
+                        # Get the most recent inbound message to determine reply recipient
+                        latest_message = Message.objects.filter(
+                            conversation=conversation,
+                            direction='inbound'
+                        ).order_by('-received_at').first()
+                        
+                        if latest_message and latest_message.contact_email:
+                            to_emails = [latest_message.contact_email]
+                
+                except Exception as e:
+                    logger.warning(f"Could not determine email recipients: {e}")
+            
+            # Validate that we have recipients
+            if not to_emails:
+                return Response(
+                    {'error': 'Email recipients must be specified. Provide either "to" array or "recipient" field.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            logger.info(f"Sending email to: {to_emails}, subject: {subject}, external_id: {external_id}")
+            
+            # Send email via UniPile SDK
+            result = async_to_sync(client.email.send_email)(
+                account_id=connection.unipile_account_id,
+                to=to_emails,
+                subject=subject,
+                body=content,
+                cc=cc_emails if cc_emails else None,
+                bcc=bcc_emails if bcc_emails else None,
+                attachments=attachments if attachments else None,
+                is_html=True
             )
+            
+            # Create local database record for sent email
+            try:
+                from communications.models import Channel, Conversation, Message, MessageDirection, MessageStatus
+                
+                # Get or create channel
+                channel, created = Channel.objects.get_or_create(
+                    unipile_account_id=connection.unipile_account_id,
+                    defaults={
+                        'name': f"{connection.account_name} ({channel_type})",
+                        'channel_type': channel_type,
+                        'is_active': True
+                    }
+                )
+                
+                # Get or create conversation
+                thread_id = external_id or result.get('thread_id', '') or f"email_{timezone.now().timestamp()}"
+                conversation, created = Conversation.objects.get_or_create(
+                    channel=channel,
+                    external_thread_id=thread_id,
+                    defaults={
+                        'subject': subject,
+                        'status': 'active',
+                        'priority': 'normal'
+                    }
+                )
+                
+                # Create message record
+                message = Message.objects.create(
+                    conversation=conversation,
+                    channel=channel,
+                    external_message_id=result.get('email_id'),
+                    direction=MessageDirection.OUTBOUND,
+                    status=MessageStatus.SENT,
+                    content=content,
+                    contact_email=', '.join(to_emails),  # Store primary recipients
+                    sent_at=timezone.now(),
+                    metadata={
+                        'subject': subject,
+                        'to': to_emails,
+                        'cc': cc_emails,
+                        'bcc': bcc_emails,
+                        'attachments': attachments
+                    }
+                )
+                
+                logger.info(f"Created local email message record {message.id}")
+                
+            except Exception as e:
+                logger.error(f"Failed to create local email message record: {e}")
+                # Don't fail the send operation, just log the error
         
         else:
             return Response(

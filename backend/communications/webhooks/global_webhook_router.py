@@ -156,18 +156,19 @@ class GlobalWebhookRouterView(View):
             # Construct tenant webhook URL
             domain = tenant_info['domain']
             
-            # Use the same port as the current request if running locally
+            # Route to main localhost domain, not tenant subdomain
+            # Webhooks are handled globally and use tenant context internally
             if 'localhost' in domain:
                 # Extract port from original request
                 host_header = original_request.get_host()
                 if ':' in host_header:
                     port = host_header.split(':')[1]
-                    target_url = f"http://{domain}:{port}/api/v1/communications/webhooks/messages/"
+                    target_url = f"http://localhost:{port}/webhooks/unipile/"
                 else:
-                    target_url = f"http://{domain}/api/v1/communications/webhooks/messages/"
+                    target_url = f"http://localhost/webhooks/unipile/"
             else:
-                # Production URL
-                target_url = f"https://{domain}/api/v1/communications/webhooks/messages/"
+                # Production URL - still route to main domain
+                target_url = f"https://oneocrm.com/webhooks/unipile/"
             
             # Add tenant context to webhook data
             enhanced_webhook_data = {

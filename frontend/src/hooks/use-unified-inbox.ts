@@ -4,11 +4,18 @@ import { api } from '@/lib/api'
 
 // Transform conversations into Record-grouped format
 function transformConversationsToRecords(conversations: any[]): { records: Record[] } {
+  console.log('🔄 Transforming conversations to records:', conversations?.length || 0, 'conversations')
+  
   const recordMap = new Map<number, Record>()
+  let unmatched_conversations = 0
   
   conversations.forEach(conversation => {
     const primaryContact = conversation.primary_contact
-    if (!primaryContact) return
+    if (!primaryContact) {
+      unmatched_conversations++
+      console.log('⚠️ Skipping conversation without primary_contact for record grouping:', conversation.id)
+      return
+    }
     
     const recordId = primaryContact.id
     
@@ -17,7 +24,7 @@ function transformConversationsToRecords(conversations: any[]): { records: Recor
     if (!record) {
       record = {
         id: recordId,
-        title: primaryContact.name || 'Unknown Contact',
+        title: primaryContact.name || primaryContact.title || 'Unknown Contact',
         pipeline_name: primaryContact.pipeline_name || 'Unknown Pipeline',
         total_unread: 0,
         last_activity: conversation.updated_at,
@@ -26,6 +33,7 @@ function transformConversationsToRecords(conversations: any[]): { records: Recor
         available_channels: []
       }
       recordMap.set(recordId, record)
+      console.log('✅ Created new record:', record.id, record.title)
     }
     
     // Update record with conversation data
@@ -34,7 +42,7 @@ function transformConversationsToRecords(conversations: any[]): { records: Recor
       record.channels[channelType] = {
         channel_type: channelType,
         conversation_count: 0,
-        message_count: 0,
+        message_count: conversation.message_count || 0,
         unread_count: 0,
         last_activity: conversation.updated_at,
         last_message_preview: '',
@@ -49,15 +57,26 @@ function transformConversationsToRecords(conversations: any[]): { records: Recor
     const channelSummary = record.channels[channelType]
     channelSummary.conversation_count += 1
     channelSummary.unread_count += conversation.unread_count || 0
-    channelSummary.last_message_preview = conversation.last_message?.content || ''
+    channelSummary.message_count += conversation.message_count || 0
     
-    if (new Date(conversation.updated_at) > new Date(channelSummary.last_activity)) {
+    // Update last message preview
+    if (conversation.last_message?.content) {
+      channelSummary.last_message_preview = conversation.last_message.content.substring(0, 100)
+    }
+    
+    // Update activity timing
+    const conversationTime = new Date(conversation.updated_at).getTime()
+    const channelTime = new Date(channelSummary.last_activity).getTime()
+    
+    if (conversationTime > channelTime) {
       channelSummary.last_activity = conversation.updated_at
     }
     
     // Update record totals
     record.total_unread += conversation.unread_count || 0
-    if (new Date(conversation.updated_at) > new Date(record.last_activity)) {
+    
+    const recordTime = new Date(record.last_activity).getTime()
+    if (conversationTime > recordTime) {
       record.last_activity = conversation.updated_at
       record.preferred_channel = channelType
     }
@@ -68,11 +87,18 @@ function transformConversationsToRecords(conversations: any[]): { records: Recor
     }
   })
   
-  return {
-    records: Array.from(recordMap.values()).sort((a, b) => 
-      new Date(b.last_activity).getTime() - new Date(a.last_activity).getTime()
-    )
-  }
+  const records = Array.from(recordMap.values()).sort((a, b) => 
+    new Date(b.last_activity).getTime() - new Date(a.last_activity).getTime()
+  )
+  
+  console.log('✅ Transformation complete:', {
+    total_conversations: conversations?.length || 0,
+    unmatched_conversations,
+    records_created: records.length,
+    total_unread: records.reduce((sum, record) => sum + record.total_unread, 0)
+  })
+  
+  return { records }
 }
 
 // Types
@@ -147,6 +173,7 @@ interface UseUnifiedInboxReturn {
   selectRecord: (record: Record) => void
   refreshRecord: (recordId: number) => Promise<void>
   markAsRead: (recordId: number, channelType: string) => Promise<void>
+  updateInboxData: (updater: (prev: UnifiedInboxData | null) => UnifiedInboxData | null) => void
   
   // Real-time updates
   isConnected: boolean
@@ -492,6 +519,18 @@ export function useUnifiedInbox(): UseUnifiedInboxReturn {
     selectRecord,
     refreshRecord,
     markAsRead,
+    updateInboxData: (updater) => {
+      setInboxData(updater)
+      // Update selected record if it's affected
+      setSelectedRecord(prev => {
+        if (!prev) return prev
+        const newInboxData = updater(inboxData)
+        if (!newInboxData) return prev
+        
+        const updatedRecord = newInboxData.records.find(record => record.id === prev.id)
+        return updatedRecord || prev
+      })
+    },
     
     // Real-time
     isConnected,

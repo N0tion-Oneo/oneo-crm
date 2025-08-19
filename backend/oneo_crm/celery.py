@@ -108,6 +108,13 @@ app.conf.update(
         'workflows.tasks.process_long_running_trigger': {'queue': 'triggers'},
         'pipelines.tasks.process_bulk_operation': {'queue': 'bulk_operations'},
         
+        # Communication sync tasks
+        'communications.tasks.periodic_message_sync_task': {'queue': 'communications'},
+        'communications.tasks.sync_account_messages_task': {'queue': 'communications'},
+        'communications.tasks.sync_channel_messages': {'queue': 'communications'},
+        'communications.tasks.generate_daily_analytics': {'queue': 'analytics'},
+        'communications.tasks.initial_sync_new_connection_task': {'queue': 'communications'},
+        
         # Contact resolution tasks
         'communications.tasks.resolve_unconnected_conversations_task': {'queue': 'contact_resolution'},
         'communications.tasks.resolve_conversation_contact_task': {'queue': 'contact_resolution'},

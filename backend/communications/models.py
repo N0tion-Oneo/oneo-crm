@@ -586,6 +586,7 @@ class Message(models.Model):
     content = models.TextField()
     subject = models.CharField(max_length=500, blank=True)
     contact_email = models.EmailField(blank=True)
+    contact_phone = models.CharField(max_length=50, blank=True, help_text="Contact phone number for WhatsApp/SMS messages")
     
     # Status and delivery
     status = models.CharField(
@@ -615,6 +616,13 @@ class Message(models.Model):
             models.Index(fields=['external_message_id']),
             models.Index(fields=['sent_at']),
             models.Index(fields=['contact_email']),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['external_message_id', 'channel'],
+                condition=models.Q(external_message_id__isnull=False) & ~models.Q(external_message_id=''),
+                name='unique_external_message_per_channel'
+            )
         ]
     
     def __str__(self):

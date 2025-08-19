@@ -10,7 +10,6 @@ from communications.models import UserChannelConnection, Message, Conversation, 
 from communications.webhooks.routing import account_router
 from communications.resolvers.contact_identifier import ContactIdentifier
 from communications.resolvers.relationship_context import RelationshipContextResolver
-from communications.services.message_normalizer import message_normalizer
 from communications.services.unified_inbox import UnifiedInboxService
 
 logger = logging.getLogger(__name__)
@@ -41,6 +40,9 @@ class UnipileWebhookHandler:
             'credentials': self.handle_credentials_required,
             'permissions': self.handle_permissions_error,
             'error': self.handle_account_error,
+            # Email specific events
+            'mail_received': self.handle_message_received,  # Map email events to message handler
+            'mail_sent': self.handle_message_sent,          # Map email events to message handler
         }
     
     def _initialize_resolvers(self, tenant_id: int):
@@ -110,7 +112,7 @@ class UnipileWebhookHandler:
         return None
     
     def handle_message_received(self, account_id: str, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Handle incoming message webhook with unified inbox support"""
+        """Handle incoming message webhook with channel-specific routing"""
         try:
             # Ensure data is a dictionary
             if not isinstance(data, dict):
@@ -123,20 +125,39 @@ class UnipileWebhookHandler:
                 logger.error(f"No user connection found for account {account_id}")
                 return {'success': False, 'error': 'User connection not found'}
             
-            # Normalize message using our unified normalizer
-            normalized_message = message_normalizer.normalize_unipile_message(
-                raw_message=data,
-                channel_type=connection.channel_type
+            # Route to specialized handler based on channel type
+            if connection.channel_type in ['gmail', 'outlook', 'mail', 'email']:
+                logger.info(f"Routing email message to specialized email handler for account {account_id}")
+                from communications.webhooks.email_handler import email_webhook_handler
+                return email_webhook_handler.handle_email_received(account_id, data)
+            
+            # For non-email channels, continue with existing WhatsApp/social logic
+            logger.info(f"Processing {connection.channel_type} message with standard handler for account {account_id}")
+            
+            # Simple approach: store raw webhook data and extract what we need
+            from communications.utils.phone_extractor import (
+                extract_whatsapp_phone_from_webhook,
+                determine_whatsapp_direction,
+                extract_whatsapp_conversation_id,
+                extract_whatsapp_contact_name
             )
             
+            # Extract basic info directly from raw webhook data
+            external_message_id = data.get('id') or data.get('message_id')
+            conversation_id = extract_whatsapp_conversation_id(data)
+            phone_number = extract_whatsapp_phone_from_webhook(data)
+            direction = determine_whatsapp_direction(data)
+            contact_name = extract_whatsapp_contact_name(data)
+            message_content = data.get('message', data.get('text', data.get('body', '')))
+            
             # Create or get conversation
-            conversation = self.get_or_create_conversation(
+            conversation = self.get_or_create_conversation_simple(
                 connection, 
-                normalized_message
+                conversation_id,
+                data
             )
             
             # Check if message already exists to prevent duplicates
-            external_message_id = normalized_message.get('external_id') or normalized_message.get('id')
             if external_message_id:
                 existing_message = Message.objects.filter(
                     external_message_id=external_message_id,
@@ -152,18 +173,16 @@ class UnipileWebhookHandler:
                         'note': 'Message already exists, skipped duplicate'
                     }
             
-            # Initialize contact resolution services with tenant context
-            from django.db import connection as db_connection
-            tenant_id = db_connection.tenant.id if hasattr(db_connection, 'tenant') else None
-            if tenant_id:
-                self._initialize_resolvers(tenant_id)
-            
-            # Create message record using normalized data
-            message, was_created = self.create_unified_message_record(
+            # Create message record with raw data
+            message, was_created = self.create_simple_message_record(
                 connection,
                 conversation,
-                normalized_message,
-                MessageDirection.INBOUND
+                external_message_id,
+                message_content,
+                direction,
+                phone_number,
+                contact_name,
+                data  # Store entire raw webhook data
             )
             
             if was_created:
@@ -176,7 +195,7 @@ class UnipileWebhookHandler:
             
             # Auto-create contact if enabled and no contact is linked
             if was_created and not message.contact_record:
-                self._attempt_auto_contact_resolution(message, normalized_message)
+                self._attempt_auto_contact_resolution(message)
             
             return {
                 'success': True,
@@ -192,12 +211,18 @@ class UnipileWebhookHandler:
             return {'success': False, 'error': str(e)}
     
     def handle_message_sent(self, account_id: str, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Handle outbound message confirmation webhook"""
+        """Handle outbound message confirmation webhook with channel routing"""
         try:
             # Ensure data is a dictionary
             if not isinstance(data, dict):
                 logger.error(f"Expected dict in handle_message_sent but got {type(data)}: {data}")
                 return {'success': False, 'error': f'Invalid data type: {type(data)}'}
+            
+            # Get user connection to determine channel type
+            connection = account_router.get_user_connection(account_id)
+            if connection and connection.channel_type in ['gmail', 'outlook', 'mail', 'email']:
+                from communications.webhooks.email_handler import email_webhook_handler
+                return email_webhook_handler.handle_email_sent(account_id, data)
             
             # UniPile webhook data structure has message content at the top level,
             # not nested under a 'message' object. So we use the entire data object.
@@ -227,12 +252,18 @@ class UnipileWebhookHandler:
             return {'success': False, 'error': str(e)}
     
     def handle_message_delivered(self, account_id: str, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Handle message delivery confirmation webhook"""
+        """Handle message delivery confirmation webhook with channel routing"""
         try:
             # Ensure data is a dictionary
             if not isinstance(data, dict):
                 logger.error(f"Expected dict in handle_message_delivered but got {type(data)}: {data}")
                 return {'success': False, 'error': f'Invalid data type: {type(data)}'}
+            
+            # Get user connection to determine channel type
+            connection = account_router.get_user_connection(account_id)
+            if connection and connection.channel_type in ['gmail', 'outlook', 'mail', 'email']:
+                from communications.webhooks.email_handler import email_webhook_handler
+                return email_webhook_handler.handle_email_delivered(account_id, data)
             
             # UniPile webhook data structure has message content at the top level,
             # not nested under a 'message' object. So we use the entire data object.
@@ -261,9 +292,15 @@ class UnipileWebhookHandler:
             return {'success': False, 'error': str(e)}
     
     def handle_message_read(self, account_id: str, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Handle message read receipt webhook"""
+        """Handle message read receipt webhook with channel routing"""
         try:
-            # Debug: Log the actual data structure
+            # Get user connection to determine channel type
+            connection = account_router.get_user_connection(account_id)
+            if connection and connection.channel_type in ['gmail', 'outlook', 'mail', 'email']:
+                from communications.webhooks.email_handler import email_webhook_handler
+                return email_webhook_handler.handle_email_read(account_id, data)
+            
+            # Debug: Log the actual data structure for non-email channels
             logger.info(f"DEBUG: Read message webhook data: {data}")
             logger.info(f"DEBUG: Data type: {type(data)}")
             
@@ -378,10 +415,65 @@ class UnipileWebhookHandler:
             logger.error(f"Error handling account checkpoint for {account_id}: {e}")
             return {'success': False, 'error': str(e)}
     
+    def get_or_create_conversation_simple(self, connection: UserChannelConnection, conversation_id: str, webhook_data: Dict[str, Any]) -> Conversation:
+        """Get or create conversation with simple approach"""
+        if conversation_id:
+            conversation = Conversation.objects.filter(
+                external_thread_id=conversation_id
+            ).first()
+            if conversation:
+                return conversation
+        
+        # Create new conversation
+        from communications.models import Channel
+        
+        # Get or create channel for this connection
+        channel, _ = Channel.objects.get_or_create(
+            unipile_account_id=connection.unipile_account_id,
+            channel_type=connection.channel_type,
+            defaults={
+                'name': f"{connection.channel_type.title()} - {connection.account_name}",
+                'auth_status': connection.auth_status,
+                'created_by': connection.user
+            }
+        )
+        
+        # Extract contact info using provider logic for better conversation subject
+        from communications.utils.phone_extractor import (
+            extract_whatsapp_contact_name,
+            extract_whatsapp_phone_from_webhook,
+            get_display_name_or_phone
+        )
+        
+        contact_name = extract_whatsapp_contact_name(webhook_data)
+        contact_phone = extract_whatsapp_phone_from_webhook(webhook_data)
+        
+        # Create a meaningful subject using contact name or formatted phone
+        if contact_name:
+            subject = f"WhatsApp - {contact_name}"
+        elif contact_phone:
+            # Use formatted phone as subject
+            subject = f"WhatsApp - {contact_phone}"
+        else:
+            subject = "WhatsApp conversation"
+        
+        conversation = Conversation.objects.create(
+            channel=channel,
+            external_thread_id=conversation_id or f"msg_{webhook_data.get('id', 'unknown')}",
+            subject=subject,
+            status='active'
+        )
+        
+        return conversation
+
     def get_or_create_conversation(self, connection: UserChannelConnection, message_data: Dict[str, Any]) -> Conversation:
         """Get or create conversation for message"""
+        # Debug logging
+        logger.debug(f"Getting conversation for message with keys: {list(message_data.keys())}")
+        logger.debug(f"Conversation IDs - conversation_id: {message_data.get('conversation_id')}, thread_id: {message_data.get('thread_id')}, chat_id: {message_data.get('chat_id')}")
+        
         # In UniPile webhook format, the chat_id is the conversation identifier
-        external_thread_id = message_data.get('chat_id')
+        external_thread_id = message_data.get('conversation_id') or message_data.get('thread_id') or message_data.get('chat_id')
         
         if external_thread_id:
             conversation = Conversation.objects.filter(
@@ -412,6 +504,49 @@ class UnipileWebhookHandler:
         )
         
         return conversation
+    
+    def create_simple_message_record(self, connection: UserChannelConnection, conversation: Conversation, 
+                                   external_message_id: str, content: str, direction: str, 
+                                   phone_number: str, contact_name: str, raw_webhook_data: Dict[str, Any]) -> tuple[Message, bool]:
+        """Create message record with simple raw data storage approach"""
+        from django.db import transaction
+        
+        # Use database-level atomic transaction to prevent race conditions
+        with transaction.atomic():
+            # Try to get existing message first (with select_for_update to prevent race conditions)
+            existing_message = Message.objects.select_for_update().filter(
+                external_message_id=external_message_id,
+                conversation=conversation
+            ).first()
+            
+            if existing_message:
+                # Message already exists - return without triggering real-time processing
+                return existing_message, False
+            
+            # Create new message with raw webhook data stored in metadata
+            message = Message.objects.create(
+                channel=conversation.channel,
+                conversation=conversation,
+                external_message_id=external_message_id,
+                direction=direction,
+                content=content or '',
+                subject='',  # WhatsApp doesn't have subjects
+                contact_email='',  # WhatsApp uses phone numbers
+                contact_phone=phone_number,
+                status=MessageStatus.DELIVERED if direction == MessageDirection.INBOUND else MessageStatus.SENT,
+                metadata={
+                    'raw_webhook_data': raw_webhook_data,  # Store entire webhook response
+                    'contact_name': contact_name,
+                    'extracted_phone': phone_number,
+                    'webhook_processed_at': timezone.now().isoformat(),
+                    'processing_version': '2.0_simplified'
+                },
+                sent_at=timezone.now() if direction == MessageDirection.OUTBOUND else None,
+                received_at=timezone.now() if direction == MessageDirection.INBOUND else None
+            )
+            
+            logger.info(f"Created message {message.id}: {direction} from phone {phone_number}")
+            return message, True
     
     def create_message_record_atomic(self, connection: UserChannelConnection, conversation: Conversation, 
                             message_data: Dict[str, Any], direction: str) -> tuple[Message, bool]:
@@ -869,20 +1004,116 @@ class UnipileWebhookHandler:
         except Exception as e:
             logger.warning(f"Failed to trigger unified inbox update: {e}")
     
-    def _attempt_auto_contact_resolution(self, message: Message, normalized_message: Dict[str, Any]):
-        """Attempt automatic contact resolution for the message"""
+    def _extract_contact_data_for_resolution(self, message: Message) -> Dict[str, Any]:
+        """Extract contact data from raw webhook data for contact resolution"""
+        try:
+            raw_data = message.metadata.get('raw_webhook_data', {}) if message.metadata else {}
+            
+            # Start with basic extracted fields
+            contact_data = {
+                'channel_type': message.channel.channel_type if message.channel else 'unknown',
+                'email': message.contact_email or '',
+                'phone': message.contact_phone or '',
+                'name': message.metadata.get('contact_name', '') if message.metadata else ''
+            }
+            
+            # Enhanced extraction from raw webhook data if needed
+            if raw_data and isinstance(raw_data, dict):
+                # WhatsApp-specific enhancements
+                if contact_data['channel_type'] == 'whatsapp':
+                    # Get provider_chat_id (the contact we're speaking to)
+                    provider_chat_id = raw_data.get('provider_chat_id', '')
+                    
+                    # Method 1: Find contact info by matching provider_chat_id in attendees
+                    if provider_chat_id and not (contact_data['phone'] and contact_data['name']):
+                        attendees = raw_data.get('attendees', [])
+                        if attendees and isinstance(attendees, list):
+                            for attendee in attendees:
+                                if isinstance(attendee, dict):
+                                    attendee_provider_id = attendee.get('attendee_provider_id', '')
+                                    if attendee_provider_id == provider_chat_id:
+                                        # Found the contact we're speaking to
+                                        if not contact_data['phone']:
+                                            if '@s.whatsapp.net' in attendee_provider_id:
+                                                contact_data['phone'] = attendee_provider_id.replace('@s.whatsapp.net', '')
+                                        
+                                        if not contact_data['name'] and attendee.get('attendee_name'):
+                                            attendee_name = attendee['attendee_name']
+                                            if not ('@s.whatsapp.net' in attendee_name or attendee_name.isdigit()):
+                                                contact_data['name'] = attendee_name
+                                        break
+                    
+                    # Method 2: Check if sender matches provider_chat_id (inbound message case)
+                    if provider_chat_id and not (contact_data['phone'] and contact_data['name']):
+                        sender = raw_data.get('sender', {})
+                        if isinstance(sender, dict):
+                            sender_provider_id = sender.get('attendee_provider_id', '')
+                            if sender_provider_id == provider_chat_id:
+                                # Sender is the contact (inbound message)
+                                if not contact_data['phone']:
+                                    if '@s.whatsapp.net' in sender_provider_id:
+                                        contact_data['phone'] = sender_provider_id.replace('@s.whatsapp.net', '')
+                                
+                                if not contact_data['name'] and sender.get('attendee_name'):
+                                    attendee_name = sender['attendee_name']
+                                    if not ('@s.whatsapp.net' in attendee_name or attendee_name.isdigit()):
+                                        contact_data['name'] = attendee_name
+                    
+                    # Fallback: Use provider_chat_id directly if available
+                    if not contact_data['phone'] and provider_chat_id:
+                        if '@s.whatsapp.net' in provider_chat_id:
+                            contact_data['phone'] = provider_chat_id.replace('@s.whatsapp.net', '')
+                
+                # Email-specific enhancements (Gmail, Outlook)
+                elif contact_data['channel_type'] in ['gmail', 'outlook', 'mail']:
+                    sender = raw_data.get('sender', {})
+                    if isinstance(sender, dict):
+                        if not contact_data['email'] and sender.get('email'):
+                            contact_data['email'] = sender['email']
+                        if not contact_data['name'] and sender.get('name'):
+                            contact_data['name'] = sender['name']
+                
+                # LinkedIn-specific enhancements
+                elif contact_data['channel_type'] == 'linkedin':
+                    sender = raw_data.get('sender', {})
+                    if isinstance(sender, dict):
+                        if not contact_data['name'] and sender.get('name'):
+                            contact_data['name'] = sender['name']
+                        # LinkedIn uses profile IDs instead of emails
+                        if sender.get('profile_id'):
+                            contact_data['linkedin_profile_id'] = sender['profile_id']
+            
+            # Clean and format phone number if present (includes country code)
+            if contact_data['phone']:
+                # Remove any remaining WhatsApp suffixes and clean
+                clean_phone = contact_data['phone'].replace('@s.whatsapp.net', '')
+                clean_phone = ''.join(c for c in clean_phone if c.isdigit())
+                
+                # Format with country code (add + prefix)
+                if len(clean_phone) >= 7:
+                    contact_data['phone'] = f"+{clean_phone}"
+                else:
+                    contact_data['phone'] = ''
+            
+            # Filter out None/empty values
+            contact_data = {k: v for k, v in contact_data.items() if v and str(v).strip()}
+            
+            logger.debug(f"Extracted contact data for resolution: {contact_data}")
+            return contact_data
+            
+        except Exception as e:
+            logger.error(f"Error extracting contact data for resolution: {e}")
+            return {}
+    
+    def _attempt_auto_contact_resolution(self, message: Message):
+        """Attempt automatic contact resolution using stored raw webhook data"""
         try:
             if not self.contact_identifier:
                 logger.debug("Contact identifier not available for auto-resolution")
                 return
             
-            # Extract contact data from normalized message
-            contact_data = {
-                'email': normalized_message.get('contact_email'),
-                'phone': normalized_message.get('contact_phone'),
-                'name': normalized_message.get('contact_name'),
-                'channel_type': normalized_message.get('channel_type')
-            }
+            # Extract contact data from message using new direct approach
+            contact_data = self._extract_contact_data_for_resolution(message)
             
             # Filter out None/empty values
             contact_data = {k: v for k, v in contact_data.items() if v}

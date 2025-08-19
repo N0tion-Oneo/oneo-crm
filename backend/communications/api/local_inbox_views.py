@@ -184,25 +184,44 @@ def get_local_unified_inbox(request):
             if conv.latest_messages:
                 latest_msg = conv.latest_messages[0]
                 
-                # Extract sender name from various sources (prioritize real contact names)
+                # Extract sender name using channel-specific provider logic
                 sender_name = 'Unknown'
                 
-                # First priority: Enhanced contact name from metadata (real WhatsApp names)
-                if latest_msg.metadata and latest_msg.metadata.get('contact_name'):
+                # First priority: Use channel-specific provider logic from webhook data
+                if latest_msg.metadata and latest_msg.metadata.get('raw_webhook_data'):
+                    raw_data = latest_msg.metadata['raw_webhook_data']
+                    
+                    if conv.channel.channel_type in ['gmail', 'outlook', 'mail']:
+                        # Use email extractors for email channels
+                        from communications.utils.email_extractor import extract_email_name_from_webhook
+                        extracted_name = extract_email_name_from_webhook(raw_data)
+                        if extracted_name:
+                            sender_name = extracted_name
+                    else:
+                        # Use WhatsApp extractors for WhatsApp channels
+                        from communications.utils.phone_extractor import extract_whatsapp_contact_name
+                        extracted_name = extract_whatsapp_contact_name(raw_data)
+                        if extracted_name:
+                            sender_name = extracted_name
+                # Second priority: Enhanced contact name from metadata (fallback)
+                elif latest_msg.metadata and latest_msg.metadata.get('contact_name'):
                     sender_name = latest_msg.metadata['contact_name']
-                # Second priority: Contact record
+                # Third priority: Contact record
                 elif latest_msg.contact_record:
                     sender_name = latest_msg.contact_record.data.get('name', 'Unknown')
-                # Third priority: Extract from email
+                # Fourth priority: Extract from email
                 elif latest_msg.contact_email:
                     if '@' in latest_msg.contact_email:
                         sender_name = latest_msg.contact_email.split('@')[0].replace('.', ' ').title()
                     else:
                         sender_name = latest_msg.contact_email
                 
+                # Map channel types to frontend-expected message types
+                message_type = 'email' if conv.channel.channel_type in ['gmail', 'outlook', 'mail'] else conv.channel.channel_type
+                
                 latest_message = {
                     'id': str(latest_msg.id),
-                    'type': conv.channel.channel_type,  # Frontend expects this
+                    'type': message_type,  # Frontend expects 'email' for email channels
                     'subject': latest_msg.subject or '',
                     'content': latest_msg.content[:200] + '...' if len(latest_msg.content) > 200 else latest_msg.content,
                     'timestamp': latest_msg.created_at.isoformat(),
@@ -240,19 +259,62 @@ def get_local_unified_inbox(request):
             # Prepare participants array for frontend compatibility
             participants = []
             
-            # Try to get participant info from multiple sources (prioritize real contact names)
+            # Try to get participant info using NEW provider logic (group chat support)
             participant_name = 'Unknown Contact'
             participant_email = ''
+            participant_provider_id = None
             
-            # First priority: Enhanced contact name from latest message metadata
-            if latest_message and latest_message.get('sender_name') and latest_message['sender_name'] not in ['Unknown', '']:
+            # First priority: Use channel-specific provider logic from latest message webhook data
+            if conv.latest_messages and conv.latest_messages[0].metadata and conv.latest_messages[0].metadata.get('raw_webhook_data'):
+                raw_data = conv.latest_messages[0].metadata['raw_webhook_data']
+                
+                if conv.channel.channel_type in ['gmail', 'outlook', 'mail']:
+                    # Use email extractors for email channels
+                    from communications.utils.email_extractor import (
+                        extract_email_name_from_webhook,
+                        extract_email_from_webhook
+                    )
+                    
+                    # Extract contact name and email
+                    extracted_name = extract_email_name_from_webhook(raw_data)
+                    if extracted_name:
+                        participant_name = extracted_name
+                    
+                    # Extract email address
+                    extracted_email = extract_email_from_webhook(raw_data)
+                    if extracted_email:
+                        participant_email = extracted_email
+                        participant_provider_id = extracted_email  # Use email as provider ID
+                
+                else:
+                    # Use WhatsApp extractors for WhatsApp channels
+                    from communications.utils.phone_extractor import (
+                        extract_whatsapp_contact_name,
+                        extract_whatsapp_phone_from_webhook
+                    )
+                    
+                    # Extract contact name (handles groups and 1-on-1)
+                    extracted_name = extract_whatsapp_contact_name(raw_data)
+                    if extracted_name:
+                        participant_name = extracted_name
+                    
+                    # Extract phone/provider ID
+                    extracted_phone = extract_whatsapp_phone_from_webhook(raw_data)
+                    if extracted_phone:
+                        participant_email = extracted_phone  # Use phone as email field for WhatsApp
+                    
+                    # Get provider ID for WhatsApp
+                    participant_provider_id = raw_data.get('provider_chat_id', '')
+                
+            # Second priority: Enhanced contact name from latest message metadata
+            elif latest_message and latest_message.get('sender_name') and latest_message['sender_name'] not in ['Unknown', '']:
                 participant_name = latest_message['sender_name']
                 participant_email = latest_message.get('contact_email', '')
-            # Second priority: Contact record
+            # Third priority: Contact record
             elif conv.primary_contact_record:
                 participant_name = conv.primary_contact_record.data.get('name', 'Unknown')
                 participant_email = conv.primary_contact_record.data.get('email', '')
-            # Third priority: Extract from email
+            # Fourth priority: Extract from email
             elif latest_message:
                 participant_email = latest_message.get('contact_email', '')
                 participant_name = participant_email.split('@')[0] if '@' in participant_email else 'Unknown'
@@ -267,15 +329,19 @@ def get_local_unified_inbox(request):
             participants.append({
                 'name': participant_name,
                 'email': participant_email,
+                'provider_id': participant_provider_id,
                 'platform': conv.channel.channel_type
             })
 
+            # Map channel types to frontend-expected conversation types
+            conversation_type = 'email' if conv.channel.channel_type in ['gmail', 'outlook', 'mail'] else conv.channel.channel_type
+            
             conversation_data = {
                 'id': f"{conv.channel.channel_type}_{conv.external_thread_id}",  # Format for send message API compatibility
                 'database_id': str(conv.id),  # Keep original UUID for reference
                 'external_thread_id': conv.external_thread_id,
                 'subject': conv.subject or 'No Subject',
-                'type': conv.channel.channel_type,  # Frontend expects this field
+                'type': conversation_type,  # Frontend expects 'email' for email channels
                 'participants': participants,  # Frontend expects this field
                 'channel': {
                     'id': str(conv.channel.id),
@@ -408,27 +474,58 @@ def get_local_conversation_messages(request, conversation_id):
         # Format messages
         message_list = []
         for msg in messages:
-            # Extract sender name from various sources (prioritize real contact names)
+            # Extract sender name using channel-specific provider logic
             sender_name = 'Unknown'
             sender_email = msg.contact_email or ''
             
-            # First priority: Enhanced contact name from metadata (real WhatsApp names)
-            if msg.metadata and msg.metadata.get('contact_name'):
+            # First priority: Use channel-specific provider logic from webhook data
+            if msg.metadata and msg.metadata.get('raw_webhook_data'):
+                raw_data = msg.metadata['raw_webhook_data']
+                
+                if conversation.channel.channel_type in ['gmail', 'outlook', 'mail']:
+                    # Use email extractors for email channels
+                    from communications.utils.email_extractor import (
+                        extract_email_name_from_webhook,
+                        extract_email_from_webhook
+                    )
+                    
+                    # Extract contact name and email
+                    extracted_name = extract_email_name_from_webhook(raw_data)
+                    if extracted_name:
+                        sender_name = extracted_name
+                    
+                    # Extract email address if not already set
+                    if not sender_email:
+                        extracted_email = extract_email_from_webhook(raw_data)
+                        if extracted_email:
+                            sender_email = extracted_email
+                
+                else:
+                    # Use WhatsApp extractors for WhatsApp channels
+                    from communications.utils.phone_extractor import extract_whatsapp_contact_name
+                    extracted_name = extract_whatsapp_contact_name(raw_data)
+                    if extracted_name:
+                        sender_name = extracted_name
+            # Second priority: Enhanced contact name from metadata (fallback)
+            elif msg.metadata and msg.metadata.get('contact_name'):
                 sender_name = msg.metadata['contact_name']
-            # Second priority: Contact record
+            # Third priority: Contact record
             elif msg.contact_record:
                 sender_name = msg.contact_record.data.get('name', 'Unknown')
                 sender_email = msg.contact_record.data.get('email', sender_email)
-            # Third priority: Extract from email
+            # Fourth priority: Extract from email
             elif msg.contact_email:
                 if '@' in msg.contact_email:
                     sender_name = msg.contact_email.split('@')[0].replace('.', ' ').title()
                 else:
                     sender_name = msg.contact_email
             
+            # Map channel types to frontend-expected message types  
+            message_type = 'email' if conversation.channel.channel_type in ['gmail', 'outlook', 'mail'] else conversation.channel.channel_type
+            
             message_data = {
                 'id': str(msg.id),
-                'type': conversation.channel.channel_type,  # Frontend expects this
+                'type': message_type,  # Frontend expects 'email' for email channels
                 'subject': msg.subject or '',
                 'content': msg.content,
                 'timestamp': msg.created_at.isoformat(),
@@ -574,5 +671,78 @@ def get_inbox_stats(request):
         logger.error(f"Error in get_inbox_stats: {e}")
         return Response(
             {'error': 'Failed to load inbox stats', 'details': str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def mark_local_conversation_as_read(request, conversation_id):
+    """
+    Mark a conversation as read in local database
+    """
+    try:
+        # Get the conversation - handle both UUID and channel_type_external_id formats
+        conversation = None
+        
+        # Check if it's the new format (contains underscore) first
+        if '_' in conversation_id:
+            try:
+                channel_type, external_thread_id = conversation_id.split('_', 1)
+                conversation = Conversation.objects.select_related('channel').get(
+                    external_thread_id=external_thread_id,
+                    channel__channel_type=channel_type
+                )
+            except Conversation.DoesNotExist:
+                pass
+        
+        # If not found and no underscore, try UUID format (database_id)
+        if not conversation:
+            try:
+                conversation = Conversation.objects.select_related('channel').get(id=conversation_id)
+            except (Conversation.DoesNotExist, ValueError):
+                pass
+        
+        if not conversation:
+            return Response(
+                {'error': 'Conversation not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Verify user has access to this conversation's channel
+        user_connection = UserChannelConnection.objects.filter(
+            user=request.user,
+            unipile_account_id=conversation.channel.unipile_account_id,
+            is_active=True
+        ).first()
+        
+        if not user_connection:
+            return Response(
+                {'error': 'Access denied to this conversation'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Mark all inbound messages in this conversation as read
+        from communications.models import MessageDirection, MessageStatus
+        
+        updated_count = Message.objects.filter(
+            conversation=conversation,
+            direction=MessageDirection.INBOUND,
+            status__in=[MessageStatus.SENT, MessageStatus.DELIVERED]
+        ).update(status=MessageStatus.READ)
+        
+        logger.info(f"Marked {updated_count} messages as read in conversation {conversation.id}")
+        
+        return Response({
+            'success': True,
+            'message': f'Marked {updated_count} messages as read',
+            'conversation_id': str(conversation.id),
+            'updated_messages': updated_count
+        })
+        
+    except Exception as e:
+        logger.error(f"Error marking local conversation as read: {e}")
+        return Response(
+            {'error': 'Failed to mark conversation as read', 'details': str(e)},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )

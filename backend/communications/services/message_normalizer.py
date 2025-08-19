@@ -47,9 +47,10 @@ class ChannelMessageNormalizer:
             normalizer = self.normalizers.get(channel_type, self._normalize_generic_message)
             
             # Base normalized structure
+            message_id = raw_message.get('id') or raw_message.get('message_id')
             normalized = {
-                'id': raw_message.get('id'),
-                'external_id': raw_message.get('id'),
+                'id': message_id,
+                'external_id': message_id,
                 'channel_type': channel_type,
                 'content': '',
                 'subject': '',
@@ -89,7 +90,7 @@ class ChannelMessageNormalizer:
         body = raw_message.get('body', {})
         
         return {
-            'content': body.get('text', body.get('html', '')),
+            'content': body.get('html') or body.get('text', ''),  # Prefer HTML for rich formatting
             'subject': raw_message.get('subject', headers.get('Subject', '')),
             'direction': self._determine_email_direction(raw_message),
             'status': self._map_email_status(raw_message.get('status')),
@@ -149,8 +150,11 @@ class ChannelMessageNormalizer:
     def _normalize_whatsapp_message(self, raw_message: Dict[str, Any]) -> Dict[str, Any]:
         """Normalize WhatsApp message"""
         
+        # Debug logging
+        logger.debug(f"Processing WhatsApp message with keys: {list(raw_message.keys())}")
+        
         return {
-            'content': raw_message.get('text', raw_message.get('body', '')),
+            'content': raw_message.get('message', raw_message.get('text', raw_message.get('body', ''))),
             'subject': '',  # WhatsApp messages don't have subjects
             'direction': self._determine_whatsapp_direction(raw_message),
             'status': self._map_whatsapp_status(raw_message.get('status')),
@@ -159,8 +163,8 @@ class ChannelMessageNormalizer:
             'contact_email': self._extract_whatsapp_email(raw_message),
             'contact_phone': self._extract_whatsapp_phone(raw_message),
             'contact_name': self._extract_whatsapp_name(raw_message),
-            'conversation_id': raw_message.get('chat_id') or raw_message.get('conversation_id'),
-            'thread_id': raw_message.get('chat_id') or raw_message.get('conversation_id'),
+            'conversation_id': raw_message.get('chat_id') or raw_message.get('conversation_id') or raw_message.get('thread_id') or raw_message.get('jid'),
+            'thread_id': raw_message.get('chat_id') or raw_message.get('conversation_id') or raw_message.get('thread_id') or raw_message.get('jid'),
             'attachments': self._extract_whatsapp_media(raw_message),
             'metadata': {
                 'whatsapp_id': raw_message.get('id'),
@@ -174,9 +178,9 @@ class ChannelMessageNormalizer:
                 'read_receipt': raw_message.get('read_receipt', False)
             },
             'formatted_content': {
-                'text': raw_message.get('text', raw_message.get('body', '')),
+                'text': raw_message.get('message', raw_message.get('text', raw_message.get('body', ''))),
                 'media_type': raw_message.get('type', 'text'),
-                'preview': self._create_preview(raw_message.get('text', raw_message.get('body', '')))
+                'preview': self._create_preview(raw_message.get('message', raw_message.get('text', raw_message.get('body', ''))))
             }
         }
     
@@ -280,6 +284,11 @@ class ChannelMessageNormalizer:
         normalized['metadata']['normalized_at'] = timezone.now().isoformat()
         normalized['metadata']['normalizer_version'] = '1.0'
         
+        # Preserve raw webhook data for debugging (first 1000 chars to avoid huge metadata)
+        if normalized.get('channel_specific_data'):
+            raw_data_str = str(normalized['channel_specific_data'])[:1000]
+            normalized['metadata']['raw_webhook_data'] = raw_data_str
+        
         return normalized
     
     # Helper methods for extracting and parsing data
@@ -295,7 +304,28 @@ class ChannelMessageNormalizer:
     
     def _determine_whatsapp_direction(self, raw_message: Dict[str, Any]) -> str:
         """Determine WhatsApp message direction"""
-        return MessageDirection.INBOUND  # Simplified for now
+        # Debug logging
+        logger.debug(f"Determining direction for message with sender: {raw_message.get('sender', raw_message.get('from'))}")
+        
+        # Check various fields that might indicate direction
+        sender = raw_message.get('sender', raw_message.get('from', ''))
+        recipient = raw_message.get('recipient', raw_message.get('to', ''))
+        direction_field = raw_message.get('direction')
+        
+        # If there's an explicit direction field, use it
+        if direction_field in ['inbound', 'outbound', 'in', 'out']:
+            return MessageDirection.INBOUND if direction_field in ['inbound', 'in'] else MessageDirection.OUTBOUND
+        
+        # For WhatsApp, if sender contains our business number, it's outbound
+        business_number = '27720720047@s.whatsapp.net'  # TODO: Make this configurable
+        if sender == business_number:
+            return MessageDirection.OUTBOUND
+        elif recipient == business_number:
+            return MessageDirection.INBOUND
+        
+        # Default to inbound if we can't determine
+        logger.warning(f"Could not determine message direction, defaulting to inbound. Sender: {sender}, Recipient: {recipient}")
+        return MessageDirection.INBOUND
     
     def _determine_social_direction(self, raw_message: Dict[str, Any]) -> str:
         """Determine social media message direction"""
@@ -352,7 +382,6 @@ class ChannelMessageNormalizer:
         except (ValueError, AttributeError):
             try:
                 # Try other common formats
-                from datetime import datetime
                 return datetime.strptime(timestamp_str, '%Y-%m-%d %H:%M:%S')
             except ValueError:
                 return None
@@ -385,9 +414,45 @@ class ChannelMessageNormalizer:
     
     def _extract_whatsapp_phone(self, raw_message: Dict[str, Any]) -> str:
         """Extract WhatsApp phone number"""
-        phone = raw_message.get('from', raw_message.get('phone', ''))
-        if phone and phone.endswith('@s.whatsapp.net'):
-            return phone.replace('@s.whatsapp.net', '')
+        # Debug logging to understand raw data
+        logger.debug(f"Raw message keys for phone extraction: {list(raw_message.keys())}")
+        
+        # Try multiple possible fields for phone number
+        phone_fields = ['from', 'sender', 'phone', 'contact_phone', 'participant']
+        
+        phone = ''
+        extracted_from = ''
+        for field in phone_fields:
+            value = raw_message.get(field, '')
+            if value:
+                phone = value
+                extracted_from = field
+                break
+        
+        logger.debug(f"Phone extracted from field '{extracted_from}': '{phone}'")
+        
+        # Handle WhatsApp JID format (phone@s.whatsapp.net)
+        if phone and '@s.whatsapp.net' in phone:
+            original_phone = phone
+            phone = phone.replace('@s.whatsapp.net', '')
+            logger.debug(f"Converted WhatsApp JID '{original_phone}' to phone '{phone}'")
+        
+        # For outbound messages, get recipient's phone instead
+        direction_field = raw_message.get('direction')
+        if direction_field in ['outbound', 'out'] or phone == '27720720047':
+            # This is an outbound message, get recipient's phone
+            recipient = raw_message.get('to', raw_message.get('recipient', ''))
+            if recipient and '@s.whatsapp.net' in recipient:
+                phone = recipient.replace('@s.whatsapp.net', '')
+                logger.debug(f"Outbound message - using recipient phone: {phone}")
+        
+        # Validate phone number format (should be 10-15 digits)
+        if phone and not phone.isdigit():
+            logger.warning(f"Extracted phone '{phone}' contains non-digits - may not be a valid phone number")
+        elif phone and (len(phone) < 7 or len(phone) > 15):
+            logger.warning(f"Extracted phone '{phone}' has invalid length ({len(phone)} digits) - expected 7-15 digits")
+        
+        logger.debug(f"Final extracted WhatsApp phone: '{phone}' (length: {len(phone)})")
         return phone
     
     def _extract_whatsapp_name(self, raw_message: Dict[str, Any]) -> str:
@@ -480,8 +545,26 @@ class ChannelMessageNormalizer:
         """Clean and format phone number"""
         if not phone:
             return ''
-        # Remove common phone number formatting
-        return ''.join(filter(str.isdigit, str(phone)))
+        
+        # Convert to string in case we get a number
+        phone = str(phone)
+        
+        # If the phone contains @s.whatsapp.net, extract the part before it
+        if '@s.whatsapp.net' in phone:
+            phone = phone.split('@s.whatsapp.net')[0]
+        
+        # Remove common phone number formatting (spaces, dashes, parentheses, plus signs)
+        cleaned = ''.join(c for c in phone if c.isdigit())
+        
+        # Validate that this looks like a phone number (7-15 digits)
+        if cleaned and (len(cleaned) < 7 or len(cleaned) > 15):
+            logger.warning(f"Cleaned phone '{cleaned}' has unusual length ({len(cleaned)} digits) - may not be a valid phone")
+            # If it's way too long, it's probably not a phone number - return empty
+            if len(cleaned) > 20:
+                logger.warning(f"Phone '{cleaned}' is too long ({len(cleaned)} digits) - likely not a phone number, returning empty")
+                return ''
+        
+        return cleaned
     
     def _clean_name(self, name: str) -> str:
         """Clean contact name"""

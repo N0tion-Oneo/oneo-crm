@@ -8,6 +8,8 @@ class CommunicationsConfig(AppConfig):
     
     def ready(self):
         """Initialize communication tracking system when Django starts"""
-        # Import signal handlers to register them
-        from .tracking import signals
-        from . import signals as communications_signals
+        # Import the new centralized signals package to register all signal handlers
+        from . import signals
+        
+        # Import account sync signals for automatic account data collection
+        from .signals import account_sync

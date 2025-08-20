@@ -78,11 +78,12 @@ from .channel_availability_views import (
     invalidate_channel_cache
 )
 from ..views import CommunicationAnalyticsViewSet
-from .whatsapp_views import (
+# Import consolidated local-first WhatsApp views (webhook-first architecture)
+from .whatsapp_views_local_first import (
+    get_whatsapp_chats_local_first,
+    get_chat_messages_local_first,
+    send_message_local_first,
     get_whatsapp_accounts,
-    get_whatsapp_chats,
-    get_chat_messages,
-    send_message as send_whatsapp_message,
     update_chat,
     test_mark_read_formats,
     get_whatsapp_attendees,
@@ -197,9 +198,9 @@ urlpatterns = [
     
     # WhatsApp-specific endpoints for Unipile integration
     path('whatsapp/accounts/', get_whatsapp_accounts, name='whatsapp-accounts'),
-    path('whatsapp/chats/', get_whatsapp_chats, name='whatsapp-chats'),
-    path('whatsapp/chats/<str:chat_id>/messages/', get_chat_messages, name='whatsapp-chat-messages'),
-    path('whatsapp/chats/<str:chat_id>/send/', send_whatsapp_message, name='whatsapp-send-message'),
+    path('whatsapp/chats/', get_whatsapp_chats_local_first, name='whatsapp-chats'),
+    path('whatsapp/chats/<str:chat_id>/messages/', get_chat_messages_local_first, name='whatsapp-chat-messages'),
+    path('whatsapp/chats/<str:chat_id>/send/', send_message_local_first, name='whatsapp-send-message'),
     path('whatsapp/chats/<str:chat_id>/', update_chat, name='whatsapp-update-chat'),
     path('whatsapp/chats/<str:chat_id>/test-mark-read/', test_mark_read_formats, name='whatsapp-test-mark-read'),
     path('whatsapp/attendees/', get_whatsapp_attendees, name='whatsapp-attendees'),

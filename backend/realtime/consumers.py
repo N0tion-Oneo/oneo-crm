@@ -677,16 +677,32 @@ class BaseRealtimeConsumer(AsyncWebsocketConsumer):
     
     async def message_update(self, event):
         """Handle real-time message updates from communication system"""
+        logger.info(f"🚨 CONSUMER RECEIVED message_update event: {event}")
         message_data = event.get('message', {})
         
-        # Send message update to the client
-        await self.send(text_data=json.dumps({
+        websocket_message = {
             'type': 'message_update',
             'message': message_data,
-            'timestamp': message_data.get('timestamp')
+            'timestamp': message_data.get('created_at') or event.get('timestamp')
+        }
+        
+        logger.info(f"🚨 SENDING MESSAGE_UPDATE TO FRONTEND: {websocket_message}")
+        
+        # Send message update notification to the client
+        await self.send(text_data=json.dumps(websocket_message))
+        
+        logger.info(f"🔄 Message update sent to user {self.user_id}: message {message_data.get('id', 'unknown')}")
+    
+    async def conversation_update(self, event):
+        """Handle real-time conversation updates from communication system"""
+        # Send the full event data to client
+        await self.send(text_data=json.dumps({
+            'type': 'conversation_update', 
+            'payload': event.get('data', {}),
+            'timestamp': event.get('data', {}).get('timestamp')
         }))
         
-        logger.debug(f"Message update sent to user {self.user_id}: message {message_data.get('id', 'unknown')}")
+        logger.debug(f"Conversation update sent to user {self.user_id}")
     
     async def field_update(self, event):
         """Handle field update messages from pipeline system"""
@@ -734,6 +750,37 @@ class BaseRealtimeConsumer(AsyncWebsocketConsumer):
         }))
         
         logger.debug(f"New conversation sent to user {self.user_id}: conversation {conversation_data.get('id', 'unknown')}")
+    
+    async def new_message(self, event):
+        """Handle new message notifications from communication system"""
+        logger.info(f"🚨 CONSUMER RECEIVED new_message event: {event}")
+        message_data = event.get('message', {})
+        
+        websocket_message = {
+            'type': 'new_message',
+            'message': message_data,
+            'timestamp': message_data.get('created_at')
+        }
+        
+        logger.info(f"🚨 SENDING TO FRONTEND: {websocket_message}")
+        
+        # Send new message notification to the client
+        await self.send(text_data=json.dumps(websocket_message))
+        
+        logger.info(f"📨 New message sent to user {self.user_id}: message {message_data.get('id', 'unknown')}")
+    
+    async def message_status_update(self, event):
+        """Handle message status update notifications from communication system"""
+        message_data = event.get('message', {})
+        
+        # Send message status update to the client
+        await self.send(text_data=json.dumps({
+            'type': 'message_status_update',
+            'message': message_data,
+            'timestamp': message_data.get('updated_at')
+        }))
+        
+        logger.debug(f"Message status update sent to user {self.user_id}: message {message_data.get('id', 'unknown')}")
 
 
 class CollaborativeEditingConsumer(BaseRealtimeConsumer):

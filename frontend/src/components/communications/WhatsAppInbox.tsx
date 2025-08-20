@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { MessageSquare, Search, Filter, Phone, Video, MoreVertical, Paperclip, Send, Smile, Image, RefreshCw, MapPin, Contact, History } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -15,6 +15,7 @@ import { useToast } from '@/hooks/use-toast'
 import { MessageContent } from '@/components/MessageContent'
 import { formatDistanceToNow } from 'date-fns'
 import { api } from '@/lib/api'
+import { useWebSocket, type RealtimeMessage } from '@/contexts/websocket-context'
 
 // Helper function to safely format dates
 const formatSafeDate = (dateString: string | undefined | null): string => {
@@ -56,7 +57,7 @@ interface WhatsAppMessage {
   direction: 'in' | 'out'
   chat_id: string
   date: string
-  status: 'sent' | 'delivered' | 'read' | 'failed'
+  status: 'pending' | 'sent' | 'delivered' | 'read' | 'failed'
   attendee_id?: string  // For 'in' direction messages
   attachments?: Array<{
     id: string
@@ -127,7 +128,7 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
   const [selectedChat, setSelectedChat] = useState<WhatsAppChat | null>(null)
   // Attendees are now included directly in chat data, no separate state needed
   const [messages, setMessages] = useState<WhatsAppMessage[]>([])
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(false)
   const [loadingMessages, setLoadingMessages] = useState(false)
   const [loadingMoreChats, setLoadingMoreChats] = useState(false)
   const [syncing, setSyncing] = useState(false)
@@ -152,6 +153,376 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
   const [composing, setComposing] = useState(false)
   const [syncingChat, setSyncingChat] = useState<string | null>(null)
   const { toast } = useToast()
+
+  // WebSocket integration for real-time updates
+  const {
+    isConnected: wsConnected,
+    connectionStatus: wsConnectionStatus,
+    subscribe,
+    unsubscribe
+  } = useWebSocket()
+
+  // Handle real-time WebSocket messages
+  const handleWebSocketMessage = useCallback((message: RealtimeMessage) => {
+    console.log('🚨 === WEBSOCKET MESSAGE RECEIVED ===')
+    console.log('📨 Full message object:', JSON.stringify(message, null, 2))
+    console.log('📨 Message type:', message.type)
+    console.log('📨 Has message key:', !!message.message)
+    console.log('📨 Has payload key:', !!message.payload)
+    console.log('📨 Has data key:', !!message.data)
+    console.log('📨 Selected chat ID:', selectedChat?.id)
+    console.log('🚨 ======================================')
+    
+    switch (message.type) {
+      case 'new_message':
+        console.log('🟢 Processing new_message')
+        const newMessageData = message.message || message.payload || message.data
+        console.log('🟢 Message data to process:', newMessageData)
+        handleNewMessage(newMessageData)
+        break
+      case 'message_update':
+        console.log('🟡 Processing message_update')
+        const updateMessageData = message.message || message.payload || message.data
+        console.log('🟡 Update data to process:', updateMessageData)
+        console.log('🟡 Full WebSocket message:', message)
+        handleMessageUpdate(updateMessageData, message.conversation_id)
+        break
+      case 'message_status_update':
+        console.log('🔵 Processing message_status_update')
+        const statusMessageData = message.message || message.payload || message.data
+        console.log('🔵 Status data to process:', statusMessageData)
+        console.log('🔵 Full WebSocket message:', message)
+        handleMessageUpdate(statusMessageData, message.conversation_id)
+        break
+      case 'conversation_update':
+        console.log('🟣 Processing conversation_update')
+        const convUpdateData = message.conversation || message.payload || message.data
+        console.log('🟣 Conversation data to process:', convUpdateData)
+        handleConversationUpdate(convUpdateData)
+        break
+      case 'new_conversation':
+        console.log('🟠 Processing new_conversation')
+        const newConvData = message.conversation || message.payload || message.data
+        console.log('🟠 New conversation data to process:', newConvData)
+        handleNewConversation(newConvData)
+        break
+      default:
+        console.log('❌ Unhandled WhatsApp WebSocket message type:', message.type)
+        console.log('❌ Available message types should be: new_message, message_update, message_status_update, conversation_update, new_conversation')
+    }
+  }, [selectedChat])
+
+  // Handle message updates (status changes, etc.)
+  const handleMessageUpdate = useCallback((messageData: any, websocketConversationId?: string) => {
+    console.log('🔄 === MESSAGE UPDATE HANDLER ===')
+    console.log('🔄 Processing message update:', messageData)
+    console.log('🔄 Message ID:', messageData?.id)
+    console.log('🔄 New Status:', messageData?.status)
+    console.log('🔄 ================================')
+    
+    if (!messageData || !messageData.id) {
+      console.log('❌ No message data or ID, skipping update')
+      return
+    }
+    
+    const messageId = messageData.id
+    
+    // Update message in the messages list
+    setMessages(prev => {
+      console.log(`🔄 Current messages count: ${prev.length}`)
+      console.log(`🔄 Looking for message ID: ${messageId}`)
+      console.log(`🔄 Message IDs in list:`, prev.map(m => m.id))
+      
+      const updated = prev.map(existingMessage => {
+        if (existingMessage.id === messageId) {
+          console.log(`🔄 ✅ FOUND MESSAGE - Updating status: ${existingMessage.status} → ${messageData.status}`)
+          return {
+            ...existingMessage,
+            status: messageData.status || existingMessage.status,
+            // Update other fields as needed
+            text: messageData.text || existingMessage.text,
+            date: messageData.date || existingMessage.date,
+          }
+        }
+        return existingMessage
+      })
+      
+      // Check if we actually updated anything
+      const wasUpdated = updated.some(msg => msg.id === messageId)
+      if (!wasUpdated) {
+        console.log(`❌ Message ${messageId} not found in current messages list`)
+        console.log(`❌ Available message IDs:`, prev.map(m => `${m.id} (${m.status})`))
+        return prev
+      }
+      
+      console.log(`✅ Successfully updated message ${messageId}`)
+      return updated
+    })
+    
+    // Also update the chat list if this affects the latest message
+    // Note: The WebSocket event has conversation_id at the root level (external thread ID)
+    // while messageData.conversation_id is the database UUID. We need the external thread ID for matching.
+    const conversation_id = websocketConversationId || messageData.conversation_id || messageData.conversation || messageData.chat_id
+    console.log(`🔄 CHAT LIST UPDATE CHECK: conversation_id=${conversation_id}, messageId=${messageId}`)
+    console.log(`🔄 Available IDs:`, {
+      websocketConversationId,
+      'messageData.conversation_id': messageData.conversation_id,
+      'messageData.conversation': messageData.conversation,
+      'messageData.chat_id': messageData.chat_id
+    })
+    
+    if (conversation_id) {
+      setChats(prev => {
+        console.log(`🔄 Checking ${prev.length} chats for conversation ${conversation_id}`)
+        
+        return prev.map(chat => {
+          const chatMatches = chat.id === conversation_id || chat.provider_chat_id === conversation_id
+          const isLatestMessage = chat.latest_message?.id === messageId
+          
+          console.log(`🔄 Chat ${chat.name}: matches=${chatMatches}, latestMsgId=${chat.latest_message?.id}, isLatest=${isLatestMessage}`)
+          
+          if (chatMatches && isLatestMessage) {
+            console.log(`🔄 ✅ UPDATING chat list status: ${chat.latest_message.status} → ${messageData.status}`)
+            return {
+              ...chat,
+              latest_message: {
+                ...chat.latest_message,
+                status: messageData.status || chat.latest_message.status
+              }
+            }
+          }
+          return chat
+        })
+      })
+    }
+  }, [])
+
+  // Handle new incoming messages
+  const handleNewMessage = useCallback((messageData: any) => {
+    console.log('📨 Processing new WhatsApp message:', messageData)
+    
+    if (!messageData) return
+    
+    // Handle both old format (conversation_id, message) and new format (direct message data)
+    const message = messageData.message || messageData
+    const conversation_id = messageData.conversation_id || message?.conversation_id || message?.metadata?.chat_id
+    
+    // Update messages if this is the currently selected chat
+    console.log('🔍 ID MATCHING DEBUG:', {
+      messageConversationId: conversation_id,
+      selectedChatId: selectedChat?.id,
+      selectedChatProviderId: selectedChat?.provider_chat_id,
+      willUpdate: selectedChat && (conversation_id === selectedChat.id || conversation_id === selectedChat.provider_chat_id)
+    })
+    
+    if (selectedChat && (conversation_id === selectedChat.id || conversation_id === selectedChat.provider_chat_id)) {
+      setMessages(prev => {
+        // Check if message already exists to prevent duplicates
+        const exists = prev.some(msg => msg.id === message.id)
+        console.log('🔍 DUPLICATE CHECK:', {
+          messageId: message.id,
+          exists: exists,
+          existingMessageIds: prev.map(m => m.id),
+          totalMessages: prev.length
+        })
+        
+        if (exists) {
+          console.log('⚠️  Message already exists, skipping duplicate')
+          return prev
+        }
+        
+        // Transform and add new message
+        const newMessage: WhatsAppMessage = {
+          id: message.id,
+          text: message.text || message.content,
+          html: message.html,
+          type: mapMessageType(message.type),
+          direction: message.direction,
+          chat_id: selectedChat.id,
+          date: message.date || message.created_at || new Date().toISOString(),
+          status: message.status || 'sent',
+          attendee_id: message.attendee_id || message.from_id,
+          attachments: (message.attachments || []).map((att: any) => ({
+            id: att.id,
+            type: att.type,
+            filename: att.filename,
+            url: att.url,
+            thumbnail_url: att.thumbnail_url,
+            size: att.size,
+            mime_type: att.mime_type
+          })),
+          location: message.location,
+          contact: message.contact,
+          quoted_message_id: message.quoted_message_id,
+          account_id: selectedChat.account_id
+        }
+        
+        // Add to beginning of array (newest first) and sort
+        const updated = [newMessage, ...prev].sort((a, b) => 
+          new Date(b.date).getTime() - new Date(a.date).getTime()
+        )
+        
+        console.log(`✅ Added new message to chat ${selectedChat.id}:`, newMessage.text?.substring(0, 50))
+        return updated
+      })
+    }
+    
+    // Update chat list with new message
+    setChats(prev => {
+      const updated = prev.map(chat => {
+        if (chat.id === conversation_id || chat.provider_chat_id === conversation_id) {
+          const isInbound = message.direction === 'in' || message.direction === 'inbound'
+          const shouldIncrementUnread = isInbound && (!selectedChat || selectedChat.id !== chat.id)
+          const messageTimestamp = message.date || message.created_at || new Date().toISOString()
+          
+          console.log(`🔄 Updating chat ${chat.id} (${chat.name}) with new message at:`, messageTimestamp)
+          
+          return {
+            ...chat,
+            latest_message: {
+              id: message.id,
+              text: message.text || message.content,
+              type: mapMessageType(message.type),
+              direction: message.direction,
+              chat_id: chat.id,
+              date: messageTimestamp,
+              status: message.status || 'sent',
+              attendee_id: message.attendee_id,
+              attachments: message.attachments || [],
+              account_id: chat.account_id
+            },
+            unread_count: shouldIncrementUnread ? chat.unread_count + 1 : chat.unread_count,
+            last_message_date: messageTimestamp
+          }
+        }
+        return chat
+      })
+      
+      // Sort by newest message timestamp  
+      const sorted = updated.sort((a, b) => new Date(b.last_message_date).getTime() - new Date(a.last_message_date).getTime())
+      
+      return sorted
+    })
+    
+    // Show toast notification for new inbound messages
+    if ((message.direction === 'in' || message.direction === 'inbound') && 
+        (!selectedChat || conversation_id !== selectedChat.id)) {
+      const chatName = chats.find(c => c.id === conversation_id || c.provider_chat_id === conversation_id)?.name || 'Unknown'
+      toast({
+        title: `New WhatsApp message from ${chatName}`,
+        description: (message.text || message.content || 'New message').substring(0, 100),
+      })
+    }
+  }, [selectedChat, chats, toast])
+
+  // Handle conversation updates (metadata changes)
+  const handleConversationUpdate = useCallback((conversationData: any) => {
+    console.log('💬 Processing WhatsApp conversation update:', conversationData)
+    
+    if (!conversationData) return
+    
+    const { conversation_id, message_count, unread_count, last_message_at } = conversationData
+    
+    setChats(prev => prev.map(chat => {
+      if (chat.id === conversation_id || chat.provider_chat_id === conversation_id) {
+        return {
+          ...chat,
+          unread_count: unread_count !== undefined ? unread_count : chat.unread_count,
+          last_message_date: last_message_at || chat.last_message_date
+        }
+      }
+      return chat
+    }))
+    
+    // Update selected chat if it matches
+    if (selectedChat && (selectedChat.id === conversation_id || selectedChat.provider_chat_id === conversation_id)) {
+      setSelectedChat(prev => prev ? {
+        ...prev,
+        unread_count: unread_count !== undefined ? unread_count : prev.unread_count,
+        last_message_date: last_message_at || prev.last_message_date
+      } : prev)
+    }
+  }, [selectedChat])
+
+  // Handle new conversations
+  const handleNewConversation = useCallback((conversationData: any) => {
+    console.log('🆕 Processing new WhatsApp conversation:', conversationData)
+    
+    if (!conversationData) return
+    
+    // Transform the conversation data to WhatsApp chat format
+    const newChat: WhatsAppChat = {
+      id: conversationData.id,
+      provider_chat_id: conversationData.provider_chat_id || conversationData.chat_id,
+      name: conversationData.name || conversationData.title,
+      picture_url: conversationData.picture_url,
+      is_group: conversationData.is_group || false,
+      is_muted: conversationData.is_muted || false,
+      is_pinned: conversationData.is_pinned || false,
+      is_archived: conversationData.is_archived || false,
+      unread_count: conversationData.unread_count || 1, // New conversation likely has unread messages
+      last_message_date: conversationData.last_message_date || conversationData.updated_at || new Date().toISOString(),
+      account_id: conversationData.account_id || (accountConnections[0]?.id || ''),
+      attendees: (conversationData.attendees || []).map((att: any) => ({
+        id: att.id,
+        name: att.name,
+        phone: att.phone,
+        picture_url: att.picture_url,
+        provider_id: att.provider_id,
+        is_admin: att.is_admin || false,
+        is_business_account: att.is_business_account || false
+      })),
+      latest_message: conversationData.latest_message,
+      member_count: conversationData.member_count
+    }
+    
+    // Add to chat list if it doesn't exist
+    setChats(prev => {
+      const exists = prev.some(chat => chat.id === newChat.id || chat.provider_chat_id === newChat.provider_chat_id)
+      if (exists) return prev
+      
+      return [newChat, ...prev].sort((a, b) => 
+        new Date(b.last_message_date).getTime() - new Date(a.last_message_date).getTime()
+      )
+    })
+    
+    // Show notification
+    toast({
+      title: `New WhatsApp conversation`,
+      description: `New conversation with ${newChat.name || 'Unknown contact'}`,
+    })
+  }, [accountConnections, toast])
+
+  // Subscribe to WhatsApp-specific WebSocket channels
+  useEffect(() => {
+    if (!wsConnected) return
+    
+    console.log('📡 Setting up WhatsApp WebSocket subscriptions')
+    
+    const subscriptions: string[] = []
+    
+    // Subscribe ONLY to conversation-specific channel (the only one that works)
+    if (selectedChat) {
+      const chatSubscription = subscribe(`conversation_${selectedChat.id}`, handleWebSocketMessage)
+      subscriptions.push(chatSubscription)
+      console.log(`📡 ✅ CORRECTLY Subscribed to conversation_${selectedChat.id} with ID:`, chatSubscription)
+      
+      // Also subscribe to unified inbox updates for general communication changes
+      const inboxSubscription = subscribe('unified_inbox_updates', handleWebSocketMessage)
+      subscriptions.push(inboxSubscription)
+      console.log('📡 ✅ CORRECTLY Subscribed to unified_inbox_updates with ID:', inboxSubscription)
+    } else {
+      console.log('📡 ⚠️ No selected chat - cannot subscribe to conversation channel')
+    }
+    
+    // Cleanup subscriptions
+    return () => {
+      subscriptions.forEach(id => unsubscribe(id))
+      console.log('📡 WhatsApp unsubscribed from all channels')
+    }
+  }, [wsConnected, accountConnections, selectedChat, subscribe, unsubscribe, handleWebSocketMessage])
+
+  // No periodic refresh needed - timestamps should be instant from backend
 
   // Handle attachment download/preview
   const handleAttachmentClick = async (messageId: string, attachment: WhatsAppMessage['attachments'][0]) => {
@@ -331,12 +702,18 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
 
   // Load WhatsApp chats and account connections from real Unipile API
   useEffect(() => {
-    loadWhatsAppData()
+    // Only load if we don't already have chats to prevent unnecessary flashing
+    if (chats.length === 0) {
+      loadWhatsAppData()
+    }
   }, [])
 
   const loadWhatsAppData = async () => {
     try {
-      setLoading(true)
+      // Only show loading if we don't have any data yet
+      if (chats.length === 0) {
+        setLoading(true)
+      }
       
       // Load WhatsApp account connections
       const accountsResponse = await api.get('/api/v1/communications/whatsapp/accounts/')
@@ -362,7 +739,7 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
       // Reset pagination state and load first batch of chats
       setChatCursor(null)
       setHasMoreChats(true)
-      setChats([])
+      // Don't clear chats here - let loadMoreChats handle it to prevent flash
       
       // Load initial batch of chats (10 conversations)
       await loadMoreChats(connections, true)
@@ -405,16 +782,19 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
       console.log(`🔄 Loading chats for account ${accountToLoad.id}, cursor: ${chatCursor}`)
       
       try {
-        // Get chats for this account with pagination
+        // Get chats for this account with pagination using local-first endpoint
         const chatsResponse = await api.get('/api/v1/communications/whatsapp/chats/', {
           params: { 
             account_id: accountToLoad.id,
             limit: 15, // Load 15 chats consistently
-            ...(chatCursor && { cursor: chatCursor })
+            ...(chatCursor && { cursor: chatCursor }),
+            force_sync: isInitialLoad ? 'false' : 'false' // Use cached data for better performance
           }
         })
         
         console.log(`📊 Chat response for account ${accountToLoad.id}:`, chatsResponse.data)
+        console.log(`📊 Raw API URL called:`, chatsResponse.config?.url)
+        console.log(`📊 API response timestamp:`, new Date().toISOString())
         
         const accountChats = chatsResponse.data?.chats || []
         newCursor = chatsResponse.data?.cursor
@@ -427,6 +807,35 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
           
         // Transform API response to WhatsApp chat format
         for (const chatData of accountChats) {
+          // Debug timestamp data from backend
+          console.log(`🔍 Chat "${chatData.name}" timestamp debug:`, {
+            chatId: chatData.id,
+            latest_message_date: chatData.latest_message?.date,
+            latest_message_created_at: chatData.latest_message?.created_at,
+            last_message_date: chatData.last_message_date,
+            updated_at: chatData.updated_at,
+            latest_message_text: chatData.latest_message?.text?.substring(0, 50),
+            finalTimestamp: chatData.latest_message?.date || chatData.latest_message?.created_at || chatData.last_message_date || chatData.updated_at,
+            priorityOrder: [
+              { source: 'latest_message.date', value: chatData.latest_message?.date },
+              { source: 'latest_message.created_at', value: chatData.latest_message?.created_at },
+              { source: 'last_message_date', value: chatData.last_message_date },
+              { source: 'updated_at', value: chatData.updated_at }
+            ]
+          })
+          
+          // Additional debug: which timestamp will be used?
+          const selectedTimestamp = chatData.latest_message?.date || chatData.latest_message?.created_at || chatData.last_message_date || chatData.updated_at
+          console.log(`🔍 Chat "${chatData.name}" will use timestamp:`, selectedTimestamp)
+          
+          // Check if timestamps match
+          if (chatData.last_message_date && chatData.latest_message?.date) {
+            const timeDiff = Math.abs(new Date(chatData.last_message_date).getTime() - new Date(chatData.latest_message.date).getTime())
+            if (timeDiff > 1000) { // More than 1 second difference
+              console.warn(`⚠️ Chat "${chatData.name}" timestamp mismatch: last_message_date=${chatData.last_message_date} vs latest_message.date=${chatData.latest_message.date}`)
+            }
+          }
+          
           const transformedChat: WhatsAppChat = {
             id: chatData.id,
             provider_chat_id: chatData.provider_chat_id || chatData.chat_id,
@@ -437,7 +846,7 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
             is_pinned: chatData.is_pinned || false,
             is_archived: chatData.is_archived || false,
             unread_count: chatData.unread_count || 0,
-            last_message_date: chatData.last_message_date || chatData.updated_at,
+            last_message_date: chatData.latest_message?.date || chatData.latest_message?.created_at || chatData.last_message_date || chatData.updated_at,
             account_id: accountToLoad.id,
             attendees: (chatData.attendees || []).map((att: any) => ({
               id: att.id,
@@ -480,7 +889,45 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
       // Append to existing chats or replace for initial load
       if (isInitialLoad) {
         console.log(`🔄 Initial load: setting ${allChats.length} chats`)
-        setChats(allChats)
+        // Only replace if we don't have chats or if the data is significantly different
+        setChats(prev => {
+          // If we already have chats, merge intelligently to prevent flash
+          if (prev.length > 0) {
+            // Create a map of existing chats by ID for quick lookup
+            const existingChatMap = new Map(prev.map(chat => [chat.id, chat]))
+            
+            // Merge new chats with existing ones, updating where necessary
+            const mergedChats = allChats.map(newChat => {
+              const existing = existingChatMap.get(newChat.id)
+              if (existing) {
+                // Update existing chat with new data
+                return {
+                  ...existing,
+                  ...newChat,
+                  // Preserve any real-time updates that might be newer
+                  latest_message: newChat.latest_message?.date > (existing.latest_message?.date || '') 
+                    ? newChat.latest_message 
+                    : existing.latest_message,
+                  last_message_date: newChat.last_message_date > existing.last_message_date 
+                    ? newChat.last_message_date 
+                    : existing.last_message_date
+                }
+              }
+              return newChat
+            })
+            
+            // Add any existing chats that weren't in the new list
+            const newChatIds = new Set(allChats.map(chat => chat.id))
+            const remainingExisting = prev.filter(chat => !newChatIds.has(chat.id))
+            
+            return [...mergedChats, ...remainingExisting].sort((a, b) => 
+              new Date(b.last_message_date).getTime() - new Date(a.last_message_date).getTime()
+            )
+          }
+          
+          // If no existing chats, just set the new ones
+          return allChats
+        })
       } else {
         console.log(`🔄 Loading more: appending ${allChats.length} chats to existing list`)
         setChats(prev => [...prev, ...allChats])
@@ -506,30 +953,124 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
     }
   }
 
-  // Sync WhatsApp data with Unipile API
+  // Sync WhatsApp data with Unipile API using comprehensive sync
   const handleSync = async () => {
-    if (syncing) return
+    console.log('🔄 Sync button clicked!')
+    console.log('🔄 Current syncing state:', syncing)
     
+    if (syncing) {
+      console.log('❌ Already syncing, returning early')
+      return
+    }
+    
+    console.log('🔄 Setting syncing to true')
     setSyncing(true)
     try {
-      // Trigger sync for all WhatsApp accounts
-      await api.post('/api/v1/communications/whatsapp/sync/')
+      console.log('🔄 Making POST request to /api/v1/communications/whatsapp/sync/')
+      // Call the dedicated comprehensive sync endpoint
+      const syncResponse = await api.post('/api/v1/communications/whatsapp/sync/')
+      console.log('✅ Sync response received:', syncResponse.data)
       
-      // Reload data after sync
-      await loadWhatsAppData()
+      if (syncResponse.data?.success) {
+        const syncResults = syncResponse.data.sync_results || []
+        const totalConversations = syncResults.reduce((sum: number, result: any) => sum + (result.conversations_synced || 0), 0)
+        const totalMessages = syncResults.reduce((sum: number, result: any) => sum + (result.messages_synced || 0), 0)
+        
+        toast({
+          title: "Comprehensive sync completed",
+          description: `Synced ${totalConversations} conversations and ${totalMessages} messages with full attendee data.`,
+        })
+      } else {
+        throw new Error(syncResponse.data?.error || 'Sync failed')
+      }
+      
+      // After successful sync, reload conversations with fresh data
+      setChatCursor(null)
+      setHasMoreChats(true)
+      
+      // Load fresh conversations
+      const accountsToUse = accountConnections
+      if (accountsToUse.length > 0) {
+        const accountToLoad = accountsToUse[0]
+        
+        const chatsResponse = await api.get('/api/v1/communications/whatsapp/chats/', {
+          params: { 
+            account_id: accountToLoad.id,
+            limit: 15,
+            force_sync: 'false' // Use fresh synced data from database
+          }
+        })
+        
+        const accountChats = chatsResponse.data?.chats || []
+        const transformedChats: WhatsAppChat[] = []
+        
+        // Transform API response to WhatsApp chat format
+        for (const chatData of accountChats) {
+          const transformedChat: WhatsAppChat = {
+            id: chatData.id,
+            provider_chat_id: chatData.provider_chat_id || chatData.chat_id,
+            name: chatData.name || chatData.title,
+            picture_url: chatData.picture_url,
+            is_group: chatData.is_group || false,
+            is_muted: chatData.is_muted || false,
+            is_pinned: chatData.is_pinned || false,
+            is_archived: chatData.is_archived || false,
+            unread_count: chatData.unread_count || 0,
+            last_message_date: chatData.latest_message?.date || chatData.latest_message?.created_at || chatData.last_message_date || chatData.updated_at,
+            account_id: accountToLoad.id,
+            attendees: (chatData.attendees || []).map((att: any) => ({
+              id: att.id,
+              name: att.name,
+              phone: att.phone,
+              picture_url: att.picture_url,
+              provider_id: att.provider_id,
+              is_admin: att.is_admin || false,
+              is_business_account: att.is_business_account || false
+            })),
+            latest_message: chatData.latest_message ? {
+              id: chatData.latest_message.id,
+              text: chatData.latest_message.text || chatData.latest_message.content,
+              type: mapMessageType(chatData.latest_message.type),
+              direction: chatData.latest_message.direction,
+              chat_id: chatData.id,
+              date: chatData.latest_message.date || chatData.latest_message.created_at,
+              status: chatData.latest_message.status || 'sent',
+              attendee_id: chatData.latest_message.attendee_id,
+              attachments: chatData.latest_message.attachments || [],
+              account_id: accountToLoad.id
+            } : undefined,
+            member_count: chatData.member_count
+          }
+          
+          transformedChats.push(transformedChat)
+        }
+        
+        // Sort and update chats
+        transformedChats.sort((a, b) => new Date(b.last_message_date).getTime() - new Date(a.last_message_date).getTime())
+        setChats(transformedChats)
+        setChatCursor(chatsResponse.data?.cursor)
+        setHasMoreChats(chatsResponse.data?.has_more || false)
+      }
       
       toast({
         title: "Sync completed",
-        description: "WhatsApp data has been synchronized successfully.",
+        description: "WhatsApp data has been refreshed from the server.",
       })
     } catch (error: any) {
-      console.error('Failed to sync WhatsApp data:', error)
+      console.error('❌ Failed to sync WhatsApp data:', error)
+      console.error('❌ Error details:', {
+        message: error.message,
+        response: error.response?.data,
+        status: error.response?.status
+      })
+      
       toast({
         title: "Sync failed",
-        description: error.response?.data?.error || "Failed to synchronize WhatsApp data.",
+        description: error.response?.data?.error || error.message || "Failed to synchronize WhatsApp data.",
         variant: "destructive",
       })
     } finally {
+      console.log('🔄 Setting syncing to false')
       setSyncing(false)
     }
   }
@@ -556,9 +1097,32 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
       default:
         return !chat.is_archived  // Hide archived by default
     }
+  }).sort((a, b) => {
+    // Sort by most recent message first
+    const aTime = new Date(a.latest_message?.date || a.last_message_date).getTime()
+    const bTime = new Date(b.latest_message?.date || b.last_message_date).getTime()
+    
+    // Debug timestamp issues only when needed
+    if (isNaN(aTime) || isNaN(bTime)) {
+      console.warn('🕐 Invalid timestamp detected:', {
+        chatA: { name: a.name, timestamp: a.latest_message?.date || a.last_message_date, parsed: aTime },
+        chatB: { name: b.name, timestamp: b.latest_message?.date || b.last_message_date, parsed: bTime }
+      })
+    }
+    
+    return bTime - aTime // Most recent first
   })
 
   const handleChatSelect = async (chat: WhatsAppChat) => {
+    console.log(`📱 Selected chat "${chat.name}" - comparing timestamps:`, {
+      chatListTimestamp: {
+        latest_message_date: chat.latest_message?.date,
+        last_message_date: chat.last_message_date,
+        displayed: formatSafeDate(chat.latest_message?.date || chat.last_message_date)
+      },
+      latest_message_text: chat.latest_message?.text?.substring(0, 100)
+    })
+    
     setSelectedChat(chat)
     setLoadingMessages(true)
     
@@ -567,10 +1131,13 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
     setHasMoreMessages(true)
     
     try {
-      // Load initial 20 messages for this chat from real Unipile API
+      // Load initial 20 messages for this chat using local-first endpoint
       console.log('🔍 Loading messages for chat:', chat.id)
       const messagesResponse = await api.get(`/api/v1/communications/whatsapp/chats/${chat.id}/messages/`, {
-        params: { limit: 20 }
+        params: { 
+          limit: 20,
+          force_sync: 'false' // Use cached data for instant loading
+        }
       })
       console.log('📨 Messages API response:', messagesResponse.data)
       const chatMessages = messagesResponse.data?.messages || []
@@ -606,6 +1173,24 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
       
       // Sort messages by date (newest first)
       transformedMessages.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+      
+      // Debug: Compare chat list timestamp vs actual latest message
+      const actualLatestMessage = transformedMessages[0] // First message is newest
+      console.log(`📊 Chat "${chat.name}" timestamp comparison:`, {
+        chatListShows: {
+          latest_message_date: chat.latest_message?.date,
+          last_message_date: chat.last_message_date,
+          formatted: formatSafeDate(chat.latest_message?.date || chat.last_message_date)
+        },
+        actualLatestMessage: actualLatestMessage ? {
+          date: actualLatestMessage.date,
+          text: actualLatestMessage.text?.substring(0, 100),
+          formatted: formatSafeDate(actualLatestMessage.date)
+        } : 'NO_MESSAGES',
+        timeDifference: actualLatestMessage ? 
+          Math.abs(new Date(actualLatestMessage.date).getTime() - new Date(chat.latest_message?.date || chat.last_message_date).getTime()) / 1000 / 60 / 60 + ' hours'
+          : 'N/A'
+      })
       
       console.log('✅ Setting messages state with:', transformedMessages.length, 'messages')
       setMessages(transformedMessages)
@@ -661,7 +1246,8 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
       const messagesResponse = await api.get(`/api/v1/communications/whatsapp/chats/${selectedChat.id}/messages/`, {
         params: { 
           limit: 20,
-          cursor: messageCursor
+          cursor: messageCursor,
+          force_sync: 'false' // Use cached data for pagination
         }
       })
       
@@ -723,6 +1309,13 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
       
       const sentMessage = response.data?.message
       
+      console.log('🔍 SEND MESSAGE ID DEBUG:', {
+        apiResponseId: sentMessage?.id,
+        apiResponseType: typeof sentMessage?.id,
+        apiResponseText: sentMessage?.text || sentMessage?.content,
+        fullSentMessage: sentMessage
+      })
+      
       if (sentMessage) {
         // Create properly formatted message from API response
         const newMessage: WhatsAppMessage = {
@@ -736,8 +1329,22 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
           account_id: selectedChat.account_id
         }
 
-        // Add to local messages (newest first)
-        setMessages(prev => [newMessage, ...prev])
+        // Add to local messages (newest first) - with duplicate check
+        setMessages(prev => {
+          const exists = prev.some(msg => msg.id === newMessage.id)
+          console.log('🚀 SEND MESSAGE DUPLICATE CHECK:', {
+            messageId: newMessage.id,
+            exists: exists,
+            action: exists ? 'SKIP_DUPLICATE' : 'ADD_MESSAGE'
+          })
+          
+          if (exists) {
+            console.log('⚠️  Sent message already exists, skipping duplicate')
+            return prev
+          }
+          
+          return [newMessage, ...prev]
+        })
 
         // Update chat's latest message
         setChats(prev => prev.map(chat =>
@@ -845,6 +1452,14 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
           </Select>
 
           <div className="flex items-center gap-2">
+            {/* WebSocket Status Indicator */}
+            <div className="flex items-center space-x-2 text-sm">
+              <div className={`w-2 h-2 rounded-full ${wsConnected ? 'bg-green-500' : 'bg-red-500'}`}></div>
+              <span className="text-gray-600 dark:text-gray-400 text-xs">
+                {wsConnected ? 'Real-time' : 'Offline'}
+              </span>
+            </div>
+            
             <Button
               variant="outline"
               size="sm"
@@ -937,8 +1552,23 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
                             {chat.is_muted && <span className="text-xs text-gray-400">🔇</span>}
                           </div>
                           <div className="flex items-center gap-1 flex-shrink-0 ml-2">
-                            <span className="text-xs text-gray-500">
-                              {formatSafeDate(chat.last_message_date)}
+                            <span 
+                              className="text-xs text-gray-500" 
+                              title={`Chat: ${chat.name}
+Latest msg date: ${chat.latest_message?.date}
+Last msg date: ${chat.last_message_date}
+Using: ${chat.latest_message?.date || chat.last_message_date}
+Latest msg text: ${chat.latest_message?.text?.substring(0, 50)}`}
+                              onClick={() => {
+                                console.log(`🔍 Clicked timestamp for ${chat.name}:`, {
+                                  chat,
+                                  latest_message: chat.latest_message,
+                                  timestamp_used: chat.latest_message?.date || chat.last_message_date,
+                                  formatted: formatSafeDate(chat.latest_message?.date || chat.last_message_date)
+                                })
+                              }}
+                            >
+                              {formatSafeDate(chat.latest_message?.date || chat.last_message_date)}
                             </span>
                             {chat.unread_count > 0 && (
                               <Badge variant="destructive" className="text-xs ml-1">
@@ -965,15 +1595,18 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
                           
                           <div className="flex items-center gap-1 ml-2">
                             {chat.latest_message?.direction === 'out' && (
-                              <span className={`text-xs ${
-                                chat.latest_message.status === 'read' ? 'text-blue-500' :
-                                chat.latest_message.status === 'delivered' ? 'text-gray-500' :
-                                chat.latest_message.status === 'sent' ? 'text-gray-400' : 'text-red-500'
+                              <div className={`flex items-center justify-center w-5 h-5 rounded-full text-xs ${
+                                chat.latest_message.status === 'read' ? 'bg-blue-500 text-white' :
+                                chat.latest_message.status === 'delivered' ? 'bg-gray-600 text-white' :
+                                chat.latest_message.status === 'sent' ? 'bg-gray-600 text-white' : 
+                                chat.latest_message.status === 'pending' ? 'bg-gray-600' : 'bg-red-500 text-white'
                               }`}>
-                                {chat.latest_message.status === 'read' ? '✓✓' :
+                                {chat.latest_message.status === 'pending' ? (
+                                  <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-white"></div>
+                                ) : chat.latest_message.status === 'read' ? '✓✓' :
                                  chat.latest_message.status === 'delivered' ? '✓✓' :
                                  chat.latest_message.status === 'sent' ? '✓' : '❌'}
-                              </span>
+                              </div>
                             )}
                           </div>
                         </div>
@@ -1040,6 +1673,76 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
                   </div>
                   
                   <div className="flex items-center gap-2">
+                    {/* Refresh Messages Button */}
+                    <Button 
+                      variant="ghost" 
+                      size="sm"
+                      onClick={async () => {
+                        if (!selectedChat) return
+                        setLoadingMessages(true)
+                        try {
+                          // Force fresh messages from API
+                          const messagesResponse = await api.get(`/api/v1/communications/whatsapp/chats/${selectedChat.id}/messages/`, {
+                            params: { 
+                              limit: 20,
+                              force_sync: 'true' // Force API sync for fresh data
+                            }
+                          })
+                          
+                          const chatMessages = messagesResponse.data?.messages || []
+                          setMessageCursor(messagesResponse.data?.cursor)
+                          setHasMoreMessages(messagesResponse.data?.has_more || false)
+                          
+                          // Transform messages
+                          const transformedMessages: WhatsAppMessage[] = chatMessages.map((msgData: any) => ({
+                            id: msgData.id,
+                            text: msgData.text || msgData.content,
+                            html: msgData.html,
+                            type: mapMessageType(msgData.type),
+                            direction: msgData.direction,
+                            chat_id: selectedChat.id,
+                            date: msgData.date || msgData.created_at,
+                            status: msgData.status || 'sent',
+                            attendee_id: msgData.attendee_id || msgData.from_id,
+                            attachments: (msgData.attachments || []).map((att: any) => ({
+                              id: att.id,
+                              type: att.type,
+                              filename: att.filename,
+                              url: att.url,
+                              thumbnail_url: att.thumbnail_url,
+                              size: att.size,
+                              mime_type: att.mime_type
+                            })),
+                            location: msgData.location,
+                            contact: msgData.contact,
+                            quoted_message_id: msgData.quoted_message_id,
+                            account_id: selectedChat.account_id
+                          }))
+                          
+                          // Sort and set messages
+                          transformedMessages.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+                          setMessages(transformedMessages)
+                          
+                          toast({
+                            title: "Messages refreshed",
+                            description: "Latest messages have been loaded from the server.",
+                          })
+                        } catch (error) {
+                          console.error('Failed to refresh messages:', error)
+                          toast({
+                            title: "Refresh failed",
+                            description: "Failed to refresh messages from the server.",
+                            variant: "destructive",
+                          })
+                        } finally {
+                          setLoadingMessages(false)
+                        }
+                      }}
+                      title="Refresh messages from server"
+                    >
+                      <RefreshCw className="w-4 h-4" />
+                    </Button>
+                    
                     {/* Chat History Sync Button */}
                     <Popover>
                       <PopoverTrigger asChild>
@@ -1132,15 +1835,16 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
                     {messages.map((message) => (
                     <div
                       key={message.id}
-                      className={`flex ${message.direction === 'out' ? 'justify-end' : 'justify-start'}`}
+                      className={`flex ${message.direction === 'out' ? 'justify-end' : 'justify-start'} mb-1`}
                     >
-                      <div
-                        className={`max-w-xs lg:max-w-md rounded-lg px-4 py-2 ${
-                          message.direction === 'out'
-                            ? 'bg-green-500 text-white ml-12'
-                            : 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white mr-12'
-                        }`}
-                      >
+                      <div className={`flex flex-col ${message.direction === 'out' ? 'items-end' : 'items-start'}`}>
+                        <div
+                          className={`max-w-xs lg:max-w-md rounded-lg px-4 py-2 ${
+                            message.direction === 'out'
+                              ? 'bg-green-500 text-white'
+                              : 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white'
+                          }`}
+                        >
                         {/* Group chat sender name */}
                         {selectedChat.is_group && message.direction === 'in' && (
                           <p className="text-xs font-medium text-green-600 mb-1">
@@ -1236,29 +1940,35 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
                           </div>
                         )}
 
-                        {/* Timestamp and status */}
-                        <div className="flex items-center justify-between mt-1">
-                          <div
-                            className={`text-xs ${
-                              message.direction === 'out'
-                                ? 'text-green-100'
-                                : 'text-gray-500 dark:text-gray-400'
-                            }`}
-                          >
+                        {/* Timestamp inside bubble */}
+                        <div className="flex items-center justify-end mt-1">
+                          <div className={`text-xs ${
+                            message.direction === 'out'
+                              ? 'text-green-100'
+                              : 'text-gray-500 dark:text-gray-400'
+                          }`}>
                             {formatSafeTime(message.date)}
                           </div>
-                          {message.direction === 'out' && (
-                            <div className={`text-xs ${
-                              message.status === 'read' ? 'text-blue-400' :
-                              message.status === 'delivered' ? 'text-gray-300' :
-                              message.status === 'sent' ? 'text-gray-400' : 'text-red-400'
+                        </div>
+                        </div>
+                        
+                        {/* Status icon outside bubble - bottom left */}
+                        {message.direction === 'out' && (
+                          <div className="flex items-center gap-1 mt-1">
+                            <div className={`flex items-center justify-center w-6 h-6 rounded-full text-sm ${
+                              message.status === 'read' ? 'bg-blue-500 text-white' :
+                              message.status === 'delivered' ? 'bg-gray-600 text-white' :
+                              message.status === 'sent' ? 'bg-gray-600 text-white' : 
+                              message.status === 'pending' ? 'bg-gray-600' : 'bg-red-500 text-white'
                             }`}>
-                              {message.status === 'read' ? '✓✓' :
+                              {message.status === 'pending' ? (
+                                <div className="animate-spin rounded-full h-3.5 w-3.5 border-b-2 border-white"></div>
+                              ) : message.status === 'read' ? '✓✓' :
                                message.status === 'delivered' ? '✓✓' :
                                message.status === 'sent' ? '✓' : '❌'}
                             </div>
-                          )}
-                        </div>
+                          </div>
+                        )}
                       </div>
                       </div>
                     ))}

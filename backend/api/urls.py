@@ -182,7 +182,7 @@ api_patterns = [
     # Real-time tracking endpoints
     path('tracking/pixel/<uuid:message_id>/', TrackingPixelView.as_view(), name='tracking-pixel'),
     path('tracking/webhook/delivery/', DeliveryWebhookView.as_view(), name='tracking-delivery-webhook'),
-    path('tracking/webhook/unipile/', UniPileWebhookView.as_view(), name='tracking-unipile-webhook'),
+    # Note: UniPile tracking webhook consolidated into main /webhooks/unipile/ endpoint
     
     # Dashboard endpoints
     path('tracking/dashboard/channel/<uuid:channel_id>/', ChannelDashboardView.as_view(), name='tracking-channel-dashboard'),

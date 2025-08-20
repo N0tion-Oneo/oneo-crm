@@ -122,10 +122,9 @@ def get_whatsapp_accounts(request):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def get_whatsapp_chats(request):
-    """Get WhatsApp chats for a specific account with pagination"""
+    """Get WhatsApp chats from tenant database with current timestamps"""
     account_id = request.GET.get('account_id')
-    limit = int(request.GET.get('limit', 10))  # Default to 10 for better performance
-    cursor = request.GET.get('cursor')
+    limit = int(request.GET.get('limit', 15))  # Default to 15 chats
     
     if not account_id:
         return Response({
@@ -133,22 +132,134 @@ def get_whatsapp_chats(request):
             'error': 'account_id parameter is required'
         }, status=status.HTTP_400_BAD_REQUEST)
     
+    # Check if we should use local database (disabled by default until sync is fixed)
+    use_db = request.GET.get('_use_db', 'false').lower() == 'true'
+    
     try:
-        # Get chats from Unipile API
-        client = unipile_service.get_client()
-        chats_data = async_to_sync(client.messaging.get_all_chats)(
-            account_id=account_id,
-            limit=limit,
-            cursor=cursor,
-            account_type='WHATSAPP'
-        )
+        if not use_db:
+            logger.info(f"🚀 HYBRID: Using local-first with background API sync")
+            # Use the local-first persistence service without force_sync for speed
+            from ..services.persistence import message_sync_service
+            from asgiref.sync import async_to_sync
+            
+            # First try local data for speed (no loading spinner)
+            result = async_to_sync(message_sync_service.get_conversations_local_first)(
+                channel_type='whatsapp',
+                user_id=str(request.user.id),
+                account_id=account_id,
+                limit=limit,
+                force_sync=False  # Use cache/DB first for speed
+            )
+            
+            conversations = result.get('conversations', [])
+            
+            # Determine data source and freshness
+            cache_timestamp = result.get('_cache_timestamp')
+            is_fresh = False
+            if cache_timestamp:
+                from datetime import datetime, timezone
+                cache_age = (datetime.now(timezone.utc) - datetime.fromisoformat(cache_timestamp)).total_seconds()
+                is_fresh = cache_age < 300  # 5 minutes
+            
+            logger.info(f"✅ Retrieved {len(conversations)} conversations (fresh: {is_fresh})")
+            
+            return Response({
+                'success': True,
+                'chats': conversations,
+                'pagination': {
+                    'limit': limit,
+                    'total_fetched': len(conversations)
+                },
+                'source': 'local_first_hybrid',
+                'fresh_data': is_fresh,
+                'cache_age_seconds': cache_age if cache_timestamp else None
+            })
         
-        # Unipile consistently returns 'items' in API responses
-        chats = chats_data.get('items', [])
+        # Query tenant database directly - no complex caching
+        from ..models import UserChannelConnection, Conversation, Message, ConversationStatus
         
-        # We'll fetch attendees per chat instead of using global attendees
-        # This ensures we get the correct attendee info for each chat
-        logger.info(f"🔍 Will fetch attendees per chat for better accuracy")
+        # Get user's WhatsApp connection for this account
+        connection = UserChannelConnection.objects.filter(
+            user=request.user,
+            channel_type='whatsapp',
+            unipile_account_id=account_id,
+            is_active=True
+        ).first()
+        
+        if not connection:
+            logger.warning(f"No WhatsApp connection found for user {request.user.id} and account {account_id}")
+            return Response({
+                'success': True,
+                'chats': [],
+                'pagination': {
+                    'limit': limit,
+                    'total_fetched': 0
+                }
+            })
+        
+        # Get conversations for this WhatsApp account by matching unipile_account_id
+        conversations = Conversation.objects.filter(
+            channel__unipile_account_id=connection.unipile_account_id,
+            channel__channel_type='whatsapp',
+            status=ConversationStatus.ACTIVE
+        ).select_related('channel', 'primary_contact_record').order_by('-last_message_at')[:limit]
+        
+        chats = []
+        for conv in conversations:
+            # Get latest message for each conversation
+            latest_message = conv.messages.order_by('-created_at').first()
+            
+            chat_data = {
+                'id': str(conv.external_thread_id or conv.id),
+                'provider_chat_id': conv.external_thread_id,
+                'name': conv.subject or 'Unknown',
+                'is_group': conv.metadata.get('is_group', False),
+                'is_muted': conv.metadata.get('is_muted', False),
+                'is_pinned': conv.metadata.get('is_pinned', False),
+                'is_archived': conv.status == ConversationStatus.ARCHIVED,
+                'unread_count': conv.metadata.get('unread_count', 0),
+                # Use latest message timestamp as source of truth
+                'last_message_date': latest_message.created_at.isoformat() if latest_message else (conv.last_message_at.isoformat() if conv.last_message_at else None),
+                'attendees': conv.metadata.get('attendees', []),
+                'account_id': account_id,
+                'member_count': conv.metadata.get('member_count')
+            }
+            
+            # Add latest message if available
+            if latest_message:
+                chat_data['latest_message'] = {
+                    'id': str(latest_message.id),
+                    'text': latest_message.content,
+                    'type': latest_message.metadata.get('type', 'text'),
+                    'direction': 'out' if latest_message.direction == 'outbound' else 'in',
+                    'date': latest_message.created_at.isoformat(),
+                    'status': latest_message.status,
+                    'chat_id': chat_data['id'],
+                    'attendee_id': latest_message.metadata.get('attendee_id'),
+                    'account_id': account_id
+                }
+            
+            chats.append(chat_data)
+        
+        logger.info(f"✅ Retrieved {len(chats)} WhatsApp conversations from tenant database (DIRECT QUERY)")
+        logger.info(f"📊 Sample chat timestamps: {[(chat['name'][:20], chat['last_message_date']) for chat in chats[:3]]}")
+        
+        return Response({
+            'success': True,
+            'chats': chats,
+            'pagination': {
+                'limit': limit,
+                'total_fetched': len(chats)
+            },
+            'source': 'tenant_database_direct'
+        })
+        
+    except Exception as e:
+        logger.error(f"Failed to get WhatsApp chats from tenant database: {e}")
+        return Response({
+            'success': False,
+            'error': str(e)
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         
         # Parallel processing for attendee fetching to improve performance
         async def fetch_chat_attendees(chat_data, client):
@@ -269,9 +380,21 @@ def get_whatsapp_chats(request):
             if is_group and attendees:
                 chat_data['estimated_member_count'] = len(attendees)
             
-            # Transform latest message - Unipile doesn't include latest message in chat list
-            # We'll need to fetch it separately or leave it empty
+            # Transform latest message - Extract from UniPile chat data
             latest_message = None
+            if chat_data.get('latest_message'):
+                msg_data = chat_data['latest_message']
+                latest_message = {
+                    'id': msg_data.get('id'),
+                    'text': msg_data.get('text') or msg_data.get('content', ''),
+                    'type': msg_data.get('type', 'text'),
+                    'direction': 'out' if msg_data.get('from_me') else 'in',
+                    'date': msg_data.get('date') or msg_data.get('timestamp'),
+                    'status': msg_data.get('status', 'sent'),
+                    'chat_id': chat_data.get('id'),
+                    'attendee_id': msg_data.get('from') if not msg_data.get('from_me') else None,
+                    'account_id': account_id
+                }
             
             # Determine chat name - prioritize meaningful names over phone numbers
             chat_name = chat_data.get('name')
@@ -346,21 +469,136 @@ def get_whatsapp_chats(request):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def get_chat_messages(request, chat_id):
-    """Get messages for a specific WhatsApp chat"""
+    """Get messages for a specific WhatsApp chat from local database"""
     logger.info(f"📨 Messages API called for chat_id: {chat_id} by user: {request.user}")
     
-    limit = int(request.GET.get('limit', 20))  # Default to 20 messages for better performance
+    limit = int(request.GET.get('limit', 20))
+    cursor = request.GET.get('cursor')
+    
+    # Check if we should use local database (disabled by default until sync is fixed)
+    use_db = request.GET.get('_use_db', 'false').lower() == 'true'
+    
+    try:
+        if not use_db:
+            logger.info(f"🚀 HYBRID: Using local-first message loading for chat {chat_id}")
+            # Try local database first for speed, fallback to API if needed
+            from ..services.persistence import message_sync_service
+            from asgiref.sync import async_to_sync
+            
+            try:
+                result = async_to_sync(message_sync_service.get_messages_local_first)(
+                    conversation_id=chat_id,
+                    channel_type='whatsapp',
+                    limit=limit,
+                    cursor=cursor,
+                    force_sync=False  # Use local data first for speed
+                )
+                
+                if result.get('messages'):
+                    logger.info(f"📄 Using local messages for chat {chat_id}: {len(result['messages'])} messages")
+                    return Response({
+                        'success': True,
+                        'messages': result['messages'],
+                        'total': len(result['messages']),
+                        'cursor': result.get('cursor'),
+                        'has_more': result.get('has_more', False),
+                        'source': 'local_first_fast'
+                    })
+                else:
+                    logger.info(f"🌐 Falling back to API for chat {chat_id} (no local data)")
+                    return get_chat_messages_api_fallback(request, chat_id)
+                    
+            except Exception as e:
+                logger.warning(f"Local message query failed, using API fallback: {e}")
+                return get_chat_messages_api_fallback(request, chat_id)
+        
+        # Get messages from local tenant database directly
+        from ..models import Conversation, Message, MessageDirection
+        from datetime import datetime
+        
+        # Find the conversation
+        conversation = Conversation.objects.filter(external_thread_id=chat_id).first()
+        if not conversation:
+            logger.warning(f"📨 LOCAL DB: No conversation found for chat {chat_id}")
+            return Response({
+                'success': True,
+                'messages': [],
+                'total': 0,
+                'cursor': None,
+                'has_more': False,
+                'source': 'tenant_database_direct'
+            })
+        
+        # Get messages with cursor-based pagination
+        messages_query = conversation.messages.order_by('-created_at')
+        
+        if cursor:
+            try:
+                cursor_dt = datetime.fromisoformat(cursor.replace('Z', '+00:00'))
+                messages_query = messages_query.filter(created_at__lt=cursor_dt)
+            except ValueError:
+                logger.warning(f"📨 Invalid cursor format: {cursor}")
+        
+        messages = list(messages_query[:limit])
+        
+        logger.info(f"📨 LOCAL DB: Retrieved {len(messages)} messages for chat {chat_id}")
+        
+        # Transform messages to frontend format
+        transformed_messages = []
+        for msg in messages:
+            transformed_message = {
+                'id': str(msg.id),
+                'text': msg.content,
+                'html': msg.metadata.get('html', ''),
+                'type': msg.metadata.get('type', 'text'),
+                'direction': 'out' if msg.direction == MessageDirection.OUTBOUND else 'in',
+                'date': msg.created_at.isoformat(),
+                'status': msg.status,
+                'attendee_id': msg.metadata.get('attendee_id'),
+                'chat_id': chat_id,
+                'attachments': msg.metadata.get('attachments', []),
+                'location': msg.metadata.get('location'),
+                'contact': msg.metadata.get('contact'),
+                'quoted_message_id': msg.metadata.get('quoted_message_id'),
+                'account_id': msg.metadata.get('account_id')
+            }
+            transformed_messages.append(transformed_message)
+        
+        # Determine if there are more messages
+        has_more = len(messages) == limit
+        next_cursor = messages[-1].created_at.isoformat() if messages and has_more else None
+        
+        logger.info(f"📨 LOCAL DB: Returning {len(transformed_messages)} messages, has_more: {has_more}")
+        
+        return Response({
+            'success': True,
+            'messages': transformed_messages,
+            'total': len(transformed_messages),
+            'cursor': next_cursor,
+            'has_more': has_more,
+            'source': 'tenant_database_direct'
+        })
+        
+    except Exception as e:
+        logger.error(f"Failed to get messages from local database: {e}")
+        
+        # Fallback to API if database fails
+        logger.info(f"📨 FALLBACK: Using UniPile API for chat {chat_id}")
+        return get_chat_messages_api_fallback(request, chat_id)
+
+
+def get_chat_messages_api_fallback(request, chat_id):
+    """Fallback to UniPile API when database fails"""
+    limit = int(request.GET.get('limit', 20))
     cursor = request.GET.get('cursor')
     since = request.GET.get('since')
-    sender_id = request.GET.get('sender_id')  # Support UniPile sender_id parameter
-    
-    logger.info(f"📨 Parameters: limit={limit}, cursor={cursor}, since={since}, sender_id={sender_id}")
+    sender_id = request.GET.get('sender_id')
     
     try:
         client = unipile_service.get_client()
         
         # Get messages from Unipile API
-        logger.info(f"📨 Calling Unipile get_all_messages for chat_id: {chat_id}")
+        logger.info(f"📨 UNIPILE API: Calling get_all_messages for chat_id: {chat_id}")
         messages_data = async_to_sync(client.messaging.get_all_messages)(
             chat_id=chat_id,
             limit=limit,
@@ -369,10 +607,8 @@ def get_chat_messages(request, chat_id):
             sender_id=sender_id
         )
         
-        logger.info(f"📨 Unipile response: {messages_data}")
-        # Unipile consistently returns 'items' in API responses
+        logger.info(f"📨 UNIPILE API: Response received with {len(messages_data.get('items', []))} messages")
         messages = messages_data.get('items', [])
-        logger.info(f"📨 Extracted messages count: {len(messages)}")
         transformed_messages = []
         
         for msg_data in messages:
@@ -393,7 +629,6 @@ def get_chat_messages(request, chat_id):
             from communications.utils.message_direction import determine_whatsapp_direction
             direction = determine_whatsapp_direction(msg_data)
             
-            
             transformed_message = {
                 'id': msg_data.get('id'),
                 'text': msg_data.get('text') or msg_data.get('body'),
@@ -410,7 +645,6 @@ def get_chat_messages(request, chat_id):
                 'quoted_message_id': msg_data.get('quoted_message_id'),
                 'account_id': msg_data.get('account_id')
             }
-            
             transformed_messages.append(transformed_message)
         
         return Response({
@@ -418,31 +652,12 @@ def get_chat_messages(request, chat_id):
             'messages': transformed_messages,
             'total': len(transformed_messages),
             'cursor': messages_data.get('cursor'),
-            'has_more': messages_data.get('has_more', False)
+            'has_more': messages_data.get('has_more', False),
+            'source': 'unipile_api_fallback'
         })
         
-    except UnipileConnectionError as e:
-        logger.error(f"UniPile connection error getting messages for chat {chat_id}: {e}")
-        
-        # For 404 errors, this might be a valid empty chat
-        if "404" in str(e) or "Cannot GET" in str(e):
-            return Response({
-                'success': True,
-                'messages': [],
-                'total': 0,
-                'cursor': None,
-                'has_more': False,
-                'warning': f'Chat {chat_id} has no accessible messages'
-            })
-        else:
-            # Other connection errors should be reported properly
-            return Response({
-                'success': False,
-                'error': f'Failed to connect to UniPile API: {str(e)}',
-                'error_type': 'connection_error'
-            }, status=status.HTTP_503_SERVICE_UNAVAILABLE)
     except Exception as e:
-        logger.error(f"Failed to get chat messages: {e}")
+        logger.error(f"API fallback failed for chat {chat_id}: {e}")
         return Response({
             'success': False,
             'error': str(e)

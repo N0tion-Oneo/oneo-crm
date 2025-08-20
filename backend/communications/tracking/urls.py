@@ -31,7 +31,7 @@ urlpatterns = [
     # Real-time tracking endpoints
     path('pixel/<uuid:message_id>/', views.TrackingPixelView.as_view(), name='tracking-pixel'),
     path('webhook/delivery/', views.DeliveryWebhookView.as_view(), name='delivery-webhook'),
-    path('webhook/unipile/', views.UniPileWebhookView.as_view(), name='unipile-webhook'),
+    # Note: UniPile webhook consolidated into main /webhooks/unipile/ endpoint with tracking handler
     
     # Dashboard endpoints
     path('dashboard/channel/<uuid:channel_id>/', views.ChannelDashboardView.as_view(), name='channel-dashboard'),

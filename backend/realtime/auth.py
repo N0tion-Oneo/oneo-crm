@@ -401,7 +401,7 @@ async def check_channel_subscription_permission(user, channel: str):
             user_id_from_channel = channel.split('_')[1]
             return str(user.id) == user_id_from_channel
         
-        elif channel.startswith('channel_') or channel.startswith('conversation_'):
+        elif channel.startswith('channel_') or channel.startswith('conversation_') or channel.startswith('whatsapp_') or channel.startswith('communication_'):
             # Communication channels - check if user has access to communications
             # For now, allow all authenticated users to subscribe to communication channels
             # In the future, you might want to check specific channel/conversation permissions
@@ -441,6 +441,8 @@ async def get_user_accessible_channels(user):
             'ai_jobs',
             'ai_templates', 
             'ai_analytics',
+            'whatsapp_updates',  # WhatsApp communication updates
+            'communication_updates',  # General communication updates
             f'user_{user.id}',  # User's own channel
             f'tenant_{getattr(user, "tenant_id", "default")}'  # Tenant channel
         ])

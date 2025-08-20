@@ -303,6 +303,17 @@ def hosted_auth_success_callback(request):
                 connection.last_sync_at = timezone.now()
                 connection.save()
                 
+                # Automatically fetch and store comprehensive account details
+                try:
+                    from communications.services.account_sync import account_sync_service
+                    sync_result = async_to_sync(account_sync_service.sync_account_details)(connection)
+                    if sync_result.get('success'):
+                        logger.info(f"✅ Auto-synced account details for {account_id}: {sync_result.get('phone_number', 'N/A')}")
+                    else:
+                        logger.warning(f"⚠️ Failed to auto-sync account details for {account_id}: {sync_result.get('error')}")
+                except Exception as sync_error:
+                    logger.error(f"❌ Error during auto-sync for {account_id}: {sync_error}")
+                
                 updated_connection = connection
                 logger.info(f"Updated connection {connection_id} with account {account_id}")
                 
@@ -326,6 +337,17 @@ def hosted_auth_success_callback(request):
                 connection.hosted_auth_url = ''
                 connection.last_sync_at = timezone.now()
                 connection.save()
+                
+                # Automatically fetch and store comprehensive account details
+                try:
+                    from communications.services.account_sync import account_sync_service
+                    sync_result = async_to_sync(account_sync_service.sync_account_details)(connection)
+                    if sync_result.get('success'):
+                        logger.info(f"✅ Auto-synced account details for {account_id}: {sync_result.get('phone_number', 'N/A')}")
+                    else:
+                        logger.warning(f"⚠️ Failed to auto-sync account details for {account_id}: {sync_result.get('error')}")
+                except Exception as sync_error:
+                    logger.error(f"❌ Error during auto-sync for {account_id}: {sync_error}")
                 
                 updated_connection = connection
                 logger.info(f"Linked account {account_id} to recent {provider} connection")
@@ -584,6 +606,17 @@ async def solve_checkpoint(request, connection_id):
                 connection.last_error = ''
                 connection.save()
                 
+                # Automatically sync account details after successful checkpoint
+                try:
+                    from communications.services.account_sync import account_sync_service
+                    sync_result = await account_sync_service.sync_account_details(connection)
+                    if sync_result.get('success'):
+                        logger.info(f"✅ Auto-synced account details after checkpoint for {connection.unipile_account_id}")
+                    else:
+                        logger.warning(f"⚠️ Failed to auto-sync after checkpoint: {sync_result.get('error')}")
+                except Exception as sync_error:
+                    logger.error(f"❌ Error during auto-sync after checkpoint: {sync_error}")
+                
                 logger.info(f"Checkpoint solved for connection {connection_id}")
                 
                 return Response({
@@ -699,6 +732,17 @@ async def reconnect_account(request, connection_id):
                 connection.last_error = ''
                 connection.last_sync_at = timezone.now()
                 connection.save()
+                
+                # Automatically sync account details after successful reconnection
+                try:
+                    from communications.services.account_sync import account_sync_service
+                    sync_result = await account_sync_service.sync_account_details(connection)
+                    if sync_result.get('success'):
+                        logger.info(f"✅ Auto-synced account details after reconnection for {connection.unipile_account_id}")
+                    else:
+                        logger.warning(f"⚠️ Failed to auto-sync after reconnection: {sync_result.get('error')}")
+                except Exception as sync_error:
+                    logger.error(f"❌ Error during auto-sync after reconnection: {sync_error}")
                 
                 logger.info(f"Account reconnected for connection {connection_id}")
                 

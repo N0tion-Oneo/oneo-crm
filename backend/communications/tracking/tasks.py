@@ -303,7 +303,7 @@ def process_webhook_events(events: List[dict]):
                     continue
                 
                 # Import signal handler
-                from .signals import handle_unipile_delivery_webhook
+                from communications.signals.tracking import handle_unipile_delivery_webhook
                 
                 # Process the event
                 handle_unipile_delivery_webhook(message_id, event)

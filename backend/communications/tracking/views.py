@@ -31,7 +31,7 @@ from .serializers import (
 )
 from .manager import communication_tracker
 from .analytics import communication_analyzer
-from .signals import handle_unipile_delivery_webhook, handle_tracking_pixel_request
+from communications.signals.tracking import handle_unipile_delivery_webhook, handle_tracking_pixel_request
 
 logger = logging.getLogger(__name__)
 

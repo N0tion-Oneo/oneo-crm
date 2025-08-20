@@ -490,6 +490,7 @@ class Conversation(models.Model):
     """
     Conversation threads that can span multiple messages
     Groups related messages together with metadata
+    Enhanced with sync capabilities and performance optimizations
     """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     
@@ -526,6 +527,27 @@ class Conversation(models.Model):
     # Statistics (updated by signals)
     message_count = models.IntegerField(default=0)
     last_message_at = models.DateTimeField(null=True, blank=True)
+    unread_count = models.IntegerField(default=0, help_text="Cached unread message count")
+    
+    # Sync metadata for persistence layer
+    sync_status = models.CharField(
+        max_length=20,
+        choices=[
+            ('pending', 'Pending Sync'),
+            ('synced', 'Synced'),
+            ('failed', 'Sync Failed'),
+            ('partial', 'Partially Synced'),
+        ],
+        default='pending',
+        help_text="Synchronization status with external provider"
+    )
+    last_synced_at = models.DateTimeField(null=True, blank=True, help_text="Last successful sync timestamp")
+    sync_error_count = models.IntegerField(default=0, help_text="Number of consecutive sync failures")
+    sync_error_message = models.TextField(blank=True, help_text="Last sync error message")
+    
+    # Performance optimization fields
+    is_hot = models.BooleanField(default=False, help_text="Frequently accessed conversation")
+    last_accessed_at = models.DateTimeField(auto_now=True, help_text="Last time conversation was accessed")
     
     # Metadata
     metadata = models.JSONField(
@@ -539,11 +561,25 @@ class Conversation(models.Model):
     
     class Meta:
         indexes = [
-            models.Index(fields=['channel', 'status']),
-            models.Index(fields=['primary_contact_record']),
-            models.Index(fields=['last_message_at']),
-            models.Index(fields=['external_thread_id']),
-            models.Index(fields=['priority', 'status']),
+            # Core query patterns
+            models.Index(fields=['channel', 'status', '-last_message_at']),  # Conversation list queries
+            models.Index(fields=['channel', '-last_message_at']),  # All conversations by recency
+            models.Index(fields=['external_thread_id']),  # External ID lookups
+            models.Index(fields=['primary_contact_record']),  # Contact-based queries
+            
+            # Sync and performance optimization
+            models.Index(fields=['sync_status', 'last_synced_at']),  # Sync management
+            models.Index(fields=['is_hot', '-last_accessed_at']),  # Hot conversation tracking
+            models.Index(fields=['-last_accessed_at']),  # Recently accessed conversations
+            
+            # Status and priority filtering
+            models.Index(fields=['status', '-last_message_at']),  # Status-based filtering
+            models.Index(fields=['priority', 'status']),  # Priority filtering
+            models.Index(fields=['unread_count']),  # Unread filtering
+            
+            # Date-based queries
+            models.Index(fields=['-created_at']),  # Recent conversations
+            models.Index(fields=['-updated_at']),  # Recently updated
         ]
         unique_together = ['channel', 'external_thread_id']  # Prevent duplicate threads per channel
     
@@ -597,6 +633,20 @@ class Message(models.Model):
     sent_at = models.DateTimeField(null=True, blank=True)
     received_at = models.DateTimeField(null=True, blank=True)
     
+    # Sync metadata for persistence layer
+    sync_status = models.CharField(
+        max_length=20,
+        choices=[
+            ('pending', 'Pending Sync'),
+            ('synced', 'Synced'),
+            ('failed', 'Sync Failed'),
+        ],
+        default='pending',
+        help_text="Synchronization status with external provider"
+    )
+    last_synced_at = models.DateTimeField(null=True, blank=True, help_text="Last successful sync timestamp")
+    is_local_only = models.BooleanField(default=False, help_text="Message exists only locally (not yet sent to external provider)")
+    
     # Metadata and attachments
     metadata = models.JSONField(
         default=dict,
@@ -609,13 +659,25 @@ class Message(models.Model):
     
     class Meta:
         indexes = [
-            models.Index(fields=['channel', 'direction']),
-            models.Index(fields=['conversation', 'created_at']),
-            models.Index(fields=['contact_record']),
-            models.Index(fields=['status', 'direction']),
-            models.Index(fields=['external_message_id']),
-            models.Index(fields=['sent_at']),
-            models.Index(fields=['contact_email']),
+            # Core query patterns
+            models.Index(fields=['conversation', '-created_at']),  # Message list queries (most important)
+            models.Index(fields=['channel', 'direction', '-created_at']),  # Channel-based message queries
+            models.Index(fields=['external_message_id']),  # External ID lookups
+            
+            # Sync and status tracking
+            models.Index(fields=['sync_status', 'last_synced_at']),  # Sync management
+            models.Index(fields=['is_local_only', '-created_at']),  # Local-only messages
+            models.Index(fields=['status', 'direction']),  # Status filtering
+            
+            # Contact and relationship queries
+            models.Index(fields=['contact_record', '-created_at']),  # Contact message history
+            models.Index(fields=['contact_email']),  # Email-based lookups
+            models.Index(fields=['contact_phone']),  # Phone-based lookups
+            
+            # Date and delivery tracking
+            models.Index(fields=['-sent_at']),  # Recently sent messages
+            models.Index(fields=['-received_at']),  # Recently received messages
+            models.Index(fields=['-created_at']),  # Recently created messages
         ]
         constraints = [
             models.UniqueConstraint(
@@ -689,41 +751,102 @@ class CommunicationAnalytics(models.Model):
         return f"Analytics {self.date} - {scope}"
 
 
-# Signal handlers to maintain data consistency
-from django.db.models.signals import post_save, post_delete
-from django.dispatch import receiver
-
-
-@receiver(post_save, sender=Message)
-def update_conversation_stats(sender, instance, created, **kwargs):
-    """Update conversation statistics when messages are created"""
-    if created and instance.conversation:
-        conversation = instance.conversation
-        conversation.message_count = conversation.messages.count()
-        conversation.last_message_at = instance.created_at
-        conversation.save(update_fields=['message_count', 'last_message_at'])
-
-
-@receiver(post_delete, sender=Message)
-def update_conversation_stats_on_delete(sender, instance, **kwargs):
-    """Update conversation statistics when messages are deleted"""
-    if instance.conversation:
-        conversation = instance.conversation
-        conversation.message_count = conversation.messages.count()
-        last_message = conversation.messages.order_by('-created_at').first()
-        conversation.last_message_at = last_message.created_at if last_message else None
-        conversation.save(update_fields=['message_count', 'last_message_at'])
+class ChatAttendee(models.Model):
+    """
+    Store contact/attendee information from Unipile API
+    Maps external contacts to internal conversation participants
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    
+    # External identification
+    external_attendee_id = models.CharField(
+        max_length=255,
+        help_text="Unipile attendee ID"
+    )
+    provider_id = models.CharField(
+        max_length=255,
+        help_text="Provider-specific ID (e.g., phone@s.whatsapp.net, email, etc.)"
+    )
+    
+    # Relationships
+    channel = models.ForeignKey(
+        Channel, 
+        on_delete=models.CASCADE, 
+        related_name='attendees',
+        help_text="Channel this attendee belongs to"
+    )
+    contact_record = models.ForeignKey(
+        'pipelines.Record', 
+        on_delete=models.SET_NULL, 
+        null=True, 
+        blank=True,
+        help_text="Linked contact record in CRM"
+    )
+    
+    # Attendee information
+    name = models.CharField(
+        max_length=255,
+        help_text="Display name of the attendee"
+    )
+    picture_url = models.URLField(
+        blank=True,
+        help_text="Profile picture URL from the platform"
+    )
+    is_self = models.BooleanField(
+        default=False,
+        help_text="Whether this attendee represents the account owner"
+    )
+    
+    # Additional data from Unipile
+    metadata = models.JSONField(
+        default=dict,
+        help_text="Additional attendee data from Unipile API"
+    )
+    
+    # Sync tracking
+    last_synced_at = models.DateTimeField(auto_now=True)
+    sync_status = models.CharField(
+        max_length=20,
+        choices=[
+            ('active', 'Active'),
+            ('stale', 'Stale'),
+            ('error', 'Error')
+        ],
+        default='active'
+    )
+    
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        unique_together = [
+            ['channel', 'external_attendee_id'],  # One record per external attendee per channel
+            ['channel', 'provider_id'],           # One record per provider ID per channel
+        ]
+        indexes = [
+            models.Index(fields=['channel', 'provider_id']),
+            models.Index(fields=['channel', 'external_attendee_id']),
+            models.Index(fields=['contact_record']),
+            models.Index(fields=['name']),
+            models.Index(fields=['last_synced_at']),
+        ]
+    
+    def __str__(self):
+        return f"{self.name} ({self.provider_id}) - {self.channel.name}"
+    
+    @property
+    def phone_number(self):
+        """Extract phone number from WhatsApp provider_id"""
+        if '@s.whatsapp.net' in self.provider_id:
+            return self.provider_id.replace('@s.whatsapp.net', '')
+        return None
+    
+    @property
+    def is_phone_number_name(self):
+        """Check if the name is just a phone number (not a real contact name)"""
+        return self.name.endswith('@s.whatsapp.net') or self.name.replace('+', '').replace('-', '').replace(' ', '').isdigit()
 
 
 # Import draft models
 from .models_drafts import MessageDraft, DraftAutoSaveSettings
-
-
-@receiver(post_save, sender=Message)
-def update_channel_stats(sender, instance, created, **kwargs):
-    """Update channel statistics when messages are created"""
-    if created:
-        channel = instance.channel
-        channel.message_count = channel.messages.count()
-        channel.last_message_at = instance.created_at
-        channel.save(update_fields=['message_count', 'last_message_at'])

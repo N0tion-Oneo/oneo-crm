@@ -169,7 +169,8 @@ interface UseUnifiedInboxReturn {
   loadingChannels: boolean
   
   // Actions
-  fetchInbox: (options?: { page?: number; limit?: number }) => Promise<void>
+  fetchInbox: (options?: { page?: number; limit?: number; forceRefresh?: boolean }) => Promise<void>
+  refreshInbox: () => Promise<void>  // Explicit refresh with loading state
   selectRecord: (record: Record) => void
   refreshRecord: (recordId: number) => Promise<void>
   markAsRead: (recordId: number, channelType: string) => Promise<void>
@@ -186,9 +187,10 @@ export function useUnifiedInbox(): UseUnifiedInboxReturn {
   const [inboxData, setInboxData] = useState<UnifiedInboxData | null>(null)
   const [selectedRecord, setSelectedRecord] = useState<Record | null>(null)
   const [channelAvailability, setChannelAvailability] = useState<ChannelAvailability[]>([])
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(false)  // Start as false - only show loading when actually needed
   const [loadingChannels, setLoadingChannels] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [initialLoad, setInitialLoad] = useState(true)  // Track if this is the first load
 
   // Use centralized WebSocket context (same as working Conversations view)
   const {
@@ -202,10 +204,16 @@ export function useUnifiedInbox(): UseUnifiedInboxReturn {
   // Handle WebSocket messages
   const handleWebSocketMessage = useCallback((message: RealtimeMessage) => {
     console.log('📨 Unified Inbox WebSocket message:', message)
+    console.log('📨 Message type:', message.type)
+    console.log('📨 Message payload:', message.payload)
+    console.log('📨 Message data:', message.data)
     
     switch (message.type) {
       case 'message_update':
         handleMessageUpdate(message.message || message.payload)
+        break
+      case 'conversation_update':
+        handleConversationUpdate(message.conversation || message.payload)
         break
       case 'new_conversation':
         handleConversationUpdate(message.conversation || message.payload)
@@ -298,23 +306,142 @@ export function useUnifiedInbox(): UseUnifiedInboxReturn {
     }
   }
 
-  // Handle message updates
-  function handleMessageUpdate(message: any) {
-    // This could trigger updates to the conversation timeline
-    // Implementation depends on timeline component
-    console.log('Message update received:', message)
+  // Handle message updates - only update the specific conversation/record
+  function handleMessageUpdate(messageData: any) {
+    console.log('📨 Processing message update:', messageData)
+    
+    if (!inboxData || !messageData) return
+    
+    const { conversation_id, message } = messageData
+    
+    // Find and update only the affected record/conversation
+    setInboxData(prev => {
+      if (!prev) return prev
+      
+      // Find which record contains this conversation
+      const updatedRecords = prev.records.map(record => {
+        // Check if any of this record's channels contain the updated conversation
+        const updatedChannels = { ...record.channels }
+        let recordUpdated = false
+        
+        Object.keys(updatedChannels).forEach(channelType => {
+          const channel = updatedChannels[channelType]
+          
+          // Update conversation if it belongs to this channel/record
+          if (conversation_id && record.conversations) {
+            const conversationExists = record.conversations.some(conv => 
+              conv.database_id === conversation_id || conv.id === conversation_id
+            )
+            
+            if (conversationExists) {
+              // Update last message preview and activity time
+              channel.last_message_preview = message?.content?.substring(0, 100) || ''
+              channel.last_activity = messageData.timestamp || new Date().toISOString()
+              
+              // Increment unread count if message is inbound
+              if (message?.direction === 'inbound' || message?.direction === 'in') {
+                channel.unread_count = (channel.unread_count || 0) + 1
+                record.total_unread = (record.total_unread || 0) + 1
+              }
+              
+              recordUpdated = true
+              console.log(`✅ Updated record ${record.id} for new message in conversation ${conversation_id}`)
+            }
+          }
+        })
+        
+        return recordUpdated ? { ...record, channels: updatedChannels, last_activity: messageData.timestamp || record.last_activity } : record
+      })
+      
+      // Sort records by last activity to show most recent first
+      updatedRecords.sort((a, b) => new Date(b.last_activity).getTime() - new Date(a.last_activity).getTime())
+      
+      // Also update the raw conversations array for consistency
+      const updatedConversations = prev.conversations.map(conv => {
+        if (conv.database_id === conversation_id || conv.id === conversation_id) {
+          return {
+            ...conv,
+            updated_at: messageData.timestamp || conv.updated_at,
+            last_message: message || conv.last_message,
+            unread_count: message?.direction === 'inbound' ? (conv.unread_count || 0) + 1 : conv.unread_count
+          }
+        }
+        return conv
+      })
+
+      return {
+        ...prev,
+        records: updatedRecords,
+        conversations: updatedConversations
+      }
+    })
   }
 
-  // Handle conversation updates
-  function handleConversationUpdate(conversation: any) {
-    // This could trigger updates to conversation metadata
-    console.log('Conversation update received:', conversation)
+  // Handle conversation updates - only update the specific conversation's metadata
+  function handleConversationUpdate(conversationData: any) {
+    console.log('💬 Processing conversation update:', conversationData)
+    
+    if (!inboxData || !conversationData) return
+    
+    const { conversation_id, message_count, unread_count, last_message_at } = conversationData
+    
+    // Find and update only the affected conversation
+    setInboxData(prev => {
+      if (!prev) return prev
+      
+      const updatedRecords = prev.records.map(record => {
+        // Check if this record contains the updated conversation
+        const updatedChannels = { ...record.channels }
+        let recordUpdated = false
+        
+        Object.keys(updatedChannels).forEach(channelType => {
+          const channel = updatedChannels[channelType]
+          
+          // Update conversation stats if this channel contains the conversation
+          if (conversation_id && record.conversations) {
+            const conversationExists = record.conversations.some(conv => 
+              conv.database_id === conversation_id || conv.id === conversation_id
+            )
+            
+            if (conversationExists) {
+              // Update conversation metadata
+              if (message_count !== undefined) channel.message_count = message_count
+              if (unread_count !== undefined) {
+                const unreadDelta = unread_count - (channel.unread_count || 0)
+                channel.unread_count = unread_count
+                record.total_unread = Math.max(0, (record.total_unread || 0) + unreadDelta)
+              }
+              if (last_message_at) {
+                channel.last_activity = last_message_at
+                record.last_activity = last_message_at
+              }
+              
+              recordUpdated = true
+              console.log(`✅ Updated conversation stats for record ${record.id}, conversation ${conversation_id}`)
+            }
+          }
+        })
+        
+        return recordUpdated ? { ...record, channels: updatedChannels } : record
+      })
+      
+      // Sort records by last activity
+      updatedRecords.sort((a, b) => new Date(b.last_activity).getTime() - new Date(a.last_activity).getTime())
+      
+      return {
+        ...prev,
+        records: updatedRecords
+      }
+    })
   }
 
   // Fetch unified inbox data
-  const fetchInbox = useCallback(async (options: { page?: number; limit?: number } = {}) => {
+  const fetchInbox = useCallback(async (options: { page?: number; limit?: number; forceRefresh?: boolean } = {}) => {
     try {
-      setLoading(true)
+      // Only show loading on initial load or forced refresh
+      if (initialLoad || options.forceRefresh) {
+        setLoading(true)
+      }
       setError(null)
       
       const params: any = {}
@@ -349,8 +476,11 @@ export function useUnifiedInbox(): UseUnifiedInboxReturn {
       setError(error.response?.data?.error || error.message || 'Failed to fetch inbox')
     } finally {
       setLoading(false)
+      if (initialLoad) {
+        setInitialLoad(false)  // Mark initial load as complete
+      }
     }
-  }, [selectedRecord])
+  }, [selectedRecord, initialLoad])
 
   // Fetch channel availability for a record
   const fetchChannelAvailability = useCallback(async (recordId: number) => {
@@ -485,13 +615,18 @@ export function useUnifiedInbox(): UseUnifiedInboxReturn {
     console.log('📡 Setting up unified inbox WebSocket subscriptions')
     
     // Subscribe to general communication updates
+    console.log('🔌 Setting up WebSocket subscriptions...')
+    console.log('🔌 WebSocket connected:', isConnected)
+    console.log('🔌 WebSocket status:', connectionStatus)
+    
     const generalSubscription = subscribe('unified_inbox_updates', handleWebSocketMessage)
+    console.log('📡 Subscribed to unified_inbox_updates with ID:', generalSubscription)
     
     // Subscribe to record-specific updates if a record is selected
     let recordSubscription: string | null = null
     if (selectedRecord) {
       recordSubscription = subscribe(`record_${selectedRecord.id}_communications`, handleWebSocketMessage)
-      console.log(`📡 Subscribed to record ${selectedRecord.id} communications`)
+      console.log(`📡 Subscribed to record ${selectedRecord.id} communications with ID:`, recordSubscription)
     }
     
     // Cleanup subscriptions
@@ -503,6 +638,11 @@ export function useUnifiedInbox(): UseUnifiedInboxReturn {
       console.log('📡 Unified inbox unsubscribed from communication channels')
     }
   }, [isConnected, selectedRecord, subscribe, unsubscribe, handleWebSocketMessage])
+
+  // Explicit refresh function that shows loading
+  const refreshInbox = useCallback(async () => {
+    await fetchInbox({ forceRefresh: true })
+  }, [fetchInbox])
 
   return {
     // Data
@@ -516,6 +656,7 @@ export function useUnifiedInbox(): UseUnifiedInboxReturn {
     
     // Actions
     fetchInbox,
+    refreshInbox,
     selectRecord,
     refreshRecord,
     markAsRead,

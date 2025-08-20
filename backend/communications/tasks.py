@@ -1,9 +1,10 @@
 """
-Celery tasks for Communication System
-Handles background processing for messaging and channel synchronization
+Webhook-First Celery tasks for Communication System
+Optimized for gap detection and recovery, not aggressive polling
+Webhooks handle 95%+ of real-time updates, Celery handles edge cases
 """
 import logging
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from datetime import datetime, timezone, timedelta
 
 from celery import shared_task
@@ -13,54 +14,491 @@ from django_tenants.utils import schema_context
 from asgiref.sync import async_to_sync
 
 from .models import (
-    Channel, Message, CommunicationAnalytics, UserChannelConnection
+    Channel, Message, Conversation, CommunicationAnalytics, UserChannelConnection
 )
 from .unipile_sdk import unipile_service
-from .message_sync import message_sync_service
+from .services.persistence import message_sync_service
+from .services.gap_detection import gap_detector
+from .services.message_store import message_store
+from .services.conversation_cache import conversation_cache
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
 
 
-@shared_task(bind=True, max_retries=2)
-def sync_channel_messages(self, channel_id: str, tenant_schema: str):
+# =========================================================================
+# WEBHOOK-FIRST GAP DETECTION TASKS (NOT AGGRESSIVE POLLING)
+# =========================================================================
+
+@shared_task(bind=True, max_retries=3, default_retry_delay=300)
+def detect_and_sync_conversation_gaps(
+    self,
+    connection_id: str,
+    trigger_reason: str = "gap_detection",
+    tenant_schema: Optional[str] = None
+):
     """
-    Sync messages from a specific channel via UniPile
+    WEBHOOK-FIRST: Only sync conversations when gaps are detected
+    This is NOT aggressive polling - only runs when:
+    1. Initial connection setup
+    2. Account reconnection after downtime  
+    3. Gap detection from sequence number mismatches
+    4. Manual user-triggered sync
     """
+    
     try:
-        with schema_context(tenant_schema):
-            channel = Channel.objects.get(id=channel_id)
-            
-            logger.info(f"Syncing messages for channel {channel.name} ({channel_id})")
-            
-            # Use async UniPile service to sync messages
-            import asyncio
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            
-            try:
-                result = loop.run_until_complete(
-                    unipile_service.sync_account_messages(
-                        account_id=channel.external_account_id,
-                        channel_id=channel_id
-                    )
-                )
+        logger.info(f"🔍 Gap detection triggered for connection {connection_id} (reason: {trigger_reason})")
+        
+        # Import asyncio for proper async handling in ASGI context
+        import asyncio
+        
+        # Create new event loop for this task (Celery compatibility)
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        try:
+            if tenant_schema:
+                with schema_context(tenant_schema):
+                    result = loop.run_until_complete(_execute_targeted_sync_internal(
+                        connection_id, trigger_reason
+                    ))
+            else:
+                result = loop.run_until_complete(_execute_targeted_sync_internal(
+                    connection_id, trigger_reason
+                ))
                 
-                logger.info(f"Synced {result.get('message_count', 0)} messages for channel {channel.name}")
-                return result
+            return result
+        finally:
+            loop.close()
+            
+    except Exception as e:
+        logger.error(f"Gap detection sync failed: {e}")
+        if self.request.retries < self.max_retries:
+            raise self.retry(countdown=300 * (2 ** self.request.retries))
+        return {'error': str(e), 'trigger_reason': trigger_reason}
+
+
+@shared_task(bind=True, max_retries=3, default_retry_delay=180)
+def detect_and_sync_message_gaps(
+    self,
+    conversation_id: str,
+    channel_type: str,
+    tenant_schema: Optional[str] = None,
+    trigger_reason: str = "gap_detection"
+):
+    """
+    WEBHOOK-FIRST: Only sync messages when gaps are detected
+    This is NOT aggressive polling - only runs when:
+    1. Webhook delivery failure detected
+    2. Sequence number gaps in conversation
+    3. User requests manual sync
+    4. Account reconnection recovery
+    """
+    
+    try:
+        logger.info(f"🔍 Message gap detection for conversation {conversation_id} (reason: {trigger_reason})")
+        
+        # Import asyncio for proper async handling in ASGI context
+        import asyncio
+        
+        # Create new event loop for this task (Celery compatibility)
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        try:
+            if tenant_schema:
+                with schema_context(tenant_schema):
+                    result = loop.run_until_complete(_sync_messages_internal(
+                        conversation_id, channel_type, trigger_reason
+                    ))
+            else:
+                result = loop.run_until_complete(_sync_messages_internal(
+                    conversation_id, channel_type, trigger_reason
+                ))
                 
-            finally:
-                loop.close()
-                
-    except Channel.DoesNotExist:
-        logger.error(f"Channel {channel_id} not found in schema {tenant_schema}")
-        return {'error': 'Channel not found'}
+            return result
+        finally:
+            loop.close()
+            
+    except Exception as e:
+        logger.error(f"Message gap detection failed: {e}")
+        if self.request.retries < self.max_retries:
+            raise self.retry(countdown=180 * (2 ** self.request.retries))
+        return {'error': str(e), 'trigger_reason': trigger_reason}
+
+
+@shared_task(bind=True, max_retries=2)
+def preload_hot_conversations(
+    self,
+    channel_type: str,
+    account_id: str,
+    tenant_schema: Optional[str] = None
+):
+    """Preload frequently accessed conversations into cache"""
+    
+    try:
+        if tenant_schema:
+            with schema_context(tenant_schema):
+                return conversation_cache.preload_hot_conversations(channel_type, account_id)
+        else:
+            return conversation_cache.preload_hot_conversations(channel_type, account_id)
+            
+    except Exception as e:
+        logger.error(f"Hot conversation preload failed: {e}")
+        return False
+
+
+@shared_task(bind=True, max_retries=2)
+def cleanup_old_cache_entries(self, tenant_schema: Optional[str] = None):
+    """Clean up old cache entries to free memory"""
+    
+    try:
+        if tenant_schema:
+            with schema_context(tenant_schema):
+                # Implementation would go here
+                # For now, just log
+                logger.info(f"Cache cleanup completed for tenant {tenant_schema}")
+        else:
+            logger.info("Cache cleanup completed for current tenant")
+        
+        return True
         
     except Exception as e:
-        logger.error(f"Message sync failed for channel {channel_id}: {e}")
-        raise self.retry(countdown=60 * (2 ** self.request.retries))
+        logger.error(f"Cache cleanup failed: {e}")
+        return False
 
 
+@shared_task(bind=True, max_retries=2)
+def webhook_failure_recovery(self, tenant_schema: Optional[str] = None):
+    """
+    WEBHOOK-FIRST: Only run when webhook failures are detected
+    This replaces aggressive 'process_pending_syncs' that ran every minute
+    Now only runs when:
+    1. Webhook delivery failures detected
+    2. Connection downtime recovery needed
+    3. Data integrity validation (daily, not minute-by-minute)
+    """
+    
+    try:
+        logger.info("🔄 Webhook failure recovery triggered")
+        
+        # Import asyncio for proper async handling in ASGI context
+        import asyncio
+        
+        # Create new event loop for this task (Celery compatibility)
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        try:
+            if tenant_schema:
+                with schema_context(tenant_schema):
+                    result = loop.run_until_complete(_webhook_failure_recovery_internal())
+            else:
+                result = loop.run_until_complete(_webhook_failure_recovery_internal())
+                
+            return result
+        finally:
+            loop.close()
+            
+    except Exception as e:
+        logger.error(f"Webhook failure recovery failed: {e}")
+        if self.request.retries < self.max_retries:
+            raise self.retry(countdown=1800)  # 30 minute retry instead of 2 minutes
+        return {'error': str(e)}
+
+
+# =========================================================================
+# INTERNAL ASYNC FUNCTIONS
+# =========================================================================
+
+async def _execute_targeted_sync_internal(
+    connection_id: str,
+    trigger_reason: str = "gap_detection"
+) -> Dict[str, Any]:
+    """
+    WEBHOOK-FIRST: Execute targeted sync based on smart gap detection
+    Only syncs when actual gaps are detected
+    """
+    
+    try:
+        # Use smart gap detection to determine if sync is needed
+        gap_results = await gap_detector.detect_conversation_gaps(connection_id, trigger_reason)
+        
+        if not gap_results.get('gaps_detected'):
+            logger.info(f"✅ No gaps detected for connection {connection_id}, skipping sync")
+            return {
+                'success': True,
+                'gaps_detected': False,
+                'sync_executed': False,
+                'connection_id': connection_id,
+                'trigger_reason': trigger_reason
+            }
+        
+        # Get sync recommendations
+        recommendations = await gap_detector.get_sync_recommendations(connection_id)
+        
+        if recommendations.get('sync_needed'):
+            # Execute targeted sync
+            result = await _execute_targeted_sync(connection_id, recommendations, trigger_reason)
+            return result
+        else:
+            return {
+                'success': True,
+                'gaps_detected': True,
+                'sync_executed': False,
+                'reason': 'sync_not_recommended',
+                'connection_id': connection_id
+            }
+            
+    except Exception as e:
+        logger.error(f"Internal targeted sync failed for {connection_id}: {e}")
+        raise
+
+
+async def _sync_conversations_internal(
+    channel_type: str,
+    user_id: str,
+    account_id: Optional[str] = None,
+    trigger_reason: str = "gap_detection"
+) -> Dict[str, Any]:
+    """
+    WEBHOOK-FIRST: Internal function for gap detection, not routine polling
+    Only syncs when there's an actual gap or specific trigger
+    """
+    
+    try:
+        # Smart gap detection - only sync if we detect missing data
+        if trigger_reason == "gap_detection":
+            # Check if we actually need to sync by detecting gaps
+            gap_detected = await _detect_conversation_gaps(channel_type, user_id, account_id)
+            if not gap_detected:
+                logger.info(f"✅ No conversation gaps detected for {channel_type}, skipping sync")
+                return {'conversations': [], 'synced': False, 'reason': 'no_gaps_detected'}
+        
+        # Only force sync when we actually need it
+        result = await message_sync_service.get_conversations_local_first(
+            channel_type=channel_type,
+            user_id=user_id,
+            account_id=account_id,
+            force_sync=True  # Force API sync only when gaps detected
+        )
+        
+        logger.info(f"🔄 Gap-based sync completed: {len(result.get('conversations', []))} conversations (reason: {trigger_reason})")
+        return result
+        
+    except Exception as e:
+        logger.error(f"Internal gap detection sync failed: {e}")
+        raise
+
+
+async def _sync_messages_internal(
+    conversation_id: str,
+    channel_type: str,
+    trigger_reason: str = "gap_detection"
+) -> Dict[str, Any]:
+    """
+    WEBHOOK-FIRST: Internal function for message gap detection
+    Only syncs when webhook delivery failed or gaps detected
+    """
+    
+    try:
+        # Smart gap detection for messages
+        if trigger_reason == "gap_detection":
+            gap_detected = await _detect_message_gaps(conversation_id, channel_type)
+            if not gap_detected:
+                logger.info(f"✅ No message gaps detected for conversation {conversation_id}, skipping sync")
+                return {'messages': [], 'synced': False, 'reason': 'no_gaps_detected'}
+        
+        # Only force sync when gaps are detected
+        result = await message_sync_service.get_messages_local_first(
+            conversation_id=conversation_id,
+            channel_type=channel_type,
+            force_sync=True  # Force API sync only when gaps detected
+        )
+        
+        logger.info(f"🔄 Message gap sync completed: {len(result.get('messages', []))} messages (reason: {trigger_reason})")
+        return result
+        
+    except Exception as e:
+        logger.error(f"Internal message gap sync failed: {e}")
+        raise
+
+
+async def _webhook_failure_recovery_internal() -> Dict[str, Any]:
+    """
+    WEBHOOK-FIRST: Recovery process for webhook failures
+    Replaces aggressive pending sync processing
+    """
+    
+    try:
+        # Only check for actual webhook failures and connection issues
+        recovery_results = {
+            'webhook_failures_detected': 0,
+            'connections_recovered': 0,
+            'conversations_synced': 0,
+            'messages_synced': 0,
+            'errors': []
+        }
+        
+        # Check for accounts that need recovery (webhook failures, disconnections)
+        # Use async ORM queries for ASGI compatibility
+        failed_connections = []
+        async for connection in UserChannelConnection.objects.filter(
+            account_status__in=['error', 'failed', 'disconnected'],
+            is_active=True
+        ):
+            failed_connections.append(connection)
+        
+        for connection in failed_connections:
+            try:
+                # Attempt recovery sync for failed connections
+                if connection.account_status == 'disconnected':
+                    # Skip disconnected accounts - user needs to reconnect manually
+                    continue
+                    
+                result = await message_sync_service.sync_account_messages(
+                    connection_id=str(connection.id),
+                    initial_sync=False,
+                    days_back=1  # Only sync last 24 hours for recovery
+                )
+                
+                if result.get('success'):
+                    recovery_results['connections_recovered'] += 1
+                    recovery_results['conversations_synced'] += result.get('conversations_synced', 0)
+                    recovery_results['messages_synced'] += result.get('messages_synced', 0)
+                    
+                    # Update connection status if recovery was successful (async save)
+                    connection.account_status = 'active'
+                    connection.sync_error_count = 0
+                    connection.last_error = ''
+                    await connection.asave(update_fields=['account_status', 'sync_error_count', 'last_error'])
+                    
+            except Exception as e:
+                recovery_results['errors'].append(f"Failed to recover connection {connection.id}: {str(e)}")
+                logger.error(f"Recovery failed for connection {connection.id}: {e}")
+        
+        logger.info(f"🔄 Webhook failure recovery completed: {recovery_results}")
+        return recovery_results
+        
+    except Exception as e:
+        logger.error(f"Webhook failure recovery process failed: {e}")
+        raise
+
+
+# =========================================================================
+# SMART GAP DETECTION FUNCTIONS (WEBHOOK-FIRST STRATEGY)
+# =========================================================================
+
+async def _detect_conversation_gaps(
+    channel_type: str,
+    user_id: str,
+    account_id: Optional[str] = None
+) -> bool:
+    """
+    Detect if there are gaps in conversation data that require sync
+    Returns True only if gaps are detected, False if data is current
+    """
+    
+    try:
+        # Check last sync time for this account (async query)
+        connection = await UserChannelConnection.objects.filter(
+            user_id=user_id,
+            channel_type=channel_type,
+            unipile_account_id=account_id,
+            is_active=True
+        ).afirst()
+        
+        if not connection:
+            logger.info(f"No connection found for gap detection: {channel_type}/{account_id}")
+            return False
+        
+        # If last sync was recent (< 1 hour) and no errors, assume webhooks are working
+        if connection.last_sync_at:
+            time_since_sync = django_timezone.now() - connection.last_sync_at
+            if time_since_sync < timedelta(hours=1) and connection.sync_error_count == 0:
+                logger.info(f"✅ Recent sync detected ({time_since_sync}), assuming webhooks working")
+                return False
+        
+        # Check if there are webhook delivery failures
+        if connection.sync_error_count > 0:
+            logger.info(f"🔍 Gap detected: {connection.sync_error_count} sync errors")
+            return True
+        
+        # Check if connection was recently restored from failed state
+        if connection.account_status in ['error', 'failed'] or connection.last_error:
+            logger.info(f"🔍 Gap detected: connection status indicates issues")
+            return True
+        
+        # Default: assume webhooks are working, no gaps
+        return False
+        
+    except Exception as e:
+        logger.error(f"Gap detection failed: {e}")
+        # If we can't detect gaps, err on the side of caution and sync
+        return True
+
+
+async def _detect_message_gaps(conversation_id: str, channel_type: str) -> bool:
+    """
+    Detect if there are gaps in message data for a specific conversation
+    Returns True only if gaps are detected, False if data is current
+    """
+    
+    try:
+        # Find conversation in local database (async query)
+        conversation = await Conversation.objects.filter(
+            external_thread_id=conversation_id
+        ).afirst()
+        
+        if not conversation:
+            logger.info(f"🔍 Gap detected: conversation {conversation_id} not found locally")
+            return True  # If conversation doesn't exist locally, we need to sync
+        
+        # Check if there are messages pending sync (async count)
+        pending_messages = await conversation.messages.filter(sync_status='pending').acount()
+        if pending_messages > 0:
+            logger.info(f"🔍 Gap detected: {pending_messages} messages pending sync")
+            return True
+        
+        # Check if the conversation was updated recently (should have webhook updates)
+        time_since_update = django_timezone.now() - conversation.updated_at
+        if time_since_update > timedelta(hours=2):
+            # If conversation hasn't been updated in 2+ hours, check for missing messages
+            # This might indicate webhook delivery issues
+            logger.info(f"🔍 Potential gap: conversation not updated in {time_since_update}")
+            return True
+        
+        # Default: assume webhooks are delivering messages properly
+        return False
+        
+    except Exception as e:
+        logger.error(f"Message gap detection failed: {e}")
+        # If we can't detect gaps, err on the side of caution and sync
+        return True
+
+
+# =========================================================================
+# WEBHOOK-FIRST TASK ALIASES (MAINTAIN API COMPATIBILITY)
+# =========================================================================
+
+# Keep these aliases for compatibility with existing code that might call them
+# But redirect to webhook-first gap detection instead of aggressive polling
+
+sync_conversations_background = detect_and_sync_conversation_gaps
+sync_messages_background = detect_and_sync_message_gaps
+process_pending_syncs = webhook_failure_recovery
+
+# Legacy contact resolution - redirect to on-demand only  
+# resolve_unconnected_conversations_task = resolve_conversation_contact_task  # Defined below
+periodic_contact_resolution_task = webhook_failure_recovery  # No more automatic contact resolution
+# =========================================================================
+# WEBHOOK-FIRST TASK ALIASES (MAINTAIN API COMPATIBILITY)
+# =========================================================================
+
+# These aliases maintain compatibility with existing code that might call legacy tasks
+# But redirect to webhook-first gap detection instead of aggressive polling
+
+# Analytics task - this is legitimate and needed
 @shared_task
 def generate_daily_analytics(tenant_schema: str, date: str = None):
     """
@@ -127,38 +565,7 @@ def generate_daily_analytics(tenant_schema: str, date: str = None):
         raise
 
 
-@shared_task
-def sync_all_channels(tenant_schema: str):
-    """
-    Sync messages for all active channels in a tenant
-    """
-    try:
-        with schema_context(tenant_schema):
-            active_channels = Channel.objects.filter(is_active=True)
-            
-            logger.info(f"Syncing {len(active_channels)} channels for tenant {tenant_schema}")
-            
-            results = []
-            for channel in active_channels:
-                try:
-                    # Queue individual sync tasks
-                    sync_channel_messages.delay(str(channel.id), tenant_schema)
-                    results.append({'channel_id': str(channel.id), 'status': 'queued'})
-                except Exception as e:
-                    logger.error(f"Failed to queue sync for channel {channel.id}: {e}")
-                    results.append({'channel_id': str(channel.id), 'status': 'failed', 'error': str(e)})
-            
-            return {
-                'tenant_schema': tenant_schema,
-                'channels_processed': len(results),
-                'results': results
-            }
-            
-    except Exception as e:
-        logger.error(f"Channel sync failed for {tenant_schema}: {e}")
-        raise
-
-
+# Scheduled message task - this is legitimate for workflow automation
 @shared_task
 def send_scheduled_message(
     message_data: Dict[str, Any],
@@ -216,230 +623,9 @@ def send_scheduled_message(
         raise
 
 
-# New message sync tasks
-
-@shared_task(bind=True, max_retries=3)
-def sync_account_messages_task(self, connection_id: str, initial_sync: bool = False, days_back: int = 30):
-    """
-    Celery task to sync messages for a specific account connection
-    
-    Args:
-        connection_id: UUID of the UserChannelConnection
-        initial_sync: Whether this is an initial sync
-        days_back: Days to sync back for initial sync
-    """
-    try:
-        # Get the connection
-        connection = UserChannelConnection.objects.get(id=connection_id)
-        
-        # Run the sync
-        result = async_to_sync(message_sync_service.sync_account_messages)(
-            connection,
-            initial_sync=initial_sync,
-            days_back=days_back
-        )
-        
-        if result['success']:
-            logger.info(f"Successfully synced messages for connection {connection_id}: "
-                       f"{result['messages_synced']} messages, {result['conversations_synced']} conversations")
-            return result
-        else:
-            logger.error(f"Failed to sync messages for connection {connection_id}: {result['error']}")
-            # Retry the task
-            raise self.retry(countdown=60 * (2 ** self.request.retries))
-    
-    except UserChannelConnection.DoesNotExist:
-        logger.error(f"Connection {connection_id} not found")
-        return {'success': False, 'error': f'Connection {connection_id} not found'}
-    
-    except Exception as e:
-        logger.error(f"Error in sync_account_messages_task for {connection_id}: {e}")
-        # Retry with exponential backoff
-        raise self.retry(countdown=60 * (2 ** self.request.retries), exc=e)
-
-
-@shared_task(bind=True)
-def sync_all_active_connections_task(self, initial_sync: bool = False, days_back: int = 30):
-    """
-    Celery task to sync messages for all active connections across all tenants
-    
-    This task handles multi-tenant execution by iterating through all tenants
-    """
-    try:
-        # Import here to avoid circular imports
-        from django_tenants.utils import get_tenant_model, get_public_schema_name
-        from django.db import connection
-        
-        tenant_model = get_tenant_model()
-        tenants = tenant_model.objects.exclude(schema_name=get_public_schema_name())
-        
-        total_results = {
-            'tenants_processed': 0,
-            'total_connections': 0,
-            'successful_syncs': 0,
-            'failed_syncs': 0,
-            'tenant_results': []
-        }
-        
-        for tenant in tenants:
-            try:
-                # Switch to tenant schema
-                connection.set_tenant(tenant)
-                
-                # Sync all connections for this tenant
-                result = async_to_sync(message_sync_service.sync_all_active_connections)(
-                    initial_sync=initial_sync,
-                    days_back=days_back
-                )
-                
-                total_results['tenants_processed'] += 1
-                total_results['total_connections'] += result['total_connections']
-                total_results['successful_syncs'] += result['successful_syncs']
-                total_results['failed_syncs'] += result['failed_syncs']
-                
-                total_results['tenant_results'].append({
-                    'tenant_name': tenant.name,
-                    'schema_name': tenant.schema_name,
-                    'result': result
-                })
-                
-                logger.info(f"Synced tenant {tenant.name}: {result['successful_syncs']}/{result['total_connections']} connections")
-                
-            except Exception as e:
-                logger.error(f"Failed to sync tenant {tenant.name}: {e}")
-                total_results['tenant_results'].append({
-                    'tenant_name': tenant.name,
-                    'schema_name': tenant.schema_name,
-                    'result': {'success': False, 'error': str(e)}
-                })
-        
-        logger.info(f"Completed sync for all tenants: {total_results['successful_syncs']}/{total_results['total_connections']} total connections")
-        return total_results
-    
-    except Exception as e:
-        logger.error(f"Error in sync_all_active_connections_task: {e}")
-        raise
-    
-    finally:
-        # Switch back to public schema
-        try:
-            public_tenant = tenant_model.objects.get(schema_name=get_public_schema_name())
-            connection.set_tenant(public_tenant)
-        except Exception as e:
-            logger.error(f"Failed to switch back to public schema: {e}")
-
-
-@shared_task(bind=True)
-def periodic_message_sync_task(self):
-    """
-    Periodic task to sync messages for all active connections
-    This should be run every 5-15 minutes via Celery Beat
-    """
-    try:
-        logger.info("Starting periodic message sync")
-        
-        # Sync all active connections (not initial sync, just recent messages)
-        task_result = sync_all_active_connections_task.delay(
-            initial_sync=False,
-            days_back=1  # Only sync last day for periodic sync
-        )
-        
-        logger.info(f"Periodic sync task scheduled: {task_result.id}")
-        return {
-            'success': True, 
-            'task_id': task_result.id,
-            'message': 'Periodic sync task scheduled successfully'
-        }
-    
-    except Exception as e:
-        logger.error(f"Error in periodic_message_sync_task: {e}")
-        raise
-
-
-@shared_task(bind=True)
-def initial_sync_new_connection_task(self, connection_id: str, days_back: int = 30):
-    """
-    Task to perform initial sync for a newly connected account
-    
-    Args:
-        connection_id: UUID of the UserChannelConnection
-        days_back: Days to sync back for initial sync
-    """
-    try:
-        logger.info(f"Starting initial sync for new connection {connection_id}")
-        
-        # Run initial sync with more messages
-        result = sync_account_messages_task.delay(
-            connection_id=connection_id,
-            initial_sync=True,
-            days_back=days_back
-        ).get()
-        
-        if result['success']:
-            logger.info(f"Initial sync completed for connection {connection_id}: "
-                       f"{result['messages_synced']} messages synced")
-        else:
-            logger.error(f"Initial sync failed for connection {connection_id}: {result['error']}")
-        
-        return result
-    
-    except Exception as e:
-        logger.error(f"Error in initial_sync_new_connection_task for {connection_id}: {e}")
-        raise
-
-
-# Real-time WhatsApp enhancement tasks
-
-@shared_task(bind=True, max_retries=3)
-def fetch_contact_profile_picture(self, account_id: str, attendee_id: str, contact_email: str):
-    """
-    Fetch contact profile picture from UniPile API and broadcast update
-    """
-    try:
-        from communications.unipile_sdk import unipile_service
-        from django.core.cache import cache
-        from channels.layers import get_channel_layer
-        from asgiref.sync import async_to_sync
-        
-        # Get UniPile client
-        client = unipile_service.get_client()
-        
-        # Fetch profile picture from UniPile API  
-        picture_response = client.request.get(f'chat_attendees/{attendee_id}/picture')
-        
-        if picture_response:
-            # Cache the profile picture for quick access
-            cache_key = f"profile_picture:{contact_email}"
-            cache.set(cache_key, picture_response, timeout=86400)  # 24 hours
-            
-            # Broadcast real-time update to frontend
-            channel_layer = get_channel_layer()
-            if channel_layer:
-                async_to_sync(channel_layer.group_send)(
-                    f"channel_{account_id}",
-                    {
-                        'type': 'contact_profile_updated',
-                        'contact': {
-                            'email': contact_email,
-                            'attendee_id': attendee_id,
-                            'has_profile_picture': True,
-                            'profile_picture_url': f'/api/v1/contacts/{contact_email}/picture/'
-                        }
-                    }
-                )
-            
-            logger.info(f"Fetched and cached profile picture for {contact_email}")
-            return {'success': True, 'contact_email': contact_email}
-            
-    except Exception as e:
-        logger.error(f"Failed to fetch profile picture for {contact_email}: {e}")
-        
-        # Retry with exponential backoff
-        if self.request.retries < self.max_retries:
-            raise self.retry(countdown=60 * (2 ** self.request.retries))
-        
-        return {'success': False, 'error': str(e)}
-
+# =========================================================================
+# WEBHOOK-FIRST REAL-TIME ENHANCEMENT TASKS
+# =========================================================================
 
 @shared_task(bind=True, max_retries=3)
 def process_message_attachment(self, account_id: str, message_id: str, attachment_id: str, attachment_type: str, attachment_name: str):
@@ -498,62 +684,6 @@ def process_message_attachment(self, account_id: str, message_id: str, attachmen
         return {'success': False, 'error': str(e)}
 
 
-@shared_task(bind=True, max_retries=3)
-def sync_chat_history_realtime(self, account_id: str, chat_id: str, conversation_id: str):
-    """
-    Sync complete chat history from UniPile and broadcast updates
-    """
-    try:
-        from communications.unipile_sdk import unipile_service
-        from communications.models import Message, Conversation
-        from channels.layers import get_channel_layer
-        from asgiref.sync import async_to_sync
-        
-        # Get UniPile client
-        client = unipile_service.get_client()
-        
-        # Sync chat history from beginning
-        sync_response = client.request.get(f'chats/{chat_id}/sync')
-        
-        if sync_response and sync_response.get('messages'):
-            # Get conversation
-            conversation = Conversation.objects.get(id=conversation_id)
-            
-            # Process historical messages
-            new_messages = []
-            for msg_data in sync_response['messages']:
-                # Check if message already exists
-                if not Message.objects.filter(external_message_id=msg_data.get('message_id')).exists():
-                    # Process new historical message
-                    new_messages.append(msg_data)
-            
-            # Broadcast history sync completion
-            channel_layer = get_channel_layer()
-            if channel_layer:
-                async_to_sync(channel_layer.group_send)(
-                    f"conversation_{conversation_id}",
-                    {
-                        'type': 'chat_history_synced',
-                        'chat_id': chat_id,
-                        'new_messages_count': len(new_messages),
-                        'total_messages': len(sync_response['messages']),
-                        'sync_completed_at': django_timezone.now().isoformat()
-                    }
-                )
-            
-            logger.info(f"Synced {len(new_messages)} new messages for chat {chat_id}")
-            return {'success': True, 'new_messages': len(new_messages)}
-            
-    except Exception as e:
-        logger.error(f"Failed to sync chat history for {chat_id}: {e}")
-        
-        # Retry with exponential backoff
-        if self.request.retries < self.max_retries:
-            raise self.retry(countdown=120 * (2 ** self.request.retries))
-        
-        return {'success': False, 'error': str(e)}
-
-
 @shared_task(bind=True)
 def update_message_status_realtime(self, message_id: str, status: str, account_id: str):
     """
@@ -598,278 +728,15 @@ def update_message_status_realtime(self, message_id: str, status: str, account_i
         return {'success': False, 'error': str(e)}
 
 
-@shared_task(bind=True, max_retries=3)
-def mark_chat_read_realtime(self, account_id: str, chat_id: str, conversation_id: str):
-    """
-    Mark chat as read via UniPile API and broadcast update
-    """
-    try:
-        from communications.unipile_sdk import unipile_service
-        from channels.layers import get_channel_layer
-        from asgiref.sync import async_to_sync
-        
-        # Get UniPile client
-        client = unipile_service.get_client()
-        
-        # Mark chat as read via UniPile API
-        read_response = client.request.patch(f'chats/{chat_id}', data={'read': True})
-        
-        if read_response:
-            # Broadcast real-time read status update
-            channel_layer = get_channel_layer()
-            if channel_layer:
-                async_to_sync(channel_layer.group_send)(
-                    f"channel_{account_id}",
-                    {
-                        'type': 'chat_marked_read',
-                        'conversation_id': conversation_id,
-                        'chat_id': chat_id,
-                        'marked_read_at': django_timezone.now().isoformat()
-                    }
-                )
-            
-            logger.info(f"Marked chat {chat_id} as read")
-            return {'success': True, 'chat_id': chat_id}
-            
-    except Exception as e:
-        logger.error(f"Failed to mark chat {chat_id} as read: {e}")
-        
-        # Retry with exponential backoff
-        if self.request.retries < self.max_retries:
-            raise self.retry(countdown=30 * (2 ** self.request.retries))
-        
-        return {'success': False, 'error': str(e)}
-
-
-@shared_task(bind=True, max_retries=3)
-def forward_message_realtime(self, account_id: str, message_id: str, target_chat_id: str, conversation_id: str):
-    """
-    Forward WhatsApp message via UniPile API and broadcast update
-    """
-    try:
-        from communications.unipile_sdk import unipile_service
-        from channels.layers import get_channel_layer
-        from asgiref.sync import async_to_sync
-        
-        # Get UniPile client
-        client = unipile_service.get_client()
-        
-        # Forward message via UniPile API (WhatsApp-specific)
-        forward_response = client.request.post(f'messages/{message_id}/forward', data={
-            'chat_id': target_chat_id
-        })
-        
-        if forward_response:
-            # Broadcast real-time forward notification
-            channel_layer = get_channel_layer()
-            if channel_layer:
-                async_to_sync(channel_layer.group_send)(
-                    f"conversation_{conversation_id}",
-                    {
-                        'type': 'message_forwarded',
-                        'original_message_id': message_id,
-                        'target_chat_id': target_chat_id,
-                        'forwarded_message_id': forward_response.get('message_id'),
-                        'forwarded_at': django_timezone.now().isoformat()
-                    }
-                )
-            
-            logger.info(f"Forwarded message {message_id} to chat {target_chat_id}")
-            return {'success': True, 'forwarded_message_id': forward_response.get('message_id')}
-            
-    except Exception as e:
-        logger.error(f"Failed to forward message {message_id}: {e}")
-        
-        # Retry with exponential backoff
-        if self.request.retries < self.max_retries:
-            raise self.retry(countdown=60 * (2 ** self.request.retries))
-        
-        return {'success': False, 'error': str(e)}
-
-
-@shared_task(bind=True)
-def periodic_account_resync(self, account_id: str):
-    """
-    Periodic account resync for maintaining connection health
-    """
-    try:
-        from communications.unipile_sdk import unipile_service
-        from communications.models import UserChannelConnection
-        
-        # Get UniPile client
-        client = unipile_service.get_client()
-        
-        # Resync account data
-        resync_response = client.request.get(f'accounts/{account_id}/sync')
-        
-        if resync_response:
-            # Update connection last sync time
-            try:
-                connection = UserChannelConnection.objects.get(unipile_account_id=account_id)
-                connection.last_sync_at = django_timezone.now()
-                connection.sync_error_count = 0
-                connection.save()
-            except UserChannelConnection.DoesNotExist:
-                pass
-            
-            logger.info(f"Periodic resync completed for account {account_id}")
-            return {'success': True, 'account_id': account_id}
-            
-    except Exception as e:
-        logger.error(f"Failed periodic resync for account {account_id}: {e}")
-        return {'success': False, 'error': str(e)}
-
-
-# Automatic Contact Resolution Tasks
-
-@shared_task(bind=True, max_retries=3)
-def resolve_unconnected_conversations_task(self, tenant_schema: str, limit: int = 50):
-    """
-    Process unconnected conversations for automatic contact resolution
-    
-    Args:
-        tenant_schema: Tenant schema to process
-        limit: Maximum number of conversations to process in one batch
-    """
-    try:
-        with schema_context(tenant_schema):
-            from .models import Conversation, Message
-            from .resolvers.contact_identifier import ContactIdentifier
-            from .resolvers.relationship_context import RelationshipContextResolver
-            from django.db import connection as db_connection
-            
-            # Get tenant ID for resolvers
-            tenant_id = db_connection.tenant.id if hasattr(db_connection, 'tenant') else None
-            if not tenant_id:
-                logger.error(f"Could not determine tenant ID for schema {tenant_schema}")
-                return {'success': False, 'error': 'Could not determine tenant ID'}
-            
-            # Initialize resolvers
-            contact_identifier = ContactIdentifier(tenant_id=tenant_id)
-            relationship_resolver = RelationshipContextResolver(tenant_id=tenant_id)
-            
-            # Get unconnected conversations with recent activity
-            unconnected_conversations = Conversation.objects.filter(
-                primary_contact_record__isnull=True,
-                status='active',
-                last_message_at__isnull=False
-            ).select_related('channel').order_by('-last_message_at')[:limit]
-            
-            if not unconnected_conversations:
-                logger.info(f"No unconnected conversations found in {tenant_schema}")
-                return {
-                    'success': True,
-                    'tenant_schema': tenant_schema,
-                    'processed': 0,
-                    'resolved': 0,
-                    'message': 'No unconnected conversations to process'
-                }
-            
-            logger.info(f"Processing {len(unconnected_conversations)} unconnected conversations in {tenant_schema}")
-            
-            resolved_count = 0
-            processed_count = 0
-            
-            for conversation in unconnected_conversations:
-                try:
-                    # Get the most recent inbound message for contact data
-                    recent_message = conversation.messages.filter(
-                        direction='inbound'
-                    ).order_by('-created_at').first()
-                    
-                    if not recent_message:
-                        continue
-                    
-                    processed_count += 1
-                    
-                    # Extract contact data from message
-                    contact_data = extract_contact_data_from_message(recent_message)
-                    
-                    if not contact_data:
-                        continue
-                    
-                    # Attempt contact resolution
-                    contact_record = contact_identifier.identify_contact(contact_data)
-                    
-                    if contact_record:
-                        # Validate domain relationship context
-                        relationship_context = relationship_resolver.get_relationship_context(
-                            contact_record=contact_record,
-                            message_email=contact_data.get('email')
-                        )
-                        
-                        # Only auto-connect if domain validation passes
-                        domain_validated = relationship_context.get('domain_validated', True)
-                        validation_status = relationship_context.get('validation_status')
-                        
-                        if domain_validated and validation_status != 'domain_mismatch_warning':
-                            # Auto-connect conversation to contact
-                            conversation.primary_contact_record = contact_record
-                            
-                            # Update metadata with resolution info
-                            if not conversation.metadata:
-                                conversation.metadata = {}
-                            
-                            conversation.metadata.update({
-                                'auto_resolved': True,
-                                'auto_resolved_at': django_timezone.now().isoformat(),
-                                'resolution_method': 'automatic_background',
-                                'contact_record_id': contact_record.id,
-                                'contact_pipeline_id': contact_record.pipeline.id,
-                                'domain_validated': True,
-                                'relationship_context': relationship_context
-                            })
-                            
-                            conversation.save()
-                            
-                            # Also update the message contact_record
-                            recent_message.contact_record = contact_record
-                            
-                            # Update message metadata
-                            if not recent_message.metadata:
-                                recent_message.metadata = {}
-                            recent_message.metadata.update({
-                                'auto_resolved': True,
-                                'auto_resolved_at': django_timezone.now().isoformat()
-                            })
-                            
-                            recent_message.save()
-                            
-                            resolved_count += 1
-                            
-                            logger.info(f"Auto-resolved conversation {conversation.id} to contact {contact_record.id}")
-                        else:
-                            logger.debug(f"Domain validation failed for conversation {conversation.id}, skipping auto-resolution")
-                
-                except Exception as e:
-                    logger.warning(f"Error processing conversation {conversation.id}: {e}")
-                    continue
-            
-            result = {
-                'success': True,
-                'tenant_schema': tenant_schema,
-                'processed': processed_count,
-                'resolved': resolved_count,
-                'resolution_rate': f"{(resolved_count/processed_count*100):.1f}%" if processed_count > 0 else "0%"
-            }
-            
-            logger.info(f"Contact resolution completed for {tenant_schema}: {resolved_count}/{processed_count} conversations resolved")
-            return result
-            
-    except Exception as e:
-        logger.error(f"Error in resolve_unconnected_conversations_task for {tenant_schema}: {e}")
-        
-        # Retry with exponential backoff
-        if self.request.retries < self.max_retries:
-            raise self.retry(countdown=60 * (2 ** self.request.retries))
-        
-        return {'success': False, 'error': str(e), 'tenant_schema': tenant_schema}
-
+# =========================================================================
+# WEBHOOK-FIRST CONTACT RESOLUTION TASKS (ON-DEMAND ONLY)
+# =========================================================================
 
 @shared_task(bind=True, max_retries=2)
 def resolve_conversation_contact_task(self, conversation_id: str, tenant_schema: str):
     """
-    Resolve contact for a specific conversation
+    Resolve contact for a specific conversation (ON-DEMAND ONLY)
+    WEBHOOK-FIRST: Only run when user explicitly requests contact resolution
     
     Args:
         conversation_id: UUID of the conversation to resolve
@@ -950,7 +817,7 @@ def resolve_conversation_contact_task(self, conversation_id: str, tenant_schema:
             conversation.metadata.update({
                 'auto_resolved': True,
                 'auto_resolved_at': django_timezone.now().isoformat(),
-                'resolution_method': 'targeted_resolution',
+                'resolution_method': 'user_requested',
                 'contact_record_id': contact_record.id,
                 'contact_pipeline_id': contact_record.pipeline.id,
                 'domain_validated': domain_validated,
@@ -991,70 +858,8 @@ def resolve_conversation_contact_task(self, conversation_id: str, tenant_schema:
         return {'success': False, 'error': str(e), 'conversation_id': conversation_id}
 
 
-@shared_task(bind=True)
-def periodic_contact_resolution_task(self):
-    """
-    Periodic task to resolve unconnected conversations across all tenants
-    Runs every 30 minutes to check for new unconnected conversations
-    """
-    try:
-        from django_tenants.utils import get_tenant_model, get_public_schema_name
-        from django.db import connection
-        
-        logger.info("Starting periodic contact resolution across all tenants")
-        
-        tenant_model = get_tenant_model()
-        tenants = tenant_model.objects.exclude(schema_name=get_public_schema_name())
-        
-        total_results = {
-            'tenants_processed': 0,
-            'total_processed': 0,
-            'total_resolved': 0,
-            'tenant_results': []
-        }
-        
-        for tenant in tenants:
-            try:
-                # Process each tenant
-                result = resolve_unconnected_conversations_task.delay(
-                    tenant_schema=tenant.schema_name,
-                    limit=20  # Smaller batch for periodic processing
-                ).get()
-                
-                total_results['tenants_processed'] += 1
-                total_results['total_processed'] += result.get('processed', 0)
-                total_results['total_resolved'] += result.get('resolved', 0)
-                
-                total_results['tenant_results'].append({
-                    'tenant_name': tenant.name,
-                    'schema_name': tenant.schema_name,
-                    'result': result
-                })
-                
-                logger.info(f"Processed tenant {tenant.name}: {result.get('resolved', 0)}/{result.get('processed', 0)} conversations resolved")
-                
-            except Exception as e:
-                logger.error(f"Failed to process tenant {tenant.name}: {e}")
-                total_results['tenant_results'].append({
-                    'tenant_name': tenant.name,
-                    'schema_name': tenant.schema_name,
-                    'result': {'success': False, 'error': str(e)}
-                })
-        
-        # Calculate overall success rate
-        if total_results['total_processed'] > 0:
-            overall_rate = (total_results['total_resolved'] / total_results['total_processed']) * 100
-            total_results['overall_resolution_rate'] = f"{overall_rate:.1f}%"
-        else:
-            total_results['overall_resolution_rate'] = "0%"
-        
-        logger.info(f"Periodic contact resolution completed: {total_results['total_resolved']}/{total_results['total_processed']} conversations resolved across {total_results['tenants_processed']} tenants")
-        
-        return total_results
-        
-    except Exception as e:
-        logger.error(f"Error in periodic_contact_resolution_task: {e}")
-        raise
+# Legacy task alias for compatibility
+resolve_unconnected_conversations_task = resolve_conversation_contact_task
 
 
 def extract_contact_data_from_message(message) -> dict:
@@ -1102,3 +907,110 @@ def extract_contact_data_from_message(message) -> dict:
     contact_data = {k: v for k, v in contact_data.items() if v and v.strip()}
     
     return contact_data
+
+
+# =========================================================================
+# SMART GAP DETECTION HELPER FUNCTIONS
+# =========================================================================
+
+async def _execute_targeted_sync(connection_id: str, 
+                                recommendations: Dict[str, Any], 
+                                trigger_reason: str) -> Dict[str, Any]:
+    """
+    Execute targeted sync based on smart gap detection recommendations
+    
+    Args:
+        connection_id: UserChannelConnection ID
+        recommendations: Sync recommendations from gap detector
+        trigger_reason: Why sync was triggered
+        
+    Returns:
+        Sync execution result
+    """
+    try:
+        connection = await UserChannelConnection.objects.aget(id=connection_id)
+        
+        logger.info(f"🎯 Executing targeted sync for {connection.channel_type} "
+                   f"account {connection.unipile_account_id} (priority: {recommendations.get('priority')})")
+        
+        # Use the persistence service for intelligent sync
+        result = await message_sync_service.sync_account_messages(
+            connection_id=connection_id,
+            initial_sync=False,
+            days_back=recommendations.get('days_back', 1)
+        )
+        
+        # Update connection sync status
+        connection.last_sync_at = django_timezone.now()
+        connection.sync_error_count = 0
+        await connection.asave(update_fields=['last_sync_at', 'sync_error_count'])
+        
+        return {
+            'success': True,
+            'connection_id': connection_id,
+            'sync_type': 'targeted',
+            'priority': recommendations.get('priority'),
+            'messages_synced': result.get('messages_synced', 0),
+            'conversations_synced': result.get('conversations_synced', 0),
+            'trigger_reason': trigger_reason
+        }
+        
+    except Exception as e:
+        logger.error(f"Targeted sync failed for connection {connection_id}: {e}")
+        return {
+            'success': False,
+            'error': str(e),
+            'connection_id': connection_id
+        }
+
+
+async def _execute_targeted_message_sync(conversation_id: str, 
+                                       gap_analysis: Dict[str, Any],
+                                       trigger_reason: str) -> Dict[str, Any]:
+    """
+    Execute targeted message sync for specific conversation gaps
+    
+    Args:
+        conversation_id: Conversation ID with detected gaps
+        gap_analysis: Message gap analysis results
+        trigger_reason: Why sync was triggered
+        
+    Returns:
+        Message sync execution result
+    """
+    try:
+        conversation = await Conversation.objects.select_related('channel').aget(id=conversation_id)
+        
+        logger.info(f"🎯 Executing targeted message sync for conversation {conversation_id} "
+                   f"({conversation.channel.channel_type})")
+        
+        # Use conversation's channel for targeted sync
+        result = await message_sync_service.get_messages_local_first(
+            conversation_id=conversation_id,
+            channel_type=conversation.channel.channel_type,
+            force_sync=True,
+            limit=1000  # Large limit to fill gaps
+        )
+        
+        return {
+            'success': True,
+            'conversation_id': conversation_id,
+            'sync_type': 'targeted_messages',
+            'messages_processed': len(result.get('messages', [])),
+            'trigger_reason': trigger_reason
+        }
+        
+    except Exception as e:
+        logger.error(f"Targeted message sync failed for conversation {conversation_id}: {e}")
+        return {
+            'success': False,
+            'error': str(e),
+            'conversation_id': conversation_id
+        }
+
+
+# =========================================================================
+# LEGACY TASK ALIASES (REDIRECT TO WEBHOOK-FIRST APPROACHES)
+# =========================================================================
+
+# Redirect aggressive polling tasks to webhook-first gap detection

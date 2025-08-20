@@ -459,24 +459,30 @@ class UnipileWebhookHandler:
             }
         )
         
-        # Extract contact info using provider logic for better conversation subject
-        from communications.utils.phone_extractor import (
-            extract_whatsapp_contact_name,
-            extract_whatsapp_phone_from_webhook,
-            get_display_name_or_phone
+        # Generate smart conversation name
+        from communications.services.conversation_naming import conversation_naming_service
+        
+        # Extract contact info from webhook data
+        contact_info = {}
+        
+        # Extract WhatsApp-specific contact info
+        if 'contact' in webhook_data:
+            contact_info.update(webhook_data['contact'])
+        if 'message' in webhook_data:
+            message_data = webhook_data['message']
+            contact_info.update({
+                'from': message_data.get('from'),
+                'phone': message_data.get('from'),
+                'content': message_data.get('text', {}).get('body') if isinstance(message_data.get('text'), dict) else message_data.get('text')
+            })
+        
+        # Generate subject using smart naming service
+        subject = conversation_naming_service.generate_conversation_name(
+            channel_type=connection.channel_type,
+            contact_info=contact_info,
+            message_content=contact_info.get('content'),
+            external_thread_id=conversation_id
         )
-        
-        contact_name = extract_whatsapp_contact_name(webhook_data)
-        contact_phone = extract_whatsapp_phone_from_webhook(webhook_data)
-        
-        # Create a meaningful subject using contact name or formatted phone
-        if contact_name:
-            subject = f"WhatsApp - {contact_name}"
-        elif contact_phone:
-            # Use formatted phone as subject
-            subject = f"WhatsApp - {contact_phone}"
-        else:
-            subject = "WhatsApp conversation"
         
         conversation = Conversation.objects.create(
             channel=channel,
@@ -517,10 +523,32 @@ class UnipileWebhookHandler:
             }
         )
         
+        # Generate smart conversation name
+        from communications.services.conversation_naming import conversation_naming_service
+        
+        # Extract contact info from message data
+        contact_info = {
+            'from': message_data.get('from'),
+            'phone': message_data.get('from'),
+            'content': message_data.get('text', {}).get('body') if isinstance(message_data.get('text'), dict) else message_data.get('text')
+        }
+        
+        # Add any contact info from the message data
+        if 'contact' in message_data:
+            contact_info.update(message_data['contact'])
+        
+        # Generate subject using smart naming service
+        subject = conversation_naming_service.generate_conversation_name(
+            channel_type=connection.channel_type,
+            contact_info=contact_info,
+            message_content=contact_info.get('content'),
+            external_thread_id=external_thread_id
+        )
+        
         conversation = Conversation.objects.create(
             channel=channel,
             external_thread_id=external_thread_id or f"msg_{message_data.get('message_id', timezone.now().timestamp())}",
-            subject=f"WhatsApp conversation", 
+            subject=subject, 
             status='active'
         )
         

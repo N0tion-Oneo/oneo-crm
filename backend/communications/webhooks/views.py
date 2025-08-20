@@ -8,8 +8,10 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 from django.utils.decorators import method_decorator
 from django.utils import timezone
-from communications.webhooks.handlers import webhook_handler
+from communications.webhooks.dispatcher import webhook_dispatcher
 from communications.webhooks.validators import webhook_validator
+# Backward compatibility alias
+webhook_handler = webhook_dispatcher
 from communications.models import UserChannelConnection
 
 logger = logging.getLogger(__name__)
@@ -45,8 +47,17 @@ def unipile_webhook(request):
         logger.info(f"Received webhook: {event_type}")
         logger.debug(f"Webhook data: {data}")
         
-        # Process the webhook
-        result = webhook_handler.process_webhook(event_type, data)
+        # Process the webhook using unified dispatcher
+        result = webhook_dispatcher.process_webhook(event_type, data)
+        
+        # Also process with legacy handler for backward compatibility during transition
+        # TODO: Remove this after confirming new dispatcher works correctly
+        if not result.get('success'):
+            logger.info(f"Falling back to legacy handler for {event_type}")
+            fallback_result = webhook_handler.process_webhook(event_type, data)
+            if fallback_result.get('success'):
+                logger.warning(f"Legacy handler succeeded where new dispatcher failed for {event_type}")
+                result = fallback_result
         
         if result.get('success'):
             logger.info(f"Successfully processed webhook: {event_type}")

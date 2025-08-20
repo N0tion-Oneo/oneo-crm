@@ -4,7 +4,7 @@ import React, { createContext, useContext, useEffect, useRef, useState, useCallb
 import { useAuth } from '@/features/auth/context'
 
 export interface RealtimeMessage {
-  type: 'record_create' | 'record_update' | 'record_delete' | 'pipeline_update' | 'field_update' | 'field_delete' | 'user_presence' | 'field_lock' | 'field_unlock' | 'permission_update' | 'activity_update' | 'message_update' | 'new_conversation'
+  type: 'record_create' | 'record_update' | 'record_delete' | 'pipeline_update' | 'field_update' | 'field_delete' | 'user_presence' | 'field_lock' | 'field_unlock' | 'permission_update' | 'activity_update' | 'message_update' | 'new_conversation' | 'new_message' | 'message_status_update' | 'conversation_update'
   payload: any
   data?: any // Backend sends activity data in 'data' field for activity_update messages
   user?: {
@@ -113,6 +113,14 @@ export function WebSocketProvider({ children, autoConnect = true }: WebSocketPro
     
     const accessToken = getCookie('oneo_access_token')
     let url = `${protocol}//${host}:${port}/ws/realtime/`
+    
+    console.log('🔌 WebSocket URL Debug:', {
+      protocol,
+      host,
+      port,
+      fullUrl: url,
+      windowLocation: window.location.href
+    })
     
     console.log('🍪 WebSocket Cookie Debug:', {
       allCookies: document.cookie,
@@ -246,6 +254,8 @@ export function WebSocketProvider({ children, autoConnect = true }: WebSocketPro
         message.type === 'permission_update' && subscription.channel.startsWith('permission') ||
         message.type === 'activity_update' && subscription.channel.startsWith('document_') ||
         message.type === 'message_update' && subscription.channel.startsWith('conversation_') ||
+        message.type === 'new_message' && subscription.channel.startsWith('conversation_') ||
+        message.type === 'message_status_update' && subscription.channel.startsWith('conversation_') ||
         message.type === 'new_conversation' && subscription.channel.startsWith('channel_') ||
         subscription.channel === 'pipelines_overview' // Special case for overview page
       
@@ -271,10 +281,11 @@ export function WebSocketProvider({ children, autoConnect = true }: WebSocketPro
       const wsUrl = getWebSocketUrl()
       
       console.log('🚀 Connecting to centralized WebSocket')
+      console.log('🔌 Attempting WebSocket connection to:', wsUrl)
       wsRef.current = new WebSocket(wsUrl)
 
       wsRef.current.onopen = () => {
-        console.log('✅ WebSocket connected successfully')
+        console.log('✅ WebSocket connected successfully to:', wsUrl)
         setIsConnected(true)
         setConnectionStatus('connected')
         reconnectAttempts.current = 0

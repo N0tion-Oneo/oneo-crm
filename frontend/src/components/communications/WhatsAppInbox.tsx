@@ -372,10 +372,13 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
       const updated = prev.map(chat => {
         if (chat.id === conversation_id || chat.provider_chat_id === conversation_id) {
           const isInbound = message.direction === 'in' || message.direction === 'inbound'
-          const shouldIncrementUnread = isInbound && (!selectedChat || selectedChat.id !== chat.id)
+          // Always increment unread for inbound messages (for testing unread badges)
+          const shouldIncrementUnread = isInbound
+          // Original logic: const shouldIncrementUnread = isInbound && (!selectedChat || selectedChat.id !== chat.id)
           const messageTimestamp = message.date || message.created_at || new Date().toISOString()
           
           console.log(`🔄 Updating chat ${chat.id} (${chat.name}) with new message at:`, messageTimestamp)
+          console.log(`🔄 Unread count: ${chat.unread_count} → ${shouldIncrementUnread ? chat.unread_count + 1 : chat.unread_count} (isInbound: ${isInbound}, shouldIncrement: ${shouldIncrementUnread})`)
           
           return {
             ...chat,
@@ -807,9 +810,10 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
           
         // Transform API response to WhatsApp chat format
         for (const chatData of accountChats) {
-          // Debug timestamp data from backend
-          console.log(`🔍 Chat "${chatData.name}" timestamp debug:`, {
+          // Debug timestamp and unread count data from backend
+          console.log(`🔍 Chat "${chatData.name}" debug:`, {
             chatId: chatData.id,
+            unread_count: chatData.unread_count,
             latest_message_date: chatData.latest_message?.date,
             latest_message_created_at: chatData.latest_message?.created_at,
             last_message_date: chatData.last_message_date,
@@ -871,6 +875,9 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
             } : undefined,
             member_count: chatData.member_count
           }
+          
+          // Debug final unread count
+          console.log(`🔍 Final chat "${transformedChat.name}" unread_count: ${transformedChat.unread_count}`)
           
           allChats.push(transformedChat)
         }

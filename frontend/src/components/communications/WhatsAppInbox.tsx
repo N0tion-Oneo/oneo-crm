@@ -151,6 +151,13 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
   }>>([])
   const [replyText, setReplyText] = useState('')
   const [composing, setComposing] = useState(false)
+  const [selectedFiles, setSelectedFiles] = useState<FileList | null>(null)
+  const [attachmentPreviews, setAttachmentPreviews] = useState<Array<{
+    file: File
+    type: 'image' | 'video' | 'audio' | 'document'
+    preview?: string
+  }>>([])
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const [syncingChat, setSyncingChat] = useState<string | null>(null)
   const { toast } = useToast()
 

@@ -71,6 +71,38 @@ class WhatsAppWebhookHandler(BaseWebhookHandler):
             message_id = data.get('message_id')  
             message_text = data.get('message', '')  # This is the actual message text string
             
+            # Extract attachment data from webhook
+            raw_attachments = data.get('attachments', []) or []
+            if isinstance(raw_attachments, dict):
+                raw_attachments = [raw_attachments]  # Single attachment wrapped in list
+            
+            # Transform UniPile attachment format to our standard format
+            attachments = []
+            for i, raw_att in enumerate(raw_attachments):
+                logger.info(f"🔍 Processing WhatsApp webhook attachment {i}: {raw_att}")
+                
+                # Transform UniPile attachment fields to our standard format
+                transformed_attachment = {
+                    'id': raw_att.get('id', f'whatsapp_att_{i}'),
+                    'type': raw_att.get('content_type', raw_att.get('type', 'application/octet-stream')),
+                    'filename': raw_att.get('filename', raw_att.get('name', f'attachment_{raw_att.get("id", i)}')),
+                    'url': raw_att.get('url'),  # UniPile provides download URL
+                    'size': raw_att.get('size'),
+                    'mime_type': raw_att.get('content_type', raw_att.get('type', 'application/octet-stream')),
+                    'thumbnail_url': raw_att.get('thumbnail_url'),
+                    # Keep original UniPile data for reference
+                    'unipile_data': raw_att
+                }
+                attachments.append(transformed_attachment)
+                logger.info(f"✅ Transformed WhatsApp attachment: {transformed_attachment}")
+            
+            # Handle attachment-only messages (ensure content is never empty for database)
+            content = message_text
+            if not content and attachments:
+                content = f'[{len(attachments)} attachment(s)]'
+            elif not content:
+                content = ''  # Empty message without attachments
+            
             # Extract sender information from UniPile format
             sender_info = data.get('sender', {})
             if isinstance(sender_info, dict):
@@ -224,7 +256,7 @@ class WhatsAppWebhookHandler(BaseWebhookHandler):
                 channel=conversation.channel,
                 conversation=conversation,
                 external_message_id=message_id,
-                content=message_text,
+                content=content,  # Use processed content (handles attachment-only messages)
                 direction=direction,
                 contact_phone=contact_info.get('contact_phone', ''),  # Store contact phone in dedicated field
                 status=MessageStatus.DELIVERED,
@@ -240,7 +272,10 @@ class WhatsAppWebhookHandler(BaseWebhookHandler):
                     'business_phone': contact_info.get('business_phone'),
                     'contact_phone': contact_info.get('contact_phone'),
                     'contact_name': contact_info.get('contact_name'),
-                    'is_group_chat': contact_info.get('is_group_chat', False)
+                    'is_group_chat': contact_info.get('is_group_chat', False),
+                    'attachments': attachments,  # Store processed attachment data
+                    'original_message_text': message_text,  # Keep original text for reference
+                    'attachment_count': len(attachments)  # Quick reference for frontend
                 }
             )
             
@@ -264,7 +299,12 @@ class WhatsAppWebhookHandler(BaseWebhookHandler):
                                 'direction': message.direction,
                                 'status': message.status,
                                 'created_at': message.created_at.isoformat(),
-                                'conversation_id': str(conversation.id)
+                                'conversation_id': str(conversation.id),
+                                'metadata': {
+                                    'attachments': attachments,
+                                    'attachment_count': len(attachments),
+                                    'chat_id': chat_id
+                                }
                             }
                         }
                     )
@@ -277,7 +317,9 @@ class WhatsAppWebhookHandler(BaseWebhookHandler):
                 'conversation_id': str(conversation.id),
                 'conversation_name': conversation.subject or conversation.metadata.get('conversation_name', f'Chat {chat_id[:8]}'),
                 'attendees_synced': len(chat_attendees),
-                'approach': 'chat_centric_webhook'
+                'approach': 'chat_centric_webhook',
+                'attachment_count': len(attachments),
+                'content_type': 'attachment_only' if not message_text and attachments else 'text_with_attachments' if message_text and attachments else 'text_only'
             }
             
         except Exception as e:

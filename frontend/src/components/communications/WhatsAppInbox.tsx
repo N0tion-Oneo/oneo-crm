@@ -161,6 +161,17 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
   const [syncingChat, setSyncingChat] = useState<string | null>(null)
   const { toast } = useToast()
 
+  // Cleanup attachment previews on unmount
+  useEffect(() => {
+    return () => {
+      attachmentPreviews.forEach(preview => {
+        if (preview.preview) {
+          URL.revokeObjectURL(preview.preview)
+        }
+      })
+    }
+  }, [])
+
   // WebSocket integration for real-time updates
   const {
     isConnected: wsConnected,
@@ -312,7 +323,27 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
     
     // Handle both old format (conversation_id, message) and new format (direct message data)
     const message = messageData.message || messageData
-    const conversation_id = messageData.conversation_id || message?.conversation_id || message?.metadata?.chat_id
+    
+    // Debug conversation ID extraction
+    console.log('🔍 CONVERSATION ID EXTRACTION:', {
+      'messageData.conversation_id': messageData.conversation_id,
+      'message?.conversation_id': message?.conversation_id,
+      'message?.metadata?.chat_id': message?.metadata?.chat_id,
+      'messageData.metadata?.chat_id': messageData.metadata?.chat_id,
+      'messageData structure': Object.keys(messageData),
+      'message.metadata structure': message?.metadata ? Object.keys(message.metadata) : 'no metadata'
+    })
+    
+    // Extract conversation ID from multiple possible sources
+    const conversation_id = (
+      messageData.conversation_id ||           // Direct conversation_id
+      message?.conversation_id ||              // Message conversation_id  
+      message?.metadata?.chat_id ||            // Webhook messages have chat_id in metadata
+      messageData.metadata?.chat_id ||         // Alternative metadata location
+      messageData.external_thread_id ||        // API messages might use this
+      message?.external_thread_id ||           // Message external thread ID
+      (selectedChat?.id)                       // Fallback to selected chat for API messages
+    )
     
     // Update messages if this is the currently selected chat
     console.log('🔍 ID MATCHING DEBUG:', {
@@ -338,6 +369,14 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
           return prev
         }
         
+        // Debug attachment data mapping
+        console.log('🔍 ATTACHMENT DEBUG:', {
+          'message.attachments': message.attachments,
+          'message.metadata?.attachments': message.metadata?.attachments,
+          'message.metadata': message.metadata,
+          finalAttachments: (message.attachments || message.metadata?.attachments) || []
+        })
+        
         // Transform and add new message
         const newMessage: WhatsAppMessage = {
           id: message.id,
@@ -349,7 +388,7 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
           date: message.date || message.created_at || new Date().toISOString(),
           status: message.status || 'sent',
           attendee_id: message.attendee_id || message.from_id,
-          attachments: (message.attachments || []).map((att: any) => ({
+          attachments: ((message.attachments || message.metadata?.attachments) || []).map((att: any) => ({
             id: att.id,
             type: att.type,
             filename: att.filename,
@@ -398,7 +437,7 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
               date: messageTimestamp,
               status: message.status || 'sent',
               attendee_id: message.attendee_id,
-              attachments: message.attachments || [],
+              attachments: message.attachments || message.metadata?.attachments || [],
               account_id: chat.account_id
             },
             unread_count: shouldIncrementUnread ? chat.unread_count + 1 : chat.unread_count,
@@ -534,6 +573,66 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
 
   // No periodic refresh needed - timestamps should be instant from backend
 
+  // Handle file selection for attachments
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files
+    if (!files || files.length === 0) return
+
+    const newPreviews: typeof attachmentPreviews = []
+    
+    Array.from(files).forEach((file) => {
+      const fileType = file.type.split('/')[0]
+      let type: 'image' | 'video' | 'audio' | 'document' = 'document'
+      
+      if (fileType === 'image') type = 'image'
+      else if (fileType === 'video') type = 'video'  
+      else if (fileType === 'audio') type = 'audio'
+      
+      const preview: typeof attachmentPreviews[0] = {
+        file,
+        type,
+      }
+      
+      // Generate preview URL for images
+      if (type === 'image') {
+        preview.preview = URL.createObjectURL(file)
+      }
+      
+      newPreviews.push(preview)
+    })
+    
+    setAttachmentPreviews(prev => [...prev, ...newPreviews])
+    setSelectedFiles(files)
+    
+    // Clear the input so the same file can be selected again
+    if (fileInputRef.current) {
+      fileInputRef.current.value = ''
+    }
+  }
+
+  // Remove attachment from preview
+  const removeAttachment = (index: number) => {
+    setAttachmentPreviews(prev => {
+      const removed = prev[index]
+      // Clean up preview URL to prevent memory leaks
+      if (removed.preview) {
+        URL.revokeObjectURL(removed.preview)
+      }
+      return prev.filter((_, i) => i !== index)
+    })
+  }
+
+  // Clear all attachments
+  const clearAttachments = () => {
+    attachmentPreviews.forEach(preview => {
+      if (preview.preview) {
+        URL.revokeObjectURL(preview.preview)
+      }
+    })
+    setAttachmentPreviews([])
+    setSelectedFiles(null)
+  }
+
   // Handle attachment download/preview
   const handleAttachmentClick = async (messageId: string, attachment: WhatsAppMessage['attachments'][0]) => {
     if (!attachment) return
@@ -570,7 +669,7 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
 
       // For other attachments, download via our API
       const response = await api.get(
-        `/api/v1/communications/whatsapp/messages/${messageId}/attachments/${attachment.id}/`,
+        `/api/v1/communications/messages/${messageId}/attachments/${attachment.id}/download/`,
         {
           responseType: 'blob' // Important for file downloads
         }
@@ -1160,7 +1259,18 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
       console.log('📨 Extracted chat messages:', chatMessages)
       
       // Transform API messages to WhatsApp message format
-      const transformedMessages: WhatsAppMessage[] = chatMessages.map((msgData: any) => ({
+      const transformedMessages: WhatsAppMessage[] = chatMessages.map((msgData: any) => {
+        // Debug API attachment data structure
+        if (msgData.metadata?.attachments || msgData.attachments) {
+          console.log('🔍 API ATTACHMENT DEBUG for message', msgData.id, ':', {
+            'msgData.attachments': msgData.attachments,
+            'msgData.metadata?.attachments': msgData.metadata?.attachments,
+            'msgData.metadata': msgData.metadata,
+            finalAttachments: (msgData.attachments || msgData.metadata?.attachments) || []
+          })
+        }
+        
+        return {
         id: msgData.id,
         text: msgData.text || msgData.content,
         html: msgData.html,
@@ -1170,7 +1280,7 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
         date: msgData.date || msgData.created_at,
         status: msgData.status || 'sent',
         attendee_id: msgData.attendee_id || msgData.from_id,
-        attachments: (msgData.attachments || []).map((att: any) => ({
+        attachments: ((msgData.attachments || msgData.metadata?.attachments) || []).map((att: any) => ({
           id: att.id,
           type: att.type,
           filename: att.filename,
@@ -1179,11 +1289,12 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
           size: att.size,
           mime_type: att.mime_type
         })),
-        location: msgData.location,
-        contact: msgData.contact,
-        quoted_message_id: msgData.quoted_message_id,
-        account_id: chat.account_id
-      }))
+          location: msgData.location,
+          contact: msgData.contact,
+          quoted_message_id: msgData.quoted_message_id,
+          account_id: chat.account_id
+        }
+      })
       
       // Sort messages by date (newest first)
       transformedMessages.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
@@ -1280,7 +1391,7 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
         date: msgData.date || msgData.created_at,
         status: msgData.status || 'sent',
         attendee_id: msgData.attendee_id || msgData.from_id,
-        attachments: (msgData.attachments || []).map((att: any) => ({
+        attachments: ((msgData.attachments || msgData.metadata?.attachments) || []).map((att: any) => ({
           id: att.id,
           type: att.type,
           filename: att.filename,
@@ -1308,18 +1419,110 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
   }
 
   const handleSendMessage = async () => {
-    if (!selectedChat || !replyText.trim() || composing) return
+    if (!selectedChat || (!replyText.trim() && attachmentPreviews.length === 0) || composing) return
 
     const messageText = replyText.trim()
+    const hasAttachments = attachmentPreviews.length > 0
     setComposing(true)
     setReplyText('') // Clear input immediately for better UX
     
     try {
+      console.log('🚀 Attempting to send message to chat:', selectedChat.id)
+      console.log('🚀 Has attachments:', hasAttachments, 'files:', attachmentPreviews.length)
+      
       // Send message using real Unipile API
-      const response = await api.post(`/api/v1/communications/whatsapp/chats/${selectedChat.id}/send/`, {
-        text: messageText,
-        type: 'text'
-      })
+      let response
+      
+      if (hasAttachments) {
+        // First upload attachments, then send message with attachment references
+        const uploadedAttachments = []
+        
+        console.log(`🗂️ Uploading ${attachmentPreviews.length} attachments...`)
+        console.log(`🗂️ Selected chat account_id:`, selectedChat.account_id)
+        console.log(`🗂️ Account connections:`, accountConnections)
+        
+        // Find the correct account connection ID
+        const accountConnection = accountConnections.find(conn => 
+          conn.unipile_account_id === selectedChat.account_id || conn.id === selectedChat.account_id
+        )
+        
+        if (!accountConnection) {
+          throw new Error(`Could not find account connection for account_id: ${selectedChat.account_id}`)
+        }
+        
+        console.log(`🗂️ Using account connection full object:`, accountConnection)
+        console.log(`🗂️ Using account connection database ID:`, accountConnection.connection_id)
+        console.log(`🗂️ Account connection database ID type:`, typeof accountConnection.connection_id)
+        
+        for (let i = 0; i < attachmentPreviews.length; i++) {
+          const preview = attachmentPreviews[i]
+          console.log(`🗂️ Uploading file ${i + 1}/${attachmentPreviews.length}: ${preview.file.name}`)
+          
+          const formData = new FormData()
+          formData.append('file', preview.file)
+          formData.append('account_id', accountConnection.connection_id) // Use database connection ID
+          formData.append('conversation_id', selectedChat.id)
+          
+          // Debug what's in the FormData
+          console.log(`🗂️ FormData entries:`)
+          for (let pair of formData.entries()) {
+            console.log(`  ${pair[0]}: ${pair[1]} (type: ${typeof pair[1]})`)
+          }
+          
+          try {
+            const uploadResponse = await api.post(
+              `/api/v1/communications/attachments/upload/`,
+              formData,
+              {
+                headers: {
+                  'Content-Type': 'multipart/form-data'
+                }
+              }
+            )
+            
+            uploadedAttachments.push(uploadResponse.data.attachment)
+            console.log(`✅ Successfully uploaded: ${preview.file.name}`)
+          } catch (uploadError) {
+            console.error(`❌ Failed to upload ${preview.file.name}:`, uploadError)
+            console.error('❌ Upload error details:', uploadError.response?.data)
+            console.error('❌ Upload error status:', uploadError.response?.status)
+            throw new Error(`Failed to upload ${preview.file.name}: ${uploadError.response?.data?.error || uploadError.response?.data?.details || uploadError.message}`)
+          }
+        }
+        
+        console.log(`✅ All attachments uploaded successfully: ${uploadedAttachments.length} files`)
+        
+        // Send message with attachment references using general endpoint
+        console.log(`📤 Sending message with ${uploadedAttachments.length} attachments...`)
+        console.log(`📤 Message data:`, {
+          content: messageText.trim() || '', // Allow empty content if attachments exist
+          account_id: accountConnection.connection_id,
+          conversation_id: selectedChat.id,
+          attachments: uploadedAttachments
+        })
+        
+        try {
+          response = await api.post(`/api/v1/communications/inbox/send-message-with-attachments/`, {
+            content: messageText.trim() || '', // Allow empty content if attachments exist
+            account_id: accountConnection.connection_id, // Use database connection ID
+            conversation_id: selectedChat.id,
+            attachments: uploadedAttachments
+          })
+          
+          console.log(`✅ Message with attachments sent successfully!`)
+        } catch (sendError) {
+          console.error(`❌ Failed to send message with attachments:`, sendError)
+          console.error(`❌ Send error details:`, sendError.response?.data)
+          console.error(`❌ Send error status:`, sendError.response?.status)
+          throw new Error(`Failed to send message with attachments: ${sendError.response?.data?.error || sendError.response?.data?.details || sendError.message}`)
+        }
+      } else {
+        // Regular JSON for text-only messages using WhatsApp endpoint
+        response = await api.post(`/api/v1/communications/whatsapp/chats/${selectedChat.id}/send/`, {
+          text: messageText,
+          type: 'text'
+        })
+      }
       
       const sentMessage = response.data?.message
       
@@ -1340,47 +1543,72 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
           chat_id: selectedChat.id,
           date: sentMessage.date || new Date().toISOString(),
           status: sentMessage.status || 'sent',
-          account_id: selectedChat.account_id
+          account_id: selectedChat.account_id,
+          // Add attachment data if present
+          attachments: hasAttachments ? (sentMessage.attachments || []).map((att: any) => ({
+            id: att.id,
+            type: att.type,
+            filename: att.filename,
+            url: att.url,
+            thumbnail_url: att.thumbnail_url,
+            size: att.size,
+            mime_type: att.mime_type
+          })) : []
         }
 
-        // Add to local messages (newest first) - with duplicate check
-        setMessages(prev => {
-          const exists = prev.some(msg => msg.id === newMessage.id)
-          console.log('🚀 SEND MESSAGE DUPLICATE CHECK:', {
-            messageId: newMessage.id,
-            exists: exists,
-            action: exists ? 'SKIP_DUPLICATE' : 'ADD_MESSAGE'
+        // Only add immediate message for text-only messages
+        // Attachment messages will come through webhook with proper UniPile data
+        if (!hasAttachments) {
+          // Add to local messages (newest first) - with duplicate check
+          setMessages(prev => {
+            const exists = prev.some(msg => msg.id === newMessage.id)
+            console.log('🚀 SEND MESSAGE DUPLICATE CHECK:', {
+              messageId: newMessage.id,
+              exists: exists,
+              action: exists ? 'SKIP_DUPLICATE' : 'ADD_MESSAGE'
+            })
+            
+            if (exists) {
+              console.log('⚠️  Sent message already exists, skipping duplicate')
+              return prev
+            }
+            
+            return [newMessage, ...prev]
           })
-          
-          if (exists) {
-            console.log('⚠️  Sent message already exists, skipping duplicate')
-            return prev
-          }
-          
-          return [newMessage, ...prev]
-        })
+        } else {
+          console.log('📎 Attachment message sent - waiting for webhook confirmation instead of immediate UI update')
+        }
 
-        // Update chat's latest message
-        setChats(prev => prev.map(chat =>
-          chat.id === selectedChat.id
-            ? { 
-                ...chat, 
-                latest_message: newMessage,
-                last_message_date: newMessage.date
-              }
-            : chat
-        ))
+        // Only update chat lists for text-only messages
+        // Attachment messages will update via webhook
+        if (!hasAttachments) {
+          // Update chat's latest message
+          setChats(prev => prev.map(chat =>
+            chat.id === selectedChat.id
+              ? { 
+                  ...chat, 
+                  latest_message: newMessage,
+                  last_message_date: newMessage.date
+                }
+              : chat
+          ))
 
-        // Update selected chat
-        setSelectedChat(prev => prev ? {
-          ...prev,
-          latest_message: newMessage,
-          last_message_date: newMessage.date
-        } : null)
+          // Update selected chat
+          setSelectedChat(prev => prev ? {
+            ...prev,
+            latest_message: newMessage,
+            last_message_date: newMessage.date
+          } : null)
+        }
+        
+        // Clear attachments after successful send
+        clearAttachments()
         
         toast({
           title: "Message sent",
-          description: "Your WhatsApp message has been sent successfully.",
+          description: hasAttachments ? 
+            `Your WhatsApp message with ${attachmentPreviews.length} attachment(s) has been sent successfully.` :
+            "Your WhatsApp message has been sent successfully.",
         })
       }
       
@@ -1718,7 +1946,7 @@ Latest msg text: ${chat.latest_message?.text?.substring(0, 50)}`}
                             date: msgData.date || msgData.created_at,
                             status: msgData.status || 'sent',
                             attendee_id: msgData.attendee_id || msgData.from_id,
-                            attachments: (msgData.attachments || []).map((att: any) => ({
+                            attachments: ((msgData.attachments || msgData.metadata?.attachments) || []).map((att: any) => ({
                               id: att.id,
                               type: att.type,
                               filename: att.filename,
@@ -1883,9 +2111,9 @@ Latest msg text: ${chat.latest_message?.text?.substring(0, 50)}`}
                         {/* Attachments */}
                         {message.attachments && message.attachments.length > 0 && (
                           <div className="mt-2 space-y-2">
-                            {message.attachments.map((attachment) => (
+                            {message.attachments.map((attachment, index) => (
                               <div 
-                                key={attachment.id} 
+                                key={attachment.id || attachment.attachment_id || `attachment-${index}`} 
                                 className="bg-black bg-opacity-10 rounded p-2 cursor-pointer hover:bg-opacity-20 transition-all"
                                 onClick={() => handleAttachmentClick(message.id, attachment)}
                                 title={`Click to ${attachment.type === 'image' ? 'preview' : 'download'} ${attachment.filename || attachment.type}`}
@@ -2001,8 +2229,69 @@ Latest msg text: ${chat.latest_message?.text?.substring(0, 50)}`}
 
               {/* Message Input */}
               <div className="flex-shrink-0 p-4 bg-white dark:bg-gray-800 border-t">
+                {/* Attachment Previews */}
+                {attachmentPreviews.length > 0 && (
+                  <div className="mb-3 flex flex-wrap gap-2">
+                    {attachmentPreviews.map((preview, index) => (
+                      <div 
+                        key={preview.id || `preview-${index}`}
+                        className="relative bg-gray-100 dark:bg-gray-700 rounded-lg p-2 flex items-center gap-2 max-w-xs"
+                      >
+                        {preview.type === 'image' && preview.preview ? (
+                          <img 
+                            src={preview.preview} 
+                            alt="Preview" 
+                            className="w-12 h-12 rounded object-cover"
+                          />
+                        ) : (
+                          <div className="w-12 h-12 bg-gray-200 dark:bg-gray-600 rounded flex items-center justify-center">
+                            {preview.type === 'video' ? (
+                              <Video className="w-6 h-6" />
+                            ) : preview.type === 'audio' ? (
+                              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19V6l12-2v13M9 19c0 1.105-.895 2-2 2s-2-.895-2-2 .895-2 2-2 2 .895 2 2zm12-2c0 1.105-.895 2-2 2s-2-.895-2-2 .895-2 2-2 2 .895 2 2zM9 10l12-2" />
+                              </svg>
+                            ) : (
+                              <Paperclip className="w-6 h-6" />
+                            )}
+                          </div>
+                        )}
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium truncate">
+                            {preview.file.name}
+                          </p>
+                          <p className="text-xs text-gray-500">
+                            {(preview.file.size / 1024).toFixed(1)}KB
+                          </p>
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="w-6 h-6 p-0"
+                          onClick={() => removeAttachment(index)}
+                        >
+                          ×
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                
                 <div className="flex items-end space-x-2">
-                  <Button variant="ghost" size="sm">
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    multiple
+                    onChange={handleFileSelect}
+                    className="hidden"
+                    accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx"
+                  />
+                  <Button 
+                    variant="ghost" 
+                    size="sm"
+                    onClick={() => fileInputRef.current?.click()}
+                    title="Attach files"
+                  >
                     <Paperclip className="w-4 h-4" />
                   </Button>
                   <Textarea
@@ -2011,7 +2300,7 @@ Latest msg text: ${chat.latest_message?.text?.substring(0, 50)}`}
                     onChange={(e) => setReplyText(e.target.value)}
                     className="flex-1 min-h-[40px] max-h-32 resize-none"
                     onKeyPress={(e) => {
-                      if (e.key === 'Enter' && !e.shiftKey && !composing && replyText.trim()) {
+                      if (e.key === 'Enter' && !e.shiftKey && !composing && (replyText.trim() || attachmentPreviews.length > 0)) {
                         e.preventDefault()
                         handleSendMessage()
                       }
@@ -2022,7 +2311,7 @@ Latest msg text: ${chat.latest_message?.text?.substring(0, 50)}`}
                   </Button>
                   <Button
                     onClick={handleSendMessage}
-                    disabled={!replyText.trim() || composing}
+                    disabled={(!replyText.trim() && attachmentPreviews.length === 0) || composing}
                     className="bg-green-500 hover:bg-green-600 text-white"
                     size="sm"
                   >

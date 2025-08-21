@@ -394,15 +394,54 @@ class MessageSyncService:
                 
                 else:
                     # Regular webhook-only message update
+                    raw_content = message_data.get('text') or message_data.get('content') or ''
+                    attachments = message_data.get('attachments', [])
+                    
+                    # Handle attachment-only messages in updates too
+                    if not existing_message.content and not raw_content and attachments:
+                        existing_message.content = f'[{len(attachments)} attachment(s)]'
+                        update_fields = ['metadata', 'content']
+                    else:
+                        update_fields = ['metadata']
+                    
                     existing_message.metadata.update({
                         'unipile_data': message_data,
-                        'last_sync': django_timezone.now().isoformat()
+                        'last_sync': django_timezone.now().isoformat(),
+                        'attachments': attachments,
+                        'attachment_count': len(attachments) if attachments else 0
                     })
-                    existing_message.save(update_fields=['metadata'])
+                    existing_message.save(update_fields=update_fields)
                     return existing_message
             
             # Extract message details
-            content = message_data.get('text') or message_data.get('content') or ''
+            raw_content = message_data.get('text') or message_data.get('content') or ''
+            raw_attachments = message_data.get('attachments', [])
+            
+            # Transform UniPile attachment format to our standard format
+            attachments = []
+            for i, raw_att in enumerate(raw_attachments):
+                logger.info(f"🔍 Processing webhook attachment {i}: {raw_att}")
+                
+                # Transform UniPile attachment fields to our standard format
+                transformed_attachment = {
+                    'id': raw_att.get('id', f'webhook_att_{i}'),
+                    'type': raw_att.get('content_type', raw_att.get('type', 'application/octet-stream')),
+                    'filename': raw_att.get('filename', raw_att.get('name', f'attachment_{raw_att.get("id", i)}')),
+                    'url': raw_att.get('url'),  # UniPile provides download URL
+                    'size': raw_att.get('size'),
+                    'mime_type': raw_att.get('content_type', raw_att.get('type', 'application/octet-stream')),
+                    'thumbnail_url': raw_att.get('thumbnail_url'),
+                    # Keep original UniPile data for reference
+                    'unipile_data': raw_att
+                }
+                attachments.append(transformed_attachment)
+                logger.info(f"✅ Transformed attachment: {transformed_attachment}")
+            
+            # Handle attachment-only messages (ensure content is never empty string for database)
+            if not raw_content and attachments:
+                content = f'[{len(attachments)} attachment(s)]'
+            else:
+                content = raw_content or ''
             
             # Determine direction
             author = message_data.get('author', {})
@@ -467,7 +506,8 @@ class MessageSyncService:
                     'sync_source': 'unipile_sync',
                     'user_channel_connection_id': str(user_channel_connection.id),
                     'author': author,
-                    'attachments': message_data.get('attachments', [])
+                    'attachments': attachments,
+                    'attachment_count': len(attachments) if attachments else 0
                 }
             )
             

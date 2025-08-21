@@ -112,30 +112,59 @@ class UnipileClient:
         endpoint: str, 
         data: Optional[Dict] = None,
         params: Optional[Dict] = None,
-        headers: Optional[Dict] = None
+        headers: Optional[Dict] = None,
+        files: Optional[Dict] = None
     ) -> Dict[str, Any]:
         """Make authenticated request to UniPile API"""
         
         url = f"{self.base_url}/{endpoint.lstrip('/')}"
         request_headers = {
             'X-API-KEY': self.access_token,
-            'Content-Type': 'application/json',
             'Accept': 'application/json',
         }
+        
+        # Handle multipart/form-data for file uploads
+        if files:
+            # Don't set Content-Type for multipart, let aiohttp handle it
+            request_data = aiohttp.FormData()
+            
+            # Add regular form fields
+            if data:
+                for key, value in data.items():
+                    request_data.add_field(key, str(value))
+            
+            # Add files
+            for field_name, (filename, file_obj, content_type) in files.items():
+                request_data.add_field(
+                    field_name,
+                    file_obj,
+                    filename=filename,
+                    content_type=content_type
+                )
+        else:
+            # Regular JSON request
+            request_headers['Content-Type'] = 'application/json'
+            request_data = data
         
         if headers:
             request_headers.update(headers)
         
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.request(
-                    method=method,
-                    url=url,
-                    json=data,
-                    params=params,
-                    headers=request_headers,
-                    timeout=aiohttp.ClientTimeout(total=30)
-                ) as response:
+                request_kwargs = {
+                    'method': method,
+                    'url': url,
+                    'params': params,
+                    'headers': request_headers,
+                    'timeout': aiohttp.ClientTimeout(total=30)
+                }
+                
+                if files:
+                    request_kwargs['data'] = request_data
+                else:
+                    request_kwargs['json'] = request_data
+                
+                async with session.request(**request_kwargs) as response:
                     
                     # Check content type to determine how to parse response
                     content_type = response.headers.get('content-type', '').lower()

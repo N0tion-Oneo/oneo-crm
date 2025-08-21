@@ -619,7 +619,7 @@ class Message(models.Model):
     
     # Message details
     direction = models.CharField(max_length=20, choices=MessageDirection.choices)
-    content = models.TextField()
+    content = models.TextField(blank=True, default='')  # Allow empty content for attachment-only messages
     subject = models.CharField(max_length=500, blank=True)
     contact_email = models.EmailField(blank=True)
     contact_phone = models.CharField(max_length=50, blank=True, help_text="Contact phone number for WhatsApp/SMS messages")

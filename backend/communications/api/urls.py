@@ -2,6 +2,7 @@
 URL patterns for communications API
 """
 from django.urls import path, include
+from django.http import JsonResponse
 from rest_framework.routers import DefaultRouter
 from .views import AccountConnectionViewSet
 from ..views import MessageViewSet, ChannelViewSet, ConversationViewSet, ContactResolutionMonitoringView
@@ -32,7 +33,8 @@ from .conversation_messages import (
 from .attachment_views import (
     AttachmentUploadView,
     send_message_with_attachments,
-    delete_attachment
+    delete_attachment,
+    download_attachment
 )
 from .draft_views import (
     MessageDraftViewSet,
@@ -140,6 +142,7 @@ urlpatterns = [
     # Message sending endpoints (MUST come before router to avoid conflicts with ViewSet actions)
     path('inbox/send-message/', send_message, name='send-message'),
     path('inbox/send-message-with-attachments/', send_message_with_attachments, name='send-message-with-attachments'),
+    path('inbox/test-endpoint/', lambda request: JsonResponse({'status': 'ok', 'method': request.method}), name='test-endpoint'),
     
     # Unified Inbox endpoints
     path('inbox/', get_unified_inbox, name='unified-inbox'),
@@ -149,6 +152,7 @@ urlpatterns = [
     # Attachment endpoints
     path('attachments/upload/', AttachmentUploadView.as_view(), name='attachment-upload'),
     path('attachments/<str:attachment_id>/', delete_attachment, name='delete-attachment'),
+    path('messages/<str:message_id>/attachments/<str:attachment_id>/download/', download_attachment, name='download-attachment'),
     
     # Message sync endpoints
     path('sync/messages/', sync_account_messages, name='sync-all-messages'),

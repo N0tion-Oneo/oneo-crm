@@ -109,15 +109,49 @@ class UnipileMessagingClient:
     ) -> Dict[str, Any]:
         """Send message to existing chat"""
         try:
-            data = {
-                'chat_id': chat_id,
-                'text': text
-            }
+            # If we have attachments, use multipart/form-data
             if attachments:
-                data['attachments'] = attachments
+                files = {}
+                data = {
+                    'chat_id': chat_id,
+                    'text': text
+                }
                 
-            response = await self.client._make_request('POST', f'chats/{chat_id}/messages', data=data)
-            return response
+                # Prepare files for multipart upload
+                for attachment in attachments:
+                    if 'file_path' in attachment:
+                        files['attachments'] = (
+                            attachment['name'],
+                            open(attachment['file_path'], 'rb'),
+                            attachment['content_type']
+                        )
+                        # UniPile API docs show only one attachment per request
+                        # For multiple files, we'd need multiple requests
+                        break
+                
+                # Send with files
+                response = await self.client._make_request(
+                    'POST', 
+                    f'chats/{chat_id}/messages', 
+                    data=data, 
+                    files=files
+                )
+                
+                # Close file handles
+                for file_tuple in files.values():
+                    if hasattr(file_tuple[1], 'close'):
+                        file_tuple[1].close()
+                        
+                return response
+            else:
+                # Regular text message
+                data = {
+                    'chat_id': chat_id,
+                    'text': text
+                }
+                response = await self.client._make_request('POST', f'chats/{chat_id}/messages', data=data)
+                return response
+                
         except Exception as e:
             logger.error(f"Failed to send message: {e}")
             raise
@@ -131,16 +165,50 @@ class UnipileMessagingClient:
     ) -> Dict[str, Any]:
         """Start new chat with message"""
         try:
-            data = {
-                'account_id': account_id,
-                'attendees_ids': attendees_ids,
-                'text': text
-            }
+            # If we have attachments, use multipart/form-data
             if attachments:
-                data['attachments'] = attachments
+                files = {}
+                data = {
+                    'account_id': account_id,
+                    'attendees_ids': ','.join(attendees_ids),  # Convert list to comma-separated string
+                    'text': text
+                }
                 
-            response = await self.client._make_request('POST', 'chats/start', data=data)
-            return response
+                # Prepare files for multipart upload
+                for attachment in attachments:
+                    if 'file_path' in attachment:
+                        files['attachments'] = (
+                            attachment['name'],
+                            open(attachment['file_path'], 'rb'),
+                            attachment['content_type']
+                        )
+                        # UniPile API docs show only one attachment per request
+                        break
+                
+                # Send with files
+                response = await self.client._make_request(
+                    'POST', 
+                    'chats/start', 
+                    data=data, 
+                    files=files
+                )
+                
+                # Close file handles
+                for file_tuple in files.values():
+                    if hasattr(file_tuple[1], 'close'):
+                        file_tuple[1].close()
+                        
+                return response
+            else:
+                # Regular text message
+                data = {
+                    'account_id': account_id,
+                    'attendees_ids': attendees_ids,
+                    'text': text
+                }
+                response = await self.client._make_request('POST', 'chats/start', data=data)
+                return response
+                
         except Exception as e:
             logger.error(f"Failed to start new chat: {e}")
             raise

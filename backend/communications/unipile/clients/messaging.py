@@ -3,6 +3,7 @@ UniPile Messaging Client
 Handles chat and message operations
 """
 import logging
+from datetime import datetime
 from typing import Dict, List, Any, Optional
 
 logger = logging.getLogger(__name__)
@@ -233,3 +234,188 @@ class UnipileMessagingClient:
         except Exception as e:
             logger.error(f"Failed to get attendees: {e}")
             raise
+    
+    # =========================================================================
+    # ENHANCED PAGINATION METHODS FOR BACKGROUND SYNC
+    # =========================================================================
+    
+    async def paginate_all_chats(
+        self, 
+        account_id: Optional[str] = None,
+        account_type: Optional[str] = None,
+        batch_size: int = 50,
+        max_items: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Paginate through all chats with automatic cursor management
+        Returns all chats in a single list for processing
+        
+        Args:
+            account_id: Account to filter by
+            account_type: Type of account (WHATSAPP, etc.)
+            batch_size: Items per API request
+            max_items: Maximum total items to return (None = unlimited)
+        """
+        all_chats = []
+        cursor = None
+        items_fetched = 0
+        
+        while True:
+            response = await self.get_all_chats(
+                account_id=account_id,
+                cursor=cursor,
+                limit=batch_size,
+                account_type=account_type
+            )
+            
+            items = response.get('items', [])
+            if not items:
+                break
+                
+            all_chats.extend(items)
+            items_fetched += len(items)
+            
+            # Check if we've hit our max limit
+            if max_items and items_fetched >= max_items:
+                all_chats = all_chats[:max_items]
+                break
+            
+            # Check for more pages
+            cursor = response.get('next_cursor') or response.get('cursor')
+            has_more = response.get('has_more', False)
+            
+            if not has_more or not cursor:
+                break
+                
+        logger.info(f"Paginated {len(all_chats)} chats across multiple requests")
+        return all_chats
+    
+    async def paginate_all_messages(
+        self,
+        chat_id: Optional[str] = None,
+        account_id: Optional[str] = None,
+        batch_size: int = 100,
+        max_items: Optional[int] = None,
+        since: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Paginate through all messages with automatic cursor management
+        Returns all messages in a single list for processing
+        
+        Args:
+            chat_id: Specific chat to get messages from
+            account_id: Account to filter by 
+            batch_size: Items per API request
+            max_items: Maximum total items to return (None = unlimited)
+            since: Get messages since this timestamp
+        """
+        all_messages = []
+        cursor = None
+        items_fetched = 0
+        
+        while True:
+            response = await self.get_all_messages(
+                chat_id=chat_id,
+                account_id=account_id,
+                cursor=cursor,
+                limit=batch_size,
+                since=since
+            )
+            
+            items = response.get('items', [])
+            if not items:
+                break
+                
+            all_messages.extend(items)
+            items_fetched += len(items)
+            
+            # Check if we've hit our max limit
+            if max_items and items_fetched >= max_items:
+                all_messages = all_messages[:max_items]
+                break
+            
+            # Check for more pages
+            cursor = response.get('next_cursor') or response.get('cursor')
+            has_more = response.get('has_more', False)
+            
+            if not has_more or not cursor:
+                break
+                
+        logger.info(f"Paginated {len(all_messages)} messages across multiple requests")
+        return all_messages
+    
+    async def get_chats_batch(
+        self,
+        account_id: Optional[str] = None,
+        account_type: Optional[str] = None,
+        cursor: Optional[str] = None,
+        limit: int = 50
+    ) -> Dict[str, Any]:
+        """
+        Get a single batch of chats with enhanced pagination metadata
+        Optimized for background sync task processing
+        
+        Returns:
+            {
+                'items': [...],
+                'next_cursor': 'cursor_string',
+                'has_more': True/False,
+                'total_fetched': 50,
+                'batch_info': {...}
+            }
+        """
+        start_time = datetime.now()
+        
+        response = await self.get_all_chats(
+            account_id=account_id,
+            cursor=cursor,
+            limit=limit,
+            account_type=account_type
+        )
+        
+        # Enhance response with batch metadata for sync tracking
+        response.setdefault('batch_info', {})
+        response['batch_info'].update({
+            'request_time_ms': int((datetime.now() - start_time).total_seconds() * 1000),
+            'batch_size': limit,
+            'items_returned': len(response.get('items', [])),
+            'cursor_used': cursor
+        })
+        
+        return response
+    
+    async def get_messages_batch(
+        self,
+        chat_id: Optional[str] = None,
+        account_id: Optional[str] = None,
+        cursor: Optional[str] = None,
+        limit: int = 100,
+        since: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Get a single batch of messages with enhanced pagination metadata
+        Optimized for background sync task processing
+        """
+        from datetime import datetime
+        
+        start_time = datetime.now()
+        
+        response = await self.get_all_messages(
+            chat_id=chat_id,
+            account_id=account_id,
+            cursor=cursor,
+            limit=limit,
+            since=since
+        )
+        
+        # Enhance response with batch metadata for sync tracking
+        response.setdefault('batch_info', {})
+        response['batch_info'].update({
+            'request_time_ms': int((datetime.now() - start_time).total_seconds() * 1000),
+            'batch_size': limit,
+            'items_returned': len(response.get('items', [])),
+            'cursor_used': cursor,
+            'chat_id': chat_id
+        })
+        
+        return response

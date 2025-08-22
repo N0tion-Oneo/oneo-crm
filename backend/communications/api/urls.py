@@ -96,6 +96,16 @@ from .whatsapp_views_local_first import (
     get_chat_sync_status
 )
 
+# Import background sync views
+from .background_sync_views import (
+    start_background_sync,
+    start_chat_specific_sync,
+    get_sync_jobs,
+    get_sync_job_status,
+    cancel_sync_job,
+    get_active_sync_jobs
+)
+
 router = DefaultRouter()
 router.register(r'accounts', AccountConnectionViewSet, basename='account-connection')
 router.register(r'connections', CommunicationConnectionViewSet, basename='communication-connection')
@@ -213,4 +223,12 @@ urlpatterns = [
     path('whatsapp/sync/', sync_whatsapp_data, name='whatsapp-sync'),
     path('whatsapp/chats/<str:chat_id>/sync/', sync_chat_history, name='whatsapp-chat-sync'),
     path('whatsapp/chats/<str:chat_id>/sync/status/', get_chat_sync_status, name='whatsapp-chat-sync-status'),
+    
+    # Background sync endpoints
+    path('sync/background/', start_background_sync, name='start-background-sync'),
+    path('sync/background/chat/<str:chat_id>/', start_chat_specific_sync, name='start-chat-specific-sync'),
+    path('sync/jobs/', get_sync_jobs, name='get-sync-jobs'),
+    path('sync/jobs/active/', get_active_sync_jobs, name='get-active-sync-jobs'),
+    path('sync/jobs/<uuid:sync_job_id>/', get_sync_job_status, name='get-sync-job-status'),
+    path('sync/jobs/<uuid:sync_job_id>/cancel/', cancel_sync_job, name='cancel-sync-job'),
 ]

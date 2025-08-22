@@ -413,20 +413,46 @@ class UnifiedMessageProcessor:
         """Determine message direction using available data"""
         source = normalized_data.get('source')
         
-        if source == 'api' and 'is_sender' in normalized_data:
-            # API provides is_sender field
-            return MessageDirection.OUTBOUND if normalized_data.get('is_sender') else MessageDirection.INBOUND
-        elif source == 'webhook' and connection:
-            # Use direction detection service for webhooks
-            direction, _ = self.direction_service.determine_direction(
+        if connection:
+            # Always use the sophisticated direction detection service when we have a connection
+            raw_data = normalized_data.get('raw_data', {})
+            
+            # For API sync, try to determine event type from is_sender field
+            event_type = None
+            if source == 'api':
+                is_sender = normalized_data.get('is_sender')
+                if is_sender is not None:
+                    event_type = 'message_sent' if is_sender else 'message_received'
+            elif source == 'webhook':
+                # For webhook, we can use the actual event type if available in raw data
+                event_type = raw_data.get('event_type', 'message_received')
+            
+            # Use the comprehensive direction detection service
+            direction, detection_metadata = self.direction_service.determine_direction(
                 connection=connection,
-                message_data=normalized_data.get('raw_data', {}),
-                event_type='message_received'
+                message_data=raw_data,
+                event_type=event_type
             )
+            
+            # Log detection details for debugging
+            logger.info(f"🔍 Direction Detection: {direction.value}")
+            logger.info(f"   Method: {detection_metadata.get('detection_method')}")
+            logger.info(f"   Confidence: {detection_metadata.get('confidence')}")
+            if detection_metadata.get('account_phone'):
+                logger.info(f"   Account Phone: {detection_metadata.get('account_phone')}")
+            if detection_metadata.get('sender_info'):
+                logger.info(f"   Sender Info: {detection_metadata.get('sender_info')}")
+            
             return direction
         else:
-            # Fallback: assume inbound for received messages
-            return MessageDirection.INBOUND
+            # Fallback when no connection available
+            if source == 'api' and 'is_sender' in normalized_data:
+                # API provides is_sender field as backup
+                return MessageDirection.OUTBOUND if normalized_data.get('is_sender') else MessageDirection.INBOUND
+            else:
+                # Final fallback: assume inbound for received messages
+                logger.warning(f"No connection available for direction detection, assuming INBOUND")
+                return MessageDirection.INBOUND
     
     def _generate_conversation_name(
         self,

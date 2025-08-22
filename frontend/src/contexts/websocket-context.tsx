@@ -4,7 +4,7 @@ import React, { createContext, useContext, useEffect, useRef, useState, useCallb
 import { useAuth } from '@/features/auth/context'
 
 export interface RealtimeMessage {
-  type: 'record_create' | 'record_update' | 'record_delete' | 'pipeline_update' | 'field_update' | 'field_delete' | 'user_presence' | 'field_lock' | 'field_unlock' | 'permission_update' | 'activity_update' | 'message_update' | 'new_conversation' | 'new_message' | 'message_status_update' | 'conversation_update'
+  type: 'record_create' | 'record_update' | 'record_delete' | 'pipeline_update' | 'field_update' | 'field_delete' | 'user_presence' | 'field_lock' | 'field_unlock' | 'permission_update' | 'activity_update' | 'message_update' | 'new_conversation' | 'new_message' | 'message_status_update' | 'conversation_update' | 'sync_progress_update' | 'sync_job_update'
   payload: any
   data?: any // Backend sends activity data in 'data' field for activity_update messages
   user?: {
@@ -226,6 +226,12 @@ export function WebSocketProvider({ children, autoConnect = true }: WebSocketPro
 
   // Handle incoming messages
   const handleMessage = useCallback((message: RealtimeMessage) => {
+    console.log('🔍 Processing WebSocket message:', {
+      type: message.type,
+      subscriptionCount: subscriptionsRef.current.size,
+      activeChannels: Array.from(activeChannelsRef.current)
+    })
+    
     // Handle system messages
     switch (message.type) {
       case 'user_presence':
@@ -240,8 +246,16 @@ export function WebSocketProvider({ children, autoConnect = true }: WebSocketPro
     }
     
     // Broadcast to subscribers
+    let matchedSubscriptions = 0
     
     for (const subscription of subscriptionsRef.current.values()) {
+      // Debug sync progress specifically
+      if (message.type === 'sync_progress_update' || subscription.channel.startsWith('sync_progress_')) {
+        console.log(`🔍 SYNC DEBUG - Message type: ${message.type}, Channel: ${subscription.channel}`)
+        console.log(`🔍 SYNC DEBUG - Channel check: ${subscription.channel.startsWith('sync_progress_')}`)
+        console.log(`🔍 SYNC DEBUG - Message type check: ${message.type === 'sync_progress_update'}`)
+      }
+      
       // Check if message is relevant to this subscription
       const isRelevant = 
         message.type === 'record_create' && subscription.channel.startsWith('pipeline_records_') ||
@@ -257,10 +271,13 @@ export function WebSocketProvider({ children, autoConnect = true }: WebSocketPro
         message.type === 'new_message' && subscription.channel.startsWith('conversation_') ||
         message.type === 'message_status_update' && subscription.channel.startsWith('conversation_') ||
         message.type === 'new_conversation' && subscription.channel.startsWith('channel_') ||
+        message.type === 'sync_progress_update' && subscription.channel.startsWith('sync_progress_') ||
+        message.type === 'sync_job_update' && subscription.channel.startsWith('sync_job_') ||
         subscription.channel === 'pipelines_overview' // Special case for overview page
       
-      
       if (isRelevant) {
+        matchedSubscriptions++
+        console.log(`🎯 Matched subscription ${subscription.id} for channel ${subscription.channel}`)
         try {
           subscription.callback(message)
         } catch (error) {
@@ -268,6 +285,8 @@ export function WebSocketProvider({ children, autoConnect = true }: WebSocketPro
         }
       }
     }
+    
+    console.log(`📊 Message processed: ${matchedSubscriptions} matched subscriptions out of ${subscriptionsRef.current.size} total`)
   }, [])
 
   // Connect to WebSocket
@@ -307,9 +326,16 @@ export function WebSocketProvider({ children, autoConnect = true }: WebSocketPro
       wsRef.current.onmessage = (event) => {
         try {
           const message: RealtimeMessage = JSON.parse(event.data)
+          console.log('🎯 WebSocket Context Received Message:', {
+            type: message.type,
+            timestamp: message.timestamp,
+            hasPayload: !!message.payload,
+            hasData: !!message.data,
+            fullMessage: message
+          })
           handleMessage(message)
         } catch (error) {
-          console.error('Failed to parse WebSocket message:', error)
+          console.error('Failed to parse WebSocket message:', error, event.data)
         }
       }
 

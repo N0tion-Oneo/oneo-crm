@@ -14,7 +14,7 @@ from django.utils import timezone as django_timezone
 from asgiref.sync import sync_to_async
 
 from ..models import (
-    Channel, Conversation, Message, ChatAttendee,
+    Channel, Conversation, Message, ChatAttendee, UserChannelConnection, SyncJob,
     ConversationStatus, MessageDirection, MessageStatus
 )
 from ..unipile_sdk import unipile_service
@@ -37,7 +37,9 @@ class ComprehensiveSyncService:
         self,
         channel: Channel,
         days_back: int = 30,
-        max_messages_per_chat: int = 100
+        max_messages_per_chat: int = 100,
+        connection: Optional['UserChannelConnection'] = None,
+        sync_job: Optional['SyncJob'] = None
     ) -> Dict[str, Any]:
         """
         Perform comprehensive sync for a channel account using chat-centric approach
@@ -46,6 +48,8 @@ class ComprehensiveSyncService:
             channel: Channel to sync
             days_back: How many days of history to sync
             max_messages_per_chat: Maximum messages to sync per chat
+            connection: User connection for proper direction detection
+            sync_job: Sync job for progress updates and WebSocket broadcasting
             
         Returns:
             Dict with sync statistics and results
@@ -61,12 +65,18 @@ class ComprehensiveSyncService:
         
         try:
             logger.info(f"🔄 Starting chat-centric comprehensive sync for {channel.name}")
+            if connection:
+                logger.info(f"🔍 Direction detection enabled with connection: {connection.account_name}")
+            else:
+                logger.warning(f"⚠️ No connection provided - direction detection will use fallback methods")
             
             # New approach: Get all chats, then sync attendees and messages for each chat
             sync_result = await self._sync_chats_with_attendees_and_messages(
                 channel, 
                 days_back, 
-                max_messages_per_chat
+                max_messages_per_chat,
+                connection,
+                sync_job
             )
             
             stats.update(sync_result)
@@ -87,7 +97,9 @@ class ComprehensiveSyncService:
         self,
         channel: Channel,
         days_back: int = 30,
-        max_messages_per_chat: int = 100
+        max_messages_per_chat: int = 100,
+        connection: Optional['UserChannelConnection'] = None,
+        sync_job: Optional['SyncJob'] = None
     ) -> Dict[str, Any]:
         """
         Chat-centric sync: Get all chats, then sync attendees and messages for each
@@ -124,14 +136,35 @@ class ComprehensiveSyncService:
             chats = chats_data.get('items', [])
             logger.info(f"📱 Found {len(chats)} chats to process")
             
+            # Update sync job with total chat count
+            if sync_job:
+                await sync_job.update_progress(
+                    conversations_total=len(chats),
+                    conversations_processed=0,
+                    current_phase='processing_conversations',
+                    current_step=f'Found {len(chats)} conversations to sync'
+                )
+            
             # Step 2: Process each chat to get its attendees and messages
-            for chat_data in chats:
+            for i, chat_data in enumerate(chats, 1):
                 try:
                     chat_id = chat_data.get('id')
                     if not chat_id:
                         continue
                     
-                    logger.info(f"🔄 Processing chat {chat_id}")
+                    chat_name = chat_data.get('name', f'Chat {i}')
+                    logger.info(f"🔄 Processing chat {i}/{len(chats)}: {chat_name}")
+                    logger.info(f"🔍 Chat ID from UniPile: {chat_id}")
+                    logger.info(f"🔍 Raw chat_data keys: {list(chat_data.keys())}")
+                    logger.info(f"🔍 Raw chat_data: {chat_data}")
+                    
+                    # Update progress for this chat
+                    if sync_job:
+                        await sync_job.update_progress(
+                            conversations_processed=i-1,  # Previous chats completed
+                            current_step=f'Processing chat: {chat_name}',
+                            current_conversation_name=chat_name
+                        )
                     
                     # Get attendees for this specific chat
                     chat_attendees = await self._get_chat_attendees(client, chat_id)
@@ -169,30 +202,52 @@ class ComprehensiveSyncService:
                     stats['chats_synced'] += 1
                     
                     # Get messages for this specific chat
-                    chat_messages = await self._get_chat_messages(client, chat_id, max_messages_per_chat)
+                    logger.info(f"🔍 About to fetch messages for chat_id: {chat_id}")
+                    logger.info(f"🔍 Using account_id: {channel.unipile_account_id}")
+                    chat_messages = await self._get_chat_messages(client, chat_id, channel.unipile_account_id, max_messages_per_chat)
+                    logger.info(f"🔍 Got {len(chat_messages)} messages back from UniPile")
                     
                     # Process messages using unified processor  
                     messages_created = 0
-                    for message_data in chat_messages:
+                    for i, message_data in enumerate(chat_messages):
                         try:
+                            logger.info(f"🔍 Processing message {i+1}/{len(chat_messages)}: {message_data.get('id')}")
+                            
+                            # Normalize message data
                             normalized_message = unified_processor.normalize_message_data(message_data, 'api')
                             # Set chat_id for API messages
                             normalized_message['chat_id'] = chat_id
                             
+                            logger.info(f"📝 Normalized message - ID: {normalized_message.get('external_message_id')}, Content: {normalized_message.get('content', '')[:50]}...")
+                            
+                            # Process the message
                             message, created = await unified_processor.process_message(
                                 normalized_message,
                                 channel,
-                                conversation
+                                conversation,
+                                connection  # Pass connection for direction detection
                             )
+                            
+                            logger.info(f"✅ Message processed - Created: {created}, DB ID: {message.id if message else 'None'}")
                             
                             if created:
                                 messages_created += 1
                         except Exception as e:
-                            logger.error(f"Failed to process message {message_data.get('id')}: {e}")
+                            logger.error(f"❌ Failed to process message {message_data.get('id')}: {e}")
+                            import traceback
+                            logger.error(f"❌ Full traceback: {traceback.format_exc()}")
                             continue
                     
                     stats['messages_synced'] += messages_created
-                    logger.info(f"✅ Chat {chat_id}: {len(chat_attendees)} attendees, {messages_created} messages")
+                    logger.info(f"✅ Chat {chat_name}: {len(chat_attendees)} attendees, {messages_created} messages")
+                    
+                    # Update progress after completing this chat
+                    if sync_job:
+                        await sync_job.update_progress(
+                            conversations_processed=i,
+                            messages_processed=stats['messages_synced'],
+                            current_step=f'Completed chat: {chat_name}'
+                        )
                     
                 except Exception as e:
                     logger.error(f"Failed to process chat {chat_data.get('id', 'unknown')}: {e}")
@@ -201,8 +256,24 @@ class ComprehensiveSyncService:
             
             logger.info(f"✅ Processed {stats['chats_synced']} chats with {stats['attendees_synced']} attendees and {stats['messages_synced']} messages")
             
+            # Final progress update
+            if sync_job:
+                await sync_job.update_progress(
+                    conversations_processed=stats['chats_synced'],
+                    messages_processed=stats['messages_synced'],
+                    current_phase='completed',
+                    current_step='Comprehensive sync completed'
+                )
+            
         except Exception as e:
             logger.error(f"Failed chat-centric sync for {channel.name}: {e}")
+            
+            # Update sync job with error
+            if sync_job:
+                await sync_job.update_progress(
+                    current_phase='error',
+                    current_step=f'Sync failed: {str(e)}'
+                )
             raise
         
         return stats
@@ -225,31 +296,41 @@ class ComprehensiveSyncService:
             logger.error(f"Failed to get attendees for chat {chat_id}: {e}")
             return []
     
-    async def _get_chat_messages(self, client, chat_id: str, limit: int = 100) -> List[Dict[str, Any]]:
-        """Get messages for a specific chat using the chat messages endpoint"""
+    async def _get_chat_messages(self, client, chat_id: str, account_id: str, limit: int = 100) -> List[Dict[str, Any]]:
+        """Get messages for a specific chat using the same method as frontend"""
         try:
-            logger.info(f"📨 Getting messages for chat {chat_id}")
-            chat_messages_data = await client._make_request(
-                'GET', 
-                f'chats/{chat_id}/messages',
-                params={'limit': limit}
+            logger.info(f"📨 Getting messages for chat {chat_id} with account {account_id} and limit {limit}")
+            # Use the SDK properly with account_id parameter
+            chat_messages_data = await client.messaging.get_all_messages(
+                chat_id=chat_id,
+                account_id=account_id,  # This was missing!
+                limit=limit,
+                cursor=None
             )
             
+            logger.info(f"📨 Raw API response for chat {chat_id}: {type(chat_messages_data)}")
+            if chat_messages_data:
+                logger.info(f"📨 Response keys: {list(chat_messages_data.keys()) if isinstance(chat_messages_data, dict) else 'Not a dict'}")
+            
             messages = chat_messages_data.get('items', []) if chat_messages_data else []
+            logger.info(f"📨 Raw messages count for chat {chat_id}: {len(messages)}")
             
             # Filter out null/invalid messages
             valid_messages = []
-            for msg in messages:
+            for i, msg in enumerate(messages):
                 if msg and isinstance(msg, dict) and msg.get('id'):
                     valid_messages.append(msg)
+                    logger.debug(f"📨 Valid message {i}: {msg.get('id')} - {msg.get('text', 'No text')[:50]}")
                 else:
-                    logger.warning(f"Skipping invalid message: {msg}")
+                    logger.warning(f"Skipping invalid message {i}: {msg}")
             
-            logger.info(f"📨 Found {len(messages)} messages, {len(valid_messages)} valid for chat {chat_id}")
+            logger.info(f"📨 FINAL RESULT for chat {chat_id}: {len(messages)} raw, {len(valid_messages)} valid messages")
             return valid_messages
             
         except Exception as e:
-            logger.error(f"Failed to get messages for chat {chat_id}: {e}")
+            logger.error(f"❌ Failed to get messages for chat {chat_id}: {e}")
+            import traceback
+            logger.error(f"❌ Traceback: {traceback.format_exc()}")
             return []
     
     async def _sync_attendees(self, channel: Channel) -> Dict[str, Any]:

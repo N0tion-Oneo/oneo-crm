@@ -91,6 +91,14 @@ except ImportError:
     MODELS_AVAILABLE = False
     logger.warning("Pipeline/Relationship models not available for real-time signals")
 
+# Import communication models for sync job progress tracking
+try:
+    from communications.models import SyncJob, SyncJobProgress
+    COMMUNICATION_MODELS_AVAILABLE = True
+except ImportError:
+    COMMUNICATION_MODELS_AVAILABLE = False
+    logger.warning("Communication models not available for real-time signals")
+
 if MODELS_AVAILABLE:
     
     @receiver(post_save, sender=Record)
@@ -618,3 +626,157 @@ def _format_audit_changes_for_realtime(changes, action):
         return f"Share link deleted\nHad {access_count} access{'es' if access_count != 1 else ''}"
     
     return f"Record {action}"
+
+
+# =========================================================================
+# SYNC JOB PROGRESS SIGNAL HANDLERS
+# =========================================================================
+
+if COMMUNICATION_MODELS_AVAILABLE:
+    
+    @receiver(post_save, sender=SyncJob)
+    def handle_sync_job_saved(sender, instance, created, **kwargs):
+        """Handle sync job creation/update for real-time progress tracking"""
+        logger.info(f"📡 SYNC JOB SIGNAL: Sync job {instance.id} {'created' if created else 'updated'}")
+        logger.info(f"   🔄 Status: {instance.status}")
+        logger.info(f"   📊 Progress: {instance.progress}")
+        
+        try:
+            channel_layer = get_channel_layer()
+            if not channel_layer:
+                logger.info(f"   ⏸️  No channel layer available for sync job signal")
+                return
+            
+            # Create event data for sync job update
+            event_data = {
+                'type': 'sync_job_created' if created else 'sync_job_updated',
+                'sync_job_id': str(instance.id),
+                'celery_task_id': instance.celery_task_id,  # Frontend needs this to match stored jobs
+                'channel_id': str(instance.channel_id),
+                'user_id': str(instance.user_id),
+                'job_type': instance.job_type,
+                'status': instance.status,
+                'progress': instance.progress or {},
+                'result_summary': instance.result_summary or {},
+                'error_details': instance.error_details or {},
+                'error_count': instance.error_count,
+                'started_at': instance.started_at.isoformat() if instance.started_at else None,
+                'completed_at': instance.completed_at.isoformat() if instance.completed_at else None,
+                'last_progress_update': instance.last_progress_update.isoformat() if instance.last_progress_update else None,
+                'completion_percentage': instance.completion_percentage,
+                'is_active': instance.is_active,
+                'timestamp': time.time()
+            }
+            
+            logger.info(f"📡 Broadcasting sync job update:")
+            logger.info(f"   🎯 Target groups: sync_jobs_{instance.user_id}, sync_job_{instance.id}")
+            logger.info(f"   📊 Progress: {instance.completion_percentage}%")
+            logger.info(f"   🔄 Status: {instance.status}")
+            logger.info(f"   🔑 Celery Task ID: {instance.celery_task_id}")
+            logger.info(f"   📋 Event Data Debug: {event_data}")
+            
+            # Primary broadcast: Celery task ID channel (used by frontend)
+            if instance.celery_task_id:
+                celery_task_group = f"sync_progress_{instance.celery_task_id}"
+                progress_data = {
+                    'type': 'sync_progress_update',
+                    'celery_task_id': instance.celery_task_id,
+                    'sync_job_id': str(instance.id),
+                    'status': instance.status,
+                    'progress': instance.progress or {},
+                    'completion_percentage': instance.completion_percentage,
+                    'updated_at': instance.last_progress_update.isoformat() if instance.last_progress_update else None,
+                    'timestamp': time.time()
+                }
+                safe_group_send_sync(channel_layer, celery_task_group, progress_data)
+                logger.info(f"   📡 Broadcasting sync progress to: {celery_task_group}")
+            
+            # Optional: Keep user sync jobs channel for potential dashboard use
+            user_sync_group = f"sync_jobs_{instance.user_id}"
+            safe_group_send_sync(channel_layer, user_sync_group, {
+                'type': 'sync_job_update',
+                'data': event_data
+            })
+            
+            # Store for SSE subscribers
+            store_sse_message(
+                f"sync_jobs_{instance.user_id}",
+                event_data
+            )
+            
+            logger.info(f"✅ Successfully broadcasted sync job {'created' if created else 'updated'}: {instance.id}")
+            
+        except Exception as e:
+            logger.error(f"❌ Error handling sync job signal: {e}")
+            logger.error(f"❌ Sync job: {instance.id}")
+    
+    
+    @receiver(post_save, sender=SyncJobProgress)
+    def handle_sync_job_progress_saved(sender, instance, created, **kwargs):
+        """Handle sync job progress updates for real-time progress tracking"""
+        logger.info(f"📡 SYNC PROGRESS SIGNAL: Progress entry {instance.id} {'created' if created else 'updated'}")
+        logger.info(f"   🏷️  Phase: {instance.phase_name} - Step: {instance.step_name}")
+        logger.info(f"   📈 Progress: {instance.items_processed}/{instance.items_total} ({instance.completion_percentage}%)")
+        
+        try:
+            channel_layer = get_channel_layer()
+            if not channel_layer:
+                logger.info(f"   ⏸️  No channel layer available for sync progress signal")
+                return
+            
+            # Create event data for progress update
+            event_data = {
+                'type': 'sync_progress_updated',
+                'progress_id': str(instance.id),
+                'sync_job_id': str(instance.sync_job_id),
+                'phase_name': instance.phase_name,
+                'step_name': instance.step_name,
+                'items_processed': instance.items_processed,
+                'items_total': instance.items_total,
+                'completion_percentage': instance.completion_percentage,
+                'step_status': instance.step_status,
+                'processing_time_ms': instance.processing_time_ms,
+                'memory_usage_mb': instance.memory_usage_mb,
+                'metadata': instance.metadata or {},
+                'started_at': instance.started_at.isoformat() if instance.started_at else None,
+                'completed_at': instance.completed_at.isoformat() if instance.completed_at else None,
+                'timestamp': time.time()
+            }
+            
+            logger.info(f"📡 Broadcasting sync progress update:")
+            logger.info(f"   🎯 Target groups: sync_job_{instance.sync_job_id}")
+            logger.info(f"   📈 Progress: {instance.completion_percentage}% ({instance.items_processed}/{instance.items_total})")
+            logger.info(f"   🏷️  Step: {instance.phase_name}.{instance.step_name}")
+            
+            # Get sync job to determine user
+            try:
+                sync_job = instance.sync_job
+                
+                # Broadcast to user's sync jobs channel
+                user_sync_group = f"sync_jobs_{sync_job.user_id}"
+                safe_group_send_sync(channel_layer, user_sync_group, {
+                    'type': 'sync_progress_update',
+                    'data': event_data
+                })
+                
+                # Broadcast to specific sync job channel
+                sync_job_group = f"sync_job_{instance.sync_job_id}"
+                safe_group_send_sync(channel_layer, sync_job_group, {
+                    'type': 'sync_progress_update',
+                    'data': event_data
+                })
+                
+                # Store for SSE subscribers
+                store_sse_message(
+                    f"sync_jobs_{sync_job.user_id}",
+                    event_data
+                )
+                
+                logger.info(f"✅ Successfully broadcasted sync progress update: {instance.id}")
+                
+            except Exception as job_error:
+                logger.error(f"❌ Failed to get sync job for progress broadcast: {job_error}")
+            
+        except Exception as e:
+            logger.error(f"❌ Error handling sync progress signal: {e}")
+            logger.error(f"❌ Progress entry: {instance.id}")

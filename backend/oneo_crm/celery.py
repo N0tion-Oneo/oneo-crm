@@ -115,6 +115,10 @@ app.conf.update(
         'communications.tasks.generate_daily_analytics': {'queue': 'analytics'},
         'communications.tasks.initial_sync_new_connection_task': {'queue': 'communications'},
         
+        # Background sync tasks
+        'communications.tasks_background_sync.sync_account_comprehensive_background': {'queue': 'background_sync'},
+        'communications.tasks_background_sync.sync_chat_specific_background': {'queue': 'background_sync'},
+        
         # Contact resolution tasks
         'communications.tasks.resolve_unconnected_conversations_task': {'queue': 'contact_resolution'},
         'communications.tasks.resolve_conversation_contact_task': {'queue': 'contact_resolution'},

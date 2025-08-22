@@ -287,6 +287,18 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
         console.log('🟠 New conversation data to process:', newConvData)
         handleNewConversation(newConvData)
         break
+      case 'sync_progress_update':
+        console.log('📊 Processing sync_progress_update')
+        const syncData = message.data || message.payload
+        console.log('📊 Sync progress data:', syncData)
+        handleSyncProgressUpdate(syncData)
+        break
+      case 'sync_job_update':
+        console.log('🔄 Processing sync_job_update')
+        const jobData = message.data || message.payload
+        console.log('🔄 Sync job data:', jobData)
+        handleSyncJobUpdate(jobData)
+        break
       default:
         console.log('❌ Unhandled WhatsApp WebSocket message type:', message.type)
         console.log('❌ Available message types should be: new_message, message_update, message_status_update, conversation_update, new_conversation')
@@ -605,6 +617,90 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
     })
   }, [accountConnections, toast])
 
+  // Handle sync progress updates
+  const handleSyncProgressUpdate = useCallback((syncData: any) => {
+    console.log('📊 Sync progress update received:', syncData)
+    
+    // Backend sends celery_task_id for frontend matching
+    const celeryTaskId = syncData.celery_task_id
+    if (!celeryTaskId) {
+      console.log('❌ No celery_task_id in progress update:', syncData)
+      return
+    }
+    
+    console.log('✅ Using celery_task_id for UI lookup:', celeryTaskId)
+    
+    // Store progress data using the celery_task_id that frontend stores jobs by
+    setSyncProgress(prev => ({
+      ...prev,
+      [celeryTaskId]: {
+        ...syncData,
+        updated_at: new Date().toISOString()
+      }
+    }))
+    
+    // Show progress toast updates
+    const progress = syncData.progress || {}
+    const completionPercentage = syncData.completion_percentage || 0
+    const currentPhase = progress.current_phase || 'processing'
+    const conversationsProcessed = progress.conversations_processed || 0
+    const messagesProcessed = progress.messages_processed || 0
+    
+    if (completionPercentage > 0 && completionPercentage % 25 === 0) {
+      toast({
+        title: `Sync ${completionPercentage}% complete`,
+        description: `${currentPhase}: ${conversationsProcessed} conversations, ${messagesProcessed} messages processed.`,
+      })
+    }
+  }, [toast])
+
+  // Handle sync job updates (start, completion, failure)
+  const handleSyncJobUpdate = useCallback((jobData: any) => {
+    console.log('🔄 Sync job update received:', jobData)
+    
+    const syncJobId = jobData.celery_task_id || jobData.job_id
+    if (!syncJobId) {
+      console.log('❌ No sync job ID in job update')
+      return
+    }
+    
+    // Handle different job status updates
+    if (jobData.status === 'completed') {
+      console.log('🎉 Sync completed:', jobData)
+      
+      // Remove from active jobs
+      setActiveSyncJobs(prev => prev.filter(job => job.celery_task_id !== syncJobId))
+      
+      // Show completion notification
+      const result = jobData.result_summary || {}
+      toast({
+        title: "Sync completed",
+        description: `Successfully synced ${result.conversations_synced || 0} conversations and ${result.messages_synced || 0} messages.`,
+      })
+      
+      // Refresh conversation list
+      refreshConversations()
+      
+    } else if (jobData.status === 'failed') {
+      console.log('❌ Sync failed:', jobData)
+      
+      // Update job status to failed
+      setActiveSyncJobs(prev => 
+        prev.map(job => 
+          job.celery_task_id === syncJobId 
+            ? { ...job, status: 'failed', error_message: jobData.error_message }
+            : job
+        )
+      )
+      
+      toast({
+        title: "Sync failed",
+        description: jobData.error_message || 'Background sync failed',
+        variant: "destructive"
+      })
+    }
+  }, [toast])
+
   // Subscribe to WhatsApp-specific WebSocket channels
   useEffect(() => {
     if (!wsConnected) return
@@ -880,6 +976,12 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
     }
   }, [])
 
+  // Load active sync jobs on component mount (handles page refreshes)
+  useEffect(() => {
+    // Load sync jobs once when component mounts
+    loadActiveSyncJobs()
+  }, []) // Empty dependency array - only run on mount
+
   const loadWhatsAppData = async () => {
     try {
       // Only show loading if we don't have any data yet
@@ -1129,35 +1231,236 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
     }
   }
 
-  // Sync WhatsApp data with Unipile API using comprehensive sync
+  // Background sync state management
+  const [activeSyncJobs, setActiveSyncJobs] = useState<any[]>([])
+  const [syncProgress, setSyncProgress] = useState<{[key: string]: any}>({})
+  const [syncProgressVisible, setSyncProgressVisible] = useState(true)
+  const [syncJobsLoaded, setSyncJobsLoaded] = useState(false)
+
+  // Load active sync jobs on component mount (for page refreshes)
+  const loadActiveSyncJobs = async () => {
+    // Prevent duplicate calls
+    if (syncJobsLoaded) return
+    
+    try {
+      const response = await api.get('/api/v1/communications/sync/jobs/active/')
+      
+      if (response.data?.success && response.data.active_sync_jobs?.length > 0) {
+        const activeJobs = response.data.active_sync_jobs
+        
+        console.log(`🔄 Restored ${activeJobs.length} active sync jobs after page refresh`)
+        setActiveSyncJobs(activeJobs)
+        setSyncProgressVisible(true) // Show progress when active jobs are found
+        
+        // Restore progress state from backend data
+        const restoredProgress: {[key: string]: any} = {}
+        activeJobs.forEach(job => {
+          if (job.celery_task_id) {
+            restoredProgress[job.celery_task_id] = {
+              status: job.status,
+              completion_percentage: job.completion_percentage || 0,
+              progress: job.progress || {},
+              updated_at: job.last_progress_update || job.created_at,
+              error_details: job.error_details,
+              is_active: job.is_active
+            }
+          }
+        })
+        setSyncProgress(restoredProgress)
+        
+        // Reconnect to WebSocket progress for each active job
+        activeJobs.forEach(job => {
+          if (job.id && (job.status === 'pending' || job.status === 'running')) {
+            console.log(`🔌 Reconnecting to progress WebSocket for job ${job.id}`)
+            connectToSyncProgress(job.id)
+          }
+        })
+      } else {
+        console.log('📱 No active sync jobs found on page load')
+      }
+      
+      setSyncJobsLoaded(true)
+    } catch (error) {
+      console.error('❌ Failed to load active sync jobs:', error)
+      setSyncJobsLoaded(true)
+    }
+  }
+
+  // Handler functions for sync job management
+  const handleRetrySync = async (taskId: string) => {
+    try {
+      const response = await fetch('/api/v1/communications/sync/jobs/retry/', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${getToken()}`
+        },
+        body: JSON.stringify({ celery_task_id: taskId })
+      })
+      
+      if (response.ok) {
+        const retryData = await response.json()
+        toast({
+          title: "Sync retry initiated",
+          description: "Background sync has been restarted."
+        })
+        
+        // Update job status
+        setActiveSyncJobs(prev => 
+          prev.map(job => 
+            job.celery_task_id === taskId 
+              ? { ...job, ...retryData } 
+              : job
+          )
+        )
+        
+        // Reconnect to progress WebSocket
+        connectToSyncProgress(retryData.id)
+      } else {
+        throw new Error('Failed to retry sync')
+      }
+    } catch (error) {
+      console.error('❌ Failed to retry sync:', error)
+      toast({
+        title: "Retry failed", 
+        description: "Unable to restart the sync job.",
+        variant: "destructive"
+      })
+    }
+  }
+  
+  const handleCancelSync = async (taskId: string) => {
+    try {
+      const response = await fetch('/api/v1/communications/sync/jobs/cancel/', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${getToken()}`
+        },
+        body: JSON.stringify({ celery_task_id: taskId })
+      })
+      
+      if (response.ok) {
+        toast({
+          title: "Sync cancelled",
+          description: "Background sync has been cancelled."
+        })
+        
+        // Remove from active jobs and reset visibility if needed
+        setActiveSyncJobs(prev => {
+          const filtered = prev.filter(job => job.celery_task_id !== taskId)
+          // If no jobs left, reset visibility to true for next time
+          if (filtered.length === 0) {
+            setSyncProgressVisible(true)
+          }
+          return filtered
+        })
+        setSyncProgress(prev => {
+          const updated = { ...prev }
+          delete updated[taskId]
+          return updated
+        })
+      } else {
+        throw new Error('Failed to cancel sync')
+      }
+    } catch (error) {
+      console.error('❌ Failed to cancel sync:', error)
+      toast({
+        title: "Cancel failed",
+        description: "Unable to cancel the sync job.",
+        variant: "destructive"
+      })
+    }
+  }
+  
+  const handleRemoveJob = (taskId: string) => {
+    setActiveSyncJobs(prev => {
+      const filtered = prev.filter(job => job.celery_task_id !== taskId)
+      // If no jobs left, reset visibility to true for next time
+      if (filtered.length === 0) {
+        setSyncProgressVisible(true)
+      }
+      return filtered
+    })
+    setSyncProgress(prev => {
+      const updated = { ...prev }
+      delete updated[taskId]
+      return updated
+    })
+  }
+
+  // Background sync with real-time progress tracking
   const handleSync = async () => {
-    console.log('🔄 Sync button clicked!')
-    console.log('🔄 Current syncing state:', syncing)
+    console.log('🚀 Starting background sync!')
     
     if (syncing) {
       console.log('❌ Already syncing, returning early')
       return
     }
     
-    console.log('🔄 Setting syncing to true')
     setSyncing(true)
     try {
-      console.log('🔄 Making POST request to /api/v1/communications/whatsapp/sync/')
-      // Call the dedicated comprehensive sync endpoint
-      const syncResponse = await api.post('/api/v1/communications/whatsapp/sync/')
-      console.log('✅ Sync response received:', syncResponse.data)
+      // Start background sync
+      const syncResponse = await api.post('/api/v1/communications/sync/background/', {
+        sync_options: {
+          days_back: 30,
+          max_messages_per_chat: 500,
+          conversations_per_batch: 50,
+          messages_per_batch: 100
+        }
+      })
+      console.log('✅ Background sync started:', syncResponse.data)
       
       if (syncResponse.data?.success) {
-        const syncResults = syncResponse.data.sync_results || []
-        const totalConversations = syncResults.reduce((sum: number, result: any) => sum + (result.conversations_synced || 0), 0)
-        const totalMessages = syncResults.reduce((sum: number, result: any) => sum + (result.messages_synced || 0), 0)
+        const syncJobs = syncResponse.data.sync_jobs || []
+        const startedJobs = syncJobs.filter((job: any) => job.status === 'started')
         
-        toast({
-          title: "Comprehensive sync completed",
-          description: `Synced ${totalConversations} conversations and ${totalMessages} messages with full attendee data.`,
-        })
+        console.log('🔍 DEBUG sync_jobs array:', syncJobs)
+        console.log('🔍 DEBUG startedJobs:', startedJobs)
+        console.log('🔍 DEBUG startedJobs.length:', startedJobs.length)
+        
+        if (startedJobs.length > 0) {
+          // Connect to WebSocket for each sync job to track progress
+          startedJobs.forEach((job: any) => {
+            const celeryTaskId = job.celery_task_id
+            if (celeryTaskId) {
+              console.log('🔌 Connecting to sync progress for job:', celeryTaskId)
+              connectToSyncProgress(celeryTaskId)
+            } else {
+              console.log('❌ No celery_task_id found in job:', job)
+            }
+          })
+          
+          toast({
+            title: "Background sync started",
+            description: `Started sync for ${startedJobs.length} WhatsApp account(s). Progress will be shown below.`,
+          })
+          
+          // Update UI to show non-blocking state
+          setSyncing(false) // Allow user to continue using the app
+          
+          console.log('🔍 ACTIVE JOBS DEBUG:', {
+            startedJobsStructure: startedJobs.map(job => ({
+              celery_task_id: job.celery_task_id,
+              channel_id: job.channel_id,
+              sync_job_id: job.sync_job_id || 'not_present',
+              allKeys: Object.keys(job)
+            }))
+          })
+          
+          setActiveSyncJobs(startedJobs)
+          setSyncProgressVisible(true) // Show progress panel when new jobs start
+        } else {
+          // All jobs were already running or failed
+          toast({
+            title: "Sync status", 
+            description: "Some accounts are already syncing or have active sync jobs.",
+          })
+          setSyncing(false)
+        }
+        
       } else {
-        throw new Error(syncResponse.data?.error || 'Sync failed')
+        throw new Error(syncResponse.data?.error || 'Failed to start background sync')
       }
       
       // After successful sync, reload conversations with fresh data
@@ -1251,6 +1554,55 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
     }
   }
 
+  // Subscribe to sync progress via realtime WebSocket
+  const connectToSyncProgress = (celeryTaskId: string) => {
+    console.log('🔌 Subscribing to sync progress updates for Celery task:', celeryTaskId)
+    
+    // Subscribe to Celery task-specific sync channel via realtime WebSocket
+    // Backend should send to group: sync_progress_{celeryTaskId}
+    if (subscribe) {
+      const taskChannelName = `sync_progress_${celeryTaskId}`
+      const taskSubscriptionId = subscribe(taskChannelName, handleWebSocketMessage)
+      console.log('✅ Subscribed to task-specific sync channel:', taskChannelName, 'with subscription ID:', taskSubscriptionId)
+    } else {
+      console.log('❌ WebSocket context not available, skipping progress tracking')
+      return
+    }
+  }
+
+  // Helper function to refresh conversations after sync completion
+  const refreshConversations = async () => {
+    try {
+      console.log('🔄 Refreshing conversations after sync completion')
+      
+      // Clear cache and reload
+      setChats([])
+      setChatCursor(null) 
+      setHasMoreChats(true)
+      setLoadingChats(true)
+      
+      const freshChatsResponse = await api.get(`/api/v1/communications/whatsapp/chats/`, {
+        params: { 
+          account_id: selectedConnection?.unipile_account_id,
+          limit: 15,
+          force_sync: 'false' // Use fresh synced data
+        }
+      })
+      
+      const processedChats = processChatData(freshChatsResponse.data?.chats || [])
+      setChats(processedChats)
+      setChatCursor(freshChatsResponse.data?.cursor || null)
+      setHasMoreChats(freshChatsResponse.data?.has_more || false)
+      
+      console.log('✅ Conversations refreshed:', processedChats.length)
+      
+    } catch (error) {
+      console.error('Failed to refresh conversations:', error)
+    } finally {
+      setLoadingChats(false)
+    }
+  }
+
   const filteredChats = chats.filter(chat => {
     // Apply search filter
     if (searchQuery) {
@@ -1278,15 +1630,11 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
     const aTime = new Date(a.latest_message?.date || a.last_message_date).getTime()
     const bTime = new Date(b.latest_message?.date || b.last_message_date).getTime()
     
-    // Debug timestamp issues only when needed
-    if (isNaN(aTime) || isNaN(bTime)) {
-      console.warn('🕐 Invalid timestamp detected:', {
-        chatA: { name: a.name, timestamp: a.latest_message?.date || a.last_message_date, parsed: aTime },
-        chatB: { name: b.name, timestamp: b.latest_message?.date || b.last_message_date, parsed: bTime }
-      })
-    }
+    // Handle invalid timestamps silently (fallback to current time)
+    const safeATime = isNaN(aTime) ? 0 : aTime
+    const safeBTime = isNaN(bTime) ? 0 : bTime
     
-    return bTime - aTime // Most recent first
+    return safeBTime - safeATime // Most recent first
   })
 
   const handleChatSelect = async (chat: WhatsAppChat) => {
@@ -1766,6 +2114,289 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
 
   return (
     <div className={`h-full flex flex-col ${className}`}>
+      {/* Loading sync jobs status */}
+      {!syncJobsLoaded && (
+        <div className="flex-shrink-0 bg-gray-50 dark:bg-gray-900/20 border-b border-gray-200 dark:border-gray-800">
+          <div className="p-2 flex items-center justify-center">
+            <div className="flex items-center space-x-2 text-xs text-gray-600 dark:text-gray-400">
+              <div className="w-3 h-3 border-2 border-gray-400 border-t-transparent rounded-full animate-spin"></div>
+              <span>Checking for active sync jobs...</span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Sync Status Toggle - Show when hidden */}
+      {syncJobsLoaded && activeSyncJobs.length > 0 && !syncProgressVisible && (
+        <div className="flex-shrink-0 bg-blue-50 dark:bg-blue-900/20 border-b border-blue-200 dark:border-blue-800">
+          <div className="p-2 flex items-center justify-between">
+            <div className="flex items-center space-x-2">
+              <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>
+              <span className="text-xs text-blue-900 dark:text-blue-100">
+                {activeSyncJobs.length} sync job{activeSyncJobs.length > 1 ? 's' : ''} running in background
+              </span>
+            </div>
+            <button 
+              onClick={() => setSyncProgressVisible(true)} 
+              className="text-blue-700 hover:text-blue-900 text-xs bg-blue-100 hover:bg-blue-200 px-2 py-1 rounded transition-colors"
+            >
+              Show Progress
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Active Sync Progress - Detailed Updates */}
+      {syncJobsLoaded && activeSyncJobs.length > 0 && syncProgressVisible && (
+        <div className="flex-shrink-0 bg-blue-50 dark:bg-blue-900/20 border-b border-blue-200 dark:border-blue-800">
+          <div className="p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-medium text-blue-900 dark:text-blue-100">
+                Background Sync in Progress ({activeSyncJobs.length} job{activeSyncJobs.length > 1 ? 's' : ''})
+              </h3>
+              <button 
+                onClick={() => setSyncProgressVisible(false)} 
+                className="text-blue-700 hover:text-blue-900 text-xs"
+              >
+                Hide
+              </button>
+            </div>
+            
+            {activeSyncJobs.map((job) => {
+              const progress = syncProgress[job.celery_task_id] || {}
+              const jobProgress = progress.progress || {}
+              const completionPercentage = progress.completion_percentage || 0
+              
+              return (
+                <div key={job.celery_task_id} className="bg-white dark:bg-gray-800 rounded-lg p-3 border">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center space-x-2">
+                      <div className={`w-2 h-2 rounded-full ${
+                        progress.status === 'failed' ? 'bg-red-500' :
+                        progress.status === 'completed' ? 'bg-green-500' :
+                        'bg-blue-500 animate-pulse'
+                      }`}></div>
+                      <span className="text-sm font-medium">
+                        WhatsApp Account Sync
+                      </span>
+                      <span className={`text-xs px-2 py-1 rounded ${
+                        progress.status === 'failed' ? 'bg-red-100 text-red-800' :
+                        progress.status === 'completed' ? 'bg-green-100 text-green-800' :
+                        'bg-blue-100 text-blue-800'
+                      }`}>
+                        {progress.status === 'failed' ? 'Failed' :
+                         progress.status === 'completed' ? 'Complete' :
+                         `${completionPercentage}% Complete`}
+                      </span>
+                    </div>
+                    
+                    {/* Action Buttons */}
+                    <div className="flex items-center space-x-2">
+                      {progress.status === 'failed' && (
+                        <button
+                          onClick={() => handleRetrySync(job.celery_task_id)}
+                          className="text-xs bg-blue-500 text-white px-3 py-1 rounded hover:bg-blue-600 transition-colors"
+                          disabled={syncing}
+                        >
+                          Retry
+                        </button>
+                      )}
+                      {(progress.status === 'running' || progress.status === 'pending') && (
+                        <button
+                          onClick={() => handleCancelSync(job.celery_task_id)}
+                          className="text-xs bg-red-500 text-white px-3 py-1 rounded hover:bg-red-600 transition-colors"
+                        >
+                          Cancel
+                        </button>
+                      )}
+                      <button
+                        onClick={() => handleRemoveJob(job.celery_task_id)}
+                        className="text-gray-500 hover:text-gray-700 text-xs"
+                        title="Remove from view"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  </div>
+                  
+                  {/* Progress Bar */}
+                  <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2 mb-2">
+                    <div 
+                      className="bg-blue-500 h-2 rounded-full transition-all duration-300 ease-out"
+                      style={{ width: `${Math.max(1, completionPercentage)}%` }}
+                    ></div>
+                  </div>
+                  
+                  {/* Detailed Progress Info */}
+                  <div className="space-y-3 text-xs">
+                    {/* Current Status */}
+                    <div className="flex items-center justify-between">
+                      <span className="text-gray-600 dark:text-gray-400">Status:</span>
+                      <span className="font-medium text-blue-600 dark:text-blue-400">
+                        {jobProgress.current_phase === 'processing_conversations' ? 'Processing Conversations' : 
+                         jobProgress.current_phase === 'fetching_conversations' ? 'Fetching Conversations' :
+                         jobProgress.current_phase === 'syncing_messages' ? 'Syncing Messages' : 'Initializing'}
+                      </span>
+                    </div>
+                    
+                    {/* Current Conversation */}
+                    {jobProgress.current_conversation_name && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-gray-600 dark:text-gray-400">Current:</span>
+                        <span className="font-mono text-sm max-w-48 truncate" title={jobProgress.current_conversation_name}>
+                          {jobProgress.current_conversation_name}
+                        </span>
+                      </div>
+                    )}
+                    
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <div className="flex justify-between mb-1">
+                          <span className="text-gray-600 dark:text-gray-400">Conversations:</span>
+                          <span className="font-mono">
+                            {jobProgress.conversations_processed || 0} / {jobProgress.conversations_total || '?'}
+                          </span>
+                        </div>
+                        <div className="flex justify-between mb-1">
+                          <span className="text-gray-600 dark:text-gray-400">Messages:</span>
+                          <span className="font-mono">
+                            {jobProgress.messages_processed || 0}
+                          </span>
+                        </div>
+                        {jobProgress.batch_number && (
+                          <div className="flex justify-between mb-1">
+                            <span className="text-gray-600 dark:text-gray-400">Batch:</span>
+                            <span className="font-mono">#{jobProgress.batch_number}</span>
+                          </div>
+                        )}
+                      </div>
+                      <div>
+                        {/* Performance Metrics */}
+                        {jobProgress.processing_rate_per_minute && (
+                          <div className="flex justify-between mb-1">
+                            <span className="text-gray-600 dark:text-gray-400">Rate:</span>
+                            <span className="font-mono">{jobProgress.processing_rate_per_minute}/min</span>
+                          </div>
+                        )}
+                        {jobProgress.avg_conversation_processing_ms && (
+                          <div className="flex justify-between mb-1">
+                            <span className="text-gray-600 dark:text-gray-400">Avg Time:</span>
+                            <span className="font-mono">{jobProgress.avg_conversation_processing_ms}ms</span>
+                          </div>
+                        )}
+                        {jobProgress.estimated_time_remaining_minutes && (
+                          <div className="flex justify-between mb-1">
+                            <span className="text-gray-600 dark:text-gray-400">ETA:</span>
+                            <span className="font-mono text-green-600 dark:text-green-400">
+                              {jobProgress.estimated_time_remaining_minutes}min
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    
+                    {/* Error and Retry Information */}
+                    {(jobProgress.batch_errors_count > 0 || progress.status === 'failed' || progress.status === 'retrying') && (
+                      <div className={`mt-2 p-2 rounded border ${
+                        progress.status === 'failed' ? 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800' :
+                        progress.status === 'retrying' ? 'bg-yellow-50 dark:bg-yellow-900/20 border-yellow-200 dark:border-yellow-800' :
+                        'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800'
+                      }`}>
+                        
+                        {/* Batch Errors */}
+                        {jobProgress.batch_errors_count > 0 && (
+                          <div className="mb-2">
+                            <div className="flex justify-between items-center mb-1">
+                              <span className="text-red-700 dark:text-red-400 font-medium">Batch Errors:</span>
+                              <span className="font-mono text-red-700 dark:text-red-400">
+                                {jobProgress.batch_errors_count} ({jobProgress.batch_error_rate_percent?.toFixed(1)}%)
+                              </span>
+                            </div>
+                            {jobProgress.recent_errors && jobProgress.recent_errors.length > 0 && (
+                              <div className="space-y-1">
+                                {jobProgress.recent_errors.slice(0, 2).map((error: any, i: number) => (
+                                  <div key={i} className="text-xs text-red-600 dark:text-red-400 truncate" title={error.error}>
+                                    {error.conversation_name}: {error.error}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                        
+                        {/* Sync Failure Information */}
+                        {progress.status === 'failed' && (
+                          <div className="space-y-2">
+                            <div className="flex justify-between items-center">
+                              <span className="text-red-700 dark:text-red-400 font-medium">Sync Failed:</span>
+                              <span className="text-xs text-red-600 dark:text-red-400">
+                                Attempt {progress.retry_count || 0}/{progress.max_retries || 3}
+                              </span>
+                            </div>
+                            <div className="text-xs text-red-600 dark:text-red-400 break-words">
+                              {progress.error_message || progress.failure_reason || 'Unknown error occurred'}
+                            </div>
+                            {progress.can_retry && (
+                              <div className="text-xs text-blue-600 dark:text-blue-400">
+                                You can retry this sync using the Retry button above.
+                              </div>
+                            )}
+                          </div>
+                        )}
+                        
+                        {/* Retry Status */}
+                        {progress.status === 'retrying' && (
+                          <div className="space-y-2">
+                            <div className="flex justify-between items-center">
+                              <span className="text-yellow-700 dark:text-yellow-400 font-medium">Retrying Sync:</span>
+                              <span className="text-xs text-yellow-600 dark:text-yellow-400">
+                                Attempt {progress.retry_count || 1}/{progress.max_retries || 3}
+                              </span>
+                            </div>
+                            <div className="text-xs text-yellow-600 dark:text-yellow-400">
+                              {progress.retry_reason || 'Retrying due to previous failure'}
+                            </div>
+                            {progress.next_retry_at && (
+                              <div className="text-xs text-gray-500">
+                                Next retry: {new Date(progress.next_retry_at).toLocaleTimeString()}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    
+                    {/* Batch Progress */}
+                    {jobProgress.batch_progress_percent && (
+                      <div className="mt-2">
+                        <div className="flex justify-between items-center mb-1">
+                          <span className="text-gray-600 dark:text-gray-400">Current Batch:</span>
+                          <span className="text-xs">{jobProgress.batch_progress_percent}%</span>
+                        </div>
+                        <div className="w-full bg-gray-100 dark:bg-gray-700 rounded-full h-1">
+                          <div 
+                            className="bg-green-500 h-1 rounded-full transition-all duration-300"
+                            style={{ width: `${jobProgress.batch_progress_percent}%` }}
+                          ></div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                  
+                  {/* Last Updated */}
+                  <div className="mt-2 text-xs text-gray-500">
+                    Last updated: {progress.updated_at ? 
+                      new Date(progress.updated_at).toLocaleTimeString() : 
+                      'Just now'
+                    }
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
       {/* Filters */}
       <div className="flex-shrink-0 p-4 border-b bg-white dark:bg-gray-900">
         <div className="flex items-center space-x-4">

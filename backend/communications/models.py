@@ -848,5 +848,264 @@ class ChatAttendee(models.Model):
         return self.name.endswith('@s.whatsapp.net') or self.name.replace('+', '').replace('-', '').replace(' ', '').isdigit()
 
 
+# =========================================================================
+# BACKGROUND SYNC MANAGEMENT MODELS
+# =========================================================================
+
+class SyncJobStatus(models.TextChoices):
+    """Status choices for sync jobs"""
+    PENDING = 'pending', 'Pending'
+    RUNNING = 'running', 'Running'
+    COMPLETED = 'completed', 'Completed'
+    FAILED = 'failed', 'Failed'
+    CANCELLED = 'cancelled', 'Cancelled'
+    PAUSED = 'paused', 'Paused'
+
+
+class SyncJobType(models.TextChoices):
+    """Type choices for sync jobs"""
+    COMPREHENSIVE = 'comprehensive', 'Comprehensive Sync'
+    CHAT_SPECIFIC = 'chat_specific', 'Chat-Specific Sync'
+    INCREMENTAL = 'incremental', 'Incremental Sync'
+    HISTORICAL = 'historical', 'Historical Sync'
+    RECOVERY = 'recovery', 'Recovery Sync'
+
+
+class SyncJob(models.Model):
+    """
+    Background sync job tracking for large-scale sync operations
+    Enables non-blocking sync with progress tracking and resume capability
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    
+    # Job identification
+    user = models.ForeignKey(
+        User, 
+        on_delete=models.CASCADE,
+        help_text="User who initiated the sync"
+    )
+    channel = models.ForeignKey(
+        'Channel',
+        on_delete=models.CASCADE,
+        help_text="Channel being synced"
+    )
+    
+    # Job configuration
+    job_type = models.CharField(max_length=20, choices=SyncJobType.choices)
+    sync_options = models.JSONField(
+        default=dict,
+        help_text="Sync configuration options (days_back, batch_sizes, etc.)"
+    )
+    
+    # Job status
+    status = models.CharField(max_length=20, choices=SyncJobStatus.choices, default=SyncJobStatus.PENDING)
+    celery_task_id = models.CharField(max_length=255, blank=True, help_text="Celery task ID for job management")
+    
+    # Progress tracking
+    progress = models.JSONField(
+        default=dict,
+        help_text="Current progress state: conversations processed, messages synced, etc."
+    )
+    
+    # Pagination state (for resumable syncs)
+    pagination_state = models.JSONField(
+        default=dict,
+        help_text="Cursor positions and pagination state for resuming interrupted syncs"
+    )
+    
+    # Results and statistics
+    result_summary = models.JSONField(
+        default=dict,
+        help_text="Final sync results: totals, errors, performance metrics"
+    )
+    
+    # Error handling
+    error_details = models.JSONField(
+        null=True, 
+        blank=True,
+        help_text="Error information if sync fails"
+    )
+    error_count = models.IntegerField(default=0, help_text="Number of errors encountered")
+    
+    # Timing
+    estimated_duration = models.DurationField(null=True, blank=True, help_text="Estimated completion time")
+    started_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    last_progress_update = models.DateTimeField(auto_now=True)
+    
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        indexes = [
+            models.Index(fields=['user', 'status']),
+            models.Index(fields=['channel', 'status']),
+            models.Index(fields=['celery_task_id']),
+            models.Index(fields=['status', 'created_at']),
+        ]
+        ordering = ['-created_at']
+    
+    def __str__(self):
+        return f"{self.job_type} sync for {self.channel.name} ({self.status})"
+    
+    @property
+    def is_active(self):
+        """Check if sync job is currently active"""
+        return self.status in [SyncJobStatus.PENDING, SyncJobStatus.RUNNING, SyncJobStatus.PAUSED]
+    
+    @property
+    def completion_percentage(self):
+        """Calculate completion percentage from progress data"""
+        progress = self.progress
+        if not progress:
+            return 0
+        
+        # Calculate based on conversations and messages
+        conversations_total = progress.get('conversations_total', 0)
+        conversations_processed = progress.get('conversations_processed', 0)
+        
+        if conversations_total == 0:
+            return 0
+        
+        return min(100, int((conversations_processed / conversations_total) * 100))
+    
+    def update_progress(self, **kwargs):
+        """Update progress and broadcast to WebSocket clients"""
+        # Update progress data
+        self.progress.update(kwargs)
+        self.last_progress_update = django_timezone.now()
+        self.save(update_fields=['progress', 'last_progress_update'])
+        
+        # Broadcasting handled by realtime/signals.py to avoid duplication
+        # self._broadcast_progress_update()
+    
+    def _broadcast_progress_update(self):
+        """Broadcast progress update to WebSocket clients"""
+        try:
+            from channels.layers import get_channel_layer
+            from asgiref.sync import async_to_sync
+            import logging
+            
+            logger = logging.getLogger(__name__)
+            channel_name = f"sync_progress_{self.celery_task_id}"
+            logger.info(f"🔴 Broadcasting sync progress to channel: {channel_name}")
+            logger.info(f"🔴 Progress data: {self.progress}")
+            
+            channel_layer = get_channel_layer()
+            if channel_layer:
+                message_data = {
+                    'type': 'sync_progress_update',
+                    'celery_task_id': self.celery_task_id,  # PRIMARY KEY: Frontend expects this for UI lookup
+                    'sync_job_id': str(self.id),  # Secondary: Database UUID for backend reference
+                    'status': self.status.value if hasattr(self.status, 'value') else str(self.status),
+                    'progress': self.progress,
+                    'completion_percentage': self.completion_percentage,
+                    'updated_at': self.last_progress_update.isoformat()
+                }
+                logger.info(f"🔴 Sending WebSocket message: {message_data}")
+                
+                async_to_sync(channel_layer.group_send)(channel_name, message_data)
+                logger.info(f"🔴 WebSocket message sent successfully to {channel_name}")
+            else:
+                logger.error(f"🔴 No channel layer available for broadcasting")
+        except Exception as e:
+            # Don't fail the sync if WebSocket broadcast fails
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Failed to broadcast sync progress for job {self.id}: {e}")
+
+
+class SyncJobProgress(models.Model):
+    """
+    Detailed progress tracking for sync job phases
+    Enables granular progress reporting and debugging
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    
+    sync_job = models.ForeignKey(
+        'SyncJob',
+        on_delete=models.CASCADE,
+        related_name='progress_entries'
+    )
+    
+    # Progress phase
+    phase_name = models.CharField(
+        max_length=50,
+        help_text="Sync phase: 'fetching_conversations', 'processing_messages', etc."
+    )
+    step_name = models.CharField(
+        max_length=100,
+        help_text="Specific step within phase: 'batch_1_conversations', 'chat_abc123_messages'"
+    )
+    
+    # Progress metrics
+    items_processed = models.IntegerField(default=0)
+    items_total = models.IntegerField(default=0)
+    
+    # Performance metrics
+    processing_time_ms = models.IntegerField(null=True, blank=True, help_text="Time taken for this step in milliseconds")
+    memory_usage_mb = models.FloatField(null=True, blank=True, help_text="Memory usage during this step")
+    
+    # Step metadata
+    metadata = models.JSONField(
+        default=dict,
+        help_text="Additional step-specific data (batch info, error details, etc.)"
+    )
+    
+    # Status
+    step_status = models.CharField(
+        max_length=20,
+        choices=[
+            ('running', 'Running'),
+            ('completed', 'Completed'),
+            ('failed', 'Failed'),
+            ('skipped', 'Skipped')
+        ],
+        default='running'
+    )
+    
+    # Timestamps
+    started_at = models.DateTimeField(auto_now_add=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        indexes = [
+            models.Index(fields=['sync_job', 'phase_name']),
+            models.Index(fields=['sync_job', 'started_at']),
+        ]
+        ordering = ['-started_at']
+    
+    def __str__(self):
+        return f"{self.phase_name}/{self.step_name}: {self.items_processed}/{self.items_total}"
+    
+    @property
+    def completion_percentage(self):
+        """Calculate completion percentage for this step"""
+        if self.items_total == 0:
+            return 100 if self.step_status == 'completed' else 0
+        return min(100, int((self.items_processed / self.items_total) * 100))
+    
+    def mark_completed(self, items_processed=None):
+        """Mark step as completed"""
+        if items_processed is not None:
+            self.items_processed = items_processed
+        self.step_status = 'completed'
+        self.completed_at = django_timezone.now()
+        self.save(update_fields=['items_processed', 'step_status', 'completed_at'])
+    
+    def mark_failed(self, error_message=None):
+        """Mark step as failed"""
+        self.step_status = 'failed'
+        self.completed_at = django_timezone.now()
+        if error_message:
+            self.metadata.setdefault('errors', []).append({
+                'message': error_message,
+                'timestamp': django_timezone.now().isoformat()
+            })
+        self.save(update_fields=['step_status', 'completed_at', 'metadata'])
+
+
 # Import draft models
 from .models_drafts import MessageDraft, DraftAutoSaveSettings

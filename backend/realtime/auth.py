@@ -401,6 +401,21 @@ async def check_channel_subscription_permission(user, channel: str):
             user_id_from_channel = channel.split('_')[1]
             return str(user.id) == user_id_from_channel
         
+        elif channel.startswith('sync_jobs_'):
+            # Sync job channels - users can only subscribe to their own sync job channels
+            user_id_from_channel = channel.split('_')[2]  # sync_jobs_{user_id}
+            return str(user.id) == user_id_from_channel
+        
+        elif channel.startswith('sync_job_'):
+            # Individual sync job channels - check if user owns the sync job
+            # For now, allow access since we'll validate the sync job ownership in the consumer
+            return True
+        
+        elif channel.startswith('sync_progress_'):
+            # Sync progress channels - allow access for sync job progress updates
+            # TODO: In future, validate that user owns the sync job
+            return True
+        
         elif channel.startswith('channel_') or channel.startswith('conversation_') or channel.startswith('whatsapp_') or channel.startswith('communication_'):
             # Communication channels - check if user has access to communications
             # For now, allow all authenticated users to subscribe to communication channels

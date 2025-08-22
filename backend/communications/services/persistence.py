@@ -537,24 +537,20 @@ class MessageSyncService:
             if cached_data:
                 return cached_data
         
-        # Query local database
+        # Query local database ONLY - no API fallback
         try:
             local_data = await self._get_messages_from_db(conversation_id, limit, cursor)
-            if local_data['messages']:
-                cache.set(cache_key, local_data, self.cache_timeout)
-                return local_data
+            cache.set(cache_key, local_data, self.cache_timeout)
+            return local_data
         except Exception as e:
             logger.error(f"Failed to get messages from DB: {e}")
-        
-        # Fallback to API
-        api_data = await self._get_messages_from_api(conversation_id, channel_type, limit, cursor)
-        
-        # Store API messages in database for future local-first access
-        await self._store_messages_in_db(api_data['messages'], conversation_id, channel_type)
-        
-        cache.set(cache_key, api_data, self.cache_timeout)
-        
-        return api_data
+            # Return empty result instead of falling back to API
+            return {
+                'messages': [],
+                'cursor': None,
+                'has_more': False,
+                'source': 'database_error'
+            }
     
     async def _get_messages_from_db(
         self,

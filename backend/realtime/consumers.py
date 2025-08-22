@@ -781,6 +781,52 @@ class BaseRealtimeConsumer(AsyncWebsocketConsumer):
         }))
         
         logger.debug(f"Message status update sent to user {self.user_id}: message {message_data.get('id', 'unknown')}")
+    
+    async def sync_progress_update(self, event):
+        """Handle sync job progress update events"""
+        logger.info(f"🔴 CONSUMER RECEIVED sync_progress_update event: {event}")
+        
+        # The backend sends data directly in the event, not nested under 'data'
+        websocket_message = {
+            'type': 'sync_progress_update',
+            'data': {
+                'celery_task_id': event.get('celery_task_id'),  # PRIMARY KEY for frontend UI lookup
+                'sync_job_id': event.get('sync_job_id'),        # Database UUID for backend reference
+                'status': event.get('status'),
+                'progress': event.get('progress'),
+                'completion_percentage': event.get('completion_percentage'),
+                'updated_at': event.get('updated_at')
+            },
+            'timestamp': event.get('updated_at')
+        }
+        
+        logger.info(f"🔴 SENDING SYNC_PROGRESS_UPDATE TO FRONTEND: {websocket_message}")
+        
+        await self.send(text_data=json.dumps(websocket_message))
+        
+        logger.info(f"📊 Sync progress update sent to user {self.user_id}")
+    
+    async def sync_job_update(self, event):
+        """Handle sync job creation/update events"""
+        logger.info(f"🔄 CONSUMER RECEIVED sync_job_update event: {event}")
+        
+        websocket_message = {
+            'type': 'sync_job_update',
+            'data': {
+                'sync_job_id': event.get('sync_job_id'),
+                'status': event.get('status'),
+                'progress': event.get('progress'),
+                'completion_percentage': event.get('completion_percentage'),
+                'updated_at': event.get('updated_at')
+            },
+            'timestamp': event.get('updated_at')
+        }
+        
+        logger.info(f"🔄 SENDING SYNC_JOB_UPDATE TO FRONTEND: {websocket_message}")
+        
+        await self.send(text_data=json.dumps(websocket_message))
+        
+        logger.info(f"🔄 Sync job update sent to user {self.user_id}")
 
 
 class CollaborativeEditingConsumer(BaseRealtimeConsumer):
@@ -1147,6 +1193,29 @@ class WorkflowExecutionConsumer(BaseRealtimeConsumer):
             'approved_by': event['approved_by'],
             'approved_at': event['approved_at'],
             'notes': event.get('notes')
+        }))
+    
+    async def sync_job_update(self, event):
+        """Handle sync job creation/update events"""
+        await self.send(text_data=json.dumps({
+            'type': 'sync_job_update',
+            'data': event['data']
+        }))
+    
+    async def sync_progress_update(self, event):
+        """Handle sync job progress update events"""
+        # Forward the event data directly - the backend already includes celery_task_id
+        await self.send(text_data=json.dumps({
+            'type': 'sync_progress_update', 
+            'data': {
+                'celery_task_id': event.get('celery_task_id'),  # PRIMARY KEY for frontend UI lookup
+                'sync_job_id': event.get('sync_job_id'),        # Database UUID for backend reference
+                'status': event.get('status'),
+                'progress': event.get('progress'),
+                'completion_percentage': event.get('completion_percentage'),
+                'updated_at': event.get('updated_at')
+            },
+            'timestamp': event.get('updated_at')
         }))
 
 

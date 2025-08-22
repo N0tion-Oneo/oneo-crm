@@ -94,13 +94,36 @@ cleanup() {
 # Set up signal handlers
 trap cleanup SIGINT SIGTERM
 
-# Start Celery worker in background
-echo "🤖 Starting Celery worker for AI processing..."
-celery -A oneo_crm worker --loglevel=info --queues=ai_processing,maintenance --concurrency=1 --pool=solo &
-CELERY_PID=$!
+# Start Celery workers in background
+echo "🤖 Starting Celery workers..."
 
-# Give Celery a moment to start
-sleep 2
+# AI Processing worker
+echo "  • Starting AI processing worker..."
+celery -A oneo_crm worker --loglevel=info --queues=ai_processing,maintenance --concurrency=1 --pool=solo &
+CELERY_AI_PID=$!
+
+# Background sync worker
+echo "  • Starting background sync worker..."
+celery -A oneo_crm worker --loglevel=info --queues=background_sync --concurrency=1 --pool=solo &
+CELERY_SYNC_PID=$!
+
+# Give Celery workers a moment to start
+echo "  • Waiting for workers to initialize..."
+sleep 3
+
+# Verify workers are running
+echo "🔍 Verifying Celery workers..."
+if ps -p $CELERY_AI_PID > /dev/null; then
+    echo "  ✅ AI processing worker started (PID: $CELERY_AI_PID)"
+else
+    echo "  ❌ AI processing worker failed to start"
+fi
+
+if ps -p $CELERY_SYNC_PID > /dev/null; then
+    echo "  ✅ Background sync worker started (PID: $CELERY_SYNC_PID)"
+else
+    echo "  ❌ Background sync worker failed to start"
+fi
 
 # Start the Django development server with ASGI support
 echo "🌟 Starting Django ASGI server (daphne) with WebSocket support..."
@@ -117,7 +140,8 @@ echo "   • Workflows: ws://localhost:8000/ws/workflows/"
 echo ""
 echo "🤖 Background services:"
 echo "   ✅ Django ASGI server (WebSocket + HTTP)"
-echo "   ✅ Celery worker (AI processing + maintenance)"
+echo "   ✅ Celery AI worker (AI processing + maintenance)"
+echo "   ✅ Celery sync worker (background sync + communication)"
 echo ""
 echo "📋 Useful commands:"
 echo "   • View Celery logs: celery -A oneo_crm events"

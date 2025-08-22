@@ -13,7 +13,7 @@ from django.core.cache import cache
 from django.contrib.auth import get_user_model
 
 from ..models import (
-    UserChannelConnection, Channel, Conversation, Message, 
+    UserChannelConnection, Channel, Conversation, Message, ChatAttendee,
     MessageDirection, MessageStatus, ConversationStatus, ChannelType
 )
 from ..unipile_sdk import unipile_service
@@ -190,6 +190,10 @@ class MessageSyncService:
                                      f"latest_message.created_at={latest_message.created_at} vs "
                                      f"conv.last_message_at={conv.last_message_at} (diff: {time_diff}s)")
                 
+                # Get attendees for this specific conversation
+                attendees = await self._get_conversation_attendees(conv)
+                logger.debug(f"Conversation {conv.external_thread_id}: Found {len(attendees)} attendees for this specific chat")
+                
                 conversation_data = {
                     'id': str(conv.external_thread_id or conv.id),
                     'provider_chat_id': conv.external_thread_id,
@@ -200,7 +204,7 @@ class MessageSyncService:
                     'is_archived': conv.status == ConversationStatus.ARCHIVED,
                     'unread_count': conv.metadata.get('unread_count', 0),
                     'last_message_date': actual_last_message_date.isoformat() if actual_last_message_date else None,
-                    'attendees': conv.metadata.get('attendees', []),
+                    'attendees': attendees,
                     'latest_message': None,
                     'account_id': connection.unipile_account_id,
                     'member_count': conv.metadata.get('member_count')
@@ -208,12 +212,26 @@ class MessageSyncService:
                 
                 # Add latest message if available
                 if latest_message:
+                    # Get actual message timestamp from metadata (not sync time)
+                    latest_msg_date = None
+                    if latest_message.metadata and 'raw_data' in latest_message.metadata:
+                        latest_msg_date = latest_message.metadata['raw_data'].get('timestamp')
+                    
+                    # Fallback to received_at for inbound or sent_at for outbound
+                    if not latest_msg_date:
+                        if latest_message.direction == MessageDirection.OUTBOUND and latest_message.sent_at:
+                            latest_msg_date = latest_message.sent_at.isoformat()
+                        elif latest_message.direction == MessageDirection.INBOUND and latest_message.received_at:
+                            latest_msg_date = latest_message.received_at.isoformat()
+                        else:
+                            latest_msg_date = latest_message.created_at.isoformat()
+                    
                     conversation_data['latest_message'] = {
                         'id': str(latest_message.id),
                         'text': latest_message.content,
                         'type': latest_message.metadata.get('type', 'text'),
                         'direction': 'out' if latest_message.direction == MessageDirection.OUTBOUND else 'in',
-                        'date': latest_message.created_at.isoformat(),
+                        'date': latest_msg_date,
                         'status': latest_message.status,
                         'chat_id': conversation_data['id'],
                         'attendee_id': latest_message.metadata.get('attendee_id'),
@@ -231,266 +249,93 @@ class MessageSyncService:
             'cursor': str(len(conversations)) if len(conversations) == limit else None
         }
     
-    async def _get_conversations_from_api(
-        self,
-        channel_type: str,
-        user_id: str,
-        account_id: Optional[str] = None,
-        limit: int = 15,
-        cursor: Optional[str] = None
-    ) -> Dict[str, Any]:
-        """Fetch conversations from UniPile API with contact enrichment"""
-        
+    
+    
+    async def _get_conversation_attendees(self, conversation: Conversation) -> List[Dict[str, Any]]:
+        """
+        Get attendees for a specific conversation from ChatAttendee table
+        For 1-on-1 chats, tries to identify the single relevant attendee
+        """
         try:
-            client = self.unipile_service.get_client()
-            
-            # Map channel type to UniPile account type
-            account_type_map = {
-                'whatsapp': 'WHATSAPP',
-                'linkedin': 'LINKEDIN',
-                'gmail': 'GOOGLE',
-                'outlook': 'OUTLOOK'
-            }
-            
-            account_type = account_type_map.get(channel_type, channel_type.upper())
-            
-            # Step 1: Get chats
-            chats_data = await client.messaging.get_all_chats(
-                account_id=account_id,
-                limit=limit,
-                cursor=cursor,
-                account_type=account_type
+            # Get all attendees for this channel
+            all_attendees = await sync_to_async(list)(
+                ChatAttendee.objects.filter(channel=conversation.channel)
             )
             
-            # Step 2: Get attendees for contact name enrichment
-            attendees_map = {}
-            try:
-                attendees_data = await client.messaging.get_all_attendees(
-                    account_id=account_id,
-                    limit=200  # Get more attendees to ensure we have good coverage
-                )
+            if not all_attendees:
+                return []
+            
+            # For WhatsApp 1-on-1 chats, try to identify the specific attendee
+            chat_id = conversation.external_thread_id
+            conversation_subject = conversation.subject or ""
+            relevant_attendees = []
+            
+            # Method 1: Try to match by conversation subject/name
+            for att in all_attendees:
+                # Skip account owner and status@broadcast
+                if att.is_self or att.provider_id == 'status@broadcast':
+                    continue
                 
-                # Create lookup map: provider_id -> attendee data
-                for attendee in attendees_data.get('items', []):
-                    provider_id = attendee.get('provider_id')
-                    if provider_id:
-                        attendees_map[provider_id] = attendee
+                # Check if attendee name matches conversation subject
+                if att.name and conversation_subject:
+                    if att.name.lower() in conversation_subject.lower() or conversation_subject.lower() in att.name.lower():
+                        relevant_attendees.append(att)
+                        logger.debug(f"Matched attendee by name: {att.name} <-> {conversation_subject}")
+                        break
+            
+            # Method 2: If no name match, try phone number matching (fallback)
+            if not relevant_attendees:
+                for att in all_attendees:
+                    # Skip account owner and status@broadcast
+                    if att.is_self or att.provider_id == 'status@broadcast':
+                        continue
+                    
+                    # For WhatsApp, try to match the chat_id with attendee's provider_id
+                    if att.provider_id and chat_id:
+                        # Extract phone from WhatsApp JID
+                        if '@s.whatsapp.net' in att.provider_id:
+                            attendee_phone = att.provider_id.split('@s.whatsapp.net')[0]
+                        else:
+                            attendee_phone = att.provider_id
                         
-                logger.debug(f"✅ Loaded {len(attendees_map)} attendees for contact enrichment")
-                
-            except Exception as e:
-                logger.warning(f"Failed to load attendees for enrichment: {e}")
+                        # Check if chat_id contains phone or vice versa
+                        if attendee_phone in chat_id or chat_id in attendee_phone:
+                            relevant_attendees.append(att)
+                            logger.debug(f"Matched attendee by phone: {attendee_phone} <-> {chat_id}")
+                            break
             
-            conversations = []
-            chats = chats_data.get('items', [])
+            # If no specific match, return empty array to avoid showing all attendees
+            if not relevant_attendees:
+                logger.debug(f"No specific attendee found for chat {chat_id} (subject: {conversation_subject}), returning empty array")
+                return []
             
-            for chat_data in chats:
-                # Enrich chat data with attendee information
-                enriched_chat_data = await self._enrich_chat_with_attendees(
-                    chat_data, attendees_map
-                )
-                
-                # Transform enriched chat data to conversation format
-                conversation = await self._transform_chat_to_conversation(
-                    enriched_chat_data, channel_type, account_id
-                )
-                conversations.append(conversation)
-            
-            return {
-                'conversations': conversations,
-                'has_more': len(conversations) == limit and chats_data.get('cursor'),
-                'cursor': chats_data.get('cursor')
-            }
-            
-        except Exception as e:
-            logger.error(f"API fetch failed for {channel_type}: {e}")
-            return {'conversations': [], 'has_more': False, 'cursor': None}
-    
-    async def _enrich_chat_with_attendees(
-        self,
-        chat_data: Dict[str, Any],
-        attendees_map: Dict[str, Dict[str, Any]]
-    ) -> Dict[str, Any]:
-        """Enrich chat data with attendee information for better contact names"""
-        
-        # Make a copy to avoid modifying original data
-        enriched_chat = chat_data.copy()
-        
-        # Look up attendee by provider_id
-        provider_id = chat_data.get('provider_id') or chat_data.get('attendee_provider_id')
-        if provider_id and provider_id in attendees_map:
-            attendee = attendees_map[provider_id]
-            
-            # Add attendee to the chat's attendees array (which is often empty)
-            enriched_chat['attendees'] = [{
-                'id': attendee.get('id'),
-                'name': attendee.get('name'),
-                'provider_id': attendee.get('provider_id'),
-                'picture_url': attendee.get('picture_url'),
-                'is_self': attendee.get('is_self', False)
-            }]
-            
-            # If the chat has no name, use the attendee name
-            if not enriched_chat.get('name') and attendee.get('name'):
-                # Don't use the name if it's just the phone number
-                attendee_name = attendee.get('name', '')
-                if not attendee_name.endswith('@s.whatsapp.net'):
-                    enriched_chat['name'] = attendee_name
-            
-            logger.debug(f"✅ Enriched chat {chat_data.get('id')} with attendee: {attendee.get('name')}")
-        
-        return enriched_chat
-    
-    async def _transform_chat_to_conversation(
-        self,
-        chat_data: Dict[str, Any],
-        channel_type: str,
-        account_id: str
-    ) -> Dict[str, Any]:
-        """Transform UniPile chat data to standard conversation format"""
-        
-        # Extract latest message
-        latest_message = None
-        if chat_data.get('latest_message'):
-            msg_data = chat_data['latest_message']
-            latest_message = {
-                'id': msg_data.get('id'),
-                'text': msg_data.get('text') or msg_data.get('content', ''),
-                'type': msg_data.get('type', 'text'),
-                'direction': 'out' if msg_data.get('from_me') else 'in',
-                'date': msg_data.get('date') or msg_data.get('timestamp'),
-                'status': msg_data.get('status', 'sent'),
-                'chat_id': chat_data.get('id'),
-                'attendee_id': msg_data.get('from') if not msg_data.get('from_me') else None,
-                'account_id': account_id
-            }
-        
-        # Determine if group chat
-        is_group = chat_data.get('type', 0) == 1 or bool(chat_data.get('is_group'))
-        
-        # Extract attendees
-        attendees = []
-        if chat_data.get('attendees'):
-            for attendee in chat_data['attendees']:
-                attendees.append({
-                    'id': attendee.get('id'),
-                    'name': attendee.get('name'),
-                    'phone': attendee.get('phone'),
-                    'picture_url': attendee.get('picture_url'),
-                    'is_admin': attendee.get('is_admin', False)
-                })
-        
-        # Determine conversation name using smart naming service
-        from .conversation_naming import conversation_naming_service
-        
-        # Prepare contact info for smart naming
-        contact_info = {}
-        if attendees:
-            attendee = attendees[0]
-            contact_info.update({
-                'name': attendee.get('name'),
-                'phone': attendee.get('phone'),
-                'id': attendee.get('id')
-            })
-        
-        # Add any additional contact info from chat data
-        if chat_data.get('name'):
-            contact_info['chat_name'] = chat_data.get('name')
-        
-        # Get message content for context
-        message_content = None
-        if latest_message:
-            message_content = latest_message.get('text', '')
-        
-        # Generate smart conversation name
-        chat_name = conversation_naming_service.generate_conversation_name(
-            channel_type=channel_type,
-            contact_info=contact_info,
-            message_content=message_content,
-            external_thread_id=chat_data.get('id')
-        )
-        
-        return {
-            'id': chat_data.get('id'),
-            'provider_chat_id': chat_data.get('provider_id'),
-            'name': chat_name,
-            'picture_url': chat_data.get('picture_url'),
-            'is_group': is_group,
-            'is_muted': bool(chat_data.get('muted_until')),
-            'is_pinned': chat_data.get('is_pinned', False),
-            'is_archived': bool(chat_data.get('archived', 0)),
-            'unread_count': chat_data.get('unread_count', 0),
-            'last_message_date': chat_data.get('timestamp'),
-            'attendees': attendees,
-            'latest_message': latest_message,
-            'account_id': account_id,
-            'member_count': len(attendees) if is_group else None
-        }
-    
-    async def _store_conversations_in_db(
-        self,
-        conversations: List[Dict[str, Any]],
-        channel_type: str,
-        account_id: str
-    ):
-        """Store conversations in local database"""
-        
-        try:
-            for conv_data in conversations:
-                await self._store_single_conversation(conv_data, channel_type, account_id)
-        except Exception as e:
-            logger.error(f"Failed to store conversations in DB: {e}")
-    
-    async def _store_single_conversation(
-        self,
-        conv_data: Dict[str, Any],
-        channel_type: str,
-        account_id: str
-    ):
-        """Store a single conversation in database"""
-        
-        try:
-            # Get or create channel
-            channel, created = await sync_to_async(Channel.objects.get_or_create)(
-                unipile_account_id=account_id,
-                channel_type=channel_type,
-                defaults={
-                    'name': f"{channel_type.title()} Account {account_id[:8]}",
-                    'auth_status': 'authenticated',
-                    'is_active': True
+            # Return the matched attendees
+            return [
+                {
+                    'id': att.external_attendee_id,
+                    'name': att.name,
+                    'provider_id': att.provider_id,
+                    'picture_url': att.picture_url,
+                    'is_self': att.is_self,
+                    'metadata': att.metadata
                 }
-            )
+                for att in relevant_attendees
+            ]
             
-            # Get or create conversation
-            conversation, created = await sync_to_async(Conversation.objects.get_or_create)(
-                channel=channel,
-                external_thread_id=conv_data['id'],
-                defaults={
-                    'subject': conv_data['name'],
-                    'status': ConversationStatus.ARCHIVED if conv_data.get('is_archived') else ConversationStatus.ACTIVE,
-                    'last_message_at': datetime.fromisoformat(conv_data['last_message_date'].replace('Z', '+00:00')) if conv_data.get('last_message_date') else None,
-                    'metadata': {
-                        'is_group': conv_data.get('is_group', False),
-                        'is_muted': conv_data.get('is_muted', False),
-                        'is_pinned': conv_data.get('is_pinned', False),
-                        'unread_count': conv_data.get('unread_count', 0),
-                        'attendees': conv_data.get('attendees', []),
-                        'member_count': conv_data.get('member_count'),
-                        'picture_url': conv_data.get('picture_url')
-                    }
-                }
-            )
-            
-            # Store latest message if available
-            if conv_data.get('latest_message'):
-                await self._store_message_from_data(
-                    conv_data['latest_message'], 
-                    conversation, 
-                    channel
-                )
-                
         except Exception as e:
-            logger.error(f"Failed to store conversation {conv_data.get('id')}: {e}")
+            logger.warning(f"Failed to get attendees for conversation {conversation.id}: {e}")
+            return []
+    
+    # =========================================================================
+    # CACHE MANAGEMENT
+    # =========================================================================
+    
+    def _invalidate_conversation_cache(self, channel_type: str, account_id: Optional[str] = None):
+        """Invalidate conversation cache"""
+        pattern = f"conversations:{channel_type}"
+        if account_id:
+            pattern += f":{account_id}"
+        invalidate_tenant_cache(pattern)
     
     async def _store_message_from_data(
         self,
@@ -740,12 +585,26 @@ class MessageSyncService:
             
             message_data = []
             for msg in messages:
+                # Get actual message timestamp from metadata (not sync time)
+                actual_date = None
+                if msg.metadata and 'raw_data' in msg.metadata:
+                    actual_date = msg.metadata['raw_data'].get('timestamp')
+                
+                # Fallback to received_at for inbound or sent_at for outbound
+                if not actual_date:
+                    if msg.direction == MessageDirection.OUTBOUND and msg.sent_at:
+                        actual_date = msg.sent_at.isoformat()
+                    elif msg.direction == MessageDirection.INBOUND and msg.received_at:
+                        actual_date = msg.received_at.isoformat()
+                    else:
+                        actual_date = msg.created_at.isoformat()
+                
                 message_data.append({
                     'id': str(msg.id),
                     'text': msg.content,
                     'type': msg.metadata.get('type', 'text'),
                     'direction': 'out' if msg.direction == MessageDirection.OUTBOUND else 'in',
-                    'date': msg.created_at.isoformat(),
+                    'date': actual_date,
                     'status': msg.status,
                     'chat_id': conversation_id,
                     'attendee_id': msg.metadata.get('attendee_id'),

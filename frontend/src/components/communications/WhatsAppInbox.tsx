@@ -24,7 +24,35 @@ const formatSafeDate = (dateString: string | undefined | null): string => {
   try {
     const date = new Date(dateString)
     if (isNaN(date.getTime())) return 'Invalid date'
-    return formatDistanceToNow(date)
+    
+    const now = new Date()
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+    const messageDate = new Date(date.getFullYear(), date.getMonth(), date.getDate())
+    
+    // Check if it's today
+    if (messageDate.getTime() === today.getTime()) {
+      return formatDistanceToNow(date)
+    }
+    
+    // Check if it's yesterday
+    const yesterday = new Date(today)
+    yesterday.setDate(yesterday.getDate() - 1)
+    if (messageDate.getTime() === yesterday.getTime()) {
+      return 'Yesterday'
+    }
+    
+    // Check if it's within the last 7 days
+    const daysDiff = (today.getTime() - messageDate.getTime()) / (1000 * 60 * 60 * 24)
+    if (daysDiff < 7) {
+      return date.toLocaleDateString([], { weekday: 'short' }) // Mon, Tue, etc.
+    }
+    
+    // For older messages, show the date
+    if (messageDate.getFullYear() === today.getFullYear()) {
+      return date.toLocaleDateString([], { month: 'short', day: 'numeric' }) // Jan 15
+    } else {
+      return date.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }) // Jan 15, 2023
+    }
   } catch (error) {
     console.error('Error formatting date:', dateString, error)
     return 'Invalid date'
@@ -38,10 +66,41 @@ const formatSafeTime = (dateString: string | undefined | null): string => {
   try {
     const date = new Date(dateString)
     if (isNaN(date.getTime())) return 'Invalid time'
-    return date.toLocaleTimeString([], {
-      hour: '2-digit',
-      minute: '2-digit'
-    })
+    
+    const now = new Date()
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+    const messageDate = new Date(date.getFullYear(), date.getMonth(), date.getDate())
+    
+    // If it's today, show just the time
+    if (messageDate.getTime() === today.getTime()) {
+      return date.toLocaleTimeString([], {
+        hour: '2-digit',
+        minute: '2-digit'
+      })
+    }
+    
+    // If it's yesterday, show "Yesterday HH:MM"
+    const yesterday = new Date(today)
+    yesterday.setDate(yesterday.getDate() - 1)
+    if (messageDate.getTime() === yesterday.getTime()) {
+      return `Yesterday ${date.toLocaleTimeString([], {
+        hour: '2-digit',
+        minute: '2-digit'
+      })}`
+    }
+    
+    // For other dates, show date + time
+    if (messageDate.getFullYear() === today.getFullYear()) {
+      return `${date.toLocaleDateString([], { month: 'short', day: 'numeric' })} ${date.toLocaleTimeString([], {
+        hour: '2-digit',
+        minute: '2-digit'
+      })}`
+    } else {
+      return `${date.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })} ${date.toLocaleTimeString([], {
+        hour: '2-digit',
+        minute: '2-digit'
+      })}`
+    }
   } catch (error) {
     console.error('Error formatting time:', dateString, error)
     return 'Invalid time'
@@ -139,6 +198,10 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
   const [loadingMoreMessages, setLoadingMoreMessages] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [filterStatus, setFilterStatus] = useState<'all' | 'unread' | 'groups' | 'archived'>('all')
+  
+  // Throttling refs for scroll handlers
+  const conversationScrollTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const messageScrollTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const [accountConnections, setAccountConnections] = useState<Array<{
     id: string
     connection_id?: string
@@ -1361,7 +1424,26 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
     }
   }
 
-  const loadMoreMessages = async () => {
+  // Throttled scroll handler for conversations
+  const handleConversationScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
+    if (conversationScrollTimeoutRef.current) return
+    
+    conversationScrollTimeoutRef.current = setTimeout(() => {
+      const target = e.target as HTMLDivElement
+      const { scrollTop, scrollHeight, clientHeight } = target
+      const distanceFromBottom = scrollHeight - scrollTop - clientHeight
+      
+      // Check if user scrolled near bottom (within 200px)
+      if (distanceFromBottom < 200 && hasMoreChats && !loadingMoreChats) {
+        console.log('🔄 Triggering loadMoreChats from scroll')
+        loadMoreChats()
+      }
+      
+      conversationScrollTimeoutRef.current = null
+    }, 100) // Throttle to 100ms
+  }, [hasMoreChats, loadingMoreChats, loadMoreChats])
+
+  const loadMoreMessages = useCallback(async () => {
     if (!selectedChat || loadingMoreMessages || !hasMoreMessages || !messageCursor) return
     
     setLoadingMoreMessages(true)
@@ -1416,7 +1498,25 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
     } finally {
       setLoadingMoreMessages(false)
     }
-  }
+  }, [selectedChat, loadingMoreMessages, hasMoreMessages, messageCursor])
+
+  // Throttled scroll handler for messages
+  const handleMessageScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
+    if (messageScrollTimeoutRef.current) return
+    
+    messageScrollTimeoutRef.current = setTimeout(() => {
+      const target = e.target as HTMLDivElement
+      const { scrollTop, scrollHeight, clientHeight } = target
+      
+      // Check if user scrolled near bottom (within 200px)
+      if (scrollHeight - scrollTop - clientHeight < 200 && hasMoreMessages && !loadingMoreMessages) {
+        console.log('🔄 Triggering loadMoreMessages from scroll')
+        loadMoreMessages()
+      }
+      
+      messageScrollTimeoutRef.current = null
+    }, 100) // Throttle to 100ms
+  }, [hasMoreMessages, loadingMoreMessages, loadMoreMessages])
 
   const handleSendMessage = async () => {
     if (!selectedChat || (!replyText.trim() && attachmentPreviews.length === 0) || composing) return
@@ -1741,22 +1841,7 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
         <div className="col-span-4 border-r bg-white dark:bg-gray-900 flex flex-col min-h-0">
           <div 
             className="flex-1 overflow-y-auto"
-            onScroll={(e) => {
-              const target = e.target as HTMLDivElement
-              const { scrollTop, scrollHeight, clientHeight } = target
-              const distanceFromBottom = scrollHeight - scrollTop - clientHeight
-              
-              // Debug scroll position (throttle to avoid spam)
-              if (Math.random() < 0.1) { // Only log 10% of scroll events
-                console.log(`📜 Scroll: ${distanceFromBottom}px from bottom, hasMore: ${hasMoreChats}, loading: ${loadingMoreChats}`)
-              }
-              
-              // Check if user scrolled near bottom (within 100px)
-              if (distanceFromBottom < 100 && hasMoreChats && !loadingMoreChats) {
-                console.log('🔄 Triggering loadMoreChats from scroll')
-                loadMoreChats()
-              }
-            }}
+            onScroll={handleConversationScroll}
           >
             {filteredChats.length === 0 ? (
               <div className="p-8 text-center text-gray-500">
@@ -1882,7 +1967,18 @@ Latest msg text: ${chat.latest_message?.text?.substring(0, 50)}`}
                 )}
                 
                 {/* End of conversations indicator */}
-                {!hasMoreChats && filteredChats.length > 0 && (
+                {/* Loading indicator for more chats */}
+                {loadingMoreChats && (
+                  <div className="p-4 text-center">
+                    <div className="flex items-center justify-center gap-2 text-gray-500">
+                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-green-500"></div>
+                      <span className="text-sm">Loading more conversations...</span>
+                    </div>
+                  </div>
+                )}
+                
+                {/* End of list indicator */}
+                {!hasMoreChats && !loadingMoreChats && filteredChats.length > 0 && (
                   <div className="p-4 text-center text-gray-400 text-sm">
                     No more conversations to load
                   </div>
@@ -2048,15 +2144,7 @@ Latest msg text: ${chat.latest_message?.text?.substring(0, 50)}`}
               {/* Messages */}
               <ScrollArea 
                 className="flex-1 min-h-0"
-                onScrollCapture={(e) => {
-                  const target = e.target as HTMLDivElement
-                  const { scrollTop, scrollHeight, clientHeight } = target
-                  
-                  // Check if user scrolled near bottom (within 100px) - for infinite scroll
-                  if (scrollHeight - scrollTop - clientHeight < 100 && hasMoreMessages && !loadingMoreMessages) {
-                    loadMoreMessages()
-                  }
-                }}
+                onScrollCapture={handleMessageScroll}
               >
                 <div className="p-4">
                 {loadingMessages ? (
@@ -2218,8 +2306,17 @@ Latest msg text: ${chat.latest_message?.text?.substring(0, 50)}`}
                     {/* Infinite scroll loading indicator */}
                     {loadingMoreMessages && (
                       <div className="p-4 text-center">
-                        <RefreshCw className="w-4 h-4 animate-spin mx-auto text-gray-400" />
-                        <p className="text-sm text-gray-500 mt-2">Loading more messages...</p>
+                        <div className="flex items-center justify-center gap-2 text-gray-500">
+                          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-green-500"></div>
+                          <span className="text-sm">Loading more messages...</span>
+                        </div>
+                      </div>
+                    )}
+                    
+                    {/* End of messages indicator */}
+                    {!hasMoreMessages && !loadingMoreMessages && messages.length > 0 && (
+                      <div className="p-4 text-center text-gray-400 text-sm">
+                        Beginning of conversation
                       </div>
                     )}
                   </div>

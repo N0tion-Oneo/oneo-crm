@@ -136,19 +136,31 @@ class ComprehensiveSyncService:
                     # Get attendees for this specific chat
                     chat_attendees = await self._get_chat_attendees(client, chat_id)
                     
-                    # Create attendee records for this chat
-                    attendees_map = {}
-                    for attendee_data in chat_attendees:
-                        attendee = await self._create_or_update_attendee(channel, attendee_data)
-                        if attendee:
-                            attendees_map[attendee.provider_id] = attendee
-                            stats['attendees_synced'] += 1
+                    # Process attendee records using unified processor
+                    from .unified_processor import unified_processor
                     
-                    # Enrich chat with attendee data
-                    enriched_chat = self._enrich_chat_with_attendee_data(chat_data, attendees_map)
+                    normalized_attendees = [
+                        unified_processor.normalize_attendee_data(attendee_data, 'api')
+                        for attendee_data in chat_attendees
+                    ]
                     
-                    # Create or update conversation
-                    conversation, created = await self._create_or_update_conversation(channel, enriched_chat)
+                    attendees_list = await unified_processor.process_attendees(
+                        normalized_attendees, channel
+                    )
+                    
+                    # Create attendees map for conversation processing
+                    attendees_map = {att.provider_id: att for att in attendees_list}
+                    stats['attendees_synced'] += len(attendees_list)
+                    
+                    # Process conversation using unified processor
+                    normalized_conversation = unified_processor.normalize_conversation_data(chat_data, 'api')
+                    
+                    conversation, created = await unified_processor.process_conversation(
+                        normalized_conversation,
+                        channel,
+                        attendees_list
+                    )
+                    
                     if created:
                         stats['conversations_created'] += 1
                     else:
@@ -159,12 +171,25 @@ class ComprehensiveSyncService:
                     # Get messages for this specific chat
                     chat_messages = await self._get_chat_messages(client, chat_id, max_messages_per_chat)
                     
-                    # Create message records for this chat
+                    # Process messages using unified processor  
                     messages_created = 0
                     for message_data in chat_messages:
-                        message_created = await self._create_or_update_message(channel, conversation, message_data)
-                        if message_created:
-                            messages_created += 1
+                        try:
+                            normalized_message = unified_processor.normalize_message_data(message_data, 'api')
+                            # Set chat_id for API messages
+                            normalized_message['chat_id'] = chat_id
+                            
+                            message, created = await unified_processor.process_message(
+                                normalized_message,
+                                channel,
+                                conversation
+                            )
+                            
+                            if created:
+                                messages_created += 1
+                        except Exception as e:
+                            logger.error(f"Failed to process message {message_data.get('id')}: {e}")
+                            continue
                     
                     stats['messages_synced'] += messages_created
                     logger.info(f"✅ Chat {chat_id}: {len(chat_attendees)} attendees, {messages_created} messages")
@@ -270,11 +295,16 @@ class ComprehensiveSyncService:
             logger.error(f"Failed to sync attendees for {channel.name}: {e}")
             raise
     
+    # =========================================================================
+    # DEPRECATED METHODS - Use unified_processor instead
+    # =========================================================================
+    
     async def _create_or_update_attendee(
         self, 
         channel: Channel, 
         attendee_data: Dict[str, Any]
     ) -> Optional[ChatAttendee]:
+        """DEPRECATED: Use unified_processor.process_attendees() instead"""
         """Create or update a single attendee record"""
         
         external_id = attendee_data.get('id')
@@ -605,7 +635,7 @@ class ComprehensiveSyncService:
         chat_data: Dict[str, Any], 
         attendees_map: Dict[str, ChatAttendee]
     ) -> Dict[str, Any]:
-        """Enrich chat data with attendee information"""
+        """DEPRECATED: Use unified_processor.normalize_conversation_data() instead"""
         enriched_chat = chat_data.copy()
         
         # Look up attendee by provider_id
@@ -635,6 +665,7 @@ class ComprehensiveSyncService:
         channel: Channel, 
         chat_data: Dict[str, Any]
     ) -> Tuple[Conversation, bool]:
+        """DEPRECATED: Use unified_processor.process_conversation() instead"""
         """Create or update a conversation from chat data"""
         
         external_thread_id = chat_data.get('id')
@@ -821,6 +852,7 @@ class ComprehensiveSyncService:
         conversation: Conversation, 
         message_data: Dict[str, Any]
     ) -> bool:
+        """DEPRECATED: Use unified_processor.process_message() instead"""
         """Create or update a single message"""
         
         # Check if message_data is None or empty

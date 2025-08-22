@@ -141,13 +141,14 @@ class MessageSerializer(serializers.ModelSerializer):
     needs_domain_review = serializers.SerializerMethodField()
     domain_validated = serializers.SerializerMethodField()
     relationship_context = serializers.SerializerMethodField()
+    date = serializers.SerializerMethodField()
     
     class Meta:
         model = Message
         fields = [
             'id', 'channel', 'channel_name', 'conversation', 'contact_record', 'direction',
             'content', 'subject', 'contact_email', 'contact_name', 'contact_info',
-            'status', 'external_message_id', 'sent_at', 'received_at',
+            'status', 'external_message_id', 'sent_at', 'received_at', 'date',
             'metadata', 'created_at', 'updated_at',
             # Contact resolution fields
             'unmatched_contact_data', 'needs_manual_resolution', 'needs_domain_review',
@@ -204,6 +205,24 @@ class MessageSerializer(serializers.ModelSerializer):
                 'pipeline_context': context.get('pipeline_context', [])
             }
         return None
+    
+    def get_date(self, obj):
+        """Get the actual message timestamp from metadata (not the sync time)"""
+        # Try to get the actual timestamp from raw_data metadata
+        if obj.metadata and 'raw_data' in obj.metadata:
+            raw_timestamp = obj.metadata['raw_data'].get('timestamp')
+            if raw_timestamp:
+                return raw_timestamp
+        
+        # Fallback: For outbound messages, use sent_at if available
+        if obj.direction == 'outbound' and obj.sent_at:
+            return obj.sent_at.isoformat()
+        # Fallback: For inbound messages, use received_at if available  
+        elif obj.direction == 'inbound' and obj.received_at:
+            return obj.received_at.isoformat()
+        # Final fallback to created_at (sync time)
+        else:
+            return obj.created_at.isoformat()
 
 
 class MessageCreateSerializer(serializers.ModelSerializer):

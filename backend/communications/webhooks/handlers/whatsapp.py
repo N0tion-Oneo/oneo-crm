@@ -48,11 +48,11 @@ class WhatsAppWebhookHandler(BaseWebhookHandler):
         return None
     
     def handle_message_received(self, account_id: str, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Handle incoming WhatsApp message with chat-centric approach"""
+        """Handle incoming WhatsApp message using unified processor"""
         try:
             from communications.webhooks.routing import account_router
-            from communications.models import Channel, Conversation, Message, ChatAttendee, MessageDirection, MessageStatus
-            from communications.services.conversation_naming import conversation_naming_service
+            from communications.models import Channel, Conversation, Message, ChatAttendee
+            from communications.services.unified_processor import unified_processor
             from communications.unipile_sdk import unipile_service
             from asgiref.sync import async_to_sync
             
@@ -65,50 +65,12 @@ class WhatsAppWebhookHandler(BaseWebhookHandler):
             if connection.channel_type != 'whatsapp':
                 return {'success': False, 'error': f'Invalid channel type: {connection.channel_type}'}
             
-            # Extract message data from UniPile webhook structure
-            # UniPile sends the message content as a string in 'message' field, not as nested object
-            chat_id = data.get('chat_id') or data.get('provider_chat_id')
-            message_id = data.get('message_id')  
-            message_text = data.get('message', '')  # This is the actual message text string
+            # Normalize webhook data using unified processor
+            normalized_message = unified_processor.normalize_message_data(data, 'webhook')
+            normalized_conversation = unified_processor.normalize_conversation_data(data, 'webhook')
             
-            # Extract attachment data from webhook
-            raw_attachments = data.get('attachments', []) or []
-            if isinstance(raw_attachments, dict):
-                raw_attachments = [raw_attachments]  # Single attachment wrapped in list
-            
-            # Transform UniPile attachment format to our standard format
-            attachments = []
-            for i, raw_att in enumerate(raw_attachments):
-                logger.info(f"🔍 Processing WhatsApp webhook attachment {i}: {raw_att}")
-                
-                # Transform UniPile attachment fields to our standard format
-                transformed_attachment = {
-                    'id': raw_att.get('id', f'whatsapp_att_{i}'),
-                    'type': raw_att.get('content_type', raw_att.get('type', 'application/octet-stream')),
-                    'filename': raw_att.get('filename', raw_att.get('name', f'attachment_{raw_att.get("id", i)}')),
-                    'url': raw_att.get('url'),  # UniPile provides download URL
-                    'size': raw_att.get('size'),
-                    'mime_type': raw_att.get('content_type', raw_att.get('type', 'application/octet-stream')),
-                    'thumbnail_url': raw_att.get('thumbnail_url'),
-                    # Keep original UniPile data for reference
-                    'unipile_data': raw_att
-                }
-                attachments.append(transformed_attachment)
-                logger.info(f"✅ Transformed WhatsApp attachment: {transformed_attachment}")
-            
-            # Handle attachment-only messages (ensure content is never empty for database)
-            content = message_text
-            if not content and attachments:
-                content = f'[{len(attachments)} attachment(s)]'
-            elif not content:
-                content = ''  # Empty message without attachments
-            
-            # Extract sender information from UniPile format
-            sender_info = data.get('sender', {})
-            if isinstance(sender_info, dict):
-                sender_id = sender_info.get('attendee_id') or sender_info.get('attendee_provider_id')
-            else:
-                sender_id = data.get('from') or data.get('sender_id')
+            chat_id = normalized_message.get('chat_id')
+            message_id = normalized_message.get('external_message_id')
             
             if not chat_id:
                 return {'success': False, 'error': 'Chat ID not found in webhook data'}
@@ -147,25 +109,17 @@ class WhatsAppWebhookHandler(BaseWebhookHandler):
                     else:
                         attendees_list = []
                     
-                    # Store attendees in database for future reference
-                    for attendee_data in attendees_list:
-                        attendee_id = attendee_data.get('id')
-                        if attendee_id:
-                            chat_attendee, created = ChatAttendee.objects.get_or_create(
-                                external_attendee_id=attendee_id,
-                                channel=channel,
-                                defaults={
-                                    'provider_id': attendee_data.get('provider_id', ''),
-                                    'name': attendee_data.get('name', ''),
-                                    'picture_url': attendee_data.get('picture_url', ''),
-                                    'is_self': attendee_data.get('is_self', False),
-                                    'metadata': attendee_data
-                                }
-                            )
-                            chat_attendees.append(chat_attendee)
-                            
-                            if created:
-                                logger.info(f"✅ Created ChatAttendee {attendee_id} for chat {chat_id}")
+                    # Normalize and process attendees using unified processor
+                    normalized_attendees = [
+                        unified_processor.normalize_attendee_data(attendee_data, 'webhook')
+                        for attendee_data in attendees_list
+                    ]
+                    
+                    chat_attendees = async_to_sync(unified_processor.process_attendees)(
+                        normalized_attendees, channel
+                    )
+                    
+                    logger.info(f"✅ Processed {len(chat_attendees)} attendees for chat {chat_id}")
                     
                 except Exception as attendee_error:
                     logger.warning(f"Failed to fetch chat attendees for {chat_id}: {attendee_error}")
@@ -174,16 +128,17 @@ class WhatsAppWebhookHandler(BaseWebhookHandler):
                 # Get existing attendees
                 chat_attendees = list(ChatAttendee.objects.filter(channel=channel))
             
-            # Create or update conversation with proper naming
+            # Create or update conversation using unified processor
             if not conversation:
-                # Find sender attendee for naming
+                # Find sender attendee for contact info
                 sender_attendee = None
+                sender_id = normalized_message.get('sender_id')
                 for attendee in chat_attendees:
                     if attendee.external_attendee_id == sender_id or attendee.provider_id == sender_id:
                         sender_attendee = attendee
                         break
                 
-                # Generate conversation name using naming service
+                # Prepare contact info for conversation naming
                 contact_info = {}
                 if sender_attendee:
                     contact_info = {
@@ -192,94 +147,38 @@ class WhatsAppWebhookHandler(BaseWebhookHandler):
                         'profile': sender_attendee.metadata
                     }
                 
-                conversation_name = conversation_naming_service.generate_conversation_name(
-                    channel_type='whatsapp',
-                    contact_info=contact_info,
-                    message_content=message_text,
-                    external_thread_id=chat_id
+                # Create conversation using unified processor
+                conversation, created = async_to_sync(unified_processor.process_conversation)(
+                    normalized_conversation,
+                    channel,
+                    chat_attendees,
+                    contact_info
                 )
                 
-                conversation = Conversation.objects.create(
-                    channel=channel,
-                    external_thread_id=chat_id,
-                    subject=conversation_name,  # Using subject field instead of name
-                    status='active',  # Using the actual field from ConversationStatus choices
-                    sync_status='pending',
-                    metadata={
-                        'conversation_name': conversation_name,
-                        'conversation_type': 'whatsapp',
-                        'created_by_user': str(connection.user.id),
-                        'chat_id': chat_id,
-                        'webhook_created': True
-                    }
-                )
-                logger.info(f"✅ Created conversation '{conversation_name}' for chat {chat_id}")
+                if created:
+                    logger.info(f"✅ Created conversation '{conversation.subject}' for chat {chat_id}")
             
-            # Check if message already exists (handle duplicates)
-            existing_message = Message.objects.filter(
-                external_message_id=message_id,
-                channel=channel
-            ).first()
+            # Create or update message using unified processor
+            message, created = async_to_sync(unified_processor.process_message)(
+                normalized_message,
+                channel,
+                conversation,
+                connection
+            )
             
-            if existing_message:
-                logger.info(f"✅ Message {message_id} already exists, updating if needed")
-                # Update existing message status if needed
-                if existing_message.status != MessageStatus.DELIVERED:
-                    existing_message.status = MessageStatus.DELIVERED
-                    existing_message.received_at = timezone.now()
-                    existing_message.save(update_fields=['status', 'received_at'])
-                
-                conversation_name = conversation.subject or conversation.metadata.get('conversation_name', f'Chat {chat_id[:8]}')
+            if not created:
+                logger.info(f"✅ Message {message_id} already exists, status updated if needed")
+                conversation_name = conversation.subject or f'Chat {chat_id[:8]}'
                 return {
                     'success': True,
-                    'message_id': str(existing_message.id),
+                    'message_id': str(message.id),
                     'conversation_id': str(conversation.id),
                     'conversation_name': conversation_name,
                     'note': 'Message already exists, updated status',
-                    'approach': 'chat_centric_webhook'
+                    'approach': 'unified_webhook_processor'
                 }
             
-            # Enhanced contact identification using stored account data
-            from communications.services.contact_identification import contact_identification_service
-            contact_info = contact_identification_service.identify_whatsapp_contact(connection, data)
-            
-            # Determine message direction using enhanced detection service
-            from communications.services.direction_detection import direction_detection_service
-            direction, detection_metadata = direction_detection_service.determine_direction(
-                connection=connection,
-                message_data=data,
-                event_type='message_received'
-            )
-            
-            # Create new message with enhanced contact data
-            message = Message.objects.create(
-                channel=conversation.channel,
-                conversation=conversation,
-                external_message_id=message_id,
-                content=content,  # Use processed content (handles attachment-only messages)
-                direction=direction,
-                contact_phone=contact_info.get('contact_phone', ''),  # Store contact phone in dedicated field
-                status=MessageStatus.DELIVERED,
-                received_at=timezone.now(),
-                sync_status='synced',  # This came from webhook so it's synced
-                metadata={
-                    'sender_id': sender_id,
-                    'webhook_data': data,
-                    'chat_id': chat_id,
-                    'webhook_received': True,
-                    'direction_detection': detection_metadata,  # Store detection details
-                    'contact_identification': contact_info,     # Store contact identification
-                    'business_phone': contact_info.get('business_phone'),
-                    'contact_phone': contact_info.get('contact_phone'),
-                    'contact_name': contact_info.get('contact_name'),
-                    'is_group_chat': contact_info.get('is_group_chat', False),
-                    'attachments': attachments,  # Store processed attachment data
-                    'original_message_text': message_text,  # Keep original text for reference
-                    'attachment_count': len(attachments)  # Quick reference for frontend
-                }
-            )
-            
-            conversation_name = conversation.subject or conversation.metadata.get('conversation_name', f'Chat {chat_id[:8]}')
+            conversation_name = conversation.subject or f'Chat {chat_id[:8]}'
             logger.info(f"✅ Created WhatsApp message {message.id} in conversation '{conversation_name}'")
             
             # Send real-time update
@@ -315,11 +214,11 @@ class WhatsAppWebhookHandler(BaseWebhookHandler):
                 'success': True,
                 'message_id': str(message.id),
                 'conversation_id': str(conversation.id),
-                'conversation_name': conversation.subject or conversation.metadata.get('conversation_name', f'Chat {chat_id[:8]}'),
+                'conversation_name': conversation.subject or f'Chat {chat_id[:8]}',
                 'attendees_synced': len(chat_attendees),
-                'approach': 'chat_centric_webhook',
-                'attachment_count': len(attachments),
-                'content_type': 'attachment_only' if not message_text and attachments else 'text_with_attachments' if message_text and attachments else 'text_only'
+                'approach': 'unified_processor_webhook',
+                'attachment_count': len(normalized_message.get('attachments', [])),
+                'content_type': 'attachment_only' if not normalized_message.get('content') and normalized_message.get('attachments') else 'text_with_attachments' if normalized_message.get('content') and normalized_message.get('attachments') else 'text_only'
             }
             
         except Exception as e:

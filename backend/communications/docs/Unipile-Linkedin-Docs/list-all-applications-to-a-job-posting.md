@@ -1,0 +1,897 @@
+List all applicants to a job posting
+
+# OpenAPI definition
+```json
+{
+  "openapi": "3.0.0",
+  "paths": {
+    "/api/v1/linkedin/jobs/{id}/applicants": {
+      "get": {
+        "operationId": "LinkedinController_getJobApplicants",
+        "summary": "List all applicants to a job posting",
+        "description": "Retrieve all the users that have applied to a given offer.",
+        "parameters": [
+          {
+            "name": "ratings",
+            "required": false,
+            "in": "query",
+            "description": "One or more ratings (UNRATED, GOOD_FIT, MAYBE, NOT_A_FIT) separated by commas.",
+            "example": "GOOD_FIT,MAYBE",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "keywords",
+            "required": false,
+            "in": "query",
+            "description": "Filter results with keywords.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "service",
+            "required": false,
+            "in": "query",
+            "description": "The Linkedin service the job posting depends on. Default is classic.",
+            "schema": {
+              "enum": [
+                "CLASSIC",
+                "RECRUITER"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "minimum": 1,
+              "maximum": 250,
+              "description": "A limit for the number of items returned in the response. The value can be set between 1 and 250.",
+              "example": 100,
+              "type": "integer"
+            }
+          },
+          {
+            "name": "cursor",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "title": "CursorParam",
+              "description": "A cursor for pagination purposes. To get the next page of entries, you need to make a new request and fulfill this field with the cursor received in the preceding request. This process should be repeated until all entries have been retrieved.",
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "name": "account_id",
+            "required": true,
+            "in": "query",
+            "description": "The ID of the account to trigger the request from.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "description": "The ID of the job offer.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK. Request succeeded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "object": {
+                      "type": "string",
+                      "enum": [
+                        "LinkedinJobApplicantList"
+                      ]
+                    },
+                    "job_posting_id": {
+                      "title": "UniqueId",
+                      "description": "A unique identifier.",
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "object": {
+                            "type": "string",
+                            "enum": [
+                              "LinkedinJobApplicant"
+                            ]
+                          },
+                          "id": {
+                            "type": "string"
+                          },
+                          "profile_id": {
+                            "type": "string"
+                          },
+                          "public_identifier": {
+                            "type": "string"
+                          },
+                          "public_profile_url": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "location": {
+                            "type": "string"
+                          },
+                          "headline": {
+                            "type": "string"
+                          },
+                          "profile_picture_url": {
+                            "type": "string"
+                          },
+                          "applied_at": {
+                            "type": "number"
+                          },
+                          "rating": {
+                            "type": "string",
+                            "enum": [
+                              "UNRATED",
+                              "GOOD_FIT",
+                              "MAYBE",
+                              "NOT_A_FIT"
+                            ]
+                          },
+                          "email_address": {
+                            "type": "string"
+                          },
+                          "phone_number": {
+                            "type": "string"
+                          },
+                          "contact_info": {
+                            "type": "object",
+                            "properties": {
+                              "email_addresses": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "phone_numbers": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              }
+                            },
+                            "required": [
+                              "email_addresses",
+                              "phone_numbers"
+                            ]
+                          },
+                          "work_experience": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "company": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "nullable": true
+                                    }
+                                  ]
+                                },
+                                "company_id": {
+                                  "type": "string"
+                                },
+                                "position": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "nullable": true
+                                    }
+                                  ]
+                                },
+                                "location": {
+                                  "type": "string"
+                                },
+                                "description": {
+                                  "type": "string"
+                                },
+                                "picture_url": {
+                                  "type": "string"
+                                },
+                                "start": {
+                                  "anyOf": [
+                                    {
+                                      "type": "object",
+                                      "properties": {
+                                        "year": {
+                                          "type": "number"
+                                        },
+                                        "month": {
+                                          "type": "number"
+                                        }
+                                      },
+                                      "required": [
+                                        "year",
+                                        "month"
+                                      ]
+                                    },
+                                    {
+                                      "nullable": true
+                                    }
+                                  ]
+                                },
+                                "end": {
+                                  "anyOf": [
+                                    {
+                                      "type": "object",
+                                      "properties": {
+                                        "year": {
+                                          "type": "number"
+                                        },
+                                        "month": {
+                                          "type": "number"
+                                        }
+                                      },
+                                      "required": [
+                                        "year",
+                                        "month"
+                                      ]
+                                    },
+                                    {
+                                      "nullable": true
+                                    }
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "company",
+                                "position",
+                                "start",
+                                "end"
+                              ]
+                            }
+                          },
+                          "education": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "school": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "nullable": true
+                                    }
+                                  ]
+                                },
+                                "school_id": {
+                                  "type": "string"
+                                },
+                                "degree": {
+                                  "type": "string"
+                                },
+                                "description": {
+                                  "type": "string"
+                                },
+                                "field_of_study": {
+                                  "type": "string"
+                                },
+                                "picture_url": {
+                                  "type": "string"
+                                },
+                                "start": {
+                                  "anyOf": [
+                                    {
+                                      "type": "object",
+                                      "properties": {
+                                        "year": {
+                                          "type": "number"
+                                        },
+                                        "month": {
+                                          "type": "number"
+                                        }
+                                      },
+                                      "required": [
+                                        "year",
+                                        "month"
+                                      ]
+                                    },
+                                    {
+                                      "nullable": true
+                                    }
+                                  ]
+                                },
+                                "end": {
+                                  "anyOf": [
+                                    {
+                                      "type": "object",
+                                      "properties": {
+                                        "year": {
+                                          "type": "number"
+                                        },
+                                        "month": {
+                                          "type": "number"
+                                        }
+                                      },
+                                      "required": [
+                                        "year",
+                                        "month"
+                                      ]
+                                    },
+                                    {
+                                      "nullable": true
+                                    }
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "school",
+                                "start",
+                                "end"
+                              ]
+                            }
+                          },
+                          "screening_questions": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "question": {
+                                  "type": "string"
+                                },
+                                "answers": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string"
+                                  }
+                                },
+                                "success": {
+                                  "type": "boolean"
+                                }
+                              },
+                              "required": [
+                                "question",
+                                "answers",
+                                "success"
+                              ]
+                            }
+                          }
+                        },
+                        "required": [
+                          "object",
+                          "id",
+                          "profile_id",
+                          "public_identifier",
+                          "public_profile_url",
+                          "name",
+                          "location",
+                          "headline",
+                          "applied_at",
+                          "rating",
+                          "work_experience",
+                          "education",
+                          "screening_questions"
+                        ]
+                      }
+                    },
+                    "cursor": {
+                      "anyOf": [
+                        {},
+                        {
+                          "nullable": true
+                        }
+                      ]
+                    },
+                    "paging": {
+                      "type": "object",
+                      "properties": {
+                        "page_count": {
+                          "type": "number"
+                        },
+                        "total_count": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "page_count",
+                        "total_count"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "object",
+                    "job_posting_id",
+                    "items",
+                    "cursor",
+                    "paging"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "\n          ## Bad Request\n          ### Invalid parameters\n          One or more request parameters are invalid or missing.\nundefined",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "BadRequestResponse",
+                  "type": "object",
+                  "properties": {
+                    "title": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "errors/invalid_parameters",
+                        "errors/malformed_request",
+                        "errors/content_too_large",
+                        "errors/invalid_url",
+                        "errors/too_many_characters",
+                        "errors/unescaped_characters",
+                        "errors/missing_parameters"
+                      ]
+                    },
+                    "status": {
+                      "type": "number",
+                      "enum": [
+                        400
+                      ]
+                    }
+                  },
+                  "required": [
+                    "title",
+                    "type",
+                    "status"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "\n          ## Unauthorized\n          ### Disconnected account\n          The account appears to be disconnected from the provider service.\nundefined",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "UnauthorizedResponse",
+                  "type": "object",
+                  "properties": {
+                    "title": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "errors/missing_credentials",
+                        "errors/multiple_sessions",
+                        "errors/invalid_checkpoint_solution",
+                        "errors/checkpoint_error",
+                        "errors/invalid_credentials",
+                        "errors/expired_credentials",
+                        "errors/insufficient_privileges",
+                        "errors/disconnected_account",
+                        "errors/disconnected_feature",
+                        "errors/invalid_credentials_but_valid_account_imap",
+                        "errors/expired_link",
+                        "errors/wrong_account",
+                        "errors/captcha_not_supported"
+                      ]
+                    },
+                    "status": {
+                      "type": "number",
+                      "enum": [
+                        401
+                      ]
+                    },
+                    "connectionParams": {
+                      "type": "object",
+                      "properties": {
+                        "imap_host": {
+                          "type": "string"
+                        },
+                        "imap_encryption": {
+                          "type": "string"
+                        },
+                        "imap_port": {
+                          "type": "number"
+                        },
+                        "imap_user": {
+                          "type": "string"
+                        },
+                        "smtp_host": {
+                          "type": "string"
+                        },
+                        "smtp_port": {
+                          "type": "number"
+                        },
+                        "smtp_user": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "imap_host",
+                        "imap_port",
+                        "imap_user",
+                        "smtp_host",
+                        "smtp_port",
+                        "smtp_user"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "title",
+                    "type",
+                    "status"
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "## Forbidden\n\n### Insufficient permissions - Type: \"errors/insufficient_permissions\"\nValid authentication but insufficient permissions to perform the request.\n\n### Account restricted - Type: \"errors/account_restricted\"\nAccess to this account has been restricted by the provider.\n\n### Account mismatch - Type: \"errors/account_mismatch\"\nThis action cannot be done with your account.\n\n### Unknown authentication context - Type: \"errors/unknown_authentication_context\"\nAn additional step seems necessary to complete login. Please connect to provider with your browser to find out more, then retry authentication.\n\n### Session mismatch - Type: \"errors/session_mismatch\"\nToken User id does not match client session id.\n\n### Feature not subscribed - Type: \"errors/feature_not_subscribed\"\nThe requested feature has either not been subscribed or not been authenticated properly.\n\n### Subscription required - Type: \"errors/subscription_required\"\nThe action you're trying to achieve requires a subscription to provider's services.\n\n### Resource access restricted - Type: \"errors/resource_access_restricted\"\nYou don't have access to this resource.\n\n### Action required - Type: \"errors/action_required\"\nAn additional step seems necessary. Complete authentication on the provider's native application and try again.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "ForbiddenResponse",
+                  "type": "object",
+                  "properties": {
+                    "title": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "errors/account_restricted",
+                        "errors/account_mismatch",
+                        "errors/insufficient_permissions",
+                        "errors/session_mismatch",
+                        "errors/feature_not_subscribed",
+                        "errors/subscription_required",
+                        "errors/unknown_authentication_context",
+                        "errors/action_required",
+                        "errors/resource_access_restricted"
+                      ]
+                    },
+                    "status": {
+                      "type": "number",
+                      "enum": [
+                        403
+                      ]
+                    }
+                  },
+                  "required": [
+                    "title",
+                    "type",
+                    "status"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "\n        ## Not Found\n        ### Resource not found.\n        The requested resource were not found.\nAccount not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "NotFoundResponse",
+                  "type": "object",
+                  "properties": {
+                    "title": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "errors/resource_not_found",
+                        "errors/invalid_resource_identifier"
+                      ]
+                    },
+                    "status": {
+                      "type": "number",
+                      "enum": [
+                        404
+                      ]
+                    }
+                  },
+                  "required": [
+                    "title",
+                    "type",
+                    "status"
+                  ]
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "\n          ## Unprocessable Entity\n          ### Invalid account\n          Provided account is not designed for this feature.\nundefined",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "UnprocessableEntityResponseSchema",
+                  "type": "object",
+                  "properties": {
+                    "title": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "errors/invalid_account",
+                        "errors/invalid_recipient",
+                        "errors/no_connection_with_recipient",
+                        "errors/blocked_recipient",
+                        "errors/user_unreachable",
+                        "errors/unprocessable_entity",
+                        "errors/action_already_performed",
+                        "errors/invalid_message",
+                        "errors/invalid_post",
+                        "errors/not_allowed_inmail",
+                        "errors/insufficient_credits",
+                        "errors/cannot_resend_yet",
+                        "errors/cannot_resend_within_24hrs",
+                        "errors/limit_exceeded",
+                        "errors/already_invited_recently",
+                        "errors/cannot_invite_attendee",
+                        "errors/parent_mail_not_found",
+                        "errors/invalid_reply_subject",
+                        "errors/invalid_headers",
+                        "errors/send_as_denied",
+                        "errors/invalid_folder",
+                        "errors/invalid_thread",
+                        "errors/limit_too_high",
+                        "errors/unauthorized",
+                        "errors/sender_rejected",
+                        "errors/recipient_rejected",
+                        "errors/ip_rejected_by_server",
+                        "errors/provider_unreachable",
+                        "errors/account_configuration_error",
+                        "errors/cant_send_message",
+                        "errors/realtime_client_not_initialized"
+                      ]
+                    },
+                    "status": {
+                      "type": "number",
+                      "enum": [
+                        422
+                      ]
+                    }
+                  },
+                  "required": [
+                    "title",
+                    "type",
+                    "status"
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "## Internal Server Error\n\n### Unexpected error - Type: \"errors/unexpected_error\"\nSomething went wrong. {{moreDetails}}\n\n### Provider error - Type: \"errors/provider_error\"\nThe provider is experiencing operational problems. Please try again later.\n\n### Authentication intent error - Type: \"errors/authentication_intent_error\"\nThe current authentication intent was killed after failure. Please start the process again from the beginning.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "InternalServerErrorResponse",
+                  "type": "object",
+                  "properties": {
+                    "title": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "errors/unexpected_error",
+                        "errors/provider_error",
+                        "errors/authentication_intent_error"
+                      ]
+                    },
+                    "status": {
+                      "type": "number",
+                      "enum": [
+                        500
+                      ]
+                    }
+                  },
+                  "required": [
+                    "title",
+                    "type",
+                    "status"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "## Service Unavailable\n\n### No client session - Type: \"errors/no_client_session\"\nNo client session is currently running.\n\n### No channel - Type: \"errors/no_channel\"\nNo channel to client session.\n\n### Handler missing - Type: \"errors/no_handler\"\nHandler missing for that request.\n\n### Network down - Type: \"errors/network_down\"\nNetwork is down on server side. Please wait a moment and retry.\n\n### Service unavailable - Type: \"errors/service_unavailable\"\nPlease try again later.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "ServiceUnavailableResponse",
+                  "type": "object",
+                  "properties": {
+                    "title": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "errors/no_client_session",
+                        "errors/no_channel",
+                        "errors/no_handler",
+                        "errors/network_down",
+                        "errors/service_unavailable"
+                      ]
+                    },
+                    "status": {
+                      "type": "number",
+                      "enum": [
+                        503
+                      ]
+                    }
+                  },
+                  "required": [
+                    "title",
+                    "type",
+                    "status"
+                  ]
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "## Gateway Timeout\n\n### Request timed out - Type: \"errors/request_timeout\"\nRequest Timeout. Please try again, and if the issue persists, contact support.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "GatewayTimeoutResponse",
+                  "type": "object",
+                  "properties": {
+                    "title": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "errors/request_timeout"
+                      ]
+                    },
+                    "status": {
+                      "type": "number",
+                      "enum": [
+                        504
+                      ]
+                    }
+                  },
+                  "required": [
+                    "title",
+                    "type",
+                    "status"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "LinkedIn Specific"
+        ],
+        "security": [
+          {
+            "Access-Token": []
+          }
+        ]
+      }
+    }
+  },
+  "info": {
+    "title": "Unipile API Reference",
+    "description": "Unipile Communication is an **HTTP API**. It has predictable resource-oriented `URLs`, accepts **form-encoded** or **JSON-encoded** request bodies, returns **JSON-encoded responses**, and uses standard HTTP response codes, authentication, and verbs.",
+    "version": "1.0",
+    "contact": {}
+  },
+  "tags": [
+    {
+      "name": "LinkedIn Specific",
+      "description": "Linkedin specific use cases"
+    }
+  ],
+  "servers": [
+    {
+      "url": "https://{subdomain}.unipile.com:{port}",
+      "description": "live server",
+      "variables": {
+        "subdomain": {
+          "default": "api1"
+        },
+        "port": {
+          "default": "13111"
+        }
+      }
+    },
+    {
+      "url": "http://127.0.0.1:3114"
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "Access-Token": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-API-KEY"
+      }
+    }
+  },
+  "x-readme": {
+    "explorer-enabled": true,
+    "proxy-enabled": true
+  },
+  "_id": "654cacb148798d000bf66ba2"
+}
+```

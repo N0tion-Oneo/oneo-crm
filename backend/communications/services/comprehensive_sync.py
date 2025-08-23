@@ -1061,7 +1061,23 @@ class ComprehensiveSyncService:
             # Update conversation
             conversation.message_count = message_count
             if latest_message:
-                conversation.last_message_at = latest_message.created_at
+                # Use actual message timestamp, not sync time
+                actual_timestamp = None
+                if latest_message.metadata and 'raw_data' in latest_message.metadata:
+                    raw_timestamp = latest_message.metadata['raw_data'].get('timestamp')
+                    if raw_timestamp:
+                        from datetime import datetime
+                        actual_timestamp = datetime.fromisoformat(raw_timestamp.replace('Z', '+00:00'))
+                
+                if not actual_timestamp:
+                    if latest_message.direction == MessageDirection.OUTBOUND and latest_message.sent_at:
+                        actual_timestamp = latest_message.sent_at
+                    elif latest_message.direction == MessageDirection.INBOUND and latest_message.received_at:
+                        actual_timestamp = latest_message.received_at
+                    else:
+                        actual_timestamp = latest_message.created_at  # Fallback to sync time
+                
+                conversation.last_message_at = actual_timestamp
             
             await sync_to_async(conversation.save)(
                 update_fields=['message_count', 'last_message_at']

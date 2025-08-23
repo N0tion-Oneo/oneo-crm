@@ -198,7 +198,8 @@ class UnifiedMessageProcessor:
                 'is_group': raw_data.get('is_group', False),
                 'metadata': {
                     'webhook_created': True,
-                    'created_from_message': True
+                    'created_from_message': True,
+                    'raw_data': raw_data  # Store full webhook data
                 },
                 'source': 'webhook'
             }
@@ -216,7 +217,8 @@ class UnifiedMessageProcessor:
                 'last_message_date': raw_data.get('timestamp'),
                 'metadata': {
                     'api_synced': True,
-                    'sync_timestamp': django_timezone.now().isoformat()
+                    'sync_timestamp': django_timezone.now().isoformat(),
+                    'raw_data': raw_data  # Store full conversation object like messages do
                 },
                 'source': 'api'
             }
@@ -268,10 +270,39 @@ class UnifiedMessageProcessor:
             # Update existing message if needed
             if existing_message.status != MessageStatus.DELIVERED:
                 existing_message.status = MessageStatus.DELIVERED
-                existing_message.received_at = django_timezone.now()
+                # Use actual message timestamp, not sync time
+                message_timestamp = normalized_data.get('timestamp')
+                parsed_timestamp = None
+                
+                if message_timestamp:
+                    # Parse timestamp from normalized data (should be actual message time)
+                    from datetime import datetime
+                    if isinstance(message_timestamp, str):
+                        try:
+                            parsed_timestamp = datetime.fromisoformat(message_timestamp.replace('Z', '+00:00'))
+                        except ValueError:
+                            parsed_timestamp = django_timezone.now()  # Fallback
+                    else:
+                        parsed_timestamp = message_timestamp
+                else:
+                    # Only use sync time as last resort
+                    parsed_timestamp = django_timezone.now()
+                
+                # Set appropriate timestamp field based on message direction
+                update_fields = ['status']
+                if existing_message.direction == MessageDirection.OUTBOUND:
+                    existing_message.sent_at = parsed_timestamp
+                    update_fields.append('sent_at')
+                else:
+                    existing_message.received_at = parsed_timestamp
+                    update_fields.append('received_at')
+                    
                 def save_existing_message_with_context():
                     with schema_context(current_schema):
-                        existing_message.save(update_fields=['status', 'received_at'])
+                        existing_message.save(update_fields=update_fields)
+                        # Update conversation last_message_at to actual message timestamp
+                        conversation.last_message_at = parsed_timestamp
+                        conversation.save(update_fields=['last_message_at'])
                 
                 await sync_to_async(save_existing_message_with_context)()
             return existing_message, False
@@ -279,8 +310,20 @@ class UnifiedMessageProcessor:
         # Determine message direction
         direction = await self._determine_message_direction(normalized_data, connection)
         
-        # Get timestamp
-        received_at = normalized_data.get('timestamp') or django_timezone.now()
+        # Get actual message timestamp (not sync time)
+        message_timestamp = normalized_data.get('timestamp')
+        if message_timestamp:
+            if isinstance(message_timestamp, str):
+                try:
+                    from datetime import datetime
+                    received_at = datetime.fromisoformat(message_timestamp.replace('Z', '+00:00'))
+                except ValueError:
+                    received_at = django_timezone.now()  # Fallback to sync time
+            else:
+                received_at = message_timestamp
+        else:
+            # Only use sync time as last resort
+            received_at = django_timezone.now()
         
         # Extract contact information
         contact_phone = ''
@@ -290,29 +333,45 @@ class UnifiedMessageProcessor:
             )
             contact_phone = contact_info.get('contact_phone', '')
         
-        # Create new message  
+        # Create new message with proper timestamp fields
         def create_message_with_context():
             with schema_context(current_schema):
-                return Message.objects.create(
-                    external_message_id=external_message_id,
-                    channel=channel,
-                    conversation=conversation,
-                    content=normalized_data.get('content', ''),
-                    subject=normalized_data.get('subject', ''),
-                    direction=direction,
-                    contact_phone=contact_phone,
-                    status=MessageStatus.DELIVERED,
-                    received_at=received_at,
-                    sync_status='synced',
-                    metadata={
-                        'source': normalized_data.get('source'),
-                        'sender_id': normalized_data.get('sender_id'),
-                        'attachments': normalized_data.get('attachments', []),
-                        'attachment_count': len(normalized_data.get('attachments', [])),
-                        'raw_data': normalized_data.get('raw_data', {}),
-                        'processed_at': django_timezone.now().isoformat()
-                    }
-                )
+                # Set sent_at for outbound messages, received_at for inbound messages
+                message_data = {
+                    'external_message_id': external_message_id,
+                    'channel': channel,
+                    'conversation': conversation,
+                    'content': normalized_data.get('content', ''),
+                    'subject': normalized_data.get('subject', ''),
+                    'direction': direction,
+                    'contact_phone': contact_phone,
+                    'status': MessageStatus.DELIVERED,
+                    'sync_status': 'synced',
+                }
+                
+                # Set appropriate timestamp field based on message direction
+                if direction == MessageDirection.OUTBOUND:
+                    message_data['sent_at'] = received_at  # Use the parsed timestamp for sent messages
+                else:
+                    message_data['received_at'] = received_at  # Use the parsed timestamp for received messages
+                
+                message_data['metadata'] = {
+                    'source': normalized_data.get('source'),
+                    'sender_id': normalized_data.get('sender_id'),
+                    'attachments': normalized_data.get('attachments', []),
+                    'attachment_count': len(normalized_data.get('attachments', [])),
+                    'raw_data': normalized_data.get('raw_data', {}),
+                    'processed_at': django_timezone.now().isoformat()
+                }
+                
+                # Create message with proper timestamp fields
+                message = Message.objects.create(**message_data)
+                
+                # Update conversation last_message_at to actual message timestamp
+                conversation.last_message_at = received_at
+                conversation.save(update_fields=['last_message_at'])
+                
+                return message
         
         message = await sync_to_async(create_message_with_context)()
         

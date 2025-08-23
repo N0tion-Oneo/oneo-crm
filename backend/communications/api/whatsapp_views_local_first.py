@@ -60,6 +60,9 @@ def get_whatsapp_chats_local_first(request):
         return Response({
             'success': True,
             'chats': conversations,
+            # Move pagination info to root level to match frontend expectations
+            'has_more': result.get('has_more', False),
+            'cursor': result.get('cursor'),
             'pagination': {
                 'limit': limit,
                 'cursor': cursor,
@@ -119,6 +122,9 @@ def get_chat_messages_local_first(request, chat_id):
         return Response({
             'success': True,
             'messages': messages,
+            # Move pagination info to root level to match frontend expectations
+            'has_more': result.get('has_more', False),
+            'cursor': result.get('cursor'),
             'pagination': {
                 'limit': limit,
                 'cursor': cursor,

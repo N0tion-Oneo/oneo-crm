@@ -202,6 +202,7 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
   // Throttling refs for scroll handlers
   const conversationScrollTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const messageScrollTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const messageScrollRef = useRef<HTMLDivElement>(null)
   const [accountConnections, setAccountConnections] = useState<Array<{
     id: string
     connection_id?: string
@@ -478,10 +479,8 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
           account_id: selectedChat.account_id
         }
         
-        // Add to beginning of array (newest first) and sort
-        const updated = [newMessage, ...prev].sort((a, b) => 
-          new Date(b.date).getTime() - new Date(a.date).getTime()
-        )
+        // Add to beginning of array (backend already orders by updated_at)
+        const updated = [newMessage, ...prev]
         
         console.log(`✅ Added new message to chat ${selectedChat.id}:`, newMessage.text?.substring(0, 50))
         return updated
@@ -522,10 +521,8 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
         return chat
       })
       
-      // Sort by newest message timestamp  
-      const sorted = updated.sort((a, b) => new Date(b.last_message_date).getTime() - new Date(a.last_message_date).getTime())
-      
-      return sorted
+      // No sorting needed - backend handles ordering by updated_at
+      return updated
     })
     
     // Show toast notification for new inbound messages
@@ -605,9 +602,8 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
       const exists = prev.some(chat => chat.id === newChat.id || chat.provider_chat_id === newChat.provider_chat_id)
       if (exists) return prev
       
-      return [newChat, ...prev].sort((a, b) => 
-        new Date(b.last_message_date).getTime() - new Date(a.last_message_date).getTime()
-      )
+      // No sorting needed - backend handles ordering by updated_at
+      return [newChat, ...prev]
     })
     
     // Show notification
@@ -1161,8 +1157,7 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
       console.log(`🔄 Updating pagination: cursor=${newCursor}, hasMore=${hasMoreData}`)
       setChatCursor(newCursor)
 
-      // Sort chats by last message date (most recent first)
-      allChats.sort((a, b) => new Date(b.last_message_date).getTime() - new Date(a.last_message_date).getTime())
+      // No sorting needed - backend already returns data ordered by updated_at
       
       // Append to existing chats or replace for initial load
       if (isInitialLoad) {
@@ -1198,17 +1193,27 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
             const newChatIds = new Set(allChats.map(chat => chat.id))
             const remainingExisting = prev.filter(chat => !newChatIds.has(chat.id))
             
-            return [...mergedChats, ...remainingExisting].sort((a, b) => 
-              new Date(b.last_message_date).getTime() - new Date(a.last_message_date).getTime()
-            )
+            // No sorting needed - backend handles ordering
+            return [...mergedChats, ...remainingExisting]
           }
           
           // If no existing chats, just set the new ones
           return allChats
         })
       } else {
-        console.log(`🔄 Loading more: appending ${allChats.length} chats to existing list`)
-        setChats(prev => [...prev, ...allChats])
+        console.log(`🔄 Loading more: appending ${allChats.length} chats to existing list with duplicate prevention`)
+        setChats(prev => {
+          // Create a map of existing chats by ID for quick lookup
+          const existingChatMap = new Map(prev.map(chat => [chat.id, chat]))
+          
+          // Only add chats that don't already exist
+          const newUniqueChats = allChats.filter(newChat => !existingChatMap.has(newChat.id))
+          
+          console.log(`🔄 Filtered ${allChats.length} new chats to ${newUniqueChats.length} unique chats`)
+          
+          // No sorting needed - backend handles ordering, just append new items
+          return [...prev, ...newUniqueChats]
+        })
       }
       
     } catch (error) {
@@ -1524,8 +1529,7 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
           transformedChats.push(transformedChat)
         }
         
-        // Sort and update chats
-        transformedChats.sort((a, b) => new Date(b.last_message_date).getTime() - new Date(a.last_message_date).getTime())
+        // No sorting needed - backend handles ordering by updated_at
         setChats(transformedChats)
         setChatCursor(chatsResponse.data?.cursor)
         setHasMoreChats(chatsResponse.data?.has_more || false)
@@ -1625,17 +1629,7 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
       default:
         return !chat.is_archived  // Hide archived by default
     }
-  }).sort((a, b) => {
-    // Sort by most recent message first
-    const aTime = new Date(a.latest_message?.date || a.last_message_date).getTime()
-    const bTime = new Date(b.latest_message?.date || b.last_message_date).getTime()
-    
-    // Handle invalid timestamps silently (fallback to current time)
-    const safeATime = isNaN(aTime) ? 0 : aTime
-    const safeBTime = isNaN(bTime) ? 0 : bTime
-    
-    return safeBTime - safeATime // Most recent first
-  })
+  }) // No sorting needed - backend handles ordering by updated_at
 
   const handleChatSelect = async (chat: WhatsAppChat) => {
     console.log(`📱 Selected chat "${chat.name}" - comparing timestamps:`, {
@@ -1707,8 +1701,7 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
         }
       })
       
-      // Sort messages by date (newest first)
-      transformedMessages.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+      // No sorting needed - backend handles ordering by updated_at
       
       // Debug: Compare chat list timestamp vs actual latest message
       const actualLatestMessage = transformedMessages[0] // First message is newest
@@ -1836,10 +1829,19 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
         account_id: selectedChat.account_id
       }))
       
-      // Sort newest first and append to existing messages
-      transformedMessages.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+      // No sorting needed - backend handles ordering by updated_at
       
-      setMessages(prev => [...prev, ...transformedMessages])
+      setMessages(prev => {
+        // Create a set of existing message IDs for quick lookup
+        const existingMessageIds = new Set(prev.map(msg => msg.id))
+        
+        // Only add messages that don't already exist
+        const newUniqueMessages = transformedMessages.filter(msg => !existingMessageIds.has(msg.id))
+        
+        console.log(`🔄 Filtered ${transformedMessages.length} new messages to ${newUniqueMessages.length} unique messages`)
+        
+        return [...prev, ...newUniqueMessages]
+      })
       
     } catch (error) {
       console.error('Failed to load more messages:', error)
@@ -1848,22 +1850,33 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
     }
   }, [selectedChat, loadingMoreMessages, hasMoreMessages, messageCursor])
 
-  // Throttled scroll handler for messages
-  const handleMessageScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
-    if (messageScrollTimeoutRef.current) return
-    
-    messageScrollTimeoutRef.current = setTimeout(() => {
-      const target = e.target as HTMLDivElement
-      const { scrollTop, scrollHeight, clientHeight } = target
+  // Effect to attach scroll listener to ScrollArea viewport
+  useEffect(() => {
+    const scrollAreaElement = messageScrollRef.current
+    if (!scrollAreaElement) return
+
+    // Find the viewport element within the ScrollArea
+    const viewport = scrollAreaElement.querySelector('[data-radix-scroll-area-viewport]') as HTMLDivElement
+    if (!viewport) return
+
+    const handleScroll = () => {
+      if (messageScrollTimeoutRef.current) return
       
-      // Check if user scrolled near bottom (within 200px)
-      if (scrollHeight - scrollTop - clientHeight < 200 && hasMoreMessages && !loadingMoreMessages) {
-        console.log('🔄 Triggering loadMoreMessages from scroll')
-        loadMoreMessages()
-      }
-      
-      messageScrollTimeoutRef.current = null
-    }, 100) // Throttle to 100ms
+      messageScrollTimeoutRef.current = setTimeout(() => {
+        const { scrollTop, scrollHeight, clientHeight } = viewport
+        
+        // Check if user scrolled near bottom (within 200px)
+        if (scrollHeight - scrollTop - clientHeight < 200 && hasMoreMessages && !loadingMoreMessages) {
+          console.log('🔄 Triggering loadMoreMessages from scroll')
+          loadMoreMessages()
+        }
+        
+        messageScrollTimeoutRef.current = null
+      }, 100) // Throttle to 100ms
+    }
+
+    viewport.addEventListener('scroll', handleScroll)
+    return () => viewport.removeEventListener('scroll', handleScroll)
   }, [hasMoreMessages, loadingMoreMessages, loadMoreMessages])
 
   const handleSendMessage = async () => {
@@ -2688,8 +2701,7 @@ Latest msg text: ${chat.latest_message?.text?.substring(0, 50)}`}
                             account_id: selectedChat.account_id
                           }))
                           
-                          // Sort and set messages
-                          transformedMessages.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+                          // No sorting needed - backend handles ordering by updated_at
                           setMessages(transformedMessages)
                           
                           toast({
@@ -2775,7 +2787,7 @@ Latest msg text: ${chat.latest_message?.text?.substring(0, 50)}`}
               {/* Messages */}
               <ScrollArea 
                 className="flex-1 min-h-0"
-                onScrollCapture={handleMessageScroll}
+                ref={messageScrollRef}
               >
                 <div className="p-4">
                 {loadingMessages ? (

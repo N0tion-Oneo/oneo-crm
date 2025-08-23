@@ -112,8 +112,7 @@ class UnifiedWebhookDispatcher:
         """Determine provider type from account ID by checking connection"""
         try:
             # This requires tenant context, so we'll check each tenant
-            from django_tenants.utils import get_tenant_model, get_public_schema_name
-            from django.db import connection
+            from django_tenants.utils import get_tenant_model, get_public_schema_name, schema_context
             from communications.models import UserChannelConnection
             
             tenant_model = get_tenant_model()
@@ -121,33 +120,27 @@ class UnifiedWebhookDispatcher:
             
             for tenant in tenants:
                 try:
-                    connection.set_tenant(tenant)
-                    
-                    user_connection = UserChannelConnection.objects.filter(
-                        unipile_account_id=account_id,
-                        is_active=True
-                    ).first()
-                    
-                    if user_connection:
-                        return user_connection.channel_type
+                    # Use proper schema_context instead of connection.set_tenant
+                    with schema_context(tenant.schema_name):
+                        user_connection = UserChannelConnection.objects.filter(
+                            unipile_account_id=account_id,
+                            is_active=True
+                        ).first()
+                        
+                        if user_connection:
+                            logger.debug(f"Found provider type {user_connection.channel_type} for account {account_id} in tenant {tenant.schema_name}")
+                            return user_connection.channel_type
                         
                 except Exception as e:
                     logger.debug(f"Error checking tenant {tenant.schema_name}: {e}")
                     continue
             
+            logger.warning(f"No provider type found for account {account_id}")
             return None
             
         except Exception as e:
             logger.error(f"Failed to determine provider type for account {account_id}: {e}")
             return None
-        
-        finally:
-            # Switch back to public schema
-            try:
-                public_tenant = tenant_model.objects.get(schema_name=get_public_schema_name())
-                connection.set_tenant(public_tenant)
-            except Exception as e:
-                logger.error(f"Failed to switch back to public schema: {e}")
     
     def _get_provider_handler(self, provider_type: str):
         """Get appropriate handler for provider type"""

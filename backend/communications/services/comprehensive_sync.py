@@ -138,7 +138,7 @@ class ComprehensiveSyncService:
             
             # Update sync job with total chat count
             if sync_job:
-                await sync_job.update_progress(
+                await sync_job.aupdate_progress(
                     conversations_total=len(chats),
                     conversations_processed=0,
                     current_phase='processing_conversations',
@@ -160,7 +160,7 @@ class ComprehensiveSyncService:
                     
                     # Update progress for this chat
                     if sync_job:
-                        await sync_job.update_progress(
+                        await sync_job.aupdate_progress(
                             conversations_processed=i-1,  # Previous chats completed
                             current_step=f'Processing chat: {chat_name}',
                             current_conversation_name=chat_name
@@ -230,7 +230,8 @@ class ComprehensiveSyncService:
                             
                             logger.info(f"✅ Message processed - Created: {created}, DB ID: {message.id if message else 'None'}")
                             
-                            if created:
+                            # Count both created and updated messages as "processed"
+                            if message:  # If message was processed successfully (created OR updated)
                                 messages_created += 1
                         except Exception as e:
                             logger.error(f"❌ Failed to process message {message_data.get('id')}: {e}")
@@ -243,7 +244,7 @@ class ComprehensiveSyncService:
                     
                     # Update progress after completing this chat
                     if sync_job:
-                        await sync_job.update_progress(
+                        await sync_job.aupdate_progress(
                             conversations_processed=i,
                             messages_processed=stats['messages_synced'],
                             current_step=f'Completed chat: {chat_name}'
@@ -258,7 +259,7 @@ class ComprehensiveSyncService:
             
             # Final progress update
             if sync_job:
-                await sync_job.update_progress(
+                await sync_job.aupdate_progress(
                     conversations_processed=stats['chats_synced'],
                     messages_processed=stats['messages_synced'],
                     current_phase='completed',
@@ -270,7 +271,7 @@ class ComprehensiveSyncService:
             
             # Update sync job with error
             if sync_job:
-                await sync_job.update_progress(
+                await sync_job.aupdate_progress(
                     current_phase='error',
                     current_step=f'Sync failed: {str(e)}'
                 )
@@ -320,7 +321,9 @@ class ComprehensiveSyncService:
             for i, msg in enumerate(messages):
                 if msg and isinstance(msg, dict) and msg.get('id'):
                     valid_messages.append(msg)
-                    logger.debug(f"📨 Valid message {i}: {msg.get('id')} - {msg.get('text', 'No text')[:50]}")
+                    message_text = msg.get('text') or msg.get('body') or 'No text'
+                    message_text_preview = message_text[:50] if message_text else 'No text'
+                    logger.debug(f"📨 Valid message {i}: {msg.get('id')} - {message_text_preview}")
                 else:
                     logger.warning(f"Skipping invalid message {i}: {msg}")
             

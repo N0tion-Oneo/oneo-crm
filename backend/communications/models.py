@@ -980,6 +980,25 @@ class SyncJob(models.Model):
         # Broadcasting handled by realtime/signals.py to avoid duplication
         # self._broadcast_progress_update()
     
+    async def aupdate_progress(self, **kwargs):
+        """Async version of update_progress for use in async contexts"""
+        from django_tenants.utils import schema_context
+        from django.db import connection as db_connection
+        from asgiref.sync import sync_to_async
+        
+        # Capture tenant context before async operation
+        current_schema = getattr(db_connection, 'schema_name', 'public')
+        
+        def sync_update():
+            # Ensure tenant context is preserved
+            with schema_context(current_schema):
+                self.progress.update(kwargs)
+                self.last_progress_update = django_timezone.now()
+                self.save(update_fields=['progress', 'last_progress_update'])
+        
+        # Run the sync operation with tenant context preservation
+        await sync_to_async(sync_update)()
+    
     def _broadcast_progress_update(self):
         """Broadcast progress update to WebSocket clients"""
         try:

@@ -250,18 +250,30 @@ class UnifiedMessageProcessor:
         if not external_message_id:
             raise ValueError("Message ID is required")
         
-        # Check if message already exists
-        existing_message = await sync_to_async(Message.objects.filter(
-            external_message_id=external_message_id,
-            channel=channel
-        ).first)()
+        # Check if message already exists - capture tenant context
+        from django.db import connection as db_connection
+        from django_tenants.utils import schema_context
+        current_schema = db_connection.schema_name
+        
+        def get_existing_message_with_context():
+            with schema_context(current_schema):
+                return Message.objects.filter(
+                    external_message_id=external_message_id,
+                    channel=channel
+                ).first()
+        
+        existing_message = await sync_to_async(get_existing_message_with_context)()
         
         if existing_message:
             # Update existing message if needed
             if existing_message.status != MessageStatus.DELIVERED:
                 existing_message.status = MessageStatus.DELIVERED
                 existing_message.received_at = django_timezone.now()
-                await sync_to_async(existing_message.save)(update_fields=['status', 'received_at'])
+                def save_existing_message_with_context():
+                    with schema_context(current_schema):
+                        existing_message.save(update_fields=['status', 'received_at'])
+                
+                await sync_to_async(save_existing_message_with_context)()
             return existing_message, False
         
         # Determine message direction
@@ -278,27 +290,31 @@ class UnifiedMessageProcessor:
             )
             contact_phone = contact_info.get('contact_phone', '')
         
-        # Create new message
-        message = await sync_to_async(Message.objects.create)(
-            external_message_id=external_message_id,
-            channel=channel,
-            conversation=conversation,
-            content=normalized_data.get('content', ''),
-            subject=normalized_data.get('subject', ''),
-            direction=direction,
-            contact_phone=contact_phone,
-            status=MessageStatus.DELIVERED,
-            received_at=received_at,
-            sync_status='synced',
-            metadata={
-                'source': normalized_data.get('source'),
-                'sender_id': normalized_data.get('sender_id'),
-                'attachments': normalized_data.get('attachments', []),
-                'attachment_count': len(normalized_data.get('attachments', [])),
-                'raw_data': normalized_data.get('raw_data', {}),
-                'processed_at': django_timezone.now().isoformat()
-            }
-        )
+        # Create new message  
+        def create_message_with_context():
+            with schema_context(current_schema):
+                return Message.objects.create(
+                    external_message_id=external_message_id,
+                    channel=channel,
+                    conversation=conversation,
+                    content=normalized_data.get('content', ''),
+                    subject=normalized_data.get('subject', ''),
+                    direction=direction,
+                    contact_phone=contact_phone,
+                    status=MessageStatus.DELIVERED,
+                    received_at=received_at,
+                    sync_status='synced',
+                    metadata={
+                        'source': normalized_data.get('source'),
+                        'sender_id': normalized_data.get('sender_id'),
+                        'attachments': normalized_data.get('attachments', []),
+                        'attachment_count': len(normalized_data.get('attachments', [])),
+                        'raw_data': normalized_data.get('raw_data', {}),
+                        'processed_at': django_timezone.now().isoformat()
+                    }
+                )
+        
+        message = await sync_to_async(create_message_with_context)()
         
         logger.info(f"✅ Created message {message.id} from {normalized_data.get('source')} data")
         return message, True
@@ -318,6 +334,7 @@ class UnifiedMessageProcessor:
         Returns:
             List of created/updated ChatAttendee objects
         """
+        from django_tenants.utils import schema_context
         attendees = []
         
         for attendee_data in normalized_attendees:
@@ -325,24 +342,36 @@ class UnifiedMessageProcessor:
             if not attendee_id:
                 continue
             
-            attendee, created = await sync_to_async(ChatAttendee.objects.get_or_create)(
-                external_attendee_id=attendee_id,
-                channel=channel,
-                defaults={
-                    'provider_id': attendee_data.get('provider_id', ''),
-                    'name': attendee_data.get('name', ''),
-                    'picture_url': attendee_data.get('picture_url', ''),
-                    'is_self': attendee_data.get('is_self', False),
-                    'metadata': attendee_data.get('metadata', {})
-                }
-            )
+            # Capture current tenant context like we do in background_sync tasks  
+            from django.db import connection as db_connection
+            current_schema = db_connection.schema_name
+            
+            def get_or_create_attendee_with_context():
+                with schema_context(current_schema):
+                    return ChatAttendee.objects.get_or_create(
+                        external_attendee_id=attendee_id,
+                        channel=channel,
+                        defaults={
+                            'provider_id': attendee_data.get('provider_id', ''),
+                            'name': attendee_data.get('name', ''),
+                            'picture_url': attendee_data.get('picture_url', ''),
+                            'is_self': attendee_data.get('is_self', False),
+                            'metadata': attendee_data.get('metadata', {})
+                        }
+                    )
+            
+            attendee, created = await sync_to_async(get_or_create_attendee_with_context)()
             
             if not created:
                 # Update existing attendee if needed
                 attendee.name = attendee_data.get('name', attendee.name)
                 attendee.picture_url = attendee_data.get('picture_url', attendee.picture_url)
                 attendee.metadata = attendee_data.get('metadata', attendee.metadata)
-                await sync_to_async(attendee.save)()
+                def save_attendee_with_context():
+                    with schema_context(current_schema):
+                        attendee.save()
+                
+                await sync_to_async(save_attendee_with_context)()
             
             attendees.append(attendee)
             
@@ -374,11 +403,19 @@ class UnifiedMessageProcessor:
         if not external_thread_id:
             raise ValueError("Conversation thread ID is required")
         
-        # Check if conversation exists
-        existing_conversation = await sync_to_async(Conversation.objects.filter(
-            channel=channel,
-            external_thread_id=external_thread_id
-        ).first)()
+        # Check if conversation exists - capture tenant context
+        from django.db import connection as db_connection
+        from django_tenants.utils import schema_context
+        current_schema = db_connection.schema_name
+        
+        def get_existing_conversation_with_context():
+            with schema_context(current_schema):
+                return Conversation.objects.filter(
+                    channel=channel,
+                    external_thread_id=external_thread_id
+                ).first()
+        
+        existing_conversation = await sync_to_async(get_existing_conversation_with_context)()
         
         if existing_conversation:
             return existing_conversation, False
@@ -389,14 +426,18 @@ class UnifiedMessageProcessor:
         )
         
         # Create new conversation
-        conversation = await sync_to_async(Conversation.objects.create)(
-            channel=channel,
-            external_thread_id=external_thread_id,
-            subject=conversation_name,
-            status=ConversationStatus.ARCHIVED if normalized_data.get('is_archived') else ConversationStatus.ACTIVE,
-            sync_status='pending',
-            metadata=normalized_data.get('metadata', {})
-        )
+        def create_conversation_with_context():
+            with schema_context(current_schema):
+                return Conversation.objects.create(
+                    channel=channel,
+                    external_thread_id=external_thread_id,
+                    subject=conversation_name,
+                    status=ConversationStatus.ARCHIVED if normalized_data.get('is_archived') else ConversationStatus.ACTIVE,
+                    sync_status='pending',
+                    metadata=normalized_data.get('metadata', {})
+                )
+        
+        conversation = await sync_to_async(create_conversation_with_context)()
         
         logger.info(f"✅ Created conversation '{conversation_name}' from {normalized_data.get('source')} data")
         return conversation, True

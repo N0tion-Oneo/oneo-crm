@@ -907,18 +907,32 @@ def _run_comprehensive_sync_simplified(channel: Channel, options: Dict[str, Any]
                 
                 # Use sync version of process_attendees
                 from asgiref.sync import sync_to_async
-                attendees_list = async_to_sync(unified_processor.process_attendees)(
-                    normalized_attendees, channel
-                )
+                # Fix async_to_sync tenant context loss by wrapping in schema_context
+                from django.db import connection as db_connection
+                current_schema = db_connection.schema_name
+                
+                async def process_attendees_with_tenant_context():
+                    with schema_context(current_schema):
+                        return await unified_processor.process_attendees(normalized_attendees, channel)
+                
+                attendees_list = async_to_sync(process_attendees_with_tenant_context)()
                 
                 stats['attendees_synced'] += len(attendees_list)
                 
                 # Process conversation
                 normalized_conversation = unified_processor.normalize_conversation_data(chat_data, 'api')
                 
-                conversation, created = async_to_sync(unified_processor.process_conversation)(
-                    normalized_conversation, channel, attendees_list
-                )
+                # Fix async_to_sync tenant context loss by wrapping in schema_context
+                from django.db import connection as db_connection
+                current_schema = db_connection.schema_name
+                
+                async def process_conversation_with_tenant_context():
+                    with schema_context(current_schema):
+                        return await unified_processor.process_conversation(
+                            normalized_conversation, channel, attendees_list
+                        )
+                
+                conversation, created = async_to_sync(process_conversation_with_tenant_context)()
                 
                 if created:
                     stats['conversations_created'] += 1

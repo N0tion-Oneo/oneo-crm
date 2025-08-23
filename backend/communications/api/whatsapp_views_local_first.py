@@ -34,15 +34,23 @@ def get_whatsapp_chats_local_first(request):
         # Import persistence services
         from ..services.persistence import message_sync_service
         
-        # Use local-first approach for intelligent caching and sync
-        result = async_to_sync(message_sync_service.get_conversations_local_first)(
-            channel_type='whatsapp',
-            user_id=str(request.user.id),
-            account_id=account_id,
-            limit=limit,
-            cursor=cursor,
-            force_sync=force_sync
-        )
+        # Use local-first approach for intelligent caching and sync with tenant context preservation
+        from django.db import connection as db_connection
+        from django_tenants.utils import schema_context
+        current_schema = db_connection.schema_name
+        
+        async def get_conversations_with_tenant_context():
+            with schema_context(current_schema):
+                return await message_sync_service.get_conversations_local_first(
+                    channel_type='whatsapp',
+                    user_id=str(request.user.id),
+                    account_id=account_id,
+                    limit=limit,
+                    cursor=cursor,
+                    force_sync=force_sync
+                )
+        
+        result = async_to_sync(get_conversations_with_tenant_context)()
         
         # Extract conversations from the result
         conversations = result.get('conversations', [])
@@ -86,14 +94,22 @@ def get_chat_messages_local_first(request, chat_id):
         # Import persistence services
         from ..services.persistence import message_sync_service
         
-        # Use local-first approach for messages
-        result = async_to_sync(message_sync_service.get_messages_local_first)(
-            conversation_id=chat_id,
-            channel_type='whatsapp',
-            limit=limit,
-            cursor=cursor,
-            force_sync=force_sync
-        )
+        # Use local-first approach for messages with tenant context preservation
+        from django.db import connection as db_connection
+        from django_tenants.utils import schema_context
+        current_schema = db_connection.schema_name
+        
+        async def get_messages_with_tenant_context():
+            with schema_context(current_schema):
+                return await message_sync_service.get_messages_local_first(
+                    conversation_id=chat_id,
+                    channel_type='whatsapp',
+                    limit=limit,
+                    cursor=cursor,
+                    force_sync=force_sync
+                )
+        
+        result = async_to_sync(get_messages_with_tenant_context)()
         
         # Extract messages from the result
         messages = result.get('messages', [])
@@ -680,11 +696,22 @@ def sync_whatsapp_data(request):
                 
                 # Run comprehensive sync to get all attendees, chats, and messages
                 logger.info(f"🔄 Starting comprehensive sync for WhatsApp account {connection.unipile_account_id}")
-                stats = async_to_sync(comprehensive_sync_service.sync_account_comprehensive)(
-                    channel=channel,
-                    days_back=30,  # Sync 30 days of history
-                    max_messages_per_chat=100  # Limit messages per chat for reasonable sync time
-                )
+                
+                # Preserve tenant context for async operation
+                from django.db import connection as db_connection
+                from django_tenants.utils import schema_context
+                current_schema = db_connection.schema_name
+                
+                async def sync_with_tenant_context():
+                    with schema_context(current_schema):
+                        return await comprehensive_sync_service.sync_account_comprehensive(
+                            channel=channel,
+                            days_back=30,  # Sync 30 days of history
+                            max_messages_per_chat=100,  # Limit messages per chat for reasonable sync time
+                            connection=connection  # Add connection for direction detection
+                        )
+                
+                stats = async_to_sync(sync_with_tenant_context)()
                 
                 # Update connection sync status
                 connection.last_sync_at = django_timezone.now()

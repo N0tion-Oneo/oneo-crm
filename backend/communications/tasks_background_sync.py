@@ -68,20 +68,24 @@ def sync_account_comprehensive_background(
         
         logger.info(f"🚀 Starting comprehensive background sync for channel {channel_id}")
         
-        # ASGI-compatible event loop setup
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
+        # Capture Celery task ID before async context
+        task_id = self.request.id
+        logger.info(f"🎯 Captured Celery task ID: {task_id}")
         
-        try:
-            # Pass tenant schema to the async function for proper context handling
-            result = loop.run_until_complete(
-                _execute_comprehensive_sync(self, channel_id, user_id, options, tenant_schema)
-            )
-            
-            return result
-            
-        finally:
-            loop.close()
+        if not task_id:
+            logger.error(f"❌ No Celery task ID available - task not properly queued")
+            raise ValueError("No Celery task ID available - task must be properly queued")
+        
+        # ASGI-compatible async execution - don't create new event loop
+        # Use async_to_sync for proper ASGI compatibility
+        from asgiref.sync import async_to_sync
+        
+        # Execute async function within ASGI context, passing task_id explicitly
+        result = async_to_sync(_execute_comprehensive_sync_simple)(
+            channel_id, user_id, options, tenant_schema, task_id
+        )
+        
+        return result
             
     except Exception as e:
         logger.error(f"❌ Background sync failed for channel {channel_id}: {e}")
@@ -114,12 +118,12 @@ def sync_account_comprehensive_background(
 # PAGINATED SYNC IMPLEMENTATION
 # =========================================================================
 
-async def _execute_comprehensive_sync(
-    task, 
+async def _execute_comprehensive_sync_simple(
     channel_id: str, 
     user_id: str, 
     options: Dict[str, Any],
-    tenant_schema: Optional[str] = None
+    tenant_schema: Optional[str] = None,
+    task_id: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Execute comprehensive sync with pagination and progress tracking
@@ -149,7 +153,7 @@ async def _execute_comprehensive_sync(
             channel=channel,
             job_type=SyncJobType.COMPREHENSIVE,
             sync_options=options,
-            celery_task_id=task.request.id,
+            celery_task_id=task_id,
             status=SyncJobStatus.RUNNING,
             started_at=django_timezone.now()
         )
@@ -202,10 +206,10 @@ async def _execute_comprehensive_sync(
             result = {
                 'success': True,
                 'sync_job_id': str(sync_job.id),
-                'conversations_synced': len(conversations_synced),
+                'conversations_synced': conversations_synced,
                 'messages_synced': messages_synced,
                 'channel_id': channel_id,
-                'task_id': task.request.id
+                'task_id': task_id
             }
             
             logger.info(f"✅ Comprehensive sync completed: {result}")
@@ -216,157 +220,97 @@ async def _execute_comprehensive_sync(
             await _mark_sync_job_failed_async(sync_job, str(e))
             raise
     
-    # Execute with proper tenant context
-    if tenant_schema:
-        logger.info(f"🏢 Using tenant schema context: {tenant_schema}")
-        
-        # Get task ID before entering async context to avoid context loss
-        task_id = task.request.id
-        logger.info(f"🎯 Task ID before async wrapper: {task_id}")
-        
-        if not task_id:
-            logger.error(f"❌ No Celery task ID available - task not properly queued")
-            raise ValueError("No Celery task ID available - task must be properly queued")
-        
-        # For ASGI/Daphne compatibility, wrap the entire sync operation
+    # Execute with tenant context
+    if not tenant_schema:
+        raise ValueError("No tenant schema provided for background sync task")
+    
+    # Use the working comprehensive sync service
+    from django_tenants.utils import schema_context
+    
+    async def _run_sync():
+        # Import the sync function 
         from asgiref.sync import sync_to_async
+        from django_tenants.utils import schema_context
         
-        @sync_to_async  
-        def run_sync_with_tenant_context(celery_task_id):
+        # Execute the entire sync in a synchronous context with proper tenant schema
+        @sync_to_async
+        def run_sync_with_tenant_context():
             with schema_context(tenant_schema):
-                logger.info(f"🎯 Using task ID in sync context: {celery_task_id}")
+                from asgiref.sync import async_to_sync
                 
-                # Verify we're in the correct schema
-                from django.db import connection
-                logger.info(f"🔍 Current schema after context: {connection.schema_name}")
-                
-                # Test database access 
-                with connection.cursor() as cursor:
-                    cursor.execute("SELECT COUNT(*) FROM communications_channel")
-                    count = cursor.fetchone()[0]
-                    logger.info(f"✅ Found {count} channels in schema {connection.schema_name}")
-                
-                # Get channel and user using synchronous ORM
-                from .models import Channel
+                # Get channel and user (sync)
                 channel = Channel.objects.get(id=channel_id)
                 user = User.objects.get(id=user_id)
-                logger.info(f"✅ Found channel: {channel.name} and user: {user.username}")
                 
                 # Get the UserChannelConnection for direction detection
-                user_connection = UserChannelConnection.objects.filter(
+                connection = UserChannelConnection.objects.filter(
                     user=user,
                     unipile_account_id=channel.unipile_account_id
                 ).first()
                 
-                if user_connection:
-                    logger.info(f"✅ Found user connection for direction detection")
-                else:
-                    logger.warning(f"⚠️ No user connection found - direction detection will use fallback methods")
-                
-                # Create sync job - no fallback lookups in ASGI environment
+                # Create sync job
                 sync_job = SyncJob.objects.create(
                     user=user,
                     channel=channel,
                     job_type=SyncJobType.COMPREHENSIVE,
                     sync_options=options,
-                    celery_task_id=celery_task_id,
+                    celery_task_id=task_id,
                     status=SyncJobStatus.RUNNING,
                     started_at=django_timezone.now()
                 )
-                logger.info(f"🆕 Created sync job: {sync_job.id} with task ID: {celery_task_id}")
                 
-                logger.info(f"✅ Sync job created with task ID: {celery_task_id}")
+                # Use comprehensive sync service with proper async context
+                from .services.comprehensive_sync import ComprehensiveSyncService
+                comprehensive_sync = ComprehensiveSyncService()
                 
-                logger.info(f"📊 Created sync job {sync_job.id} for comprehensive sync")
+                # Wrapper to call async comprehensive sync within tenant context
+                async def comprehensive_sync_with_tenant():
+                    with schema_context(tenant_schema):
+                        return await comprehensive_sync.sync_account_comprehensive(
+                            channel=channel,
+                            days_back=options.get('days_back', 30),
+                            max_messages_per_chat=options.get('max_messages_per_chat', 100),
+                            connection=connection,
+                            sync_job=sync_job
+                        )
                 
-                # Now execute the full sync implementation
-                try:
-                    # Phase 1: Get conversation count estimate
-                    total_conversations = _estimate_conversation_count_sync(channel, options)
-                    logger.info(f"📊 Estimated {total_conversations} conversations to sync")
-                    
-                    # Update sync job with total estimate
-                    sync_job.progress = {
-                        'conversations_total': total_conversations,
-                        'conversations_processed': 0,
-                        'messages_processed': 0,
-                        'current_phase': 'fetching_conversations'
-                    }
-                    sync_job.save(update_fields=['progress'])
-                    
-                    # Phase 2 & 3: Use comprehensive sync service 
-                    # Use our simplified sync version to avoid async/sync conflicts
-                    sync_job.progress.update({
-                        'current_phase': 'running_comprehensive_sync',
-                        'current_step': 'Starting comprehensive sync service'
-                    })
-                    sync_job.save(update_fields=['progress'])
-                    
-                    # Run simplified comprehensive sync (sync version)
-                    sync_result = _run_comprehensive_sync_simplified(channel, options, user_connection, sync_job)
-                    
-                    # Extract results from comprehensive sync
-                    conversations_synced = [{'conversation_id': f'sync_{i}'} for i in range(sync_result.get('chats_synced', 0))]
-                    messages_synced = sync_result.get('messages_synced', 0)
-                    
-                    # Update sync job progress
-                    sync_job.progress.update({
-                        'conversations_processed': len(conversations_synced),
-                        'conversations_total': len(conversations_synced),
-                        'messages_processed': messages_synced,
-                        'current_phase': 'completed',
-                        'current_step': 'sync_finished'
-                    })
-                    sync_job.save(update_fields=['progress'])
-                    
-                    # Phase 4: Finalize sync job
-                    sync_job.status = SyncJobStatus.COMPLETED
-                    sync_job.completed_at = django_timezone.now()
-                    sync_job.result_summary = {
-                        'conversations_synced': len(conversations_synced),
-                        'messages_synced': messages_synced,
-                        'completed_at': django_timezone.now().isoformat(),
-                        'duration_seconds': (
-                            sync_job.completed_at - sync_job.started_at
-                        ).total_seconds() if sync_job.started_at else 0
-                    }
-                    sync_job.save(update_fields=[
-                        'status', 'completed_at', 'result_summary'
-                    ])
-                    
-                    result = {
-                        'success': True,
-                        'sync_job_id': str(sync_job.id),
-                        'conversations_synced': len(conversations_synced),
-                        'messages_synced': messages_synced,
-                        'channel_id': channel_id,
-                        'task_id': celery_task_id
-                    }
-                    
-                    logger.info(f"✅ Comprehensive sync completed: {result}")
-                    return result
-                    
-                except Exception as sync_error:
-                    logger.error(f"❌ Sync execution failed: {sync_error}")
-                    
-                    # Mark sync job as failed
-                    sync_job.status = SyncJobStatus.FAILED
-                    sync_job.completed_at = django_timezone.now()
-                    sync_job.error_details = {
-                        'error': str(sync_error),
-                        'failed_at': django_timezone.now().isoformat()
-                    }
-                    sync_job.error_count += 1
-                    sync_job.save(update_fields=[
-                        'status', 'completed_at', 'error_details', 'error_count'
-                    ])
-                    
-                    raise sync_error
+                # Run comprehensive sync
+                sync_result = async_to_sync(comprehensive_sync_with_tenant)()
+                
+                # Update sync job with results
+                conversations_synced = sync_result.get('chats_synced', 0)
+                messages_synced = sync_result.get('messages_synced', 0)
+                
+                # Finalize sync job
+                sync_job.status = SyncJobStatus.COMPLETED
+                sync_job.completed_at = django_timezone.now()
+                sync_job.result_summary = {
+                    'conversations_synced': conversations_synced,
+                    'messages_synced': messages_synced,
+                    'completed_at': django_timezone.now().isoformat(),
+                    'duration_seconds': (
+                        sync_job.completed_at - sync_job.started_at
+                    ).total_seconds() if sync_job.started_at else 0
+                }
+                sync_job.save(update_fields=['status', 'completed_at', 'result_summary'])
+                
+                return {
+                    'success': True,
+                    'sync_job_id': str(sync_job.id),
+                    'conversations_synced': conversations_synced,
+                    'messages_synced': messages_synced,
+                    'channel_id': channel_id,
+                    'task_id': task_id
+                }
         
-        return await run_sync_with_tenant_context(task_id)
-    else:
-        logger.error(f"❌ No tenant schema provided!")
-        raise ValueError("No tenant schema provided for background sync task")
+        return await run_sync_with_tenant_context()
+    
+    return await _run_sync()
+
+
+# =========================================================================
+# HELPER FUNCTIONS FOR PAGINATED SYNC (UNUSED IN CURRENT IMPLEMENTATION) 
+# =========================================================================
 
 
 async def _sync_conversations_paginated(

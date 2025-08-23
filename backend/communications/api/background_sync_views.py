@@ -173,8 +173,16 @@ def start_background_sync(request):
                 logger.info(f"🔍 Current DB schema: {getattr(db_connection, 'schema_name', 'unknown')}")
                 logger.info(f"🔍 Has tenant: {hasattr(db_connection, 'tenant')}")
                 if hasattr(db_connection, 'tenant'):
-                    logger.info(f"🔍 Tenant name: {db_connection.tenant.name}")
-                    logger.info(f"🔍 Tenant domain: {db_connection.tenant.domains.first() if db_connection.tenant.domains.exists() else 'No domain'}")
+                    # Handle both real tenant and FakeTenant objects
+                    tenant_name = getattr(db_connection.tenant, 'name', 'Unknown Tenant')
+                    logger.info(f"🔍 Tenant name: {tenant_name}")
+                    
+                    # Check if tenant has domains attribute (real tenant)
+                    if hasattr(db_connection.tenant, 'domains'):
+                        tenant_domain = db_connection.tenant.domains.first() if db_connection.tenant.domains.exists() else 'No domain'
+                    else:
+                        tenant_domain = 'No domain (FakeTenant)'
+                    logger.info(f"🔍 Tenant domain: {tenant_domain}")
                 
                 # Start Celery task
                 task = sync_account_comprehensive_background.delay(

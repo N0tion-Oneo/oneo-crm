@@ -129,7 +129,7 @@ class ComprehensiveSyncService:
             logger.info(f"📱 Getting all chats for {channel.name}")
             chats_data = await client.messaging.get_all_chats(
                 account_id=channel.unipile_account_id,
-                limit=5,  # Start with small number for testing
+                limit=100,  # Start with small number for testing
                 account_type=account_type
             )
             
@@ -332,8 +332,47 @@ class ComprehensiveSyncService:
             
         except Exception as e:
             logger.error(f"❌ Failed to get messages for chat {chat_id}: {e}")
+            logger.error(f"❌ Chat ID: {chat_id}")
+            logger.error(f"❌ Account ID: {account_id}")
+            logger.error(f"❌ Limit: {limit}")
+            logger.error(f"❌ Exception type: {type(e)}")
+            
+            # Check if it's a UnipileConnectionError with more details
+            if hasattr(e, '__dict__'):
+                logger.error(f"❌ Exception attributes: {e.__dict__}")
+            
+            # If it's a 400 error, try with a smaller limit
+            error_message = str(e)
+            if "400" in error_message and limit > 50:
+                logger.info(f"🔄 Retrying with smaller limit for chat {chat_id}")
+                try:
+                    # Retry with much smaller limit
+                    chat_messages_data = await client.messaging.get_all_messages(
+                        chat_id=chat_id,
+                        account_id=account_id,
+                        limit=100,  # Much smaller limit
+                        cursor=None
+                    )
+                    
+                    if chat_messages_data:
+                        messages = chat_messages_data.get('items', [])
+                        logger.info(f"✅ Retry successful: got {len(messages)} messages with smaller limit")
+                        
+                        # Filter out null/invalid messages
+                        valid_messages = []
+                        for i, msg in enumerate(messages):
+                            if msg and isinstance(msg, dict) and msg.get('id'):
+                                valid_messages.append(msg)
+                        
+                        logger.info(f"📨 RETRY RESULT for chat {chat_id}: {len(messages)} raw, {len(valid_messages)} valid messages")
+                        return valid_messages
+                    
+                except Exception as retry_error:
+                    logger.error(f"❌ Retry also failed for chat {chat_id}: {retry_error}")
+            
             import traceback
             logger.error(f"❌ Traceback: {traceback.format_exc()}")
+            logger.warning(f"⚠️ Continuing sync without messages for chat {chat_id}")
             return []
     
     async def _sync_attendees(self, channel: Channel) -> Dict[str, Any]:

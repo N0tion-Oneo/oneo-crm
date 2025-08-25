@@ -238,14 +238,37 @@ class UnipileService:
                 'processed_count': 0
             }
     
-    async def verify_chat_read_status(self, account_id: str, chat_id: str) -> Dict[str, Any]:
+    async def verify_chat_read_status(self, account_id: str, chat_id: str, tenant=None) -> Dict[str, Any]:
         """Verify a chat's read status by fetching it from UniPile API"""
         from django.db import connection
+        from communications.models import TenantUniPileConfig
+        from asgiref.sync import sync_to_async
         
         try:
-            tenant = connection.tenant
-            tenant_config = tenant.unipile_config
-            client = self.get_client(tenant_config.dsn, tenant_config.get_access_token())
+            # Use passed tenant or try to get from connection
+            if tenant is None:
+                tenant = connection.tenant
+            
+            # Get tenant config properly
+            if hasattr(tenant, 'unipile_config'):
+                tenant_config = tenant.unipile_config
+                client = self.get_client(tenant_config.dsn, tenant_config.get_access_token())
+            else:
+                # Use sync_to_async for database operations in async context
+                @sync_to_async
+                def get_tenant_config_sync():
+                    from django_tenants.utils import schema_context
+                    with schema_context(tenant.schema_name if hasattr(tenant, 'schema_name') else 'public'):
+                        config = TenantUniPileConfig.get_or_create_for_tenant()
+                        if config.is_configured():
+                            return config.get_api_credentials()
+                        return None
+                
+                credentials = await get_tenant_config_sync()
+                if credentials:
+                    client = self.get_client(credentials['dsn'], credentials['api_key'])
+                else:
+                    client = self.get_client()
             
             # Fetch the specific chat to check its unread count
             logger.info(f"🔍 Verifying read status for chat {chat_id}")
@@ -276,25 +299,39 @@ class UnipileService:
                 'error': str(e)
             }
 
-    async def mark_chat_as_read(self, account_id: str, chat_id: str) -> Dict[str, Any]:
+    async def mark_chat_as_read(self, account_id: str, chat_id: str, tenant=None) -> Dict[str, Any]:
         """Mark a WhatsApp chat as read using UniPile API with verification"""
         from django.db import connection
+        from asgiref.sync import sync_to_async
         
         try:
             # Get tenant config and client using correct pattern
             from communications.models import TenantUniPileConfig
             
-            try:
-                tenant_config = TenantUniPileConfig.get_or_create_for_tenant()
-                if tenant_config.is_configured():
-                    # Get credentials from tenant config (which delegates to global settings)
-                    credentials = tenant_config.get_api_credentials()
+            # Use passed tenant or try to get from connection
+            if tenant is None:
+                tenant = connection.tenant
+            
+            # Get tenant config with proper async handling
+            if hasattr(tenant, 'schema_name'):
+                @sync_to_async
+                def get_tenant_config_sync():
+                    from django_tenants.utils import schema_context
+                    with schema_context(tenant.schema_name):
+                        config = TenantUniPileConfig.get_or_create_for_tenant()
+                        if config.is_configured():
+                            # Get credentials from tenant config (which delegates to global settings)
+                            return config.get_api_credentials()
+                        return None
+                
+                credentials = await get_tenant_config_sync()
+                if credentials:
                     client = self.get_client(credentials['dsn'], credentials['api_key'])
                 else:
                     # Fallback to global unipile config
                     client = self.get_client()
-            except Exception:
-                # If tenant config fails, use global config
+            else:
+                # If no proper tenant, use global config
                 client = self.get_client()
             
             # Enhanced logging for debugging
@@ -302,54 +339,37 @@ class UnipileService:
             logger.info(f"🔍 DEBUG: Chat ID: {chat_id}")
             logger.info(f"🔍 DEBUG: Account ID: {account_id}")
             
-            # Get initial read status for comparison
-            initial_status = await self.verify_chat_read_status(account_id, chat_id)
-            initial_unread = initial_status.get('unread_count', 0) if initial_status.get('success') else 'unknown'
-            logger.info(f"📊 Initial unread count: {initial_unread}")
-            
             # Prepare request data with correct UniPile format
+            # Note: account_id is NOT part of the request body for PATCH /chats/{chat_id}
+            # It's only used to identify which connection to use
             request_data = {
                 'action': 'setReadStatus',
                 'value': True
             }
-            if account_id:
-                request_data['account_id'] = account_id
             logger.info(f"🔍 DEBUG: Request data: {request_data}")
             logger.info(f"🔍 DEBUG: Making PATCH request to: chats/{chat_id}")
+            logger.info(f"🔍 DEBUG: Using client: {client}")
             
             # Use UniPile PATCH endpoint to mark chat as read
             response = await client.request.patch(f'chats/{chat_id}', data=request_data)
+            logger.info(f"📡 Raw API response: {response}")
             
             # Log the full response for debugging
             logger.info(f"🔍 DEBUG: UniPile API Response: {response}")
             logger.info(f"🔍 DEBUG: Response type: {type(response)}")
             
-            # Verify the change by fetching the chat again
-            await asyncio.sleep(0.5)  # Small delay to allow API to process
-            verification = await self.verify_chat_read_status(account_id, chat_id)
-            final_unread = verification.get('unread_count', 0) if verification.get('success') else 'unknown'
-            
-            logger.info(f"📊 Final unread count: {final_unread}")
-            logger.info(f"🔄 Change detected: {initial_unread} → {final_unread}")
-            
             # Check if the change was successful
             if isinstance(response, dict):
-                # Determine success based on both API response and verification
-                api_success = response.get('success', True)  # Assume success if not explicitly false
-                verification_success = verification.get('success') and verification.get('unread_count', 0) == 0
+                # UniPile returns {'object': 'ChatPatched'} on success
+                # Also accept if there's no error field (some providers might have different responses)
+                api_success = response.get('object') == 'ChatPatched' or (not response.get('error') and not response.get('status_code'))
                 
                 if api_success:
                     logger.info(f"✅ UniPile API call succeeded for chat {chat_id}")
                     return {
                         'success': True,
                         'chat_id': chat_id,
-                        'response': response,
-                        'verification': {
-                            'initial_unread': initial_unread,
-                            'final_unread': final_unread,
-                            'change_detected': initial_unread != final_unread,
-                            'fully_read': verification_success
-                        }
+                        'response': response
                     }
                 else:
                     logger.error(f"❌ UniPile API returned error for chat {chat_id}: {response}")
@@ -357,20 +377,15 @@ class UnipileService:
                         'success': False,
                         'chat_id': chat_id,
                         'error': response.get('error', 'Unknown error'),
-                        'response': response,
-                        'verification': verification
+                        'response': response
                     }
             else:
+                # Non-dict response, treat as success (UniPile might return simple confirmation)
                 logger.info(f"✅ UniPile API returned non-dict response (assuming success): {response}")
                 return {
                     'success': True,
                     'chat_id': chat_id,
-                    'response': response,
-                    'verification': {
-                        'initial_unread': initial_unread,
-                        'final_unread': final_unread,
-                        'change_detected': initial_unread != final_unread
-                    }
+                    'response': response
                 }
             
         except Exception as e:

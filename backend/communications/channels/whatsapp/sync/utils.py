@@ -1,0 +1,255 @@
+"""
+Sync Utilities and Helper Classes
+"""
+import logging
+from typing import Dict, Any, Optional
+from django.utils import timezone
+from django.db import transaction
+from communications.models import (
+    SyncJob, SyncJobProgress, SyncJobStatus, SyncJobType
+)
+
+logger = logging.getLogger(__name__)
+
+
+class SyncJobManager:
+    """Manages sync job lifecycle"""
+    
+    @staticmethod
+    def create_sync_job(
+        channel_id: str,
+        user_id: str,
+        sync_type: str,
+        options: Dict[str, Any],
+        task_id: Optional[str] = None
+    ) -> SyncJob:
+        """Create a new sync job"""
+        sync_job = SyncJob.objects.create(
+            channel_id=channel_id,
+            user_id=user_id,
+            job_type=sync_type,
+            status=SyncJobStatus.RUNNING,
+            celery_task_id=task_id or 'manual_sync',
+            sync_options=options
+        )
+        sync_job.started_at = timezone.now()
+        sync_job.save(update_fields=['started_at'])
+        return sync_job
+    
+    @staticmethod
+    def update_sync_job(
+        sync_job: SyncJob,
+        status: Optional[str] = None,
+        stats: Optional[Dict[str, Any]] = None,
+        error: Optional[str] = None
+    ) -> None:
+        """Update sync job status and stats"""
+        if status:
+            sync_job.status = status
+        
+        if stats:
+            sync_job.result_summary = stats
+        
+        if error:
+            if not sync_job.error_details:
+                sync_job.error_details = []
+            sync_job.error_details.append({
+                'error': error,
+                'timestamp': timezone.now().isoformat()
+            })
+            sync_job.error_count = len(sync_job.error_details)
+            sync_job.status = SyncJobStatus.FAILED
+        
+        if status in [SyncJobStatus.COMPLETED, SyncJobStatus.FAILED]:
+            sync_job.completed_at = timezone.now()
+        
+        sync_job.save()
+    
+    @staticmethod
+    def mark_sync_job_failed(sync_job_id: str, error_message: str) -> None:
+        """Mark a sync job as failed"""
+        try:
+            sync_job = SyncJob.objects.get(id=sync_job_id)
+            SyncJobManager.update_sync_job(
+                sync_job, 
+                status=SyncJobStatus.FAILED,
+                error=error_message
+            )
+        except SyncJob.DoesNotExist:
+            logger.error(f"Sync job {sync_job_id} not found")
+
+
+class SyncProgressTracker:
+    """Tracks and reports sync progress"""
+    
+    def __init__(self, sync_job: Optional[SyncJob] = None):
+        self.sync_job = sync_job
+        self.stats = {
+            'conversations_synced': 0,
+            'messages_synced': 0,
+            'attendees_synced': 0,
+            'errors': []
+        }
+        # Track last update to throttle database writes
+        self.last_db_update = None
+        self.update_frequency_seconds = 5  # Only update DB every 5 seconds
+        self.last_percentage = 0
+        self.percentage_threshold = 10  # Update every 10% progress
+    
+    def update_progress(
+        self,
+        current_item: int,
+        total_items: int,
+        item_type: str,
+        details: Optional[str] = None
+    ) -> None:
+        """Update sync progress with throttling"""
+        if not self.sync_job:
+            return
+        
+        try:
+            percentage = round((current_item / total_items) * 100, 2) if total_items > 0 else 0
+            
+            # Determine if we should update the database
+            should_update_db = False
+            now = timezone.now()
+            
+            # Update if:
+            # 1. First update (no last update)
+            # 2. Completed (100%)
+            # 3. Significant percentage change (>10%)
+            # 4. More than 5 seconds since last update
+            if not self.last_db_update:
+                should_update_db = True
+            elif current_item >= total_items:  # Completed
+                should_update_db = True
+            elif abs(percentage - self.last_percentage) >= self.percentage_threshold:
+                should_update_db = True
+            elif (now - self.last_db_update).total_seconds() >= self.update_frequency_seconds:
+                should_update_db = True
+            
+            # Always update internal state
+            if not self.sync_job.progress:
+                self.sync_job.progress = {}
+            
+            self.sync_job.progress.update({
+                'current_phase': item_type,
+                'current_item': current_item,
+                'total_items': total_items,
+                'percentage': percentage,
+                'last_update': now.isoformat()
+            })
+            
+            # Also update result_summary for backward compatibility
+            if not self.sync_job.result_summary:
+                self.sync_job.result_summary = {}
+            self.sync_job.result_summary['current_progress'] = {
+                'stage': item_type,
+                'current': current_item,
+                'total': total_items,
+                'percentage': percentage
+            }
+            
+            # Only save to database if needed
+            if should_update_db:
+                # Check if this progress entry exists
+                existing_progress = SyncJobProgress.objects.filter(
+                    sync_job=self.sync_job,
+                    phase_name=item_type
+                ).first()
+                
+                # Create or update progress entry
+                progress, created = SyncJobProgress.objects.update_or_create(
+                    sync_job=self.sync_job,
+                    phase_name=item_type,
+                    defaults={
+                        'step_name': details or f"Processing {item_type}",
+                        'items_processed': current_item,
+                        'items_total': total_items,
+                        'step_status': 'in_progress',
+                        'started_at': timezone.now() if not existing_progress else existing_progress.started_at,
+                        'completed_at': timezone.now() if current_item >= total_items else None
+                    }
+                )
+                
+                # Update status to RUNNING if it's still PENDING
+                if self.sync_job.status == SyncJobStatus.PENDING:
+                    self.sync_job.status = SyncJobStatus.RUNNING
+                    self.sync_job.save(update_fields=['status', 'progress', 'result_summary', 'last_progress_update'])
+                else:
+                    self.sync_job.save(update_fields=['progress', 'result_summary', 'last_progress_update'])
+                
+                # Update tracking variables
+                self.last_db_update = now
+                self.last_percentage = percentage
+                
+                # Log significant updates only
+                if percentage == 100 or abs(percentage - self.last_percentage) >= 25:
+                    logger.info(f"📊 Progress: {item_type} - {current_item}/{total_items} ({percentage}%)")
+                else:
+                    logger.debug(f"📊 Progress: {item_type} - {current_item}/{total_items} ({percentage}%)")
+            else:
+                # Log at TRACE level (if available) or skip logging for minor updates
+                pass
+            
+        except Exception as e:
+            logger.error(f"Failed to update progress: {e}")
+    
+    def increment_stat(self, stat_name: str, count: int = 1) -> None:
+        """Increment a statistic counter"""
+        if stat_name in self.stats and isinstance(self.stats[stat_name], (int, float)):
+            self.stats[stat_name] += count
+    
+    def add_error(self, error: str) -> None:
+        """Add an error to the error list"""
+        self.stats['errors'].append({
+            'error': str(error),
+            'timestamp': timezone.now().isoformat()
+        })
+    
+    def get_stats(self) -> Dict[str, Any]:
+        """Get current statistics"""
+        return self.stats.copy()
+    
+    def finalize(self, status: str = SyncJobStatus.COMPLETED) -> None:
+        """Finalize the sync job with accumulated stats"""
+        if self.sync_job:
+            SyncJobManager.update_sync_job(
+                self.sync_job,
+                status=status,
+                stats=self.stats
+            )
+
+
+class RateLimiter:
+    """Simple rate limiter for API calls"""
+    
+    def __init__(self, max_calls: int = 100, time_window: int = 60):
+        self.max_calls = max_calls
+        self.time_window = time_window
+        self.calls = []
+    
+    def can_proceed(self) -> bool:
+        """Check if we can make another API call"""
+        now = timezone.now()
+        # Remove old calls outside the time window
+        self.calls = [
+            call_time for call_time in self.calls
+            if (now - call_time).total_seconds() < self.time_window
+        ]
+        
+        if len(self.calls) < self.max_calls:
+            self.calls.append(now)
+            return True
+        return False
+    
+    def wait_time(self) -> float:
+        """Calculate wait time until next call is allowed"""
+        if len(self.calls) < self.max_calls:
+            return 0
+        
+        oldest_call = min(self.calls)
+        now = timezone.now()
+        elapsed = (now - oldest_call).total_seconds()
+        wait = self.time_window - elapsed
+        return max(0, wait)

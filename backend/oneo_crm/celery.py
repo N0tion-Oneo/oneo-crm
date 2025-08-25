@@ -41,23 +41,26 @@ app.conf.beat_schedule = {
     },
     
     # Communication system periodic sync (backup to webhooks)
-    'communications-periodic-sync': {
-        'task': 'communications.tasks.periodic_message_sync_task',
-        'schedule': 300.0,  # Every 5 minutes
-    },
+    # DISABLED: These tasks are placeholders and cause unnecessary load
+    # 'communications-periodic-sync': {
+    #     'task': 'communications.tasks.periodic_message_sync_task',
+    #     'schedule': 300.0,  # Every 5 minutes
+    # },
     
     # Generate daily communication analytics
-    'communications-daily-analytics': {
-        'task': 'communications.tasks.generate_daily_analytics',
-        'schedule': 60 * 60 * 24,  # Daily
-        'kwargs': {'date': None}  # Use current date
-    },
+    # DISABLED: Not implemented yet
+    # 'communications-daily-analytics': {
+    #     'task': 'communications.tasks.generate_daily_analytics',
+    #     'schedule': 60 * 60 * 24,  # Daily
+    #     'kwargs': {'date': None}  # Use current date
+    # },
     
     # Automatic contact resolution for unconnected conversations
-    'automatic-contact-resolution': {
-        'task': 'communications.tasks.periodic_contact_resolution_task',
-        'schedule': 1800.0,  # Every 30 minutes
-    }
+    # DISABLED: Not implemented yet, causes unnecessary processing
+    # 'automatic-contact-resolution': {
+    #     'task': 'communications.tasks.periodic_contact_resolution_task',
+    #     'schedule': 1800.0,  # Every 30 minutes
+    # }
 }
 
 # Celery configuration
@@ -115,7 +118,11 @@ app.conf.update(
         'communications.tasks.generate_daily_analytics': {'queue': 'analytics'},
         'communications.tasks.initial_sync_new_connection_task': {'queue': 'communications'},
         
-        # Background sync tasks
+        # Background sync tasks - Updated to match refactored structure
+        'communications.channels.whatsapp.sync.tasks.sync_account_comprehensive_background': {'queue': 'background_sync'},
+        'communications.channels.whatsapp.sync.tasks.sync_chat_specific_background': {'queue': 'background_sync'},
+        'communications.channels.whatsapp.sync.tasks.cleanup_old_sync_jobs': {'queue': 'maintenance'},
+        # Legacy routing for backwards compatibility
         'communications.tasks_background_sync.sync_account_comprehensive_background': {'queue': 'background_sync'},
         'communications.tasks_background_sync.sync_chat_specific_background': {'queue': 'background_sync'},
         

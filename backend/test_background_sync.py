@@ -1,343 +1,183 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 """
-Background Sync System Test
-Quick test to verify the background sync implementation is working correctly
+Test WhatsApp background sync with centralized account identifier
 """
 import os
 import sys
 import django
 import asyncio
-from datetime import datetime
 
-# Setup Django environment
+# Setup Django
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'oneo_crm.settings')
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-
 django.setup()
 
-from communications.models import (
-    SyncJob, SyncJobProgress, Channel, UserChannelConnection,
-    SyncJobStatus, SyncJobType
-)
-from communications.tasks_background_sync import (
-    sync_account_comprehensive_background,
-    sync_chat_specific_background
-)
-from django.contrib.auth import get_user_model
-from django.utils import timezone
 from django_tenants.utils import schema_context
+from tenants.models import Tenant
+from authentication.models import CustomUser
+from communications.models import Channel, UserChannelConnection, Message, ChatAttendee, Conversation
+from communications.channels.whatsapp.background_sync import sync_account_comprehensive_background
 
+def clear_existing_data(channel):
+    """Clear existing data for clean test"""
+    print("🧹 Clearing existing data...")
+    Message.objects.filter(channel=channel).delete()
+    ChatAttendee.objects.filter(channel=channel).delete()
+    Conversation.objects.filter(channel=channel).delete()
+    print("✅ Data cleared")
 
-def test_sync_models():
-    """Test that sync models can be created and queried"""
-    print("🧪 Testing SyncJob and SyncJobProgress models...")
+def check_results(channel):
+    """Check sync results"""
+    print("\n📊 Sync Results:")
     
-    try:
-        User = get_user_model()
-        # Get or create test user
-        user, created = User.objects.get_or_create(
-            username='test_sync_user',
-            defaults={'email': 'test_sync@example.com'}
-        )
-        if created:
-            print(f"✅ Created test user: {user.username}")
-        else:
-            print(f"✅ Using existing test user: {user.username}")
-        
-        # Get or create test channel
-        channel, created = Channel.objects.get_or_create(
-            name='Test WhatsApp Channel',
-            channel_type='whatsapp',
-            defaults={
-                'unipile_account_id': 'test_account_123',
-                'auth_status': 'authenticated',
-                'is_active': True,
-                'created_by': user
-            }
-        )
-        if created:
-            print(f"✅ Created test channel: {channel.name}")
-        else:
-            print(f"✅ Using existing test channel: {channel.name}")
-        
-        # Create test sync job
-        sync_job = SyncJob.objects.create(
-            user=user,
-            channel=channel,
-            job_type=SyncJobType.COMPREHENSIVE,
-            sync_options={'test': True, 'days_back': 30},
-            status=SyncJobStatus.PENDING,
-            celery_task_id='test_task_123'
-        )
-        print(f"✅ Created sync job: {sync_job.id}")
-        
-        # Test progress tracking
-        sync_job.update_progress(
-            conversations_total=100,
-            conversations_processed=25,
-            messages_processed=150,
-            current_phase='testing'
-        )
-        print(f"✅ Updated progress: {sync_job.completion_percentage}% complete")
-        
-        # Create progress entry
-        progress_entry = SyncJobProgress.objects.create(
-            sync_job=sync_job,
-            phase_name='testing',
-            step_name='model_test',
-            items_total=10,
-            items_processed=5
-        )
-        progress_entry.mark_completed(10)
-        print(f"✅ Created and completed progress entry: {progress_entry}")
-        
-        # Test completion
-        sync_job.status = SyncJobStatus.COMPLETED
-        sync_job.completed_at = timezone.now()
-        sync_job.result_summary = {
-            'conversations_synced': 100,
-            'messages_synced': 500,
-            'test_completed': True
-        }
-        sync_job.save()
-        print(f"✅ Marked sync job as completed")
-        
-        # Query tests
-        active_jobs = SyncJob.objects.filter(user=user, status=SyncJobStatus.COMPLETED).count()
-        print(f"✅ Found {active_jobs} completed sync jobs")
-        
-        progress_count = SyncJobProgress.objects.filter(sync_job=sync_job).count()
-        print(f"✅ Found {progress_count} progress entries")
-        
-        print("🎉 Sync models test completed successfully!")
-        return True
-        
-    except Exception as e:
-        print(f"❌ Sync models test failed: {e}")
-        import traceback
-        traceback.print_exc()
-        return False
-
-
-def test_sync_api_endpoints():
-    """Test that sync API endpoints are accessible"""
-    print("🧪 Testing sync API endpoints...")
+    # Count conversations
+    conversations = Conversation.objects.filter(channel=channel)
+    print(f"  Conversations: {conversations.count()}")
     
-    try:
-        from django.test import Client
-        from django.contrib.auth import get_user_model
-        
-        User = get_user_model()
-        client = Client()
-        
-        # Get test user
-        user = User.objects.filter(username='test_sync_user').first()
-        if not user:
-            print("❌ Test user not found - run model test first")
-            return False
-        
-        # Force login
-        client.force_login(user)
-        
-        # Test get sync jobs endpoint
-        response = client.get('/api/v1/communications/sync/jobs/')
-        if response.status_code == 200:
-            data = response.json()
-            print(f"✅ Get sync jobs: {response.status_code}, found {data.get('count', 0)} jobs")
-        else:
-            print(f"⚠️ Get sync jobs: {response.status_code}")
-        
-        # Test get active sync jobs endpoint
-        response = client.get('/api/v1/communications/sync/jobs/active/')
-        if response.status_code == 200:
-            data = response.json()
-            print(f"✅ Get active sync jobs: {response.status_code}, found {data.get('count', 0)} active jobs")
-        else:
-            print(f"⚠️ Get active sync jobs: {response.status_code}")
-        
-        print("🎉 API endpoints test completed!")
-        return True
-        
-    except Exception as e:
-        print(f"❌ API endpoints test failed: {e}")
-        import traceback
-        traceback.print_exc()
-        return False
-
-
-def test_celery_task_imports():
-    """Test that Celery tasks can be imported and have correct signatures"""
-    print("🧪 Testing Celery task imports...")
+    # Count attendees
+    attendees = ChatAttendee.objects.filter(channel=channel)
+    owner_attendees = attendees.filter(is_self=True)
+    customer_attendees = attendees.filter(is_self=False)
     
-    try:
-        # Test task imports
-        from communications.tasks_background_sync import (
-            sync_account_comprehensive_background,
-            sync_chat_specific_background
-        )
-        print("✅ Successfully imported background sync tasks")
-        
-        # Test task signatures
-        comprehensive_task = sync_account_comprehensive_background
-        chat_task = sync_chat_specific_background
-        
-        print(f"✅ Comprehensive sync task: {comprehensive_task.name}")
-        print(f"✅ Chat-specific sync task: {chat_task.name}")
-        
-        # Test that tasks are registered in Celery
-        from celery import current_app
-        registered_tasks = current_app.tasks
-        
-        if comprehensive_task.name in registered_tasks:
-            print("✅ Comprehensive sync task registered in Celery")
-        else:
-            print("⚠️ Comprehensive sync task not found in Celery registry")
-        
-        if chat_task.name in registered_tasks:
-            print("✅ Chat-specific sync task registered in Celery")
-        else:
-            print("⚠️ Chat-specific sync task not found in Celery registry")
-        
-        print("🎉 Celery task import test completed!")
-        return True
-        
-    except Exception as e:
-        print(f"❌ Celery task import test failed: {e}")
-        import traceback
-        traceback.print_exc()
-        return False
-
-
-def test_unipile_client_pagination():
-    """Test UniPile client pagination methods"""
-    print("🧪 Testing UniPile client pagination...")
+    print(f"  Total Attendees: {attendees.count()}")
+    print(f"    - Business Owners (is_self=True): {owner_attendees.count()}")
+    print(f"    - Customers (is_self=False): {customer_attendees.count()}")
     
-    try:
-        from communications.unipile_sdk import unipile_service
-        
-        client = unipile_service.get_client()
-        messaging_client = client.messaging
-        
-        # Test that pagination methods exist
-        methods_to_test = [
-            'get_all_chats',
-            'get_all_messages',
-            'paginate_all_chats',
-            'paginate_all_messages',
-            'get_chats_batch',
-            'get_messages_batch'
-        ]
-        
-        for method_name in methods_to_test:
-            if hasattr(messaging_client, method_name):
-                method = getattr(messaging_client, method_name)
-                print(f"✅ Found pagination method: {method_name}")
-                
-                # Check if it's callable
-                if callable(method):
-                    print(f"✅ Method {method_name} is callable")
-                else:
-                    print(f"⚠️ Method {method_name} is not callable")
-            else:
-                print(f"❌ Missing pagination method: {method_name}")
-        
-        print("🎉 UniPile client pagination test completed!")
-        return True
-        
-    except Exception as e:
-        print(f"❌ UniPile client pagination test failed: {e}")
-        import traceback
-        traceback.print_exc()
-        return False
-
-
-def test_websocket_consumers():
-    """Test that WebSocket consumers can be imported"""
-    print("🧪 Testing WebSocket consumers...")
+    # Show some attendee examples
+    if owner_attendees.exists():
+        owner = owner_attendees.first()
+        print(f"    - Owner example: {owner.name} ({owner.provider_id})")
     
-    try:
-        from communications.consumers_sync import (
-            SyncProgressConsumer,
-            SyncOverviewConsumer
-        )
-        print("✅ Successfully imported sync WebSocket consumers")
+    if customer_attendees.exists():
+        customer = customer_attendees.first()
+        print(f"    - Customer example: {customer.name} ({customer.provider_id})")
+    
+    # Count messages
+    messages = Message.objects.filter(channel=channel)
+    outbound = messages.filter(direction='out')
+    inbound = messages.filter(direction='in')
+    
+    print(f"  Total Messages: {messages.count()}")
+    print(f"    - Outbound (from business): {outbound.count()}")
+    print(f"    - Inbound (from customers): {inbound.count()}")
+    
+    # Show recent messages with direction
+    print("\n📨 Recent Messages (last 10):")
+    recent = messages.select_related('sender').order_by('-created_at')[:10]
+    
+    for msg in recent:
+        sender_info = "Unknown"
+        is_self = False
         
-        # Test consumer inheritance
-        from channels.generic.websocket import AsyncJsonWebsocketConsumer
+        if msg.sender:
+            sender_info = msg.sender.name
+            is_self = msg.sender.is_self
+        elif msg.metadata:
+            sender_info = msg.metadata.get('attendee_name', 'Unknown')
+            is_self = msg.metadata.get('is_self', False)
         
-        if issubclass(SyncProgressConsumer, AsyncJsonWebsocketConsumer):
-            print("✅ SyncProgressConsumer properly inherits from AsyncJsonWebsocketConsumer")
-        else:
-            print("⚠️ SyncProgressConsumer inheritance issue")
-        
-        if issubclass(SyncOverviewConsumer, AsyncJsonWebsocketConsumer):
-            print("✅ SyncOverviewConsumer properly inherits from AsyncJsonWebsocketConsumer")
-        else:
-            print("⚠️ SyncOverviewConsumer inheritance issue")
-        
-        # Test routing import
-        from communications.routing import websocket_urlpatterns
-        print(f"✅ WebSocket routing loaded with {len(websocket_urlpatterns)} patterns")
-        
-        print("🎉 WebSocket consumers test completed!")
-        return True
-        
-    except Exception as e:
-        print(f"❌ WebSocket consumers test failed: {e}")
-        import traceback
-        traceback.print_exc()
-        return False
-
+        content = msg.content[:50] if msg.content else "[No content]"
+        print(f"  [{msg.direction:3}] {sender_info} (is_self={is_self}): {content}...")
+    
+    return {
+        'conversations': conversations.count(),
+        'attendees': attendees.count(),
+        'messages': messages.count(),
+        'outbound': outbound.count(),
+        'inbound': inbound.count()
+    }
 
 def main():
-    """Run all background sync tests"""
-    print("🚀 Starting Background Sync System Tests")
-    print("=" * 50)
+    """Main test function"""
     
-    tests = [
-        ("Sync Models", test_sync_models),
-        ("API Endpoints", test_sync_api_endpoints),
-        ("Celery Tasks", test_celery_task_imports),
-        ("UniPile Pagination", test_unipile_client_pagination),
-        ("WebSocket Consumers", test_websocket_consumers),
-    ]
+    # Switch to oneotalent schema
+    tenant = Tenant.objects.get(schema_name='oneotalent')
     
-    results = []
-    
-    for test_name, test_func in tests:
-        print(f"\n📋 Running {test_name} Test...")
-        print("-" * 30)
+    with schema_context(tenant.schema_name):
+        print(f"\n🔍 Testing WhatsApp Background Sync for tenant: {tenant.name}")
         
-        success = test_func()
-        results.append((test_name, success))
+        # Get test user
+        user = CustomUser.objects.get(email='josh@oneodigital.com')
+        print(f"✅ User: {user.email}")
         
-        if success:
-            print(f"✅ {test_name} Test: PASSED")
-        else:
-            print(f"❌ {test_name} Test: FAILED")
-    
-    # Summary
-    print("\n" + "=" * 50)
-    print("🏁 TEST SUMMARY")
-    print("=" * 50)
-    
-    passed = sum(1 for _, success in results if success)
-    total = len(results)
-    
-    for test_name, success in results:
-        status = "✅ PASSED" if success else "❌ FAILED"
-        print(f"{test_name:20} {status}")
-    
-    print(f"\nTotal: {passed}/{total} tests passed ({int(passed/total*100)}%)")
-    
-    if passed == total:
-        print("🎉 ALL TESTS PASSED! Background sync system is ready.")
-        return True
-    else:
-        print("⚠️ Some tests failed. Check the output above for details.")
-        return False
+        # Get WhatsApp channel that matches user's connection
+        # First get the user's WhatsApp connection
+        user_connection = UserChannelConnection.objects.filter(
+            user=user,
+            channel_type='whatsapp'
+        ).first()
+        
+        if not user_connection:
+            print("❌ No WhatsApp connection found for user")
+            return
+        
+        # Then get the channel that matches this connection
+        channel = Channel.objects.filter(
+            channel_type='whatsapp',
+            unipile_account_id=user_connection.unipile_account_id
+        ).first()
+        
+        if not channel:
+            print("❌ No WhatsApp channel found matching user connection")
+            print(f"   Looking for account ID: {user_connection.unipile_account_id}")
+            return
+        print(f"✅ Channel: {channel.name} ({channel.id})")
+        
+        # Use the connection we already found
+        connection = user_connection
+        account_identifier = connection.connection_config.get('phone_number')
+        print(f"✅ Connection found with account: {account_identifier}")
+        
+        # Clear existing data for clean test
+        clear_existing_data(channel)
+        
+        # Trigger background sync
+        print("\n🚀 Triggering background sync...")
+        
+        try:
+            result = sync_account_comprehensive_background.delay(
+                str(channel.id),
+                str(user.id),
+                {
+                    'force_full_sync': True,
+                    'sync_days': 30,
+                    'conversations_per_batch': 10,
+                    'messages_per_batch': 50
+                }
+            )
+            print(f"✅ Sync task triggered: {result.id}")
+            
+            # Wait for sync to complete (with timeout)
+            print("⏳ Waiting for sync to process (10 seconds)...")
+            import time
+            time.sleep(10)
+            
+            # Check results
+            results = check_results(channel)
+            
+            # Verify detection is working
+            print("\n🔍 Detection Verification:")
+            
+            if results['attendees'] > 0:
+                owner_count = ChatAttendee.objects.filter(channel=channel, is_self=True).count()
+                if owner_count > 0:
+                    print("✅ Account owner detection working (found business attendees)")
+                else:
+                    print("⚠️ No business attendees detected - check account identifier")
+            
+            if results['messages'] > 0:
+                if results['outbound'] > 0 and results['inbound'] > 0:
+                    print("✅ Message direction detection working (found both directions)")
+                elif results['outbound'] == 0:
+                    print("⚠️ No outbound messages detected - all marked as inbound")
+                elif results['inbound'] == 0:
+                    print("⚠️ No inbound messages detected - all marked as outbound")
+            
+            print("\n✅ Background sync test complete!")
+            
+        except Exception as e:
+            print(f"❌ Error triggering sync: {e}")
+            import traceback
+            traceback.print_exc()
 
-
-if __name__ == '__main__':
-    success = main()
-    sys.exit(0 if success else 1)
+if __name__ == "__main__":
+    main()

@@ -80,9 +80,8 @@ class UnipileMessagingClient:
             if chat_id:
                 # For specific chat: use /api/v1/chats/{chat_id}/messages
                 endpoint = f'chats/{chat_id}/messages'
-                # Don't include chat_id in params when it's in the URL path
-                if account_id:
-                    params['account_id'] = account_id
+                # Don't include account_id in params when chat_id is in the URL path
+                # The UniPile API doesn't accept account_id for chat-specific endpoints
             else:
                 # For all messages across chats: use /api/v1/messages
                 endpoint = 'messages'
@@ -95,6 +94,9 @@ class UnipileMessagingClient:
                 params['since'] = since
             if sender_id:
                 params['sender_id'] = sender_id
+            
+            # Debug logging for 400 errors
+            logger.debug(f"Getting messages - endpoint: {endpoint}, params: {params}")
                 
             response = await self.client._make_request('GET', endpoint, params=params)
             return response
@@ -233,6 +235,36 @@ class UnipileMessagingClient:
             return response
         except Exception as e:
             logger.error(f"Failed to get attendees: {e}")
+            raise
+    
+    async def get_attendees_from_chat(
+        self, 
+        chat_id: str,
+        cursor: Optional[str] = None,
+        limit: int = 50
+    ) -> Dict[str, Any]:
+        """Get attendees for a specific chat
+        
+        Args:
+            chat_id: The ID of the chat to get attendees for
+            cursor: Optional pagination cursor
+            limit: Number of attendees to return (default 50)
+            
+        Returns:
+            Dict containing attendees list and pagination info
+        """
+        try:
+            params = {}
+            if cursor:
+                params['cursor'] = cursor
+            if limit:
+                params['limit'] = limit
+                
+            # Endpoint per Unipile API docs: GET /api/v1/chats/{chat_id}/attendees
+            response = await self.client._make_request('GET', f'chats/{chat_id}/attendees', params=params)
+            return response
+        except Exception as e:
+            logger.error(f"Failed to get attendees for chat {chat_id}: {e}")
             raise
     
     # =========================================================================

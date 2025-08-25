@@ -498,15 +498,28 @@ def download_attachment(request, message_id, attachment_id):
         # Get the message to find the UniPile account information
         # Try both internal ID and external_message_id to handle different message sources
         message = None
+        
+        # Check if message_id looks like a UUID
+        import uuid
+        is_uuid = True
         try:
-            # First try as internal database ID
-            message = Message.objects.select_related('channel').get(id=message_id)
-            logger.info(f"📥 Found message by internal ID: {message_id}")
-            logger.info(f"📥 Message external_message_id: {message.external_message_id}")
-            logger.info(f"📥 Message content preview: '{message.content[:50]}{'...' if len(message.content) > 50 else ''}'")
-        except Message.DoesNotExist:
+            uuid.UUID(message_id)
+        except (ValueError, TypeError):
+            is_uuid = False
+        
+        if is_uuid:
+            # Try as internal database ID first
             try:
-                # Then try as external UniPile message ID
+                message = Message.objects.select_related('channel').get(id=message_id)
+                logger.info(f"📥 Found message by internal UUID: {message_id}")
+                logger.info(f"📥 Message external_message_id: {message.external_message_id}")
+                logger.info(f"📥 Message content preview: '{message.content[:50]}{'...' if len(message.content) > 50 else ''}'")
+            except Message.DoesNotExist:
+                pass
+        
+        # If not found or not a UUID, try as external message ID
+        if not message:
+            try:
                 message = Message.objects.select_related('channel').get(external_message_id=message_id)
                 logger.info(f"📥 Found message by external ID: {message_id}")
                 logger.info(f"📥 Message internal ID: {message.id}")
@@ -653,9 +666,12 @@ def download_attachment(request, message_id, attachment_id):
             # Fallback to processed attachments metadata if UniPile data not available
             if not attachment_metadata and message.metadata and 'attachments' in message.metadata:
                 logger.info(f"📥 Falling back to processed attachments metadata")
+                logger.info(f"📥 Looking for attachment_id: {attachment_id}")
                 for i, att in enumerate(message.metadata['attachments']):
-                    logger.info(f"📥 Processed attachment {i}: {att}")
-                    if att.get('id') == attachment_id:
+                    # Check both 'id' and 'attachment_id' fields for compatibility
+                    att_id = att.get('id') or att.get('attachment_id')
+                    logger.info(f"📥 Processed attachment {i}: id={att_id}, keys={list(att.keys())}")
+                    if att_id == attachment_id:
                         attachment_metadata = att
                         
                         # Check if this is a locally stored attachment (from our API upload)
@@ -705,9 +721,11 @@ def download_attachment(request, message_id, attachment_id):
                             unipile_attachment_id = unipile_data.get('attachment_id') or unipile_data.get('id')
                             logger.info(f"📥 Using UniPile attachment ID from unipile_data: {unipile_attachment_id}")
                         else:
-                            # Try to find a UniPile ID in the processed attachment  
-                            unipile_attachment_id = att.get('unipile_id') or att.get('attachment_id') or att.get('id')
+                            # Try to find a UniPile ID in the processed attachment
+                            # The 'id' field should contain the actual UniPile attachment ID
+                            unipile_attachment_id = att.get('id') or att.get('attachment_id') or att.get('unipile_id')
                             logger.info(f"📥 Using processed attachment ID for UniPile: {unipile_attachment_id}")
+                            logger.info(f"📥 Full attachment metadata: {att}")
                         break
             
             
@@ -804,6 +822,9 @@ def download_attachment(request, message_id, attachment_id):
         )
     except Exception as e:
         logger.error(f"📥 Attachment download error: {e}")
+        import traceback
+        logger.error(f"📥 Full traceback: {traceback.format_exc()}")
+        logger.error(f"📥 Request details - message_id: {message_id}, attachment_id: {attachment_id}")
         return Response(
             {'error': 'Failed to download attachment', 'details': str(e)},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR

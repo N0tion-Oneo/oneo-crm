@@ -22,4 +22,5 @@ urlpatterns = [
     path('', include('api.urls')),
     path('relationships/', include('relationships.urls')),
     path('webhooks/', include('communications.webhooks.urls')),
+    path('api/v1/communications/', include('communications.api.urls')),
 ]

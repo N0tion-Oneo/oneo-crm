@@ -479,7 +479,7 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
           account_id: selectedChat.account_id
         }
         
-        // Add to beginning of array (backend already orders by updated_at)
+        // Add to beginning of array (newest messages at top, email inbox style)
         const updated = [newMessage, ...prev]
         
         console.log(`✅ Added new message to chat ${selectedChat.id}:`, newMessage.text?.substring(0, 50))
@@ -1049,7 +1049,6 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
       // We'll load from the first account that still has more data
       const accountToLoad = accountsToUse[0] // For now, load from first account
       
-      console.log(`🔄 Loading chats for account ${accountToLoad.id}, cursor: ${chatCursor}`)
       
       try {
         // Get chats for this account with pagination using local-first endpoint
@@ -1062,62 +1061,36 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
           }
         })
         
-        console.log(`📊 Chat response for account ${accountToLoad.id}:`, chatsResponse.data)
-        console.log(`📊 Raw API URL called:`, chatsResponse.config?.url)
-        console.log(`📊 API response timestamp:`, new Date().toISOString())
+        // Log minimal chat loading info
+        console.log(`✅ Loaded ${chatsResponse.data?.chats?.length || 0} chats from WhatsApp`)
         
         const accountChats = chatsResponse.data?.chats || []
         newCursor = chatsResponse.data?.cursor
         hasMoreData = chatsResponse.data?.has_more || false
         
-        console.log(`📊 Account ${accountToLoad.id}: loaded ${accountChats.length} chats, cursor: ${newCursor}, hasMore: ${hasMoreData}`)
         
         // Update pagination state based on this account's response
         setHasMoreChats(hasMoreData)
           
         // Transform API response to WhatsApp chat format
         for (const chatData of accountChats) {
-          // Debug timestamp and unread count data from backend
-          console.log(`🔍 Chat "${chatData.name}" debug:`, {
-            chatId: chatData.id,
-            unread_count: chatData.unread_count,
-            latest_message_date: chatData.latest_message?.date,
-            latest_message_created_at: chatData.latest_message?.created_at,
-            last_message_date: chatData.last_message_date,
-            updated_at: chatData.updated_at,
-            latest_message_text: chatData.latest_message?.text?.substring(0, 50),
-            finalTimestamp: chatData.latest_message?.date || chatData.latest_message?.created_at || chatData.last_message_date || chatData.updated_at,
-            priorityOrder: [
-              { source: 'latest_message.date', value: chatData.latest_message?.date },
-              { source: 'latest_message.created_at', value: chatData.latest_message?.created_at },
-              { source: 'last_message_date', value: chatData.last_message_date },
-              { source: 'updated_at', value: chatData.updated_at }
-            ]
-          })
+          // Remove excessive debug logging
           
-          // Additional debug: which timestamp will be used?
-          const selectedTimestamp = chatData.latest_message?.date || chatData.latest_message?.created_at || chatData.last_message_date || chatData.updated_at
-          console.log(`🔍 Chat "${chatData.name}" will use timestamp:`, selectedTimestamp)
-          
-          // Check if timestamps match
-          if (chatData.last_message_date && chatData.latest_message?.date) {
-            const timeDiff = Math.abs(new Date(chatData.last_message_date).getTime() - new Date(chatData.latest_message.date).getTime())
-            if (timeDiff > 1000) { // More than 1 second difference
-              console.warn(`⚠️ Chat "${chatData.name}" timestamp mismatch: last_message_date=${chatData.last_message_date} vs latest_message.date=${chatData.latest_message.date}`)
-            }
-          }
+          // Use the name provided by backend which already handles filtering
+          const chatName = chatData.name || chatData.subject || chatData.title || 
+                          (chatData.attendees && chatData.attendees.length > 0 ? chatData.attendees[0]?.name : 'Unknown')
           
           const transformedChat: WhatsAppChat = {
             id: chatData.id,
             provider_chat_id: chatData.provider_chat_id || chatData.chat_id,
-            name: chatData.name || chatData.title,
+            name: chatName,
             picture_url: chatData.picture_url,
             is_group: chatData.is_group || false,
             is_muted: chatData.is_muted || false,
             is_pinned: chatData.is_pinned || false,
             is_archived: chatData.is_archived || false,
             unread_count: chatData.unread_count || 0,
-            last_message_date: chatData.latest_message?.date || chatData.latest_message?.created_at || chatData.last_message_date || chatData.updated_at,
+            last_message_date: chatData.last_activity || chatData.last_message?.timestamp || chatData.last_message?.date || chatData.last_message_date || chatData.updated_at,
             account_id: accountToLoad.id,
             attendees: (chatData.attendees || []).map((att: any) => ({
               id: att.id,
@@ -1128,23 +1101,20 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
               is_admin: att.is_admin || false,
               is_business_account: att.is_business_account || false
             })),
-            latest_message: chatData.latest_message ? {
-              id: chatData.latest_message.id,
-              text: chatData.latest_message.text || chatData.latest_message.content,
-              type: mapMessageType(chatData.latest_message.type),
-              direction: chatData.latest_message.direction,
+            latest_message: chatData.last_message ? {
+              id: chatData.last_message.id,
+              text: chatData.last_message.text || chatData.last_message.content,
+              type: mapMessageType(chatData.last_message.type),
+              direction: chatData.last_message.direction,
               chat_id: chatData.id,
-              date: chatData.latest_message.date || chatData.latest_message.created_at,
-              status: chatData.latest_message.status || 'sent',
-              attendee_id: chatData.latest_message.attendee_id,
-              attachments: chatData.latest_message.attachments || [],
+              date: chatData.last_message.timestamp || chatData.last_message.date || chatData.last_message.created_at,
+              status: chatData.last_message.status || 'sent',
+              attendee_id: chatData.last_message.attendee_id,
+              attachments: chatData.last_message.attachments || [],
               account_id: accountToLoad.id
             } : undefined,
             member_count: chatData.member_count
           }
-          
-          // Debug final unread count
-          console.log(`🔍 Final chat "${transformedChat.name}" unread_count: ${transformedChat.unread_count}`)
           
           allChats.push(transformedChat)
         }
@@ -1154,14 +1124,12 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
       }
 
       // Update cursor for next page
-      console.log(`🔄 Updating pagination: cursor=${newCursor}, hasMore=${hasMoreData}`)
       setChatCursor(newCursor)
 
       // No sorting needed - backend already returns data ordered by updated_at
       
       // Append to existing chats or replace for initial load
       if (isInitialLoad) {
-        console.log(`🔄 Initial load: setting ${allChats.length} chats`)
         // Only replace if we don't have chats or if the data is significantly different
         setChats(prev => {
           // If we already have chats, merge intelligently to prevent flash
@@ -1248,13 +1216,21 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
     if (syncJobsLoaded) return
     
     try {
-      const response = await api.get('/api/v1/communications/sync/jobs/active/')
+      const response = await api.get('/api/v1/communications/whatsapp/sync/jobs/active/')
       
       if (response.data?.success && response.data.active_sync_jobs?.length > 0) {
         const activeJobs = response.data.active_sync_jobs
         
         console.log(`🔄 Restored ${activeJobs.length} active sync jobs after page refresh`)
-        setActiveSyncJobs(activeJobs)
+        
+        // Deduplicate by celery_task_id when setting
+        const jobMap = new Map()
+        activeJobs.forEach(job => {
+          if (job.celery_task_id) {
+            jobMap.set(job.celery_task_id, job)
+          }
+        })
+        setActiveSyncJobs(Array.from(jobMap.values()))
         setSyncProgressVisible(true) // Show progress when active jobs are found
         
         // Restore progress state from backend data
@@ -1334,15 +1310,15 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
     }
   }
   
-  const handleCancelSync = async (taskId: string) => {
+  const handleCancelSync = async (syncJobId: string) => {
     try {
-      const response = await fetch('/api/v1/communications/sync/jobs/cancel/', {
+      // Use the sync job ID to cancel, not the celery task ID
+      const response = await fetch(`/api/v1/communications/whatsapp/sync/jobs/${syncJobId}/cancel/`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${getToken()}`
-        },
-        body: JSON.stringify({ celery_task_id: taskId })
+        }
       })
       
       if (response.ok) {
@@ -1353,7 +1329,7 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
         
         // Remove from active jobs and reset visibility if needed
         setActiveSyncJobs(prev => {
-          const filtered = prev.filter(job => job.celery_task_id !== taskId)
+          const filtered = prev.filter(job => job.id !== syncJobId)
           // If no jobs left, reset visibility to true for next time
           if (filtered.length === 0) {
             setSyncProgressVisible(true)
@@ -1362,7 +1338,7 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
         })
         setSyncProgress(prev => {
           const updated = { ...prev }
-          delete updated[taskId]
+          delete updated[syncJobId]
           return updated
         })
       } else {
@@ -1406,7 +1382,7 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
     setSyncing(true)
     try {
       // Start background sync
-      const syncResponse = await api.post('/api/v1/communications/sync/background/', {
+      const syncResponse = await api.post('/api/v1/communications/whatsapp/sync/background/', {
         sync_options: {
           days_back: 30,
           max_messages_per_chat: 500,
@@ -1453,8 +1429,66 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
             }))
           })
           
-          setActiveSyncJobs(startedJobs)
+          // Store the started jobs temporarily with celery_task_id
+          // Deduplicate by celery_task_id to prevent duplicates
+          setActiveSyncJobs(prev => {
+            const jobMap = new Map()
+            
+            // Add existing jobs
+            prev.forEach(job => {
+              if (job.celery_task_id) {
+                jobMap.set(job.celery_task_id, job)
+              }
+            })
+            
+            // Add new started jobs
+            startedJobs.forEach(job => {
+              if (job.celery_task_id) {
+                jobMap.set(job.celery_task_id, job)
+              }
+            })
+            
+            return Array.from(jobMap.values())
+          })
           setSyncProgressVisible(true) // Show progress panel when new jobs start
+          
+          // After a short delay, fetch the actual sync job records
+          setTimeout(async () => {
+            try {
+              const activeJobsResponse = await api.get('/api/v1/communications/whatsapp/sync/jobs/active/')
+              if (activeJobsResponse.data?.success) {
+                const fetchedActiveJobs = activeJobsResponse.data.active_sync_jobs || []
+                console.log('📊 Fetched active sync jobs:', fetchedActiveJobs)
+                
+                // Update with actual sync job records that have IDs
+                // Use a Map to deduplicate by celery_task_id
+                if (fetchedActiveJobs.length > 0) {
+                  setActiveSyncJobs(prev => {
+                    const jobMap = new Map()
+                    
+                    // Add existing jobs
+                    prev.forEach(job => {
+                      if (job.celery_task_id) {
+                        jobMap.set(job.celery_task_id, job)
+                      }
+                    })
+                    
+                    // Add/update with fetched jobs (these have more complete data)
+                    fetchedActiveJobs.forEach(job => {
+                      if (job.celery_task_id) {
+                        jobMap.set(job.celery_task_id, job)
+                      }
+                    })
+                    
+                    // Return deduplicated array
+                    return Array.from(jobMap.values())
+                  })
+                }
+              }
+            } catch (error) {
+              console.error('Failed to fetch active sync jobs:', error)
+            }
+          }, 2000) // Wait 2 seconds for Celery task to create SyncJob records
         } else {
           // All jobs were already running or failed
           toast({
@@ -1490,17 +1524,21 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
         
         // Transform API response to WhatsApp chat format
         for (const chatData of accountChats) {
+          // Use the name provided by backend which already handles filtering
+          const chatName = chatData.name || chatData.subject || chatData.title || 
+                          (chatData.attendees && chatData.attendees.length > 0 ? chatData.attendees[0]?.name : 'Unknown')
+          
           const transformedChat: WhatsAppChat = {
             id: chatData.id,
             provider_chat_id: chatData.provider_chat_id || chatData.chat_id,
-            name: chatData.name || chatData.title,
+            name: chatName,
             picture_url: chatData.picture_url,
             is_group: chatData.is_group || false,
             is_muted: chatData.is_muted || false,
             is_pinned: chatData.is_pinned || false,
             is_archived: chatData.is_archived || false,
             unread_count: chatData.unread_count || 0,
-            last_message_date: chatData.latest_message?.date || chatData.latest_message?.created_at || chatData.last_message_date || chatData.updated_at,
+            last_message_date: chatData.last_activity || chatData.last_message?.timestamp || chatData.last_message?.date || chatData.last_message_date || chatData.updated_at,
             account_id: accountToLoad.id,
             attendees: (chatData.attendees || []).map((att: any) => ({
               id: att.id,
@@ -1511,16 +1549,16 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
               is_admin: att.is_admin || false,
               is_business_account: att.is_business_account || false
             })),
-            latest_message: chatData.latest_message ? {
-              id: chatData.latest_message.id,
-              text: chatData.latest_message.text || chatData.latest_message.content,
-              type: mapMessageType(chatData.latest_message.type),
-              direction: chatData.latest_message.direction,
+            latest_message: chatData.last_message ? {
+              id: chatData.last_message.id,
+              text: chatData.last_message.text || chatData.last_message.content,
+              type: mapMessageType(chatData.last_message.type),
+              direction: chatData.last_message.direction,
               chat_id: chatData.id,
-              date: chatData.latest_message.date || chatData.latest_message.created_at,
-              status: chatData.latest_message.status || 'sent',
-              attendee_id: chatData.latest_message.attendee_id,
-              attachments: chatData.latest_message.attachments || [],
+              date: chatData.last_message.timestamp || chatData.last_message.date || chatData.last_message.created_at,
+              status: chatData.last_message.status || 'sent',
+              attendee_id: chatData.last_message.attendee_id,
+              attachments: chatData.last_message.attachments || [],
               account_id: accountToLoad.id
             } : undefined,
             member_count: chatData.member_count
@@ -1632,14 +1670,6 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
   }) // No sorting needed - backend handles ordering by updated_at
 
   const handleChatSelect = async (chat: WhatsAppChat) => {
-    console.log(`📱 Selected chat "${chat.name}" - comparing timestamps:`, {
-      chatListTimestamp: {
-        latest_message_date: chat.latest_message?.date,
-        last_message_date: chat.last_message_date,
-        displayed: formatSafeDate(chat.latest_message?.date || chat.last_message_date)
-      },
-      latest_message_text: chat.latest_message?.text?.substring(0, 100)
-    })
     
     setSelectedChat(chat)
     setLoadingMessages(true)
@@ -1650,18 +1680,15 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
     
     try {
       // Load initial 20 messages for this chat using local-first endpoint
-      console.log('🔍 Loading messages for chat:', chat.id)
       const messagesResponse = await api.get(`/api/v1/communications/whatsapp/chats/${chat.id}/messages/`, {
         params: { 
-          limit: 20,
+          limit: 50,  // Increased from 20 to show more messages initially
           force_sync: 'false' // Use cached data for instant loading
         }
       })
-      console.log('📨 Messages API response:', messagesResponse.data)
       const chatMessages = messagesResponse.data?.messages || []
       setMessageCursor(messagesResponse.data?.cursor)
       setHasMoreMessages(messagesResponse.data?.has_more || false)
-      console.log('📨 Extracted chat messages:', chatMessages)
       
       // Transform API messages to WhatsApp message format
       const transformedMessages: WhatsAppMessage[] = chatMessages.map((msgData: any) => {
@@ -1680,11 +1707,11 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
         text: msgData.text || msgData.content,
         html: msgData.html,
         type: mapMessageType(msgData.type),
-        direction: msgData.direction,
+        direction: msgData.direction === 'outbound' ? 'out' : 'in',  // Map outbound->out, inbound->in
         chat_id: chat.id,
-        date: msgData.date || msgData.created_at,
+        date: msgData.metadata?.api_data?.timestamp || msgData.timestamp || msgData.date || msgData.created_at,  // Use actual message timestamp from metadata
         status: msgData.status || 'sent',
-        attendee_id: msgData.attendee_id || msgData.from_id,
+        attendee_id: msgData.attendee_id || msgData.from_id || msgData.sender?.id,  // Also try sender.id
         attachments: ((msgData.attachments || msgData.metadata?.attachments) || []).map((att: any) => ({
           id: att.id,
           type: att.type,
@@ -1701,27 +1728,9 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
         }
       })
       
-      // No sorting needed - backend handles ordering by updated_at
+      // Keep messages in order from backend (newest first)
+      // This matches email inbox style where newest is at top
       
-      // Debug: Compare chat list timestamp vs actual latest message
-      const actualLatestMessage = transformedMessages[0] // First message is newest
-      console.log(`📊 Chat "${chat.name}" timestamp comparison:`, {
-        chatListShows: {
-          latest_message_date: chat.latest_message?.date,
-          last_message_date: chat.last_message_date,
-          formatted: formatSafeDate(chat.latest_message?.date || chat.last_message_date)
-        },
-        actualLatestMessage: actualLatestMessage ? {
-          date: actualLatestMessage.date,
-          text: actualLatestMessage.text?.substring(0, 100),
-          formatted: formatSafeDate(actualLatestMessage.date)
-        } : 'NO_MESSAGES',
-        timeDifference: actualLatestMessage ? 
-          Math.abs(new Date(actualLatestMessage.date).getTime() - new Date(chat.latest_message?.date || chat.last_message_date).getTime()) / 1000 / 60 / 60 + ' hours'
-          : 'N/A'
-      })
-      
-      console.log('✅ Setting messages state with:', transformedMessages.length, 'messages')
       setMessages(transformedMessages)
       
       // Mark as read if needed
@@ -1793,7 +1802,7 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
       console.log('🔍 Loading more messages for chat:', selectedChat.id, 'cursor:', messageCursor)
       const messagesResponse = await api.get(`/api/v1/communications/whatsapp/chats/${selectedChat.id}/messages/`, {
         params: { 
-          limit: 20,
+          limit: 30,  // Load 30 more messages when scrolling
           cursor: messageCursor,
           force_sync: 'false' // Use cached data for pagination
         }
@@ -1809,11 +1818,11 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
         text: msgData.text || msgData.content,
         html: msgData.html,
         type: mapMessageType(msgData.type),
-        direction: msgData.direction,
+        direction: msgData.direction === 'outbound' ? 'out' : 'in',  // Map outbound->out, inbound->in
         chat_id: selectedChat.id,
-        date: msgData.date || msgData.created_at,
+        date: msgData.metadata?.api_data?.timestamp || msgData.timestamp || msgData.date || msgData.created_at,  // Use actual message timestamp from metadata
         status: msgData.status || 'sent',
-        attendee_id: msgData.attendee_id || msgData.from_id,
+        attendee_id: msgData.attendee_id || msgData.from_id || msgData.sender?.id,  // Also try sender.id
         attachments: ((msgData.attachments || msgData.metadata?.attachments) || []).map((att: any) => ({
           id: att.id,
           type: att.type,
@@ -1829,7 +1838,7 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
         account_id: selectedChat.account_id
       }))
       
-      // No sorting needed - backend handles ordering by updated_at
+      // Backend returns newest first, append older messages at the end
       
       setMessages(prev => {
         // Create a set of existing message IDs for quick lookup
@@ -1840,6 +1849,7 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
         
         console.log(`🔄 Filtered ${transformedMessages.length} new messages to ${newUniqueMessages.length} unique messages`)
         
+        // Append older messages at the end (since newest is at top)
         return [...prev, ...newUniqueMessages]
       })
       
@@ -1865,9 +1875,10 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
       messageScrollTimeoutRef.current = setTimeout(() => {
         const { scrollTop, scrollHeight, clientHeight } = viewport
         
-        // Check if user scrolled near bottom (within 200px)
+        // Check if user scrolled near BOTTOM (within 200px) to load older messages
+        // With newest at top, older messages are at bottom, so we load more when scrolling down
         if (scrollHeight - scrollTop - clientHeight < 200 && hasMoreMessages && !loadingMoreMessages) {
-          console.log('🔄 Triggering loadMoreMessages from scroll')
+          console.log('🔄 Triggering loadMoreMessages from scroll to bottom')
           loadMoreMessages()
         }
         
@@ -2517,7 +2528,7 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
                             <h3 className={`text-sm font-medium truncate ${
                               chat.unread_count > 0 ? 'font-bold' : ''
                             }`}>
-                              {chat.name || (chat.attendees[0]?.name) || 'Unknown'}
+                              {chat.name || 'Unknown'}
                             </h3>
                             {chat.is_group && <span className="text-xs text-gray-400">(Group)</span>}
                             {chat.is_muted && <span className="text-xs text-gray-400">🔇</span>}
@@ -2530,14 +2541,6 @@ Latest msg date: ${chat.latest_message?.date}
 Last msg date: ${chat.last_message_date}
 Using: ${chat.latest_message?.date || chat.last_message_date}
 Latest msg text: ${chat.latest_message?.text?.substring(0, 50)}`}
-                              onClick={() => {
-                                console.log(`🔍 Clicked timestamp for ${chat.name}:`, {
-                                  chat,
-                                  latest_message: chat.latest_message,
-                                  timestamp_used: chat.latest_message?.date || chat.last_message_date,
-                                  formatted: formatSafeDate(chat.latest_message?.date || chat.last_message_date)
-                                })
-                              }}
                             >
                               {formatSafeDate(chat.latest_message?.date || chat.last_message_date)}
                             </span>
@@ -2643,7 +2646,7 @@ Latest msg text: ${chat.latest_message?.text?.substring(0, 50)}`}
                     <EnhancedAvatar chat={selectedChat} />
                     <div>
                       <h2 className="font-semibold">
-                        {selectedChat.name || selectedChat.attendees[0]?.name || 'Unknown'}
+                        {selectedChat.name || 'Unknown'}
                       </h2>
                       <p className="text-xs text-gray-500">
                         {selectedChat.is_group 
@@ -2666,7 +2669,7 @@ Latest msg text: ${chat.latest_message?.text?.substring(0, 50)}`}
                           // Force fresh messages from API
                           const messagesResponse = await api.get(`/api/v1/communications/whatsapp/chats/${selectedChat.id}/messages/`, {
                             params: { 
-                              limit: 20,
+                              limit: 50,  // Increased to show more messages after sync
                               force_sync: 'true' // Force API sync for fresh data
                             }
                           })
@@ -2681,11 +2684,11 @@ Latest msg text: ${chat.latest_message?.text?.substring(0, 50)}`}
                             text: msgData.text || msgData.content,
                             html: msgData.html,
                             type: mapMessageType(msgData.type),
-                            direction: msgData.direction,
+                            direction: msgData.direction === 'outbound' ? 'out' : 'in',  // Map outbound->out, inbound->in
                             chat_id: selectedChat.id,
-                            date: msgData.date || msgData.created_at,
+                            date: msgData.metadata?.api_data?.timestamp || msgData.timestamp || msgData.date || msgData.created_at,  // Use actual message timestamp from metadata
                             status: msgData.status || 'sent',
-                            attendee_id: msgData.attendee_id || msgData.from_id,
+                            attendee_id: msgData.attendee_id || msgData.from_id || msgData.sender?.id,  // Also try sender.id
                             attachments: ((msgData.attachments || msgData.metadata?.attachments) || []).map((att: any) => ({
                               id: att.id,
                               type: att.type,
@@ -2701,7 +2704,7 @@ Latest msg text: ${chat.latest_message?.text?.substring(0, 50)}`}
                             account_id: selectedChat.account_id
                           }))
                           
-                          // No sorting needed - backend handles ordering by updated_at
+                          // Keep messages in order from backend (newest first)
                           setMessages(transformedMessages)
                           
                           toast({
@@ -2799,7 +2802,6 @@ Latest msg text: ${chat.latest_message?.text?.substring(0, 50)}`}
                   </div>
                 ) : (
                   <div className="space-y-4">
-                    {console.log('🎨 Rendering messages:', messages.length, 'items') || ''}
                     {messages.length === 0 && (
                       <div className="flex items-center justify-center h-32 text-gray-500">
                         No messages in this chat yet

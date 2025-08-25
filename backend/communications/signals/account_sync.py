@@ -4,6 +4,7 @@ Django signals for automatic account data synchronization
 import logging
 from django.db.models.signals import post_save
 from django.dispatch import receiver
+from django.utils import timezone as django_timezone
 from asgiref.sync import async_to_sync
 
 from communications.models import UserChannelConnection
@@ -14,12 +15,16 @@ logger = logging.getLogger(__name__)
 @receiver(post_save, sender=UserChannelConnection)
 def auto_sync_account_details(sender, instance, created, **kwargs):
     """
-    Automatically sync account details when a connection becomes active
+    Automatically sync account details when a connection is first established
     
-    Triggers when:
+    Triggers ONLY when:
     - A new connection is created with active status
-    - An existing connection changes to active status
+    - An existing connection transitions from inactive to active for the first time
     - A connection gets a UniPile account ID for the first time
+    
+    Does NOT trigger on:
+    - Subsequent saves after initial sync
+    - Updates to already active connections
     """
     
     # Only process active, authenticated connections with UniPile account IDs
@@ -29,7 +34,13 @@ def auto_sync_account_details(sender, instance, created, **kwargs):
             instance.unipile_account_id):
         return
     
-    # Check if this connection needs account details sync
+    # Check if initial sync has already been performed
+    # We use last_sync_at as an indicator that initial sync has been done
+    if instance.last_sync_at:
+        logger.debug(f"⏭️ Skipping auto-sync for {instance.unipile_account_id} - already synced at {instance.last_sync_at}")
+        return
+    
+    # Check if this connection needs initial sync
     needs_sync = False
     
     if created:
@@ -37,46 +48,90 @@ def auto_sync_account_details(sender, instance, created, **kwargs):
         needs_sync = True
         logger.info(f"🆕 New active connection detected: {instance.unipile_account_id}")
     else:
-        # Existing connection - check if it just became active or got account ID
-        try:
-            # Get the previous state from database
-            old_instance = UserChannelConnection.objects.get(pk=instance.pk)
+        # For existing connections, only sync if specific fields changed
+        # We check update_fields to see what actually changed
+        update_fields = kwargs.get('update_fields', [])
+        
+        # If update_fields is provided, check if relevant fields changed
+        if update_fields:
+            # If only last_sync_at was updated, skip (this is the sync marking itself complete)
+            if update_fields == ['last_sync_at']:
+                logger.debug(f"⏭️ Skipping - only last_sync_at updated for {instance.unipile_account_id}")
+                return
             
-            # Check if status changed to active
-            if (old_instance.account_status != 'active' and instance.account_status == 'active'):
+            # Only trigger sync if these specific fields were updated
+            sync_trigger_fields = {'account_status', 'auth_status', 'unipile_account_id'}
+            if sync_trigger_fields.intersection(update_fields):
+                # One of the trigger fields changed - check if it's a meaningful change
+                # This means the connection just became active or got its account ID
                 needs_sync = True
-                logger.info(f"🔄 Connection became active: {instance.unipile_account_id}")
-            
-            # Check if UniPile account ID was just added
-            if (not old_instance.unipile_account_id and instance.unipile_account_id):
+                logger.info(f"🔄 Connection status changed for: {instance.unipile_account_id}")
+            else:
+                # Other fields changed - don't trigger sync
+                logger.debug(f"📝 Non-sync fields updated for {instance.unipile_account_id}: {update_fields}")
+                return
+        else:
+            # No update_fields means a full save() was called
+            # Only sync if this looks like an initial activation
+            # (no last_sync_at and has required fields)
+            if not instance.last_sync_at:
                 needs_sync = True
-                logger.info(f"🔗 UniPile account ID added: {instance.unipile_account_id}")
-            
-            # Check if account details are missing (empty config)
-            if not instance.connection_config or not instance.provider_config:
-                needs_sync = True
-                logger.info(f"📊 Missing account configuration: {instance.unipile_account_id}")
-                
-        except UserChannelConnection.DoesNotExist:
-            # This shouldn't happen but handle gracefully
-            needs_sync = True
-            logger.warning(f"⚠️ Could not find previous connection state for {instance.pk}")
+                logger.info(f"🔗 Initial activation detected for: {instance.unipile_account_id}")
     
     if needs_sync:
-        # Sync account details asynchronously
+        # Trigger comprehensive sync for the newly connected account
         try:
-            from communications.services.account_sync import account_sync_service
-            
-            # Use async_to_sync to call the async sync function
-            sync_result = async_to_sync(account_sync_service.sync_account_details)(instance)
-            
-            if sync_result.get('success'):
-                logger.info(f"✅ Auto-synced account details via signal for {instance.unipile_account_id}")
-                logger.info(f"   📱 Phone: {sync_result.get('phone_number', 'N/A')}")
-                logger.info(f"   🔗 Type: {sync_result.get('account_type', 'N/A')}")
-                logger.info(f"   📊 Status: {sync_result.get('messaging_status', 'N/A')}")
+            # Import based on channel type
+            if instance.channel_type == 'whatsapp':
+                from communications.channels.whatsapp.sync.tasks import sync_account_comprehensive_background
+                from communications.channels.whatsapp.sync.config import get_sync_options
+                
+                # Get or create channel for this account
+                from communications.models import Channel
+                channel, created = Channel.objects.get_or_create(
+                    unipile_account_id=instance.unipile_account_id,
+                    channel_type='whatsapp',
+                    defaults={
+                        'name': f'WhatsApp - {instance.account_name}',
+                        'auth_status': 'authenticated',
+                        'is_active': True,
+                        'created_by': instance.user
+                    }
+                )
+                
+                # Trigger background sync
+                logger.info(f"🚀 Triggering comprehensive sync for {instance.unipile_account_id}")
+                
+                # Get tenant schema if in multi-tenant environment
+                tenant_schema = None
+                if hasattr(instance, '_state') and hasattr(instance._state, 'db'):
+                    from django.db import connection
+                    if hasattr(connection, 'tenant'):
+                        tenant_schema = connection.tenant.schema_name
+                
+                # Queue the sync task with centralized config
+                sync_options = get_sync_options()  # Use defaults for auto-sync
+                
+                result = sync_account_comprehensive_background.delay(
+                    channel_id=str(channel.id),
+                    user_id=str(instance.user.id),
+                    sync_options=sync_options,
+                    tenant_schema=tenant_schema
+                )
+                
+                logger.info(f"✅ Queued sync task {result.id} for {instance.unipile_account_id}")
+                
+                # Mark that we've initiated the initial sync
+                # Update last_sync_at to prevent re-triggering
+                # Use update() to avoid triggering the signal again
+                UserChannelConnection.objects.filter(pk=instance.pk).update(
+                    last_sync_at=django_timezone.now()
+                )
+                logger.info(f"📝 Marked initial sync timestamp for {instance.unipile_account_id}")
+                
             else:
-                logger.warning(f"⚠️ Auto-sync failed via signal for {instance.unipile_account_id}: {sync_result.get('error')}")
+                # Other channel types not yet implemented
+                logger.info(f"ℹ️ Auto-sync not implemented for {instance.channel_type} channels")
                 
         except Exception as e:
             logger.error(f"❌ Error during auto-sync signal for {instance.unipile_account_id}: {e}")

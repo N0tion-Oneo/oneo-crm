@@ -10,7 +10,7 @@ from communications.models import UserChannelConnection, Message, Conversation, 
 from communications.webhooks.routing import account_router
 from communications.resolvers.contact_identifier import ContactIdentifier
 from communications.resolvers.relationship_context import RelationshipContextResolver
-from communications.services.unified_inbox import UnifiedInboxService
+# from communications.services.unified_inbox import UnifiedInboxService  # Service module removed
 
 logger = logging.getLogger(__name__)
 
@@ -146,7 +146,16 @@ class UnipileWebhookHandler:
             external_message_id = data.get('id') or data.get('message_id')
             conversation_id = extract_whatsapp_conversation_id(data)
             phone_number = extract_whatsapp_phone_from_webhook(data)
-            direction = determine_message_direction(data, 'whatsapp')
+            
+            # Get the channel for centralized detection
+            from communications.models import Channel
+            channel = Channel.objects.filter(
+                unipile_account_id=connection.unipile_account_id,
+                channel_type=connection.channel_type
+            ).first()
+            
+            # Use centralized detection with channel
+            direction = determine_message_direction(data, 'whatsapp', channel=channel)
             contact_name = extract_whatsapp_contact_name(data)
             message_content = data.get('message', data.get('text', data.get('body', '')))
             
@@ -157,6 +166,25 @@ class UnipileWebhookHandler:
                 data
             )
             
+            # Create or update attendee for the message sender using WhatsAppAttendeeDetector
+            sender_attendee = None
+            if channel:
+                from communications.channels.whatsapp.utils.attendee_detection import WhatsAppAttendeeDetector
+                attendee_detector = WhatsAppAttendeeDetector(channel=channel)
+                
+                # Extract attendee info from webhook data
+                attendee_info = attendee_detector.extract_attendee_from_webhook(data)
+                
+                # Create or update the attendee record
+                sender_attendee = attendee_detector.create_or_update_attendee(
+                    attendee_info,
+                    conversation=conversation,
+                    channel=channel
+                )
+                
+                if sender_attendee:
+                    logger.info(f"Created/updated attendee: {sender_attendee.name} (is_self={sender_attendee.is_self})")
+            
             # Check if message already exists to prevent duplicates
             if external_message_id:
                 existing_message = Message.objects.filter(
@@ -166,6 +194,10 @@ class UnipileWebhookHandler:
                 
                 if existing_message:
                     logger.info(f"Message {external_message_id} already exists (ID: {existing_message.id}), skipping duplicate")
+                    # Update sender if not set
+                    if sender_attendee and not existing_message.sender:
+                        existing_message.sender = sender_attendee
+                        existing_message.save(update_fields=['sender'])
                     return {
                         'success': True,
                         'message_id': str(existing_message.id),
@@ -173,7 +205,7 @@ class UnipileWebhookHandler:
                         'note': 'Message already exists, skipped duplicate'
                     }
             
-            # Create message record with raw data
+            # Create message record with raw data and sender attendee
             message, was_created = self.create_simple_message_record(
                 connection,
                 conversation,
@@ -182,7 +214,8 @@ class UnipileWebhookHandler:
                 direction,
                 phone_number,
                 contact_name,
-                data  # Store entire raw webhook data
+                data,  # Store entire raw webhook data
+                sender_attendee  # Pass the attendee
             )
             
             if was_created:
@@ -460,7 +493,7 @@ class UnipileWebhookHandler:
         )
         
         # Generate smart conversation name
-        from communications.services.conversation_naming import conversation_naming_service
+        # from communications.services.conversation_naming import conversation_naming_service  # Service removed
         
         # Extract contact info from webhook data
         contact_info = {}
@@ -476,13 +509,10 @@ class UnipileWebhookHandler:
                 'content': message_data.get('text', {}).get('body') if isinstance(message_data.get('text'), dict) else message_data.get('text')
             })
         
-        # Generate subject using smart naming service
-        subject = conversation_naming_service.generate_conversation_name(
-            channel_type=connection.channel_type,
-            contact_info=contact_info,
-            message_content=contact_info.get('content'),
-            external_thread_id=conversation_id
-        )
+        # Generate subject using fallback logic since naming service was removed
+        # subject = conversation_naming_service.generate_conversation_name(...)
+        contact_name = contact_info.get('name') or contact_info.get('from', 'Unknown')
+        subject = f"Chat with {contact_name}"
         
         conversation = Conversation.objects.create(
             channel=channel,
@@ -490,6 +520,44 @@ class UnipileWebhookHandler:
             subject=subject,
             status='active'
         )
+        
+        # Fetch and sync attendees from the chat API for new conversations
+        if conversation_id and channel:
+            try:
+                from asgiref.sync import async_to_sync
+                from communications.channels.whatsapp.service import WhatsAppService
+                from communications.channels.whatsapp.sync.attendees import AttendeeSyncService
+                
+                # Initialize services
+                whatsapp_service = WhatsAppService(channel=channel)
+                attendee_service = AttendeeSyncService(channel=channel)
+                
+                # Fetch attendees from chat API
+                attendees_result = async_to_sync(whatsapp_service.client.get_attendees)(
+                    account_id=connection.unipile_account_id,
+                    chat_id=conversation_id
+                )
+                
+                if attendees_result.get('success'):
+                    attendees_data = {
+                        'attendees': attendees_result.get('attendees', []),
+                        'id': conversation_id
+                    }
+                    
+                    # Sync attendees using the attendee service
+                    synced_attendees = attendee_service.sync_attendees_from_chat(
+                        attendees_data,
+                        conversation
+                    )
+                    
+                    if synced_attendees:
+                        logger.info(f"Synced {len(synced_attendees)} attendees for new conversation {conversation_id[:20]}...")
+                else:
+                    logger.warning(f"Failed to fetch attendees for conversation {conversation_id}: {attendees_result.get('error')}")
+                    
+            except Exception as e:
+                logger.error(f"Error fetching attendees for new conversation: {e}")
+                # Continue without attendees - they'll be synced later
         
         return conversation
 
@@ -524,7 +592,7 @@ class UnipileWebhookHandler:
         )
         
         # Generate smart conversation name
-        from communications.services.conversation_naming import conversation_naming_service
+        # from communications.services.conversation_naming import conversation_naming_service  # Service removed
         
         # Extract contact info from message data
         contact_info = {
@@ -537,13 +605,10 @@ class UnipileWebhookHandler:
         if 'contact' in message_data:
             contact_info.update(message_data['contact'])
         
-        # Generate subject using smart naming service
-        subject = conversation_naming_service.generate_conversation_name(
-            channel_type=connection.channel_type,
-            contact_info=contact_info,
-            message_content=contact_info.get('content'),
-            external_thread_id=external_thread_id
-        )
+        # Generate subject using fallback logic since naming service was removed
+        # subject = conversation_naming_service.generate_conversation_name(...)
+        contact_name = contact_info.get('name') or contact_info.get('from', 'Unknown')
+        subject = f"Chat with {contact_name}"
         
         conversation = Conversation.objects.create(
             channel=channel,
@@ -556,8 +621,9 @@ class UnipileWebhookHandler:
     
     def create_simple_message_record(self, connection: UserChannelConnection, conversation: Conversation, 
                                    external_message_id: str, content: str, direction: str, 
-                                   phone_number: str, contact_name: str, raw_webhook_data: Dict[str, Any]) -> tuple[Message, bool]:
-        """Create message record with simple raw data storage approach"""
+                                   phone_number: str, contact_name: str, raw_webhook_data: Dict[str, Any],
+                                   sender_attendee: 'ChatAttendee' = None) -> tuple[Message, bool]:
+        """Create message record with simple raw data storage approach and optional sender attendee"""
         from django.db import transaction
         
         # Use database-level atomic transaction to prevent race conditions
@@ -582,19 +648,22 @@ class UnipileWebhookHandler:
                 subject='',  # WhatsApp doesn't have subjects
                 contact_email='',  # WhatsApp uses phone numbers
                 contact_phone=phone_number,
+                sender=sender_attendee,  # Link to the sender attendee
                 status=MessageStatus.DELIVERED if direction == MessageDirection.INBOUND else MessageStatus.SENT,
                 metadata={
                     'raw_webhook_data': raw_webhook_data,  # Store entire webhook response
                     'contact_name': contact_name,
                     'extracted_phone': phone_number,
                     'webhook_processed_at': timezone.now().isoformat(),
-                    'processing_version': '2.0_simplified'
+                    'processing_version': '2.0_simplified',
+                    'attendee_id': str(sender_attendee.id) if sender_attendee else None,
+                    'attendee_name': sender_attendee.name if sender_attendee else contact_name
                 },
                 sent_at=timezone.now() if direction == MessageDirection.OUTBOUND else None,
                 received_at=timezone.now() if direction == MessageDirection.INBOUND else None
             )
             
-            logger.info(f"Created message {message.id}: {direction} from phone {phone_number}")
+            logger.info(f"Created message {message.id}: {direction} from {sender_attendee.name if sender_attendee else phone_number}")
             return message, True
     
     def create_message_record_atomic(self, connection: UserChannelConnection, conversation: Conversation, 

@@ -53,10 +53,11 @@ class WhatsAppWebhookHandler(BaseWebhookHandler):
         try:
             from communications.webhooks.routing import account_router
             from communications.models import Channel, Conversation, Message, ChatAttendee, MessageDirection, MessageStatus
-            from communications.services.unified_processor import unified_processor
-            from communications.services.conversation_naming import conversation_naming_service
-            from communications.services.direction_detection import direction_detection_service
             from django.db import transaction
+            
+            # Log the incoming data structure for debugging
+            logger.info(f"📥 WhatsApp webhook data type: {type(data)}")
+            logger.info(f"📥 WhatsApp webhook data keys: {list(data.keys()) if isinstance(data, dict) else 'Not a dict!'}")
             
             # Get user connection (we're already in tenant context)
             connection = account_router.get_user_connection(account_id)
@@ -67,12 +68,59 @@ class WhatsAppWebhookHandler(BaseWebhookHandler):
             if connection.channel_type != 'whatsapp':
                 return {'success': False, 'error': f'Invalid channel type: {connection.channel_type}'}
             
-            # Normalize webhook data using unified processor (sync method)
-            normalized_message = unified_processor.normalize_message_data(data, 'webhook')
-            normalized_conversation = unified_processor.normalize_conversation_data(data, 'webhook')
+            # Extract message data directly from webhook
+            # If data is not a dict, something is wrong
+            if not isinstance(data, dict):
+                logger.error(f"Expected dict for webhook data, got {type(data)}: {data}")
+                return {'success': False, 'error': f'Invalid data type: {type(data)}'}
+                
+            # The webhook structure for WhatsApp via UniPile is:
+            # {
+            #   "event": "message_received",
+            #   "message": "actual message text",  <-- This is the content
+            #   "message_id": "xxx",
+            #   "chat_id": "xxx",
+            #   "sender": {...},
+            #   ...
+            # }
             
-            chat_id = normalized_message.get('chat_id')
-            message_id = normalized_message.get('external_message_id')
+            # Extract message content - it's directly in data['message'] as a string
+            content = ''
+            if 'message' in data and data['message'] is not None:
+                if isinstance(data['message'], str):
+                    content = data['message']  # This is the actual message text
+                    logger.info(f"📝 Extracted message content: '{content}'")
+                elif isinstance(data['message'], dict):
+                    # Different webhook format - message might be nested
+                    content = data['message'].get('text', '') or data['message'].get('content', '')
+                    logger.info(f"📝 Extracted message content from dict: '{content}'")
+            else:
+                # No message content - could be attachment-only message
+                logger.info(f"📎 No text content - might be attachment-only message")
+            
+            # Extract IDs directly from data
+            chat_id = (data.get('chat_id') or 
+                      data.get('conversation_id') or 
+                      data.get('thread_id'))
+            message_id = (data.get('message_id') or 
+                         data.get('id') or 
+                         data.get('external_message_id'))
+            
+            # Extract sender information
+            sender_info = data.get('sender', {})
+            if not sender_info and 'from' in data:
+                sender_info = data.get('from', {})
+                
+            sender_name = ''
+            sender_id = ''
+            if isinstance(sender_info, dict):
+                sender_name = sender_info.get('attendee_name', '') or sender_info.get('name', '')
+                sender_id = sender_info.get('attendee_id', '') or sender_info.get('id', '')
+            
+            # Check if message is from self
+            is_self = data.get('is_from_me', False)
+            if not is_self and isinstance(sender_info, dict):
+                is_self = sender_info.get('is_me', False)
             
             if not chat_id:
                 return {'success': False, 'error': 'Chat ID not found in webhook data'}
@@ -111,12 +159,11 @@ class WhatsAppWebhookHandler(BaseWebhookHandler):
             
             if not conversation:
                 # Use sync conversation creation without async calls
-                conversation_name = normalized_conversation.get('name') or f"WhatsApp Chat {chat_id[:8]}"
+                conversation_name = f"WhatsApp Chat {chat_id[:8]}"
                 
                 # Try to extract better name from message sender
-                sender_info = normalized_message.get('sender_info', {})
-                if sender_info.get('name') and not sender_info.get('is_self', False):
-                    conversation_name = sender_info['name']
+                if sender_name and not is_self:
+                    conversation_name = sender_name
                 
                 conversation = Conversation.objects.create(
                     channel=channel,
@@ -154,11 +201,7 @@ class WhatsAppWebhookHandler(BaseWebhookHandler):
                     'approach': 'sync_webhook_processor'
                 }
             
-            # Determine message direction using sync method
-            sender_id = normalized_message.get('sender_id')
-            is_self = normalized_message.get('sender_info', {}).get('is_self', False)
-            
-            # Simple direction detection based on sender info
+            # Determine message direction using extracted data
             if is_self:
                 direction = MessageDirection.OUTBOUND
                 status = MessageStatus.SENT
@@ -166,24 +209,84 @@ class WhatsAppWebhookHandler(BaseWebhookHandler):
                 direction = MessageDirection.INBOUND
                 status = MessageStatus.DELIVERED
             
+            # Check for attachments and generate display content if no text
+            raw_attachments = data.get('attachments', [])
+            attachments = []
+            
+            # Process attachments into the format expected by the download endpoint
+            for att in raw_attachments:
+                processed_att = {
+                    'id': att.get('attachment_id'),  # Use attachment_id as the id
+                    'attachment_id': att.get('attachment_id'),  # Keep original too
+                    'type': att.get('attachment_type', 'file'),
+                    'url': att.get('attachment_url'),
+                    'size': att.get('attachment_size'),
+                    'filename': att.get('attachment_name', 'attachment'),
+                    'mime_type': self._get_mime_type(att.get('attachment_type', 'file')),
+                    'unipile_data': att  # Store original data for fallback
+                }
+                attachments.append(processed_att)
+            
+            # If no text content but has attachments, create a descriptive message
+            if not content and attachments:
+                attachment_types = []
+                for att in attachments:
+                    att_type = att.get('type', 'file')
+                    if att_type == 'img':
+                        attachment_types.append('📷 Image')
+                    elif att_type == 'video':
+                        attachment_types.append('📹 Video')
+                    elif att_type == 'audio':
+                        attachment_types.append('🎵 Audio')
+                    elif att_type == 'doc':
+                        attachment_types.append('📄 Document')
+                    else:
+                        attachment_types.append('📎 File')
+                
+                if attachment_types:
+                    content = ', '.join(attachment_types)
+                    logger.info(f"📎 Generated attachment description: '{content}'")
+            
+            # Parse timestamps - webhook provides ISO format timestamp
+            from dateutil import parser
+            message_timestamp = django_timezone.now()
+            if 'timestamp' in data:
+                try:
+                    ts = data['timestamp']
+                    if isinstance(ts, str):
+                        # Parse ISO format like "2025-08-25T20:02:12.000Z"
+                        message_timestamp = parser.parse(ts)
+                        if message_timestamp.tzinfo is None:
+                            message_timestamp = django_timezone.make_aware(message_timestamp)
+                    elif isinstance(ts, (int, float)):
+                        # Handle Unix timestamp (seconds or milliseconds)
+                        if ts > 10000000000:  # Milliseconds
+                            ts = ts / 1000
+                        message_timestamp = django_timezone.datetime.fromtimestamp(ts, tz=django_timezone.utc)
+                except Exception as e:
+                    logger.warning(f"Failed to parse timestamp: {e}")
+            
             # Create message with sync operations only
+            logger.info(f"💾 Creating message with content: '{content}' (length: {len(content)})")
             message = Message.objects.create(
                 channel=channel,
                 conversation=conversation,
                 external_message_id=message_id,
-                content=normalized_message.get('content', ''),
+                content=content,
                 direction=direction,
                 status=status,
-                created_at=normalized_message.get('created_at', django_timezone.now()),
-                sent_at=normalized_message.get('sent_at'),
-                received_at=normalized_message.get('received_at', django_timezone.now()),
+                created_at=message_timestamp,
+                sent_at=message_timestamp if direction == MessageDirection.OUTBOUND else None,
+                received_at=message_timestamp if direction == MessageDirection.INBOUND else None,
                 metadata={
                     'webhook_data': data,
-                    'normalized_data': normalized_message,
                     'sender_id': sender_id,
+                    'sender_name': sender_name,
                     'chat_id': chat_id,
                     'provider': 'whatsapp',
-                    'sync_created': True
+                    'sync_created': True,
+                    'attachments': attachments,
+                    'has_attachments': len(attachments) > 0
                 }
             )
             
@@ -202,8 +305,8 @@ class WhatsAppWebhookHandler(BaseWebhookHandler):
                 'conversation_id': str(conversation.id),
                 'conversation_name': conversation.subject,
                 'approach': 'sync_webhook_processor',
-                'attachment_count': len(normalized_message.get('attachments', [])),
-                'content_type': 'attachment_only' if not normalized_message.get('content') and normalized_message.get('attachments') else 'text_with_attachments' if normalized_message.get('content') and normalized_message.get('attachments') else 'text_only'
+                'attachment_count': len(attachments),
+                'content_type': 'attachment_only' if not content and attachments else 'text_with_attachments' if content and attachments else 'text_only'
             }
             
         except Exception as e:
@@ -372,6 +475,23 @@ class WhatsAppWebhookHandler(BaseWebhookHandler):
             logger.info(f"Read receipt processed for message {message.id} (WebSocket updates disabled for sync compatibility)")
         except Exception as e:
             logger.warning(f"Failed to process read tracking: {e}")
+    
+    def _get_mime_type(self, attachment_type: str) -> str:
+        """Get MIME type from attachment type"""
+        mime_map = {
+            'img': 'image/jpeg',
+            'image': 'image/jpeg',
+            'video': 'video/mp4',
+            'audio': 'audio/mpeg',
+            'doc': 'application/pdf',
+            'document': 'application/pdf',
+            'pdf': 'application/pdf',
+            'xls': 'application/vnd.ms-excel',
+            'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'doc': 'application/msword',
+            'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        }
+        return mime_map.get(attachment_type.lower(), 'application/octet-stream')
     
     def validate_webhook_data(self, data: Dict[str, Any]) -> bool:
         """Validate WhatsApp-specific webhook data"""

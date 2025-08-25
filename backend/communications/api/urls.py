@@ -58,30 +58,12 @@ from .local_inbox_views import (
     get_inbox_stats,
     mark_local_conversation_as_read
 )
-from .unified_inbox_views import (
-    get_unified_inbox,
-    get_record_timeline,
-    get_record_stats,
-    mark_record_conversation_read,
-    get_user_channels,
-    send_message_to_record
-)
-from .threading_views import (
-    create_record_conversation_thread,
-    analyze_record_threading_opportunities,
-    get_record_conversation_threads,
-    bulk_create_conversation_threads
-)
-from .channel_availability_views import (
-    get_record_channel_availability,
-    get_record_channel_recommendations,
-    bulk_analyze_channel_availability,
-    get_user_channel_summary,
-    invalidate_channel_cache
-)
+# Unified inbox views removed - legacy code
+# Threading views removed - legacy code
+# Channel availability views removed - legacy code
 from ..views import CommunicationAnalyticsViewSet
-# Import consolidated local-first WhatsApp views (webhook-first architecture)
-from .whatsapp_views_local_first import (
+# Import consolidated local-first WhatsApp views from channels directory
+from communications.channels.whatsapp.api_views import (
     get_whatsapp_chats_local_first,
     get_chat_messages_local_first,
     send_message_local_first,
@@ -96,8 +78,8 @@ from .whatsapp_views_local_first import (
     get_chat_sync_status
 )
 
-# Import background sync views
-from .background_sync_views import (
+# Import WhatsApp background sync views from channels directory
+from communications.channels.whatsapp.background_sync_views import (
     start_background_sync,
     start_chat_specific_sync,
     get_sync_jobs,
@@ -154,8 +136,7 @@ urlpatterns = [
     path('inbox/send-message-with-attachments/', send_message_with_attachments, name='send-message-with-attachments'),
     path('inbox/test-endpoint/', lambda request: JsonResponse({'status': 'ok', 'method': request.method}), name='test-endpoint'),
     
-    # Unified Inbox endpoints
-    path('inbox/', get_unified_inbox, name='unified-inbox'),
+    # Unified Inbox endpoints - removed (legacy code)
     path('conversations/<str:conversation_id>/messages/', get_conversation_messages, name='conversation-messages'),
     path('conversations/<str:conversation_id>/mark-read/', mark_conversation_as_read, name='mark-conversation-read'),
     
@@ -181,26 +162,11 @@ urlpatterns = [
     path('local-inbox/conversations/<str:conversation_id>/mark-read/', mark_local_conversation_as_read, name='local-mark-conversation-read'),
     path('local-inbox/stats/', get_inbox_stats, name='inbox-stats'),
     
-    # Unified Record-centric inbox endpoints
-    path('unified-inbox/', get_unified_inbox, name='unified-inbox'),
-    path('records/<int:record_id>/timeline/', get_record_timeline, name='record-timeline'),
-    path('records/<int:record_id>/stats/', get_record_stats, name='record-stats'),
-    path('records/<int:record_id>/mark-read/', mark_record_conversation_read, name='mark-record-read'),
-    path('records/<int:record_id>/send-message/', send_message_to_record, name='send-message-to-record'),
-    path('user-channels/', get_user_channels, name='user-channels'),
+    # Unified inbox endpoints removed - legacy code
     
-    # Conversation threading endpoints
-    path('records/<int:record_id>/threading/create/', create_record_conversation_thread, name='create-record-thread'),
-    path('records/<int:record_id>/threading/analyze/', analyze_record_threading_opportunities, name='analyze-record-threading'),
-    path('records/<int:record_id>/threading/', get_record_conversation_threads, name='get-record-threads'),
-    path('threading/bulk-create/', bulk_create_conversation_threads, name='bulk-create-threads'),
+    # Conversation threading endpoints - removed (legacy code)
     
-    # Channel availability endpoints
-    path('records/<int:record_id>/channels/', get_record_channel_availability, name='record-channel-availability'),
-    path('records/<int:record_id>/channels/recommendations/', get_record_channel_recommendations, name='record-channel-recommendations'),
-    path('channels/bulk-analyze/', bulk_analyze_channel_availability, name='bulk-analyze-channels'),
-    path('channels/user-summary/', get_user_channel_summary, name='user-channel-summary'),
-    path('channels/invalidate-cache/', invalidate_channel_cache, name='invalidate-channel-cache'),
+    # Channel availability endpoints - removed (legacy code)
     
     # Communication analytics endpoints (handled by ViewSet router above)
     # Analytics endpoints are automatically available at:
@@ -211,6 +177,7 @@ urlpatterns = [
     # /api/v1/communications/analytics/insights_dashboard/
     
     # WhatsApp-specific endpoints for Unipile integration
+    # Import new WhatsApp views from the channels structure
     path('whatsapp/accounts/', get_whatsapp_accounts, name='whatsapp-accounts'),
     path('whatsapp/chats/', get_whatsapp_chats_local_first, name='whatsapp-chats'),
     path('whatsapp/chats/<str:chat_id>/messages/', get_chat_messages_local_first, name='whatsapp-chat-messages'),
@@ -224,11 +191,11 @@ urlpatterns = [
     path('whatsapp/chats/<str:chat_id>/sync/', sync_chat_history, name='whatsapp-chat-sync'),
     path('whatsapp/chats/<str:chat_id>/sync/status/', get_chat_sync_status, name='whatsapp-chat-sync-status'),
     
-    # Background sync endpoints
-    path('sync/background/', start_background_sync, name='start-background-sync'),
-    path('sync/background/chat/<str:chat_id>/', start_chat_specific_sync, name='start-chat-specific-sync'),
-    path('sync/jobs/', get_sync_jobs, name='get-sync-jobs'),
-    path('sync/jobs/active/', get_active_sync_jobs, name='get-active-sync-jobs'),
-    path('sync/jobs/<uuid:sync_job_id>/', get_sync_job_status, name='get-sync-job-status'),
-    path('sync/jobs/<uuid:sync_job_id>/cancel/', cancel_sync_job, name='cancel-sync-job'),
+    # WhatsApp background sync endpoints
+    path('whatsapp/sync/background/', start_background_sync, name='whatsapp-background-sync'),
+    path('whatsapp/sync/background/chat/<str:chat_id>/', start_chat_specific_sync, name='whatsapp-chat-background-sync'),
+    path('whatsapp/sync/jobs/', get_sync_jobs, name='whatsapp-sync-jobs'),
+    path('whatsapp/sync/jobs/active/', get_active_sync_jobs, name='whatsapp-active-sync-jobs'),
+    path('whatsapp/sync/jobs/<uuid:sync_job_id>/', get_sync_job_status, name='whatsapp-sync-job-status'),
+    path('whatsapp/sync/jobs/<uuid:sync_job_id>/cancel/', cancel_sync_job, name='whatsapp-cancel-sync-job'),
 ]

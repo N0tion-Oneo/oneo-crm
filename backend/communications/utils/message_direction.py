@@ -3,17 +3,19 @@ Unified message direction logic for WhatsApp and other messaging channels
 """
 import logging
 from typing import Dict, Any
+from .account_owner_detection import AccountOwnerDetector
 
 logger = logging.getLogger(__name__)
 
 
-def determine_whatsapp_direction(message_data: Dict[str, Any], business_account_id: str = None) -> str:
+def determine_whatsapp_direction(message_data: Dict[str, Any], business_account_id: str = None, channel: Any = None) -> str:
     """
     Single source of truth for determining WhatsApp message direction
     
     Args:
         message_data: Raw message data from UniPile
         business_account_id: Optional business account ID for comparison
+        channel: Optional Channel instance for automatic account detection
         
     Returns:
         'in' for inbound (from customer), 'out' for outbound (from business)
@@ -23,14 +25,17 @@ def determine_whatsapp_direction(message_data: Dict[str, Any], business_account_
         is_sender = message_data.get('is_sender', 0)
         return 'out' if is_sender else 'in'
     
-    # Method 2: Compare sender with business account (for webhook data)
-    if business_account_id:
+    # Method 2: Use AccountOwnerDetector for sender analysis
+    if business_account_id or channel:
+        detector = AccountOwnerDetector('whatsapp', account_identifier=business_account_id, channel=channel)
         sender_info = message_data.get('sender', {})
+        
         if isinstance(sender_info, dict):
-            sender_id = sender_info.get('attendee_provider_id', '')
-            if sender_id == business_account_id:
+            is_owner = detector.is_account_owner(sender_info, message_data)
+            if is_owner:
                 return 'out'
-            elif sender_id:  # Has sender but not business account
+            elif sender_info.get('attendee_provider_id') or sender_info.get('id'):
+                # Has sender info but not owner
                 return 'in'
     
     # Method 3: Check message direction field directly
@@ -123,7 +128,7 @@ def determine_linkedin_direction(message_data: Dict[str, Any], user_profile_id: 
     return 'in'
 
 
-def determine_message_direction(message_data: Dict[str, Any], channel_type: str, user_identifier: str = None) -> str:
+def determine_message_direction(message_data: Dict[str, Any], channel_type: str, user_identifier: str = None, channel: Any = None) -> str:
     """
     Universal message direction determiner for all channel types
     
@@ -131,6 +136,7 @@ def determine_message_direction(message_data: Dict[str, Any], channel_type: str,
         message_data: Raw message data from UniPile
         channel_type: Type of channel ('whatsapp', 'gmail', 'linkedin', etc.)
         user_identifier: User's identifier for the channel (email, phone, profile_id, etc.)
+        channel: Optional Channel instance for automatic account detection
         
     Returns:
         'in' for inbound messages, 'out' for outbound messages
@@ -138,7 +144,7 @@ def determine_message_direction(message_data: Dict[str, Any], channel_type: str,
     channel_type = channel_type.lower()
     
     if channel_type == 'whatsapp':
-        return determine_whatsapp_direction(message_data, user_identifier)
+        return determine_whatsapp_direction(message_data, user_identifier, channel)
     elif channel_type in ['gmail', 'outlook', 'email', 'mail']:
         return determine_email_direction(message_data, user_identifier)
     elif channel_type == 'linkedin':

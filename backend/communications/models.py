@@ -236,6 +236,22 @@ class ConversationStatus(models.TextChoices):
     DELETED = 'deleted', 'Deleted'
 
 
+class ConversationType(models.TextChoices):
+    """Type of conversation"""
+    DIRECT = 'direct', 'Direct Message'
+    GROUP = 'group', 'Group Chat'
+    BROADCAST = 'broadcast', 'Broadcast List'
+    CHANNEL = 'channel', 'Channel/Community'
+
+
+class AttendeeRole(models.TextChoices):
+    """Role of attendee in conversation"""
+    OWNER = 'owner', 'Owner'
+    ADMIN = 'admin', 'Admin'
+    MEMBER = 'member', 'Member'
+    VIEWER = 'viewer', 'Viewer'
+
+
 class Priority(models.TextChoices):
     """Priority levels for conversations"""
     LOW = 'low', 'Low'
@@ -502,8 +518,31 @@ class Conversation(models.Model):
     )
     subject = models.CharField(max_length=500, blank=True)
     
+    # Conversation type
+    conversation_type = models.CharField(
+        max_length=20,
+        choices=ConversationType.choices,
+        default=ConversationType.DIRECT,
+        help_text="Type of conversation (direct, group, broadcast, channel)"
+    )
+    
+    # Participant tracking
+    participant_count = models.IntegerField(
+        default=0,
+        help_text="Cached count of active participants"
+    )
+    
     # Relationships
     channel = models.ForeignKey(Channel, on_delete=models.CASCADE, related_name='conversations')
+    
+    # Attendees (participants) in this conversation
+    attendees = models.ManyToManyField(
+        'ChatAttendee',
+        through='ConversationAttendee',
+        related_name='conversations',
+        help_text="Participants in this conversation"
+    )
+    
     primary_contact_record = models.ForeignKey(
         'pipelines.Record', 
         on_delete=models.SET_NULL, 
@@ -609,6 +648,17 @@ class Message(models.Model):
         null=True, 
         blank=True
     )
+    
+    # Who sent this message
+    sender = models.ForeignKey(
+        'ChatAttendee',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='sent_messages',
+        help_text="The attendee who sent this message"
+    )
+    
     contact_record = models.ForeignKey(
         'pipelines.Record', 
         on_delete=models.SET_NULL, 
@@ -848,6 +898,92 @@ class ChatAttendee(models.Model):
         return self.name.endswith('@s.whatsapp.net') or self.name.replace('+', '').replace('-', '').replace(' ', '').isdigit()
 
 
+class ConversationAttendee(models.Model):
+    """
+    Junction table linking attendees to specific conversations
+    Tracks participation, roles, and conversation-specific metadata
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    
+    # Core relationships
+    conversation = models.ForeignKey(
+        'Conversation',
+        on_delete=models.CASCADE,
+        related_name='conversation_attendees'
+    )
+    attendee = models.ForeignKey(
+        ChatAttendee,
+        on_delete=models.CASCADE,
+        related_name='conversation_participations'
+    )
+    
+    # Participation timeline
+    joined_at = models.DateTimeField(
+        auto_now_add=True,
+        help_text="When the attendee joined this conversation"
+    )
+    left_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When the attendee left (null if still active)"
+    )
+    is_active = models.BooleanField(
+        default=True,
+        help_text="Whether attendee is currently in conversation"
+    )
+    
+    # Role and permissions
+    role = models.CharField(
+        max_length=20,
+        choices=AttendeeRole.choices,
+        default=AttendeeRole.MEMBER,
+        help_text="Role in this conversation"
+    )
+    
+    # Read tracking
+    last_read_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Last time this attendee read messages"
+    )
+    last_typed_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Last typing indicator timestamp"
+    )
+    
+    # Notification preferences
+    notification_enabled = models.BooleanField(
+        default=True,
+        help_text="Whether notifications are enabled for this conversation"
+    )
+    
+    # Additional metadata
+    metadata = models.JSONField(
+        default=dict,
+        help_text="Additional attendee-conversation specific data"
+    )
+    
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        unique_together = [
+            ['conversation', 'attendee'],  # One record per attendee per conversation
+        ]
+        indexes = [
+            models.Index(fields=['conversation', 'is_active']),
+            models.Index(fields=['attendee', 'is_active']),
+            models.Index(fields=['conversation', 'last_read_at']),
+            models.Index(fields=['role', 'is_active']),
+        ]
+    
+    def __str__(self):
+        return f"{self.attendee.name} in {self.conversation.subject or 'Conversation'} ({self.role})"
+
+
+
 # =========================================================================
 # BACKGROUND SYNC MANAGEMENT MODELS
 # =========================================================================
@@ -985,9 +1121,16 @@ class SyncJob(models.Model):
         from django_tenants.utils import schema_context
         from django.db import connection as db_connection
         from asgiref.sync import sync_to_async
+        import logging
+        
+        logger = logging.getLogger(__name__)
         
         # Capture tenant context before async operation
         current_schema = getattr(db_connection, 'schema_name', 'public')
+        
+        logger.info(f"📊 ASYNC UPDATE PROGRESS called for SyncJob {self.id}")
+        logger.info(f"   🔑 Celery Task ID: {self.celery_task_id}")
+        logger.info(f"   📈 Progress Update: {kwargs}")
         
         def sync_update():
             # Ensure tenant context is preserved
@@ -995,6 +1138,7 @@ class SyncJob(models.Model):
                 self.progress.update(kwargs)
                 self.last_progress_update = django_timezone.now()
                 self.save(update_fields=['progress', 'last_progress_update'])
+                logger.info(f"   ✅ SyncJob {self.id} progress saved successfully")
         
         # Run the sync operation with tenant context preservation
         await sync_to_async(sync_update)()

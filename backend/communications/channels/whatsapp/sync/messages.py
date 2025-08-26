@@ -359,7 +359,14 @@ class MessageSyncService:
             'pending': MessageStatus.PENDING
         }
         
-        return status_map.get(api_status, MessageStatus.DELIVERED)
+        # If we have an explicit status, use it
+        if api_status in status_map:
+            return status_map[api_status]
+        
+        # For synced messages without explicit status, mark as READ
+        # This prevents all historical messages from appearing as unread
+        # New incoming messages via webhook will have proper status
+        return MessageStatus.READ
     
     def _update_conversation_from_messages(
         self,

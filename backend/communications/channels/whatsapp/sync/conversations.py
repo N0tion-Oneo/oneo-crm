@@ -63,7 +63,7 @@ class ConversationSyncService:
         }
         
         try:
-            logger.info(f"📱 Syncing conversations for channel {self.channel.name}")
+            logger.debug(f"📱 Syncing conversations for channel {self.channel.name}")
             
             # Get account ID from connection
             account_id = None
@@ -86,7 +86,7 @@ class ConversationSyncService:
             conversations_data = api_result.get('conversations', [])
             stats['next_cursor'] = api_result.get('cursor')
             
-            logger.info(f"  Retrieved {len(conversations_data)} conversations from API")
+            logger.debug(f"  Retrieved {len(conversations_data)} conversations from API")
             
             # Process conversations
             processed_stats = self._process_conversations_batch(conversations_data)
@@ -97,7 +97,7 @@ class ConversationSyncService:
             stats['conversations_updated'] = processed_stats['updated']
             stats['attendees_synced'] = processed_stats['attendees']
             
-            logger.info(
+            logger.debug(
                 f"  ✅ Synced {stats['conversations_synced']} conversations "
                 f"({stats['conversations_created']} new)"
             )
@@ -201,7 +201,7 @@ class ConversationSyncService:
             )
             
             if created:
-                logger.info(f"  Created conversation: {subject or external_id[:20]}")
+                logger.debug(f"  Created conversation: {subject or external_id[:20]}")
             
             return conversation, created
             
@@ -287,7 +287,7 @@ class ConversationSyncService:
         Returns:
             Combined statistics
         """
-        logger.info(f"📱 Starting paginated conversation sync (max_total={max_total}, batch_size={batch_size})")
+        logger.debug(f"📱 Starting paginated conversation sync (max_total={max_total}, batch_size={batch_size})")
         
         total_stats = {
             'conversations_synced': 0,
@@ -347,7 +347,7 @@ class ConversationSyncService:
                     f"Synced {synced} of {max_total} conversations"
                 )
         
-        logger.info(
+        logger.debug(
             f"Paginated sync complete: {total_stats['conversations_synced']} "
             f"conversations ({total_stats['conversations_created']} new)"
         )

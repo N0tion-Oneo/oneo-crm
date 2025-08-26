@@ -120,7 +120,7 @@ def track_potential_response(inbound_message: Message):
                     response_message=inbound_message
                 )
                 
-                logger.info(f"Tracked response from {inbound_message.id} to {original_message.id}")
+                # logger.info(f"Tracked response from {inbound_message.id} to {original_message.id}")
             
     except Exception as e:
         logger.error(f"Failed to track potential response for {inbound_message.id}: {e}")
@@ -143,7 +143,7 @@ def update_campaign_metrics(sender, instance: Message, created: bool, **kwargs):
             try:
                 campaign = CampaignTracking.objects.get(id=campaign_id)
                 # Campaign metrics will be updated by the performance metrics update task
-                logger.info(f"Message {instance.id} tracked for campaign {campaign.name}")
+                # logger.info(f"Message {instance.id} tracked for campaign {campaign.name}")
             except CampaignTracking.DoesNotExist:
                 logger.warning(f"Campaign {campaign_id} not found for message {instance.id}")
                 

@@ -159,29 +159,35 @@ class MessageSyncService:
             'total': 0,
             'created': 0,
             'updated': 0,
-            'skipped': 0
+            'skipped': 0,
+            'errors': 0,
+            'date_filtered': 0
         }
+        
+        logger.info(f"📦 Processing batch of {len(messages_data)} messages for conversation {conversation.external_thread_id[:20]}...")
         
         # Attendees are now synced in Phase 1.5 by comprehensive.py
         
-        with transaction.atomic():
-            for idx, msg_data in enumerate(messages_data):
-                try:
-                    # Update progress less frequently - every 25 messages or at the end
-                    if self.progress_tracker and ((idx + 1) % 25 == 0 or (idx + 1) == len(messages_data)):
-                        self.progress_tracker.update_progress(
-                            idx + 1, len(messages_data), 'processing_messages',
-                            f"Processing message {idx + 1} of {len(messages_data)}"
-                        )
-                    
-                    # Check date filter
-                    if since_date:
-                        msg_date = self._parse_message_date(msg_data)
-                        if msg_date and msg_date < since_date:
-                            stats['skipped'] += 1
-                            continue
-                    
-                    # Store message
+        for idx, msg_data in enumerate(messages_data):
+            try:
+                # Update progress less frequently - every 25 messages or at the end
+                if self.progress_tracker and ((idx + 1) % 25 == 0 or (idx + 1) == len(messages_data)):
+                    self.progress_tracker.update_progress(
+                        idx + 1, len(messages_data), 'processing_messages',
+                        f"Processing message {idx + 1} of {len(messages_data)}"
+                    )
+                
+                # Check date filter
+                if since_date:
+                    msg_date = self._parse_message_date(msg_data)
+                    if msg_date and msg_date < since_date:
+                        stats['skipped'] += 1
+                        stats['date_filtered'] += 1
+                        logger.debug(f"⏭️ SKIP: Message dated {msg_date} is before {since_date}")
+                        continue
+                
+                # Store message with its own transaction
+                with transaction.atomic():
                     message, created = self._store_message(msg_data, conversation)
                     
                     if message:
@@ -190,6 +196,9 @@ class MessageSyncService:
                             stats['created'] += 1
                         else:
                             stats['updated'] += 1
+                    else:
+                        stats['errors'] += 1
+                        logger.debug(f"⚠️ Message not stored (likely error or skip)")
                         
                         # Find existing attendee to link as sender (attendees already synced in Phase 1.5)
                         provider_id = msg_data.get('attendee_provider_id')
@@ -200,10 +209,10 @@ class MessageSyncService:
                             if attendee and not message.sender:
                                 message.sender = attendee
                                 message.save(update_fields=['sender'])
-                    
-                except Exception as e:
-                    logger.error(f"Failed to process message: {e}")
-                    continue
+                
+            except Exception as e:
+                logger.error(f"Failed to process message: {e}")
+                continue
         
         # Final progress update
         if self.progress_tracker and messages_data:
@@ -211,6 +220,18 @@ class MessageSyncService:
                 len(messages_data), len(messages_data), 'processing_messages',
                 f"Completed processing {stats['total']} messages"
             )
+        
+        # Log batch processing summary
+        logger.info(f"📊 Batch processing complete:")
+        logger.info(f"   Input: {len(messages_data)} messages")
+        logger.info(f"   Stored: {stats['total']} ({stats['created']} new, {stats['updated']} updated)")
+        logger.info(f"   Skipped: {stats['skipped']} (date filtered: {stats.get('date_filtered', 0)})")
+        logger.info(f"   Errors: {stats.get('errors', 0)}")
+        
+        if stats['total'] < len(messages_data):
+            missing = len(messages_data) - stats['total'] - stats.get('skipped', 0)
+            if missing > 0:
+                logger.warning(f"⚠️ MISSING: {missing} messages not accounted for!")
         
         return stats
     
@@ -240,7 +261,7 @@ class MessageSyncService:
             # Extract external ID
             external_id = msg_data.get('id') or msg_data.get('provider_id')
             if not external_id:
-                logger.warning("Message has no external ID")
+                logger.warning(f"🚫 SKIP: Message has no external ID - data keys: {list(msg_data.keys())[:10]}")
                 return None, False
             
             # Parse the WhatsApp message timestamp
@@ -252,6 +273,9 @@ class MessageSyncService:
                     external_message_id=external_id,
                     conversation=conversation
                 )
+                # Log duplicate detection
+                logger.debug(f"📝 UPDATE: Message {external_id} already exists - updating")
+                
                 # Update existing message
                 message.channel = self.channel
                 message.direction = direction
@@ -268,14 +292,20 @@ class MessageSyncService:
                 
                 # Update created_at separately using raw SQL to bypass Django's auto_now protection
                 if whatsapp_timestamp:
-                    from django.db import connection
-                    with connection.cursor() as cursor:
-                        cursor.execute(
-                            "UPDATE communications_message SET created_at = %s WHERE id = %s",
-                            [whatsapp_timestamp, message.id]
-                        )
+                    try:
+                        from django.db import connection
+                        with connection.cursor() as cursor:
+                            cursor.execute(
+                                "UPDATE communications_message SET created_at = %s WHERE id = %s",
+                                [whatsapp_timestamp, message.id]
+                            )
+                    except Exception as sql_error:
+                        logger.debug(f"Could not update created_at timestamp: {sql_error}")
                 created = False
             except Message.DoesNotExist:
+                # Log new message creation
+                logger.debug(f"✅ CREATE: New message {external_id} - {whatsapp_timestamp}")
+                
                 # Create new message - first create with defaults, then update created_at
                 message = Message(
                     external_message_id=external_id,
@@ -296,18 +326,22 @@ class MessageSyncService:
                 
                 # Update created_at using raw SQL to bypass Django's auto_now_add
                 if whatsapp_timestamp:
-                    from django.db import connection
-                    with connection.cursor() as cursor:
-                        cursor.execute(
-                            "UPDATE communications_message SET created_at = %s WHERE id = %s",
-                            [whatsapp_timestamp, message.id]
-                        )
+                    try:
+                        from django.db import connection
+                        with connection.cursor() as cursor:
+                            cursor.execute(
+                                "UPDATE communications_message SET created_at = %s WHERE id = %s",
+                                [whatsapp_timestamp, message.id]
+                            )
+                    except Exception as sql_error:
+                        logger.debug(f"Could not update created_at timestamp: {sql_error}")
                 created = True
             
             return message, created
             
         except Exception as e:
-            logger.error(f"Failed to store message: {e}")
+            logger.error(f"❌ ERROR storing message {external_id if 'external_id' in locals() else 'unknown'}: {e}")
+            logger.error(f"   Message data sample: {str(msg_data)[:200]}")
             return None, False
     
     def _parse_message_date(self, msg_data: Dict[str, Any]) -> Optional[datetime]:
@@ -466,12 +500,12 @@ class MessageSyncService:
                 logger.warning(f"No external ID for conversation {conversation.id}")
                 return stats
             
-            logger.debug(f"📨 Syncing messages for conversation {external_id[:20]} with pagination...")
-            logger.debug(f"  Max messages: {max_messages}, Batch size: {batch_size}")
+            logger.info(f"📨 Starting paginated sync for conversation {external_id[:20]} - target: {max_messages} messages")
             
             cursor = None
             total_synced = 0
             all_messages = []
+            last_cursor = None  # Track the last cursor for debugging
             
             # Track progress for the overall conversation
             if self.progress_tracker:
@@ -480,11 +514,14 @@ class MessageSyncService:
                     f"Starting paginated fetch for {external_id[:20]}..."
                 )
             
-            # Paginate through messages
+            # Paginate through messages - continue until we have enough OR no more available
             while total_synced < max_messages:
                 # Calculate batch size for this iteration
                 remaining = max_messages - total_synced
                 current_batch_size = min(batch_size, remaining)
+                
+                # Log API calls for debugging pagination
+                logger.info(f"  📡 API call {stats['api_calls'] + 1}: fetching up to {current_batch_size} messages (have {total_synced}/{max_messages}, cursor={cursor is not None})")
                 
                 # Update progress before API call
                 if self.progress_tracker:
@@ -503,6 +540,7 @@ class MessageSyncService:
                 
                 stats['api_calls'] += 1
                 
+                
                 if not api_result.get('success'):
                     error_msg = f"Failed to fetch messages batch {stats['api_calls']}: {api_result.get('error')}"
                     logger.error(error_msg)
@@ -511,10 +549,8 @@ class MessageSyncService:
                 
                 messages_batch = api_result.get('messages', [])
                 if not messages_batch:
-                    logger.debug(f"  No more messages available after {stats['api_calls']} API calls")
+                    logger.debug(f"  No messages in batch {stats['api_calls']} - stopping")
                     break
-                
-                logger.debug(f"  Retrieved batch {stats['api_calls']}: {len(messages_batch)} messages")
                 
                 # Filter messages by date if needed
                 if since_date:
@@ -540,17 +576,29 @@ class MessageSyncService:
                 # Check if we should continue
                 cursor = api_result.get('cursor')
                 has_more = api_result.get('has_more', False)
+                last_cursor = cursor  # Save for debugging
                 
-                if not cursor or not has_more or len(messages_batch) < current_batch_size:
-                    logger.debug(f"  No more messages to fetch (cursor: {bool(cursor)}, has_more: {has_more})")
+                # Log pagination details for debugging
+                logger.info(f"  📦 Batch {stats['api_calls']} result: got {len(messages_batch)} messages, total={total_synced}, cursor={cursor is not None}, has_more={has_more}")
+                
+                # Check for potential issues
+                if not has_more and len(messages_batch) == current_batch_size:
+                    logger.warning(f"  ⚠️ SUSPICIOUS: Got full batch of {len(messages_batch)} messages but has_more=False!")
+                
+                # Continue pagination if has_more is True (which now correctly reflects cursor presence)
+                if not has_more:
+                    logger.warning(f"  🛑 API says no more messages - stopping at {total_synced}/{max_messages} (cursor={cursor})")
+                    if total_synced < max_messages:
+                        logger.error(f"  ❌ INCOMPLETE: Only got {total_synced}/{max_messages} messages for {external_id[:20]}")
                     break
-                
-                # Log progress every few batches
-                if stats['api_calls'] % 3 == 0:
-                    logger.info(f"  Progress: {total_synced}/{max_messages} messages fetched in {stats['api_calls']} API calls")
+            
+            # Only log if there's an issue
+            if total_synced < max_messages and last_cursor:
+                logger.warning(f"  ⚠️ PAGINATION ISSUE: Stopped at {total_synced} with cursor still present!")
             
             # Now process all collected messages
             if all_messages:
+                logger.info(f"  📊 Total API messages fetched: {len(all_messages)}")
                 logger.debug(f"  Processing {len(all_messages)} total messages...")
                 
                 if self.progress_tracker:
@@ -570,14 +618,30 @@ class MessageSyncService:
                 stats['messages_synced'] = processed_stats['total']
                 stats['messages_created'] = processed_stats['created']
                 stats['messages_updated'] = processed_stats['updated']
+                # Keep errors as a list, but track error count separately
+                error_count = processed_stats.get('errors', 0)
+                if error_count > 0:
+                    stats['errors'].append(f"Failed to process {error_count} messages")
+                stats['skipped'] = processed_stats.get('skipped', 0)
+                
+                # Log the final results
+                logger.info(f"  ✅ Sync complete for {conversation.external_thread_id[:20]}:")
+                logger.info(f"     - API fetched: {len(all_messages)} messages")
+                logger.info(f"     - DB stored: {stats['messages_synced']} messages")
+                logger.info(f"     - Created: {stats['messages_created']}, Updated: {stats['messages_updated']}")
+                logger.info(f"     - Errors: {len(stats['errors'])}, Skipped: {stats['skipped']}")
+                
+                if len(all_messages) != stats['messages_synced']:
+                    discrepancy = len(all_messages) - stats['messages_synced']
+                    logger.error(f"  ❌ DISCREPANCY: {discrepancy} messages lost between API and DB!")
+                    logger.error(f"     This explains why only {stats['messages_synced']} of {len(all_messages)} messages are saved")
                 
                 # Update conversation metadata
                 self._update_conversation_from_messages(conversation, all_messages)
             
-            logger.info(
-                f"  ✅ Synced {stats['messages_synced']} messages "
-                f"({stats['messages_created']} new) in {stats['api_calls']} API calls"
-            )
+            # Only log if there's an issue
+            if stats['messages_synced'] < max_messages and last_cursor:
+                logger.warning(f"  ⚠️ Only got {stats['messages_synced']}/{max_messages} but cursor was present!")
             
         except Exception as e:
             error_msg = f"Error in paginated sync for {conversation.id}: {e}"

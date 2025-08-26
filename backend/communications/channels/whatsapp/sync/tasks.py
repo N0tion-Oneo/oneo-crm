@@ -37,16 +37,21 @@ def _run_sync_in_context(
             logger.error(error_msg)
             return {'success': False, 'error': error_msg}
         
-        # Create sync job
+        # IMPORTANT: Apply config defaults here to ensure they're used
+        from .config import get_sync_options
+        corrected_sync_options = get_sync_options(sync_options)
+        logger.info(f"📊 Using sync options: {corrected_sync_options}")
+        
+        # Create sync job with corrected options
         sync_job = SyncJobManager.create_sync_job(
             channel_id=channel.id,
             user_id=user_id,
             sync_type=SyncJobType.COMPREHENSIVE,
-            options=sync_options or {},
+            options=corrected_sync_options,
             task_id=task_id
         )
         
-        logger.info(f"  Created sync job: {sync_job.id}")
+        logger.debug(f"  Created sync job: {sync_job.id}")
         
         # Run comprehensive sync
         sync_service = ComprehensiveSyncService(
@@ -63,8 +68,8 @@ def _run_sync_in_context(
                 SyncJobManager.mark_sync_job_failed(str(sync_job.id), error_msg)
             return {'success': False, 'error': error_msg, 'validation': validation}
         
-        # Run the sync
-        stats = sync_service.run_comprehensive_sync(sync_options)
+        # Run the sync with corrected options
+        stats = sync_service.run_comprehensive_sync(corrected_sync_options)
         
         logger.info(f"✅ Background sync completed: {stats}")
         
@@ -116,12 +121,12 @@ def sync_account_comprehensive_background(
     try:
         # Capture task ID
         task_id = self.request.id
-        logger.info(f"🎯 Starting background sync task {task_id}")
+        logger.debug(f"🎯 Starting background sync task {task_id}")
         
         # Switch to tenant schema if provided
         if tenant_schema:
             from django_tenants.utils import schema_context
-            logger.info(f"  Processing sync in tenant: {tenant_schema}")
+            logger.debug(f"  Processing sync in tenant: {tenant_schema}")
             # Use schema_context for the entire operation
             with schema_context(tenant_schema):
                 return _run_sync_in_context(
@@ -143,7 +148,7 @@ def sync_account_comprehensive_background(
         
         # Retry if retries available
         if self.request.retries < self.max_retries:
-            logger.info(f"Retrying task (attempt {self.request.retries + 1}/{self.max_retries})")
+            logger.debug(f"Retrying task (attempt {self.request.retries + 1}/{self.max_retries})")
             raise self.retry(exc=e, countdown=60 * (self.request.retries + 1))
         
         return {
@@ -278,7 +283,7 @@ def sync_chat_specific_background(
         
         # Retry if retries available
         if self.request.retries < self.max_retries:
-            logger.info(f"Retrying task (attempt {self.request.retries + 1}/{self.max_retries})")
+            logger.debug(f"Retrying task (attempt {self.request.retries + 1}/{self.max_retries})")
             raise self.retry(exc=e, countdown=30 * (self.request.retries + 1))
         
         return {

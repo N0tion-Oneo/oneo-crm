@@ -13,7 +13,7 @@ SYNC_CONFIG = {
     # API batch settings
     'conversations_per_batch': 50,      # Conversations per API request
     'messages_per_batch': 100,          # Messages per API request (deprecated - use messages_batch_size)
-    'messages_batch_size': int(os.environ.get('SYNC_MESSAGES_BATCH_SIZE', 50)),  # Messages per API call when paginating
+    'messages_batch_size': int(os.environ.get('SYNC_MESSAGES_BATCH_SIZE', 200)),  # Messages per API call when paginating (API max: 200)
     'enable_message_pagination': os.environ.get('SYNC_ENABLE_MESSAGE_PAGINATION', 'true').lower() == 'true',  # Enable message pagination
     'concurrent_chat_tasks': 3,         # Parallel chat processing tasks
     'max_retries': 2,                   # Maximum retry attempts
@@ -34,9 +34,9 @@ SYNC_CONFIG = {
 # Default sync options - production ready values
 # These are the ONLY defaults that should be used across the system
 DEFAULT_SYNC_OPTIONS = {
-    'max_conversations': int(os.environ.get('SYNC_MAX_CONVERSATIONS', 300)),
+    'max_conversations': int(os.environ.get('SYNC_MAX_CONVERSATIONS', 5)),
     'max_messages_per_chat': int(os.environ.get('SYNC_MAX_MESSAGES', 300)),  # API limit: 250 max
-    'days_back': int(os.environ.get('SYNC_DAYS_BACK', 100)),
+    'days_back': int(os.environ.get('SYNC_DAYS_BACK', 0)),  # 0 = no date filter (sync all), >0 = filter messages by age in days
 }
 
 # Get sync options without overrides
@@ -51,6 +51,14 @@ def get_sync_options(overrides: dict = None) -> dict:
     Returns:
         Sync options dictionary from DEFAULT_SYNC_OPTIONS only
     """
+    # Log what we're receiving vs returning for debugging
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    if overrides:
+        logger.info(f"📊 get_sync_options called with overrides: {overrides}")
+        logger.info(f"✅ Returning config defaults instead: {DEFAULT_SYNC_OPTIONS}")
+    
     # Ignore any overrides - return only the configured defaults
     return DEFAULT_SYNC_OPTIONS.copy()
 

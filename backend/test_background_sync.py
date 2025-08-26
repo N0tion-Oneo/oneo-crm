@@ -15,7 +15,7 @@ from django_tenants.utils import schema_context
 from tenants.models import Tenant
 from authentication.models import CustomUser
 from communications.models import Channel, UserChannelConnection, Message, ChatAttendee, Conversation
-from communications.channels.whatsapp.background_sync import sync_account_comprehensive_background
+from communications.channels.whatsapp.sync.tasks import sync_account_comprehensive_background
 
 def clear_existing_data(channel):
     """Clear existing data for clean test"""

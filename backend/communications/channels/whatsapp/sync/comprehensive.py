@@ -60,6 +60,10 @@ class ComprehensiveSyncService:
         
         Args:
             options: Sync options dictionary
+                - max_conversations: Number of conversations to sync (default: 300)
+                - max_messages_per_chat: Messages per conversation (default: 300) 
+                - days_back: Days to look back for messages (default: 0 = no filter, sync all)
+                  Set to >0 to only sync recent messages, e.g., 30 for last month
             
         Returns:
             Statistics dictionary
@@ -68,10 +72,7 @@ class ComprehensiveSyncService:
         from .config import get_sync_options
         sync_options = get_sync_options(options)
         
-        logger.info(
-            f"🚀 Starting comprehensive sync for channel {self.channel.name}"
-        )
-        logger.info(f"  Options: {sync_options}")
+        # Silent start - no logging
         
         stats = {
             'conversations_synced': 0,
@@ -86,7 +87,6 @@ class ComprehensiveSyncService:
         
         try:
             # Phase 1: Sync conversations
-            logger.info("📱 Phase 1: Syncing conversations...")
             conv_stats = self._sync_conversations_phase(sync_options)
             stats['conversations_synced'] = conv_stats['conversations_synced']
             stats['conversations_created'] = conv_stats['conversations_created']
@@ -94,21 +94,19 @@ class ComprehensiveSyncService:
             stats['errors'].extend(conv_stats.get('errors', []))
             
             # Phase 1.5: Sync attendees from chat level (not from messages)
-            logger.info("👥 Phase 1.5: Syncing attendees from chats...")
             attendee_stats = self._sync_attendees_phase(sync_options)
             stats['attendees_synced'] += attendee_stats.get('attendees_synced', 0)
             stats['errors'].extend(attendee_stats.get('errors', []))
             
             # Phase 2: Sync messages for each conversation
-            logger.info("📨 Phase 2: Syncing messages...")
             msg_stats = self._sync_messages_phase(sync_options)
             stats['messages_synced'] = msg_stats['messages_synced']
             stats['messages_created'] = msg_stats['messages_created']
+            stats['incomplete_conversations'] = msg_stats.get('incomplete_conversations', [])
             # Attendees are now counted in Phase 1.5, not from messages
             stats['errors'].extend(msg_stats.get('errors', []))
             
             # Phase 3: Final cleanup and optimization
-            logger.info("🧹 Phase 3: Cleanup and optimization...")
             self._cleanup_phase()
             
             stats['completed_at'] = timezone.now().isoformat()
@@ -119,8 +117,12 @@ class ComprehensiveSyncService:
                     status=SyncJobStatus.COMPLETED if not stats['errors'] else SyncJobStatus.COMPLETED
                 )
             
-            logger.info("✅ Comprehensive sync completed successfully")
-            logger.info(f"  Statistics: {stats}")
+            # Only show final result and any issues
+            if stats.get('incomplete_conversations'):
+                issues = [f"{name}: {count}/{target}" for name, count, target in stats['incomplete_conversations'][:3]]
+                logger.warning(f"⚠️ Incomplete: {', '.join(issues)}")
+            
+            logger.info(f"✅ {stats['conversations_synced']} conversations, {stats['messages_synced']} messages")
             
         except Exception as e:
             error_msg = f"Comprehensive sync failed: {e}"
@@ -172,8 +174,7 @@ class ComprehensiveSyncService:
                 f"Completed: {conv_stats['conversations_synced']} conversations"
             )
         
-        # Log Phase 1 results
-        logger.info(f"  ✅ Phase 1 completed: {conv_stats['conversations_synced']} conversations synced (target was {max_conversations})")
+        # Silent completion
         
         return conv_stats
     
@@ -210,7 +211,6 @@ class ComprehensiveSyncService:
             channel=self.channel
         ).order_by('-created_at')[:sync_options['max_conversations']]
         
-        logger.info(f"  Fetching attendees for {conversations.count()} conversations")
         
         # Update progress at start of phase
         if self.progress_tracker:
@@ -246,8 +246,6 @@ class ComprehensiveSyncService:
                     
                     stats['attendees_synced'] += len(synced_attendees)
                     
-                    if len(synced_attendees) > 0:
-                        logger.info(f"  Synced {len(synced_attendees)} attendees for chat {chat_id[:20]}...")
                 
                 # Update progress
                 if self.progress_tracker and (idx + 1) % 10 == 0:
@@ -272,7 +270,6 @@ class ComprehensiveSyncService:
                 f"Completed: {stats['attendees_synced']} attendees synced"
             )
         
-        logger.info(f"  ✅ Attendee sync completed: {stats['attendees_synced']} attendees synced")
         return stats
     
     def _sync_messages_phase(
@@ -282,18 +279,11 @@ class ComprehensiveSyncService:
         """Phase 2: Sync messages for conversations"""
         from .config import SYNC_CONFIG
         max_messages_per_chat = sync_options['max_messages_per_chat']
-        days_back = sync_options.get('days_back', 90)
+        days_back = sync_options.get('days_back', 0)  # Default to 0 (no filter)
         
-        # Log pagination settings
-        if SYNC_CONFIG.get('enable_message_pagination', True):
-            batch_size = SYNC_CONFIG.get('messages_batch_size', 50)
-            logger.info(f"  Message pagination enabled (batch size: {batch_size})")
-        else:
-            logger.info(f"  Message pagination disabled")
-        
-        # Calculate since date
+        # Calculate since date - only apply if days_back is explicitly set and > 0
         since_date = None
-        if days_back:
+        if days_back and days_back > 0:
             since_date = timezone.now() - timedelta(days=days_back)
         
         # Get conversations to sync messages for
@@ -303,23 +293,19 @@ class ComprehensiveSyncService:
             limit=max_conversations
         )
         
-        logger.info(f"  Found {len(conversations)} conversations to sync messages for (limit was {max_conversations})")
-        
-        # Log each conversation to be synced
-        for idx, conv in enumerate(conversations, 1):
-            logger.debug(f"    {idx}. {conv.subject or conv.external_thread_id[:30]}... (last_synced: {conv.last_synced_at})")
         
         # Sync messages for each conversation
         total_stats = {
             'messages_synced': 0,
             'messages_created': 0,
             'attendees_synced': 0,
-            'errors': []
+            'errors': [],
+            'incomplete_conversations': []  # Track which didn't get full messages
         }
         
         for idx, conversation in enumerate(conversations):
             try:
-                logger.info(f"  📨 Processing conversation {idx + 1}/{len(conversations)}: {conversation.subject or conversation.external_thread_id[:30]}...")
+                # No progress logging
                 
                 # Sync messages for this conversation
                 msg_stats = self.message_service.sync_messages_for_conversation(
@@ -334,7 +320,12 @@ class ComprehensiveSyncService:
                 # Attendees are counted in Phase 1.5, not from messages
                 total_stats['errors'].extend(msg_stats.get('errors', []))
                 
-                logger.info(f"    ✓ Synced {msg_stats['messages_synced']} messages for conversation {idx + 1}/{len(conversations)}")
+                # Track incomplete conversations
+                conv_name = conversation.subject or conversation.external_thread_id[:30]
+                if msg_stats['messages_synced'] < max_messages_per_chat and msg_stats['messages_synced'] > 0:
+                    total_stats['incomplete_conversations'].append(
+                        (conv_name, msg_stats['messages_synced'], max_messages_per_chat)
+                    )
                 
                 # Update conversation sync timestamp
                 conversation.last_synced_at = timezone.now()
@@ -349,12 +340,6 @@ class ComprehensiveSyncService:
                         f"Synced {msg_stats['messages_synced']} messages for conversation"
                     )
                 
-                # Log progress every 10 conversations
-                if (idx + 1) % 10 == 0:
-                    logger.info(
-                        f"  Progress: {idx + 1}/{len(conversations)} conversations, "
-                        f"{total_stats['messages_synced']} total messages"
-                    )
                 
             except Exception as e:
                 error_msg = f"Failed to sync messages for conversation {conversation.id}: {e}"
@@ -368,6 +353,8 @@ class ComprehensiveSyncService:
                 total_stats['messages_synced']
             )
         
+        # Include incomplete conversations in returned stats
+        total_stats['incomplete_conversations'] = total_stats.get('incomplete_conversations', [])
         return total_stats
     
     def _cleanup_phase(self) -> None:
@@ -392,7 +379,6 @@ class ComprehensiveSyncService:
                     last_sync_at=timezone.now()
                 )
             
-            logger.info("  ✅ Cleanup completed")
             
         except Exception as e:
             logger.error(f"Cleanup phase failed: {e}")

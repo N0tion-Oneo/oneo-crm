@@ -8,6 +8,7 @@ from typing import Dict, Any
 from django.db.models.signals import post_save, pre_save
 from django.dispatch import receiver
 from django.utils import timezone
+from django.core.exceptions import ObjectDoesNotExist
 
 from ..models import Message, MessageStatus, MessageDirection
 from ..tracking.models import CommunicationTracking, DeliveryTracking, ResponseTracking
@@ -22,8 +23,14 @@ def track_message_events(sender, instance: Message, created: bool, **kwargs):
     Automatically track message events based on status changes
     """
     try:
-        if created and instance.direction == MessageDirection.OUTBOUND:
-            # Track new outbound message
+        # Check if this is a sync operation (messages from sync have metadata with 'synced_from')
+        is_synced_message = (
+            instance.metadata and 
+            instance.metadata.get('synced_from') in ['message_sync_service', 'webhook_handler']
+        )
+        
+        if created and instance.direction == MessageDirection.OUTBOUND and not is_synced_message:
+            # Track new outbound message (but not synced messages which already have delivery status)
             communication_tracker.track_delivery_attempt(
                 message=instance,
                 attempt_number=1
@@ -33,28 +40,46 @@ def track_message_events(sender, instance: Message, created: bool, **kwargs):
             # Check for status changes on existing messages
             if instance.status == MessageStatus.DELIVERED and hasattr(instance, '_previous_status'):
                 if instance._previous_status != MessageStatus.DELIVERED:
-                    # Message was just delivered
-                    communication_tracker.mark_delivery_success(
-                        message=instance,
-                        delivered_at=timezone.now()
-                    )
+                    # Message was just delivered - ensure delivery tracking exists first
+                    try:
+                        communication_tracker.mark_delivery_success(
+                            message=instance,
+                            delivered_at=timezone.now()
+                        )
+                    except (DeliveryTracking.DoesNotExist, ObjectDoesNotExist):
+                        # Create delivery tracking if it doesn't exist (for synced messages)
+                        logger.debug(f"Creating delivery tracking for synced message {instance.id}")
+                        communication_tracker.track_delivery_attempt(
+                            message=instance,
+                            attempt_number=1
+                        )
+                        communication_tracker.mark_delivery_success(
+                            message=instance,
+                            delivered_at=instance.sent_at or timezone.now()
+                        )
             
             elif instance.status == MessageStatus.FAILED and hasattr(instance, '_previous_status'):
                 if instance._previous_status != MessageStatus.FAILED:
-                    # Message just failed
-                    communication_tracker.mark_delivery_failure(
-                        message=instance,
-                        error_code='delivery_failed',
-                        error_message='Message delivery failed'
-                    )
+                    # Message just failed - ensure delivery tracking exists
+                    try:
+                        communication_tracker.mark_delivery_failure(
+                            message=instance,
+                            error_code='delivery_failed',
+                            error_message='Message delivery failed'
+                        )
+                    except (DeliveryTracking.DoesNotExist, ObjectDoesNotExist):
+                        logger.debug(f"No delivery tracking for message {instance.id}, skipping failure tracking")
             
             elif instance.status == MessageStatus.READ and hasattr(instance, '_previous_status'):
                 if instance._previous_status != MessageStatus.READ:
                     # Message was just read
-                    communication_tracker.track_message_read(
-                        message=instance,
-                        read_at=timezone.now()
-                    )
+                    try:
+                        communication_tracker.track_message_read(
+                            message=instance,
+                            read_at=timezone.now()
+                        )
+                    except Exception as e:
+                        logger.debug(f"Could not track read status for message {instance.id}: {e}")
         
         # Track inbound messages as potential responses
         if created and instance.direction == MessageDirection.INBOUND:
@@ -92,7 +117,7 @@ def update_campaign_metrics(sender, instance: Message, created: bool, **kwargs):
             try:
                 campaign = CampaignTracking.objects.get(id=campaign_id)
                 # Campaign metrics will be updated by the performance metrics update task
-                logger.info(f"Message {instance.id} tracked for campaign {campaign.name}")
+                # logger.info(f"Message {instance.id} tracked for campaign {campaign.name}")
             except CampaignTracking.DoesNotExist:
                 logger.warning(f"Campaign {campaign_id} not found for message {instance.id}")
                 
@@ -168,7 +193,7 @@ def track_potential_response(inbound_message: Message):
                     response_message=inbound_message
                 )
                 
-                logger.info(f"Tracked response from {inbound_message.id} to {original_message.id}")
+                # logger.info(f"Tracked response from {inbound_message.id} to {original_message.id}")
             
     except Exception as e:
         logger.error(f"Failed to track potential response for {inbound_message.id}: {e}")

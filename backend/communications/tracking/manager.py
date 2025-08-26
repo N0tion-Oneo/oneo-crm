@@ -75,7 +75,7 @@ class CommunicationTracker:
                 }
             )
             
-            logger.info(f"Tracked delivery attempt {attempt_number} for message {message.id}")
+            # logger.info(f"Tracked delivery attempt {attempt_number} for message {message.id}")
             return delivery_tracking
             
         except Exception as e:
@@ -255,7 +255,7 @@ class CommunicationTracker:
                 }
             )
             
-            logger.info(f"Tracked read for message {message.id} (read #{read_tracking.read_count})")
+            # logger.info(f"Tracked read for message {message.id} (read #{read_tracking.read_count})")
             return read_tracking
             
         except Exception as e:
@@ -308,7 +308,7 @@ class CommunicationTracker:
                 }
             )
             
-            logger.info(f"Tracked response to message {original_message.id} in {response_time_minutes}min")
+            # logger.info(f"Tracked response to message {original_message.id} in {response_time_minutes}min")
             return response_tracking
             
         except Exception as e:

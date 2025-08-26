@@ -30,31 +30,31 @@ class BaseRealtimeConsumer(AsyncWebsocketConsumer):
     
     async def connect(self):
         """Handle WebSocket connection"""
-        logger.info("🔌 BaseRealtimeConsumer.connect() called")
+        logger.debug("🔌 BaseRealtimeConsumer.connect() called")
         
         # Check if user is already authenticated by middleware
         middleware_user = self.scope.get('user')
-        logger.info(f"Middleware user: {middleware_user}")
-        logger.info(f"Middleware user authenticated: {middleware_user.is_authenticated if middleware_user else 'NO USER'}")
+        logger.debug(f"Middleware user: {middleware_user}")
+        logger.debug(f"Middleware user authenticated: {middleware_user.is_authenticated if middleware_user else 'NO USER'}")
         
         user = None
         
         # Priority 1: Use middleware-authenticated user if available
         if middleware_user and middleware_user.is_authenticated:
             user = middleware_user
-            logger.info(f"✅ Using middleware-authenticated user: {user.username}")
+            logger.debug(f"✅ Using middleware-authenticated user: {user.username}")
         else:
             # Priority 2: Try to authenticate from scope (JWT or session)
             auth_type, token = extract_auth_from_scope(self.scope)
-            logger.info(f"WebSocket auth attempt: type={auth_type}, token={'YES' if token else 'NO'}")
-            logger.info(f"WebSocket scope query_string: {self.scope.get('query_string', b'').decode('utf-8')}")
+            logger.debug(f"WebSocket auth attempt: type={auth_type}, token={'YES' if token else 'NO'}")
+            logger.debug(f"WebSocket scope query_string: {self.scope.get('query_string', b'').decode('utf-8')}")
             
             if auth_type == 'jwt' and token:
                 user = await authenticate_websocket_jwt(token)
-                logger.info(f"JWT auth result: {user.username if user else 'FAILED'}")
+                logger.debug(f"JWT auth result: {user.username if user else 'FAILED'}")
             elif auth_type == 'session' and token:
                 user = await authenticate_websocket_session(token)
-                logger.info(f"Session auth result: {user.username if user else 'FAILED'}")
+                logger.debug(f"Session auth result: {user.username if user else 'FAILED'}")
         
         if user and user.is_authenticated:
             await self._set_authenticated_user(user)
@@ -93,7 +93,7 @@ class BaseRealtimeConsumer(AsyncWebsocketConsumer):
                 )
             
             await self.send_initial_presence()
-            logger.info(f"✅ WebSocket connection authenticated for user: {user.username}")
+            logger.debug(f"✅ WebSocket connection authenticated for user: {user.username}")
             return
         
         # Accept connection and request authentication
@@ -122,7 +122,7 @@ class BaseRealtimeConsumer(AsyncWebsocketConsumer):
             tenant_schema = getattr(self.scope.get('tenant', {}), 'schema_name', 'public')
             await self.channel_layer.group_discard(f'tenant_permissions_{tenant_schema}', self.channel_name)
         
-        logger.info(f"WebSocket disconnected: {close_code}")
+        logger.debug(f"WebSocket disconnected: {close_code}")
     
     async def receive(self, text_data):
         """Handle incoming WebSocket message"""
@@ -231,7 +231,7 @@ class BaseRealtimeConsumer(AsyncWebsocketConsumer):
         
         # Validate subscription permissions
         can_subscribe = await self.can_subscribe_to_channel(channel)
-        logger.info(f"👤 User {self.user.username} requesting subscription to '{channel}': {'ALLOWED' if can_subscribe else 'DENIED'}")
+        logger.debug(f"👤 User {self.user.username} requesting subscription to '{channel}': {'ALLOWED' if can_subscribe else 'DENIED'}")
         
         if not can_subscribe:
             await self.send_error('Permission denied')
@@ -270,7 +270,7 @@ class BaseRealtimeConsumer(AsyncWebsocketConsumer):
                 await connection_manager.subscribe_to_channel(self.user_id, self.channel_name, sub_channel)
                 self.subscriptions.add(sub_channel)
             
-            logger.info(f"Subscribed to pipelines overview: {channels_to_subscribe}")
+            logger.debug(f"Subscribed to pipelines overview: {channels_to_subscribe}")
         else:
             # Standard single channel subscription
             await self.channel_layer.group_add(channel, self.channel_name)
@@ -673,11 +673,11 @@ class BaseRealtimeConsumer(AsyncWebsocketConsumer):
         }))
         
         # Log the permission update for debugging
-        logger.info(f"Permission update sent to user {self.user_id}: {message.get('data', {}).get('event_type', 'unknown')}")
+        logger.debug(f"Permission update sent to user {self.user_id}: {message.get('data', {}).get('event_type', 'unknown')}")
     
     async def message_update(self, event):
         """Handle real-time message updates from communication system"""
-        logger.info(f"🚨 CONSUMER RECEIVED message_update event: {event}")
+        logger.debug(f"🚨 CONSUMER RECEIVED message_update event: {event}")
         message_data = event.get('message', {})
         
         websocket_message = {
@@ -686,12 +686,12 @@ class BaseRealtimeConsumer(AsyncWebsocketConsumer):
             'timestamp': message_data.get('created_at') or event.get('timestamp')
         }
         
-        logger.info(f"🚨 SENDING MESSAGE_UPDATE TO FRONTEND: {websocket_message}")
+        logger.debug(f"🚨 SENDING MESSAGE_UPDATE TO FRONTEND: {websocket_message}")
         
         # Send message update notification to the client
         await self.send(text_data=json.dumps(websocket_message))
         
-        logger.info(f"🔄 Message update sent to user {self.user_id}: message {message_data.get('id', 'unknown')}")
+        logger.debug(f"🔄 Message update sent to user {self.user_id}: message {message_data.get('id', 'unknown')}")
     
     async def conversation_update(self, event):
         """Handle real-time conversation updates from communication system"""
@@ -721,9 +721,9 @@ class BaseRealtimeConsumer(AsyncWebsocketConsumer):
         """Handle field deletion messages from pipeline system"""
         field_data = event.get('data', {})
         
-        logger.info(f"🗑️ CONSUMER: field_delete handler called for user {self.user_id}")
-        logger.info(f"🗑️ CONSUMER: Event data: {event}")
-        logger.info(f"🗑️ CONSUMER: Field data: {field_data}")
+        logger.debug(f"🗑️ CONSUMER: field_delete handler called for user {self.user_id}")
+        logger.debug(f"🗑️ CONSUMER: Event data: {event}")
+        logger.debug(f"🗑️ CONSUMER: Field data: {field_data}")
         
         # Send field deletion to the client
         message_to_send = {
@@ -732,11 +732,11 @@ class BaseRealtimeConsumer(AsyncWebsocketConsumer):
             'timestamp': field_data.get('timestamp')
         }
         
-        logger.info(f"🗑️ CONSUMER: Sending to frontend: {message_to_send}")
+        logger.debug(f"🗑️ CONSUMER: Sending to frontend: {message_to_send}")
         
         await self.send(text_data=json.dumps(message_to_send))
         
-        logger.info(f"🗑️ CONSUMER: Field deletion sent to user {self.user_id}: field {field_data.get('field_id', 'unknown')}")
+        logger.debug(f"🗑️ CONSUMER: Field deletion sent to user {self.user_id}: field {field_data.get('field_id', 'unknown')}")
     
     async def new_conversation(self, event):
         """Handle new conversation notifications from communication system"""
@@ -753,7 +753,7 @@ class BaseRealtimeConsumer(AsyncWebsocketConsumer):
     
     async def new_message(self, event):
         """Handle new message notifications from communication system"""
-        logger.info(f"🚨 CONSUMER RECEIVED new_message event: {event}")
+        logger.debug(f"🚨 CONSUMER RECEIVED new_message event: {event}")
         message_data = event.get('message', {})
         
         websocket_message = {
@@ -762,12 +762,12 @@ class BaseRealtimeConsumer(AsyncWebsocketConsumer):
             'timestamp': message_data.get('created_at')
         }
         
-        logger.info(f"🚨 SENDING TO FRONTEND: {websocket_message}")
+        logger.debug(f"🚨 SENDING TO FRONTEND: {websocket_message}")
         
         # Send new message notification to the client
         await self.send(text_data=json.dumps(websocket_message))
         
-        logger.info(f"📨 New message sent to user {self.user_id}: message {message_data.get('id', 'unknown')}")
+        logger.debug(f"📨 New message sent to user {self.user_id}: message {message_data.get('id', 'unknown')}")
     
     async def message_status_update(self, event):
         """Handle message status update notifications from communication system"""
@@ -784,7 +784,7 @@ class BaseRealtimeConsumer(AsyncWebsocketConsumer):
     
     async def sync_progress_update(self, event):
         """Handle sync job progress update events"""
-        logger.info(f"🔴 CONSUMER RECEIVED sync_progress_update event: {event}")
+        logger.debug(f"🔴 CONSUMER RECEIVED sync_progress_update event: {event}")
         
         # The backend sends data directly in the event, not nested under 'data'
         websocket_message = {
@@ -800,15 +800,15 @@ class BaseRealtimeConsumer(AsyncWebsocketConsumer):
             'timestamp': event.get('updated_at')
         }
         
-        logger.info(f"🔴 SENDING SYNC_PROGRESS_UPDATE TO FRONTEND: {websocket_message}")
+        logger.debug(f"🔴 SENDING SYNC_PROGRESS_UPDATE TO FRONTEND: {websocket_message}")
         
         await self.send(text_data=json.dumps(websocket_message))
         
-        logger.info(f"📊 Sync progress update sent to user {self.user_id}")
+        logger.debug(f"📊 Sync progress update sent to user {self.user_id}")
     
     async def sync_job_update(self, event):
         """Handle sync job creation/update events"""
-        logger.info(f"🔄 CONSUMER RECEIVED sync_job_update event: {event}")
+        logger.debug(f"🔄 CONSUMER RECEIVED sync_job_update event: {event}")
         
         websocket_message = {
             'type': 'sync_job_update',

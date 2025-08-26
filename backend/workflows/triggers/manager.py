@@ -61,11 +61,11 @@ class TriggerManager:
                 name="TriggerSignalProcessor"
             )
             self._signal_processor_thread.start()
-            logger.info("Started trigger signal processor thread")
+            logger.debug("Started trigger signal processor thread")
     
     def _signal_processor_worker(self):
         """Background worker that processes signal events"""
-        logger.info("Trigger signal processor worker started")
+        logger.debug("Trigger signal processor worker started")
         
         while self._signal_processor_running:
             try:
@@ -96,7 +96,7 @@ class TriggerManager:
             except Exception as e:
                 logger.error(f"Signal processor worker error: {e}")
         
-        logger.info("Trigger signal processor worker stopped")
+        logger.debug("Trigger signal processor worker stopped")
     
     def stop_signal_processor(self):
         """Stop the background signal processor"""

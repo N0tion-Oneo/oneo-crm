@@ -33,7 +33,7 @@ class WhatsAppClient(BaseChannelClient):
         
         access_token = self.api_key
         
-        logger.info(f"Initializing UniPile client with DSN: {dsn}")
+        logger.debug(f"Initializing UniPile client with DSN: {dsn}")
         
         self.unipile_client = UnipileClient(dsn=dsn, access_token=access_token)
         self.messaging_client = UnipileMessagingClient(self.unipile_client)
@@ -75,9 +75,10 @@ class WhatsAppClient(BaseChannelClient):
             conversations = result.get('items', [])
             cursor = result.get('cursor')
             
-            # Determine has_more based on whether we got a full batch and have a cursor
-            # If we got exactly the limit we requested and there's a cursor, there might be more
-            has_more = len(conversations) == limit and cursor is not None
+            # Determine has_more based on cursor presence
+            # If there's a cursor, there are more conversations to fetch
+            # UniPile uses cursor-based pagination, so cursor presence is the definitive indicator
+            has_more = cursor is not None
             
             return {
                 'success': True,
@@ -158,21 +159,53 @@ class WhatsAppClient(BaseChannelClient):
                 limit=safe_limit
             )
             
+            # Debug: Log raw API response structure
+            logger.info(f"📝 Raw API response keys: {list(result.keys()) if result else 'None'}")
+            logger.info(f"📝 Raw cursor value: {repr(result.get('cursor'))} (type: {type(result.get('cursor')).__name__})")
+            
             # Transform to our format
             # Note: UniPile doesn't return has_more, we infer it from cursor presence and message count
             messages = result.get('items', [])
             cursor = result.get('cursor')
             
-            # Determine has_more based on whether we got a full batch and have a cursor
-            # If we got exactly the limit we requested and there's a cursor, there might be more
-            has_more = len(messages) == safe_limit and cursor is not None
+            # Determine has_more based on cursor presence
+            # If there's a cursor, there are more messages to fetch
+            # UniPile uses cursor-based pagination, so cursor presence is the definitive indicator
+            has_more = cursor is not None
+            
+            # Log useful debugging info
+            total_count = result.get('total_count')
+            if total_count:
+                logger.debug(f"API reports total_count: {total_count} messages for conversation")
+            
+            # Enhanced debugging for pagination issues
+            logger.info(f"📊 Message pagination for {conversation_id[:20]}: got {len(messages)} messages, cursor={cursor}, has_more={has_more}")
+            
+            # Log the raw response for debugging
+            if messages:
+                # Log first and last message timestamps to understand the range
+                first_msg = messages[0]
+                last_msg = messages[-1]
+                logger.info(f"  📅 Message range: first={first_msg.get('timestamp', 'unknown')[:19]}, last={last_msg.get('timestamp', 'unknown')[:19]}")
+            
+            if not has_more and len(messages) == safe_limit:
+                logger.warning(f"⚠️ PAGINATION ISSUE: Got full batch ({safe_limit}) but no cursor - API may have more messages!")
+            
+            # Check if cursor is an empty string or empty dict vs None
+            if cursor == '' or cursor == {}:
+                logger.warning(f"⚠️ Cursor is empty ({repr(cursor)}) - treating as no more data")
+                has_more = False
+            
+            # Special check: if we got exactly the limit and no cursor, there might be more
+            if len(messages) == safe_limit and not cursor:
+                logger.error(f"🚨 POTENTIAL API BUG: Got exactly {safe_limit} messages but no cursor! There may be more messages that the API isn't providing access to.")
             
             return {
                 'success': True,
                 'messages': messages,
                 'cursor': cursor,
                 'has_more': has_more,
-                'total': result.get('total_count')
+                'total': total_count
             }
             
         except Exception as e:

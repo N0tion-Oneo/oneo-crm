@@ -109,21 +109,21 @@ class AccountOwnerDetector:
                     # Normalize phone number (remove @s.whatsapp.net if present)
                     if '@' in phone:
                         phone = phone.split('@')[0]
-                    logger.info(f"Found WhatsApp account identifier: {phone}")
+                    logger.debug(f"Found WhatsApp account identifier: {phone}")
                     return phone
                     
             elif self.channel_type in ['gmail', 'outlook', 'email']:
                 # Email channels store email address
                 email = config_to_check.get('email')
                 if email:
-                    logger.info(f"Found email account identifier: {email}")
+                    logger.debug(f"Found email account identifier: {email}")
                     return email
                     
             elif self.channel_type == 'linkedin':
                 # LinkedIn stores profile ID
                 profile_id = config_to_check.get('profile_id')
                 if profile_id:
-                    logger.info(f"Found LinkedIn account identifier: {profile_id}")
+                    logger.debug(f"Found LinkedIn account identifier: {profile_id}")
                     return profile_id
             
             logger.warning(f"No account identifier found in connection config for {self.channel_type}")

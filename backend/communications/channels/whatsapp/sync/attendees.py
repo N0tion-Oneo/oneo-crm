@@ -168,7 +168,7 @@ class AttendeeSyncService:
             )
             
             if created:
-                logger.info(f"✅ Created attendee: {attendee.name} ({external_id})")
+                logger.debug(f"✅ Created attendee: {attendee.name} ({external_id})")
             else:
                 # Update existing attendee if needed
                 self._update_attendee_if_changed(attendee, attendee_info)
@@ -247,7 +247,7 @@ class AttendeeSyncService:
         )
         
         if created:
-            logger.info(
+            logger.debug(
                 f"🔗 Linked attendee {attendee.name} to "
                 f"conversation {conversation.id}"
             )

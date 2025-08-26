@@ -23,17 +23,17 @@ def safe_group_send_sync(channel_layer, group_name, message):
     import asyncio
     import threading
     
-    logger.info(f"🔄 WEBSOCKET SEND: Attempting to send message to group '{group_name}' - type: {message.get('type', 'unknown')}")
+    logger.debug(f"🔄 WEBSOCKET SEND: Attempting to send message to group '{group_name}' - type: {message.get('type', 'unknown')}")
     
     try:
         # First approach: use async_to_sync directly (works when no active event loop)
         async_to_sync(channel_layer.group_send)(group_name, message)
-        logger.info(f"✅ WEBSOCKET SEND SUCCESS (async_to_sync): {group_name} - {message.get('type', 'unknown')}")
+        logger.debug(f"✅ WEBSOCKET SEND SUCCESS (async_to_sync): {group_name} - {message.get('type', 'unknown')}")
         return
     except RuntimeError as e:
         if "async event loop" in str(e).lower():
             # There's an active event loop - try alternative approaches
-            logger.info(f"🔄 Active event loop detected, trying alternative approaches for {group_name}")
+            logger.debug(f"🔄 Active event loop detected, trying alternative approaches for {group_name}")
         else:
             logger.error(f"❌ WEBSOCKET SEND FAILED (async_to_sync): {group_name} - {e}")
             return
@@ -44,11 +44,11 @@ def safe_group_send_sync(channel_layer, group_name, message):
     # Second approach: try asyncio.run (works when no event loop at all)
     try:
         asyncio.run(channel_layer.group_send(group_name, message))
-        logger.info(f"✅ WEBSOCKET SEND SUCCESS (asyncio.run): {group_name} - {message.get('type', 'unknown')}")
+        logger.debug(f"✅ WEBSOCKET SEND SUCCESS (asyncio.run): {group_name} - {message.get('type', 'unknown')}")
         return
     except RuntimeError as e:
         if "running event loop" in str(e).lower():
-            logger.info(f"🔄 Event loop already running, trying thread-based approach for {group_name}")
+            logger.debug(f"🔄 Event loop already running, trying thread-based approach for {group_name}")
         else:
             logger.error(f"❌ WEBSOCKET SEND FAILED (asyncio.run): {group_name} - {e}")
             return
@@ -68,7 +68,7 @@ def safe_group_send_sync(channel_layer, group_name, message):
         if thread.is_alive():
             logger.error(f"❌ WEBSOCKET SEND TIMEOUT: {group_name} - thread timed out after 5 seconds")
         else:
-            logger.info(f"✅ WEBSOCKET SEND SUCCESS (thread): {group_name} - {message.get('type', 'unknown')}")
+            logger.debug(f"✅ WEBSOCKET SEND SUCCESS (thread): {group_name} - {message.get('type', 'unknown')}")
     except Exception as e:
         logger.error(f"❌ WEBSOCKET SEND FAILED (thread): {group_name} - {e}")
 
@@ -104,14 +104,14 @@ if MODELS_AVAILABLE:
     @receiver(post_save, sender=Record)
     def handle_record_saved(sender, instance, created, **kwargs):
         """Handle record creation/update/soft deletion for real-time broadcasting"""
-        logger.info(f"📡 REALTIME SIGNAL: post_save triggered for record {instance.id}")
-        logger.info(f"   🆕 Created: {created}")
-        logger.info(f"   🗑️  Is Deleted: {instance.is_deleted}")
+        logger.debug(f"📡 REALTIME SIGNAL: post_save triggered for record {instance.id}")
+        logger.debug(f"   🆕 Created: {created}")
+        logger.debug(f"   🗑️  Is Deleted: {instance.is_deleted}")
         
         try:
             channel_layer = get_channel_layer()
             if not channel_layer:
-                logger.info(f"   ⏸️  No channel layer available, exiting")
+                logger.debug(f"   ⏸️  No channel layer available, exiting")
                 return
             
             # Get updated record count for the pipeline (exclude soft deleted)
@@ -154,14 +154,7 @@ if MODELS_AVAILABLE:
             
             # Handle normal creation/update (not soft deletion)
             if not instance.is_deleted:  # Only broadcast if record is not deleted
-                print(f"🟢 DATABASE STEP 4: WebSocket Broadcasting")
-                print(f"   📡 Broadcasting record {instance.id} update")
-                print(f"   📦 Data being broadcast: {instance.data}")
-                if instance.data:
-                    print(f"   🔑 Broadcast contains {len(instance.data)} field(s): [{', '.join(instance.data.keys())}]")
-                    null_fields = [k for k, v in instance.data.items() if v is None]
-                    if null_fields:
-                        print(f"   ⚠️  Broadcast contains {len(null_fields)} NULL fields: [{', '.join(null_fields)}]")
+                # Debug logging removed for production
                 
                 # Create event data
                 event_data = {
@@ -179,9 +172,6 @@ if MODELS_AVAILABLE:
                     'timestamp': time.time()
                 }
                 
-                print(f"   🔍 SIGNAL DEBUG: Broadcasting data vs saved data")
-                print(f"   📡 Broadcasting: {instance.data}")
-                print(f"   🎯 Should contain all saved fields including new ones")
                 
                 # Broadcast to pipeline subscribers
                 pipeline_group = f"pipeline_records_{instance.pipeline_id}"
@@ -385,12 +375,12 @@ if MODELS_AVAILABLE:
     @receiver(post_delete, sender=Field)  
     def handle_field_deleted(sender, instance, **kwargs):
         """Handle field deletion for real-time broadcasting"""
-        logger.info(f"🔥 FIELD DELETE SIGNAL FIRED: Field {instance.id} ({instance.name}) deleted from pipeline {instance.pipeline_id}")
+        logger.debug(f"🔥 FIELD DELETE SIGNAL FIRED: Field {instance.id} ({instance.name}) deleted from pipeline {instance.pipeline_id}")
         
         try:
             channel_layer = get_channel_layer()
             if not channel_layer:
-                logger.warning(f"📡 No channel layer available for field delete signal")
+                logger.debug(f"📡 No channel layer available for field delete signal")
                 return
             
             # Create event data
@@ -402,9 +392,9 @@ if MODELS_AVAILABLE:
                 'timestamp': time.time()
             }
             
-            logger.info(f"📡 Broadcasting field delete to WebSocket groups:")
-            logger.info(f"   🎯 Target group: pipeline_fields_{instance.pipeline_id}")
-            logger.info(f"   📦 Event data: {event_data}")
+            logger.debug(f"📡 Broadcasting field delete to WebSocket groups:")
+            logger.debug(f"   🎯 Target group: pipeline_fields_{instance.pipeline_id}")
+            logger.debug(f"   📦 Event data: {event_data}")
             
             # Broadcast to pipeline field subscribers
             pipeline_group = f"pipeline_fields_{instance.pipeline_id}"
@@ -422,7 +412,7 @@ if MODELS_AVAILABLE:
             # Store for SSE subscribers
             store_sse_message("global_activity", event_data)
             
-            logger.info(f"✅ Successfully broadcasted field deleted: {instance.name} (Pipeline: {instance.pipeline_id})")
+            logger.debug(f"✅ Successfully broadcasted field deleted: {instance.name} (Pipeline: {instance.pipeline_id})")
             
         except Exception as e:
             logger.error(f"❌ Error handling field delete signal: {e}")
@@ -518,7 +508,7 @@ def broadcast_system_announcement(announcement_data: dict):
         
         cache.set(message_key, messages, 1800)
         
-        logger.info("Broadcasted system announcement")
+        logger.debug("Broadcasted system announcement")
         
     except Exception as e:
         logger.error(f"Error broadcasting system announcement: {e}")
@@ -637,14 +627,14 @@ if COMMUNICATION_MODELS_AVAILABLE:
     @receiver(post_save, sender=SyncJob)
     def handle_sync_job_saved(sender, instance, created, **kwargs):
         """Handle sync job creation/update for real-time progress tracking"""
-        logger.info(f"📡 SYNC JOB SIGNAL: Sync job {instance.id} {'created' if created else 'updated'}")
-        logger.info(f"   🔄 Status: {instance.status}")
-        logger.info(f"   📊 Progress: {instance.progress}")
+        logger.debug(f"📡 SYNC JOB SIGNAL: Sync job {instance.id} {'created' if created else 'updated'}")
+        logger.debug(f"   🔄 Status: {instance.status}")
+        logger.debug(f"   📊 Progress: {instance.progress}")
         
         try:
             channel_layer = get_channel_layer()
             if not channel_layer:
-                logger.info(f"   ⏸️  No channel layer available for sync job signal")
+                logger.debug(f"   ⏸️  No channel layer available for sync job signal")
                 return
             
             # Create event data for sync job update
@@ -668,12 +658,12 @@ if COMMUNICATION_MODELS_AVAILABLE:
                 'timestamp': time.time()
             }
             
-            logger.info(f"📡 Broadcasting sync job update:")
-            logger.info(f"   🎯 Target groups: sync_jobs_{instance.user_id}, sync_job_{instance.id}")
-            logger.info(f"   📊 Progress: {instance.completion_percentage}%")
-            logger.info(f"   🔄 Status: {instance.status}")
-            logger.info(f"   🔑 Celery Task ID: {instance.celery_task_id}")
-            logger.info(f"   📋 Event Data Debug: {event_data}")
+            logger.debug(f"📡 Broadcasting sync job update:")
+            logger.debug(f"   🎯 Target groups: sync_jobs_{instance.user_id}, sync_job_{instance.id}")
+            logger.debug(f"   📊 Progress: {instance.completion_percentage}%")
+            logger.debug(f"   🔄 Status: {instance.status}")
+            logger.debug(f"   🔑 Celery Task ID: {instance.celery_task_id}")
+            logger.debug(f"   📋 Event Data Debug: {event_data}")
             
             # Primary broadcast: Celery task ID channel (used by frontend)
             if instance.celery_task_id:
@@ -689,7 +679,7 @@ if COMMUNICATION_MODELS_AVAILABLE:
                     'timestamp': time.time()
                 }
                 safe_group_send_sync(channel_layer, celery_task_group, progress_data)
-                logger.info(f"   📡 Broadcasting sync progress to: {celery_task_group}")
+                logger.debug(f"   📡 Broadcasting sync progress to: {celery_task_group}")
             
             # Optional: Keep user sync jobs channel for potential dashboard use
             user_sync_group = f"sync_jobs_{instance.user_id}"
@@ -704,7 +694,7 @@ if COMMUNICATION_MODELS_AVAILABLE:
                 event_data
             )
             
-            logger.info(f"✅ Successfully broadcasted sync job {'created' if created else 'updated'}: {instance.id}")
+            logger.debug(f"✅ Successfully broadcasted sync job {'created' if created else 'updated'}: {instance.id}")
             
         except Exception as e:
             logger.error(f"❌ Error handling sync job signal: {e}")
@@ -714,14 +704,14 @@ if COMMUNICATION_MODELS_AVAILABLE:
     @receiver(post_save, sender=SyncJobProgress)
     def handle_sync_job_progress_saved(sender, instance, created, **kwargs):
         """Handle sync job progress updates for real-time progress tracking"""
-        logger.info(f"📡 SYNC PROGRESS SIGNAL: Progress entry {instance.id} {'created' if created else 'updated'}")
-        logger.info(f"   🏷️  Phase: {instance.phase_name} - Step: {instance.step_name}")
-        logger.info(f"   📈 Progress: {instance.items_processed}/{instance.items_total} ({instance.completion_percentage}%)")
+        logger.debug(f"📡 SYNC PROGRESS SIGNAL: Progress entry {instance.id} {'created' if created else 'updated'}")
+        logger.debug(f"   🏷️  Phase: {instance.phase_name} - Step: {instance.step_name}")
+        logger.debug(f"   📈 Progress: {instance.items_processed}/{instance.items_total} ({instance.completion_percentage}%)")
         
         try:
             channel_layer = get_channel_layer()
             if not channel_layer:
-                logger.info(f"   ⏸️  No channel layer available for sync progress signal")
+                logger.debug(f"   ⏸️  No channel layer available for sync progress signal")
                 return
             
             # Create event data for progress update
@@ -743,10 +733,10 @@ if COMMUNICATION_MODELS_AVAILABLE:
                 'timestamp': time.time()
             }
             
-            logger.info(f"📡 Broadcasting sync progress update:")
-            logger.info(f"   🎯 Target groups: sync_job_{instance.sync_job_id}")
-            logger.info(f"   📈 Progress: {instance.completion_percentage}% ({instance.items_processed}/{instance.items_total})")
-            logger.info(f"   🏷️  Step: {instance.phase_name}.{instance.step_name}")
+            logger.debug(f"📡 Broadcasting sync progress update:")
+            logger.debug(f"   🎯 Target groups: sync_job_{instance.sync_job_id}")
+            logger.debug(f"   📈 Progress: {instance.completion_percentage}% ({instance.items_processed}/{instance.items_total})")
+            logger.debug(f"   🏷️  Step: {instance.phase_name}.{instance.step_name}")
             
             # Get sync job to determine user
             try:
@@ -772,7 +762,7 @@ if COMMUNICATION_MODELS_AVAILABLE:
                     event_data
                 )
                 
-                logger.info(f"✅ Successfully broadcasted sync progress update: {instance.id}")
+                logger.debug(f"✅ Successfully broadcasted sync progress update: {instance.id}")
                 
             except Exception as job_error:
                 logger.error(f"❌ Failed to get sync job for progress broadcast: {job_error}")

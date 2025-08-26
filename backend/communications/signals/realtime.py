@@ -19,8 +19,8 @@ def update_conversation_stats(sender, instance, created, **kwargs):
         conversation.last_message_at = instance.created_at
         conversation.save(update_fields=['message_count', 'last_message_at'])
         
-        logger.info(f"🔄 Updated conversation {conversation.id} timestamp: {old_timestamp} → {instance.created_at}")
-        logger.info(f"🔄 Message content: {instance.content[:100] if instance.content else 'No content'}")
+        logger.debug(f"🔄 Updated conversation {conversation.id} timestamp: {old_timestamp} → {instance.created_at}")
+        logger.debug(f"🔄 Message content: {instance.content[:100] if instance.content else 'No content'}")
         
         # Invalidate cached conversation data to ensure fresh timestamps
         _invalidate_conversation_cache(instance.conversation)
@@ -71,19 +71,19 @@ def broadcast_message_update(sender, instance, created, **kwargs):
     should_broadcast = True
     
     if created:
-        logger.info(f"🚨 NEW MESSAGE CREATED: Message {instance.id} with status {instance.status}")
+        logger.debug(f"🚨 NEW MESSAGE CREATED: Message {instance.id} with status {instance.status}")
     else:
-        logger.info(f"🚨 MESSAGE UPDATED: Message {instance.id} with status {instance.status}")
+        logger.debug(f"🚨 MESSAGE UPDATED: Message {instance.id} with status {instance.status}")
         if 'status' in (kwargs.get('update_fields') or []):
-            logger.info(f"🚨 STATUS FIELD UPDATED: Message {instance.id}")
+            logger.debug(f"🚨 STATUS FIELD UPDATED: Message {instance.id}")
         else:
-            logger.info(f"🚨 OTHER FIELDS UPDATED: Message {instance.id}, update_fields: {kwargs.get('update_fields')}")
+            logger.debug(f"🚨 OTHER FIELDS UPDATED: Message {instance.id}, update_fields: {kwargs.get('update_fields')}")
     
     if should_broadcast:
-        logger.info(f"🚨 SIGNAL TRIGGERED: New message {instance.id} in conversation {instance.conversation.id if instance.conversation else 'None'}")
-        logger.info(f"🚨 Message content: '{instance.content[:50] if instance.content else 'No content'}...'")
-        logger.info(f"🚨 Message direction: {instance.direction}")
-        logger.info(f"🚨 About to broadcast to WebSocket...")
+        logger.debug(f"🚨 SIGNAL TRIGGERED: New message {instance.id} in conversation {instance.conversation.id if instance.conversation else 'None'}")
+        logger.debug(f"🚨 Message content: '{instance.content[:50] if instance.content else 'No content'}...'")
+        logger.debug(f"🚨 Message direction: {instance.direction}")
+        logger.debug(f"🚨 About to broadcast to WebSocket...")
         # Import here to avoid circular imports
         from channels.layers import get_channel_layer
         from asgiref.sync import async_to_sync
@@ -167,18 +167,18 @@ def broadcast_message_update(sender, instance, created, **kwargs):
                     'timestamp': instance.created_at.isoformat() if instance.created_at else None
                 }
                 
-                logger.info(f"🚨 BROADCASTING {event_type} to channel: {channel_name}")
-                logger.info(f"🚨 Message status: {serialized_message_data.get('status')}")
-                logger.info(f"🚨 WebSocket event: {websocket_event}")
-                logger.info(f"🚨 Conversation details: DB_ID={instance.conversation.id}, EXTERNAL_ID={instance.conversation.external_thread_id}")
+                logger.debug(f"🚨 BROADCASTING {event_type} to channel: {channel_name}")
+                logger.debug(f"🚨 Message status: {serialized_message_data.get('status')}")
+                logger.debug(f"🚨 WebSocket event: {websocket_event}")
+                logger.debug(f"🚨 Conversation details: DB_ID={instance.conversation.id}, EXTERNAL_ID={instance.conversation.external_thread_id}")
                 
                 try:
                     async_to_sync(channel_layer.group_send)(channel_name, websocket_event)
-                    logger.info(f"🚨 ✅ BROADCAST SUCCESS to {channel_name}")
+                    logger.debug(f"🚨 ✅ BROADCAST SUCCESS to {channel_name}")
                 except Exception as broadcast_error:
                     logger.error(f"🚨 ❌ BROADCAST FAILED to {channel_name}: {broadcast_error}")
             
-            logger.info(f"🚨 SIGNAL COMPLETE: Finished processing message {instance.id}")
+            logger.debug(f"🚨 SIGNAL COMPLETE: Finished processing message {instance.id}")
             
         except Exception as e:
             logger.error(f"Error broadcasting message via WebSocket: {e}")

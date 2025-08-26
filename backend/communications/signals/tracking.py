@@ -40,6 +40,11 @@ def track_message_events(sender, instance: Message, created: bool, **kwargs):
             # Check for status changes on existing messages
             if instance.status == MessageStatus.DELIVERED and hasattr(instance, '_previous_status'):
                 if instance._previous_status != MessageStatus.DELIVERED:
+                    # Skip tracking for synced messages (they already have their final status)
+                    if is_synced_message:
+                        logger.debug(f"Skipping delivery tracking for synced message {instance.id}")
+                        return
+                    
                     # Message was just delivered - ensure delivery tracking exists first
                     try:
                         communication_tracker.mark_delivery_success(
@@ -47,16 +52,19 @@ def track_message_events(sender, instance: Message, created: bool, **kwargs):
                             delivered_at=timezone.now()
                         )
                     except (DeliveryTracking.DoesNotExist, ObjectDoesNotExist):
-                        # Create delivery tracking if it doesn't exist (for synced messages)
-                        logger.debug(f"Creating delivery tracking for synced message {instance.id}")
+                        # Create delivery tracking if it doesn't exist
+                        logger.debug(f"Creating delivery tracking for message {instance.id}")
                         communication_tracker.track_delivery_attempt(
                             message=instance,
                             attempt_number=1
                         )
-                        communication_tracker.mark_delivery_success(
-                            message=instance,
-                            delivered_at=instance.sent_at or timezone.now()
-                        )
+                        try:
+                            communication_tracker.mark_delivery_success(
+                                message=instance,
+                                delivered_at=instance.sent_at or timezone.now()
+                            )
+                        except Exception as e:
+                            logger.debug(f"Could not create delivery tracking: {e}")
             
             elif instance.status == MessageStatus.FAILED and hasattr(instance, '_previous_status'):
                 if instance._previous_status != MessageStatus.FAILED:

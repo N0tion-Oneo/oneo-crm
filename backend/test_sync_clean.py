@@ -1,60 +1,85 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 """
-Clean test script to run comprehensive WhatsApp sync
+Test WhatsApp sync with WebSocket broadcasting
 """
 import os
 import sys
 import django
+import asyncio
+import logging
 
 # Setup Django
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'oneo_crm.settings')
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 django.setup()
 
-from django_tenants.utils import schema_context
-from communications.models import Channel, UserChannelConnection
-from communications.channels.whatsapp.sync.comprehensive import ComprehensiveSyncService
+# Configure logging to see debug messages
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
-def run_sync():
-    """Run comprehensive sync with proper configuration"""
+from django_tenants.utils import schema_context
+from communications.channels.whatsapp.sync.tasks import sync_account_comprehensive_background
+from communications.models import Channel, UserChannelConnection
+from tenants.models import User
+
+def test_sync():
+    """Test sync execution with broadcasting"""
     
-    # Use OneOTalent tenant
-    tenant_schema = 'oneotalent'
-    
-    with schema_context(tenant_schema):
-        # Get WhatsApp channel
+    # Use demo tenant
+    with schema_context('demo'):
+        # Get channel
         channel = Channel.objects.filter(channel_type='whatsapp').first()
         if not channel:
-            print("❌ No WhatsApp channel found")
+            logger.error("No WhatsApp channel found")
             return
+            
+        logger.info(f"Found channel: {channel.id}")
         
         # Get connection
-        connection = UserChannelConnection.objects.filter(channel_type='whatsapp').first()
+        connection = UserChannelConnection.objects.filter(
+            channel_type='whatsapp',
+            is_active=True
+        ).first()
         
-        print(f"📱 Running sync for: {channel.name}")
-        print(f"   Account ID: {connection.unipile_account_id if connection else 'N/A'}")
+        if not connection:
+            logger.error("No active connection found")
+            return
+            
+        logger.info(f"Found connection: {connection.unipile_account_id}")
         
-        # Run sync with default config (which uses environment variables)
-        sync_service = ComprehensiveSyncService(
-            channel=channel,
-            connection=connection
+        # Get user
+        user = User.objects.first()
+        if not user:
+            logger.error("No user found")
+            return
+            
+        logger.info(f"Found user: {user.email}")
+        
+        # Trigger sync
+        logger.info("Starting sync task...")
+        result = sync_account_comprehensive_background.apply(
+            args=[
+                str(channel.id),
+                str(user.id)
+            ],
+            kwargs={
+                'sync_options': {
+                    'max_conversations': 3,  # Small number for testing
+                    'max_messages_per_chat': 5,
+                    'days_back': 0
+                },
+                'tenant_schema': 'demo'
+            }
         )
         
-        # Run comprehensive sync
-        stats = sync_service.run_comprehensive_sync()
+        logger.info(f"Task ID: {result.id}")
+        logger.info("Waiting for result...")
         
-        # Print results
-        print(f"\n📊 Sync Results:")
-        print(f"   - {stats['conversations_synced']} conversations synced")
-        print(f"   - {stats['messages_synced']} messages across all conversations")
-        print(f"   - {stats['attendees_synced']} attendees synced")
-        
-        if stats.get('incomplete_conversations'):
-            print(f"\n⚠️ Incomplete conversations:")
-            for conv_name, synced, target in stats['incomplete_conversations'][:5]:
-                print(f"   - {conv_name}: {synced}/{target} messages")
-        
-        print("\n✅ Sync completed!")
+        # Wait for result (with timeout)
+        try:
+            final_result = result.get(timeout=60)
+            logger.info(f"Sync completed: {final_result}")
+        except Exception as e:
+            logger.error(f"Sync failed: {e}")
 
 if __name__ == '__main__':
-    run_sync()
+    test_sync()

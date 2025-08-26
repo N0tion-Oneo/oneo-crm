@@ -29,13 +29,14 @@ SYNC_CONFIG = {
     'websocket_enabled': os.environ.get('SYNC_WEBSOCKET_ENABLED', 'true').lower() == 'true',
     'broadcast_milestones_only': os.environ.get('SYNC_BROADCAST_MILESTONES', 'true').lower() == 'true',
     'websocket_update_interval': int(os.environ.get('SYNC_WEBSOCKET_INTERVAL', 10)),  # Seconds
+    'messages_broadcast_interval': int(os.environ.get('SYNC_MESSAGES_BROADCAST_INTERVAL', 100)),  # Broadcast every N messages
 }
 
 # Default sync options - production ready values
 # These are the ONLY defaults that should be used across the system
 DEFAULT_SYNC_OPTIONS = {
-    'max_conversations': int(os.environ.get('SYNC_MAX_CONVERSATIONS', 5)),
-    'max_messages_per_chat': int(os.environ.get('SYNC_MAX_MESSAGES', 300)),  # API limit: 250 max
+    'max_conversations': int(os.environ.get('SYNC_MAX_CONVERSATIONS', 300)),
+    'max_messages_per_chat': int(os.environ.get('SYNC_MAX_MESSAGES', 500)),  # API limit: 250 max
     'days_back': int(os.environ.get('SYNC_DAYS_BACK', 0)),  # 0 = no date filter (sync all), >0 = filter messages by age in days
 }
 

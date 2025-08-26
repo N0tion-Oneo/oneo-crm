@@ -8,6 +8,7 @@ from django.db import transaction
 from communications.models import (
     SyncJob, SyncJobProgress, SyncJobStatus, SyncJobType
 )
+from communications.sync import get_sync_broadcaster
 
 logger = logging.getLogger(__name__)
 
@@ -82,8 +83,9 @@ class SyncJobManager:
 class SyncProgressTracker:
     """Tracks and reports sync progress"""
     
-    def __init__(self, sync_job: Optional[SyncJob] = None):
+    def __init__(self, sync_job: Optional[SyncJob] = None, provider_type: str = 'whatsapp'):
         self.sync_job = sync_job
+        self.provider_type = provider_type
         self.stats = {
             'conversations_synced': 0,
             'messages_synced': 0,
@@ -105,6 +107,9 @@ class SyncProgressTracker:
             'child_current': 0,
             'child_total': 0
         }
+        
+        # Initialize broadcaster for real-time updates
+        self.broadcaster = get_sync_broadcaster(provider_type) if sync_job else None
     
     def update_progress(
         self,
@@ -160,6 +165,54 @@ class SyncProgressTracker:
                 'percentage': percentage
             }
             
+            # Broadcast real-time update via WebSocket (immediate, not throttled)
+            if self.broadcaster and self.sync_job:
+                # Map phase names to what frontend expects
+                phase_mapping = {
+                    'conversations': 'processing_conversations',
+                    'messages': 'syncing_messages',
+                    'attendees': 'processing_attendees'
+                }
+                
+                mapped_phase = phase_mapping.get(item_type, item_type)
+                
+                # Build progress data based on phase
+                logger.info(f"🔴 update_progress broadcasting: current_item={current_item}, total_items={total_items}, item_type={item_type}")
+                logger.info(f"🔴 Current stats: {self.stats}")
+                progress_data = {
+                    'current_phase': mapped_phase,
+                    'current_item': current_item,
+                    'total_items': total_items,
+                    'details': details,
+                    # Always include cumulative counts
+                    'conversations_processed': self.stats.get('conversations_synced', 0),
+                    'messages_processed': self.stats.get('messages_synced', 0),
+                    'attendees_processed': self.stats.get('attendees_synced', 0),
+                }
+                logger.info(f"🔴 Sending progress_data: conversations_processed={progress_data['conversations_processed']}")
+                
+                # Add phase-specific data
+                if item_type == 'conversations':
+                    # For conversations, we know the total
+                    progress_data['conversations_total'] = total_items
+                    progress_data['percentage'] = percentage
+                    progress_data['batch_progress_percent'] = percentage
+                elif item_type == 'messages':
+                    # For messages, don't use percentage - just counts
+                    progress_data['current_conversation_name'] = details.split(' for ')[-1] if ' for ' in details else None
+                    # Don't set percentage fields for messages
+                else:
+                    # For other phases
+                    progress_data['percentage'] = percentage if total_items > 0 else 0
+                
+                self.broadcaster.broadcast_progress(
+                    sync_job_id=str(self.sync_job.id),
+                    celery_task_id=self.sync_job.celery_task_id,
+                    user_id=str(self.sync_job.user_id),
+                    progress_data=progress_data,
+                    force=False  # Use config to determine if should broadcast
+                )
+            
             # Only save to database if needed
             if should_update_db:
                 # Check if this progress entry exists
@@ -206,9 +259,41 @@ class SyncProgressTracker:
             logger.error(f"Failed to update progress: {e}")
     
     def increment_stat(self, stat_name: str, count: int = 1) -> None:
-        """Increment a statistic counter"""
+        """Increment a statistic counter and broadcast update"""
         if stat_name in self.stats and isinstance(self.stats[stat_name], (int, float)):
             self.stats[stat_name] += count
+            logger.info(f"📈 INCREMENT_STAT: {stat_name} by {count}, new total: {self.stats[stat_name]}")
+            logger.info(f"📈 All stats now: conversations={self.stats.get('conversations_synced', 0)}, messages={self.stats.get('messages_synced', 0)}, attendees={self.stats.get('attendees_synced', 0)}")
+            
+            # Broadcast the updated stats immediately when they change
+            if self.broadcaster and self.sync_job:
+                logger.info(f"📡 Broadcasting update: sync_job_id={self.sync_job.id}, celery_task_id={self.sync_job.celery_task_id}")
+                # Determine current phase based on what's being incremented
+                if 'conversations' in stat_name:
+                    phase = 'processing_conversations'
+                elif 'messages' in stat_name:
+                    phase = 'syncing_messages'
+                elif 'attendees' in stat_name:
+                    phase = 'processing_attendees'
+                else:
+                    phase = 'unknown'
+                
+                progress_data = {
+                    'current_phase': phase,
+                    'conversations_processed': self.stats.get('conversations_synced', 0),
+                    'messages_processed': self.stats.get('messages_synced', 0),
+                    'attendees_processed': self.stats.get('attendees_synced', 0),
+                }
+                
+                self.broadcaster.broadcast_progress(
+                    sync_job_id=str(self.sync_job.id),
+                    celery_task_id=self.sync_job.celery_task_id,
+                    user_id=str(self.sync_job.user_id),
+                    progress_data=progress_data,
+                    force=True  # Force immediate broadcast when stats change
+                )
+            else:
+                logger.warning(f"⚠️ Cannot broadcast: broadcaster={bool(self.broadcaster)}, sync_job={bool(self.sync_job)}")
     
     def add_error(self, error: str) -> None:
         """Add an error to the error list"""
@@ -243,6 +328,17 @@ class SyncProgressTracker:
             child_total: Total child items
             details: Optional detail message
         """
+        # Check if phase changed and broadcast phase change
+        if self.broadcaster and self.sync_job:
+            if parent_phase != self.nested_progress['parent_phase']:
+                self.broadcaster.broadcast_phase_change(
+                    sync_job_id=str(self.sync_job.id),
+                    celery_task_id=self.sync_job.celery_task_id,
+                    user_id=str(self.sync_job.user_id),
+                    phase=parent_phase,
+                    phase_details=details
+                )
+        
         # Update nested tracking
         self.nested_progress['parent_phase'] = parent_phase
         self.nested_progress['parent_current'] = parent_current
@@ -280,6 +376,17 @@ class SyncProgressTracker:
     def finalize(self, status: str = SyncJobStatus.COMPLETED) -> None:
         """Finalize the sync job with accumulated stats"""
         if self.sync_job:
+            # Broadcast final job update
+            if self.broadcaster:
+                self.broadcaster.broadcast_job_update(
+                    sync_job_id=str(self.sync_job.id),
+                    celery_task_id=self.sync_job.celery_task_id,
+                    user_id=str(self.sync_job.user_id),
+                    status=status.lower(),  # Frontend expects lowercase
+                    result_summary=self.stats,
+                    error_message='; '.join(str(e) for e in self.stats.get('errors', [])) if status == SyncJobStatus.FAILED else None
+                )
+            
             SyncJobManager.update_sync_job(
                 self.sync_job,
                 status=status,

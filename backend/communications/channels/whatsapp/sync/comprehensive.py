@@ -72,7 +72,31 @@ class ComprehensiveSyncService:
         from .config import get_sync_options
         sync_options = get_sync_options(options)
         
-        # Silent start - no logging
+        # Broadcast sync start
+        if self.progress_tracker and self.sync_job:
+            from communications.sync import get_sync_broadcaster
+            broadcaster = get_sync_broadcaster('whatsapp')
+            broadcaster.broadcast_job_update(
+                sync_job_id=str(self.sync_job.id),
+                celery_task_id=self.sync_job.celery_task_id,
+                user_id=str(self.sync_job.user_id),
+                status='running'
+            )
+            
+            # Also broadcast initial progress with 0 counts
+            initial_progress = {
+                'current_phase': 'initializing',
+                'conversations_processed': 0,
+                'messages_processed': 0,
+                'attendees_processed': 0,
+            }
+            broadcaster.broadcast_progress(
+                sync_job_id=str(self.sync_job.id),
+                celery_task_id=self.sync_job.celery_task_id,
+                user_id=str(self.sync_job.user_id),
+                progress_data=initial_progress,
+                force=True  # Force initial broadcast
+            )
         
         stats = {
             'conversations_synced': 0,
@@ -144,14 +168,9 @@ class ComprehensiveSyncService:
         """Phase 1: Sync conversations"""
         max_conversations = sync_options['max_conversations']
         
-        # Update progress at start of phase
-        if self.progress_tracker:
-            self.progress_tracker.update_progress(
-                0,
-                max_conversations,
-                'conversations',
-                'Starting conversation sync'
-            )
+        # Don't broadcast 0 again - we already did initial broadcast in run_comprehensive_sync
+        # Just log that we're starting
+        logger.info(f"📱 Starting conversation sync phase (max={max_conversations}) for channel {self.channel.id} ({self.channel.unipile_account_id})")
         
         # Sync conversations with pagination
         conv_stats = self.conversation_service.sync_conversations_paginated(
@@ -159,20 +178,9 @@ class ComprehensiveSyncService:
             batch_size=min(50, max_conversations)
         )
         
-        # Update progress tracker with final stats
-        if self.progress_tracker:
-            self.progress_tracker.increment_stat(
-                'conversations_synced',
-                conv_stats['conversations_synced']
-            )
-            
-            # Update final progress for conversations phase
-            self.progress_tracker.update_progress(
-                conv_stats['conversations_synced'],
-                max_conversations,
-                'conversations',
-                f"Completed: {conv_stats['conversations_synced']} conversations"
-            )
+        # Don't call update_progress at phase end - it broadcasts messages_processed=0
+        # The increment_stat calls during processing are sufficient
+        logger.debug(f"Conversations phase completed: {conv_stats['conversations_synced']} conversations")
         
         # Silent completion
         
@@ -211,15 +219,8 @@ class ComprehensiveSyncService:
             channel=self.channel
         ).order_by('-created_at')[:sync_options['max_conversations']]
         
-        
-        # Update progress at start of phase
-        if self.progress_tracker:
-            self.progress_tracker.update_progress(
-                0,
-                conversations.count(),
-                'attendees',
-                'Starting attendee sync from chats'
-            )
+        # Just log the phase transition - don't broadcast with messages=0
+        logger.info(f"👥 Starting attendee sync phase ({conversations.count()} conversations)")
         
         # For each conversation, fetch attendees from API
         for idx, conversation in enumerate(conversations):
@@ -246,29 +247,23 @@ class ComprehensiveSyncService:
                     
                     stats['attendees_synced'] += len(synced_attendees)
                     
+                    # Update cumulative stats in tracker
+                    if self.progress_tracker and len(synced_attendees) > 0:
+                        self.progress_tracker.increment_stat('attendees_synced', len(synced_attendees))
                 
-                # Update progress
-                if self.progress_tracker and (idx + 1) % 10 == 0:
-                    self.progress_tracker.update_progress(
-                        idx + 1,
-                        conversations.count(),
-                        'attendees',
-                        f"Processed {idx + 1}/{conversations.count()} chats"
-                    )
+                # Don't call update_progress - rely on increment_stat to broadcast
+                # This prevents showing messages_processed=0 during attendees phase
+                if (idx + 1) % 10 == 0:
+                    logger.debug(f"Processed {idx + 1}/{conversations.count()} chats for attendees")
                     
             except Exception as e:
                 error_msg = f"Failed to sync attendees for conversation {conversation.external_thread_id}: {e}"
                 logger.error(error_msg)
                 stats['errors'].append(error_msg)
         
-        # Final progress update
-        if self.progress_tracker:
-            self.progress_tracker.update_progress(
-                conversations.count(),
-                conversations.count(),
-                'attendees',
-                f"Completed: {stats['attendees_synced']} attendees synced"
-            )
+        # Don't call update_progress here - it would broadcast with messages=0 since messages haven't been synced yet
+        # The increment_stat calls during processing are sufficient
+        logger.info(f"✅ Attendees phase complete: {stats['attendees_synced']} attendees synced")
         
         return stats
     
@@ -293,6 +288,8 @@ class ComprehensiveSyncService:
             limit=max_conversations
         )
         
+        # Just log the phase transition - don't broadcast yet to avoid showing messages=0
+        logger.info(f"📨 Starting messages sync phase ({len(conversations)} conversations)")
         
         # Sync messages for each conversation
         total_stats = {
@@ -305,7 +302,7 @@ class ComprehensiveSyncService:
         
         for idx, conversation in enumerate(conversations):
             try:
-                # No progress logging
+                # Don't broadcast here - let increment_stat handle it when messages are actually synced
                 
                 # Sync messages for this conversation
                 msg_stats = self.message_service.sync_messages_for_conversation(
@@ -331,14 +328,9 @@ class ComprehensiveSyncService:
                 conversation.last_synced_at = timezone.now()
                 conversation.save(update_fields=['last_synced_at'])
                 
-                # Update progress
-                if self.progress_tracker:
-                    self.progress_tracker.update_progress(
-                        idx + 1,
-                        len(conversations),
-                        'messages',
-                        f"Synced {msg_stats['messages_synced']} messages for conversation"
-                    )
+                # Don't call update_progress - let increment_stat in message service handle broadcasting
+                # This prevents resetting the visual display when switching phases
+                logger.debug(f"Processed conversation {idx + 1}/{len(conversations)}: {msg_stats['messages_synced']} messages")
                 
                 
             except Exception as e:
@@ -346,12 +338,7 @@ class ComprehensiveSyncService:
                 logger.error(error_msg)
                 total_stats['errors'].append(error_msg)
         
-        # Update progress tracker stats
-        if self.progress_tracker:
-            self.progress_tracker.increment_stat(
-                'messages_synced',
-                total_stats['messages_synced']
-            )
+        # Stats already incremented during message processing
         
         # Include incomplete conversations in returned stats
         total_stats['incomplete_conversations'] = total_stats.get('incomplete_conversations', [])

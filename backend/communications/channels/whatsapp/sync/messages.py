@@ -88,12 +88,8 @@ class MessageSyncService:
             
             logger.debug(f"📨 Syncing messages for conversation {external_id[:20]}...")
             
-            # Update progress before API call
-            if self.progress_tracker:
-                self.progress_tracker.update_progress(
-                    0, max_messages, 'fetching_messages',
-                    f"Fetching messages for {external_id[:20]}..."
-                )
+            # Don't update progress here - it would reset visual counts
+            logger.debug(f"Fetching messages for {external_id[:20]}...")
             
             # Fetch messages from API 
             # Note: account_id is required by the method signature but not used internally
@@ -113,12 +109,9 @@ class MessageSyncService:
             messages_data = api_result.get('messages', [])
             logger.debug(f"  Retrieved {len(messages_data)} messages from API")
             
-            # Update progress after API retrieval
-            if self.progress_tracker and messages_data:
-                self.progress_tracker.update_progress(
-                    0, len(messages_data), 'processing_messages',
-                    f"Processing {len(messages_data)} messages..."
-                )
+            # Don't update progress here - it would reset visual counts
+            if messages_data:
+                logger.debug(f"Processing {len(messages_data)} messages...")
             
             # Process messages
             processed_stats = self._process_messages_batch(
@@ -170,12 +163,8 @@ class MessageSyncService:
         
         for idx, msg_data in enumerate(messages_data):
             try:
-                # Update progress less frequently - every 25 messages or at the end
-                if self.progress_tracker and ((idx + 1) % 25 == 0 or (idx + 1) == len(messages_data)):
-                    self.progress_tracker.update_progress(
-                        idx + 1, len(messages_data), 'processing_messages',
-                        f"Processing message {idx + 1} of {len(messages_data)}"
-                    )
+                # Don't call update_progress during processing - it resets the display
+                # increment_stat at the end will handle the broadcast
                 
                 # Check date filter
                 if since_date:
@@ -214,12 +203,13 @@ class MessageSyncService:
                 logger.error(f"Failed to process message: {e}")
                 continue
         
-        # Final progress update
-        if self.progress_tracker and messages_data:
-            self.progress_tracker.update_progress(
-                len(messages_data), len(messages_data), 'processing_messages',
-                f"Completed processing {stats['total']} messages"
-            )
+        # Update cumulative stats in tracker
+        if self.progress_tracker and stats['total'] > 0:
+            logger.info(f"💬 INCREMENTING messages_synced by {stats['total']}")
+            self.progress_tracker.increment_stat('messages_synced', stats['total'])
+            
+            # Don't update progress here - increment_stat already broadcasts the update
+            logger.debug(f"Completed processing {stats['total']} messages")
         
         # Log batch processing summary
         logger.info(f"📊 Batch processing complete:")
@@ -451,14 +441,8 @@ class MessageSyncService:
                 if progress_callback:
                     progress_callback(idx + 1, len(conversations))
                 
-                if self.progress_tracker:
-                    # More detailed progress message
-                    self.progress_tracker.update_progress(
-                        idx + 1,
-                        len(conversations),
-                        'messages',
-                        f"Conversation {idx + 1}/{len(conversations)}: {conv_stats['messages_synced']} messages synced"
-                    )
+                # Don't call update_progress - rely on increment_stat for broadcasting
+                logger.debug(f"Conversation {idx + 1}/{len(conversations)}: {conv_stats['messages_synced']} messages synced")
                     
             except Exception as e:
                 error_msg = f"Failed to sync messages for conversation {conversation.id}: {e}"
@@ -507,12 +491,8 @@ class MessageSyncService:
             all_messages = []
             last_cursor = None  # Track the last cursor for debugging
             
-            # Track progress for the overall conversation
-            if self.progress_tracker:
-                self.progress_tracker.update_progress(
-                    0, max_messages, 'fetching_messages',
-                    f"Starting paginated fetch for {external_id[:20]}..."
-                )
+            # Don't update progress here - it would reset visual counts
+            logger.debug(f"Starting paginated fetch for {external_id[:20]}...")
             
             # Paginate through messages - continue until we have enough OR no more available
             while total_synced < max_messages:
@@ -523,12 +503,8 @@ class MessageSyncService:
                 # Log API calls for debugging pagination
                 logger.info(f"  📡 API call {stats['api_calls'] + 1}: fetching up to {current_batch_size} messages (have {total_synced}/{max_messages}, cursor={cursor is not None})")
                 
-                # Update progress before API call
-                if self.progress_tracker:
-                    self.progress_tracker.update_progress(
-                        total_synced, max_messages, 'fetching_messages',
-                        f"Fetching batch {stats['api_calls'] + 1} ({total_synced}/{max_messages} messages)..."
-                    )
+                # Don't update progress during fetching - just log
+                logger.debug(f"Fetching batch {stats['api_calls'] + 1} ({total_synced}/{max_messages} messages)...")
                 
                 # Fetch messages batch from API
                 api_result = async_to_sync(self.whatsapp_service.client.get_messages)(
@@ -601,11 +577,8 @@ class MessageSyncService:
                 logger.info(f"  📊 Total API messages fetched: {len(all_messages)}")
                 logger.debug(f"  Processing {len(all_messages)} total messages...")
                 
-                if self.progress_tracker:
-                    self.progress_tracker.update_progress(
-                        0, len(all_messages), 'processing_messages',
-                        f"Processing {len(all_messages)} messages..."
-                    )
+                # Don't call update_progress with 0 here - it resets the visual progress
+                logger.info(f"  Starting to process {len(all_messages)} messages...")
                 
                 # Process all messages at once
                 processed_stats = self._process_messages_batch(

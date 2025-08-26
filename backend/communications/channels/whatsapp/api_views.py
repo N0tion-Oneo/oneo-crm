@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 def get_whatsapp_chats_local_first(request):
     """Get WhatsApp chats with local-first architecture"""
     account_id = request.GET.get('account_id')
-    limit = int(request.GET.get('limit', 15))  # Default to 15 chats
+    limit = int(request.GET.get('limit', 20))  # Default to 20 chats for better performance
     cursor = request.GET.get('cursor')
     force_sync = request.GET.get('force_sync', 'false').lower() == 'true'
     
@@ -77,12 +77,23 @@ def get_whatsapp_chats_local_first(request):
             channel=channel
         ).order_by('-last_message_at')  # Initial ordering by database field
         
-        # Apply pagination
-        if cursor:
-            conversations_qs = conversations_qs.filter(id__gt=cursor)
+        # Debug logging
+        total_conversations = conversations_qs.count()
+        logger.info(f"📊 Found {total_conversations} conversations for channel {channel.id if channel else 'None'} (account_id: {account_id})")
         
-        # Get more conversations than limit to handle sorting
-        conversations = list(conversations_qs[:limit * 2])  # Get double to ensure we have enough after sorting
+        # Get all conversations first for proper sorting
+        all_conversations = list(conversations_qs)
+        
+        # Parse cursor as offset
+        offset = 0
+        if cursor:
+            try:
+                offset = int(cursor)
+            except (ValueError, TypeError):
+                offset = 0
+        
+        # We'll sort ALL conversations first, then paginate
+        conversations = all_conversations  # Will be sorted later
         
         # Format conversations for response and collect with timestamps
         conversations_with_timestamps = []
@@ -181,17 +192,25 @@ def get_whatsapp_chats_local_first(request):
             reverse=True  # Most recent first
         )
         
-        # Apply limit after sorting
-        sorted_conversations = conversations_with_timestamps[:limit]
-        has_more = len(conversations_with_timestamps) > limit
+        # Apply pagination after sorting
+        # Get the slice based on offset
+        start = offset
+        end = offset + limit
+        paginated_conversations = conversations_with_timestamps[start:end]
+        
+        # Check if there are more conversations
+        has_more = len(conversations_with_timestamps) > end
         
         # Extract formatted conversations
-        formatted_conversations = [conv['formatted'] for conv in sorted_conversations]
+        formatted_conversations = [conv['formatted'] for conv in paginated_conversations]
+        
+        # Use offset as cursor for next page
+        next_offset = end if has_more else None
         
         result = {
             'conversations': formatted_conversations,
             'has_more': has_more,
-            'cursor': str(sorted_conversations[-1]['conversation'].id) if sorted_conversations else None
+            'cursor': str(next_offset) if next_offset is not None else None
         }
         
         # Extract conversations from the result

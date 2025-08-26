@@ -635,19 +635,8 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
       }
     }))
     
-    // Show progress toast updates
-    const progress = syncData.progress || {}
-    const completionPercentage = syncData.completion_percentage || 0
-    const currentPhase = progress.current_phase || 'processing'
-    const conversationsProcessed = progress.conversations_processed || 0
-    const messagesProcessed = progress.messages_processed || 0
-    
-    if (completionPercentage > 0 && completionPercentage % 25 === 0) {
-      toast({
-        title: `Sync ${completionPercentage}% complete`,
-        description: `${currentPhase}: ${conversationsProcessed} conversations, ${messagesProcessed} messages processed.`,
-      })
-    }
+    // Don't show progress toasts - they're repetitive and not meaningful
+    // Completion toast is handled in handleSyncJobUpdate
   }, [toast])
 
   // Handle sync job updates (start, completion, failure)
@@ -671,7 +660,7 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
       const result = jobData.result_summary || {}
       toast({
         title: "Sync completed",
-        description: `Successfully synced ${result.conversations_synced || 0} conversations and ${result.messages_synced || 0} messages.`,
+        description: `Successfully synced ${result.conversations_synced || 0} conversations, ${result.messages_synced || 0} messages, and ${result.attendees_synced || 0} attendees.`,
       })
       
       // Refresh conversation list
@@ -1055,7 +1044,7 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
         const chatsResponse = await api.get('/api/v1/communications/whatsapp/chats/', {
           params: { 
             account_id: accountToLoad.id,
-            limit: 15, // Load 15 chats consistently
+            limit: 20, // Load initial batch for better performance
             ...(chatCursor && { cursor: chatCursor }),
             force_sync: isInitialLoad ? 'false' : 'false' // Use cached data for better performance
           }
@@ -1251,9 +1240,9 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
         
         // Reconnect to WebSocket progress for each active job
         activeJobs.forEach(job => {
-          if (job.id && (job.status === 'pending' || job.status === 'running')) {
-            console.log(`🔌 Reconnecting to progress WebSocket for job ${job.id}`)
-            connectToSyncProgress(job.id)
+          if (job.celery_task_id && (job.status === 'pending' || job.status === 'running')) {
+            console.log(`🔌 Reconnecting to progress WebSocket for job ${job.celery_task_id}`)
+            connectToSyncProgress(job.celery_task_id)
           }
         })
       } else {
@@ -1296,7 +1285,7 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
         )
         
         // Reconnect to progress WebSocket
-        connectToSyncProgress(retryData.id)
+        connectToSyncProgress(retryData.celery_task_id)
       } else {
         throw new Error('Failed to retry sync')
       }
@@ -1514,7 +1503,7 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
         const chatsResponse = await api.get('/api/v1/communications/whatsapp/chats/', {
           params: { 
             account_id: accountToLoad.id,
-            limit: 15,
+            limit: 20,
             force_sync: 'false' // Use fresh synced data from database
           }
         })
@@ -1626,7 +1615,7 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
       const freshChatsResponse = await api.get(`/api/v1/communications/whatsapp/chats/`, {
         params: { 
           account_id: selectedConnection?.unipile_account_id,
-          limit: 15,
+          limit: 20,
           force_sync: 'false' // Use fresh synced data
         }
       })
@@ -2189,7 +2178,11 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
             {activeSyncJobs.map((job) => {
               const progress = syncProgress[job.celery_task_id] || {}
               const jobProgress = progress.progress || {}
-              const completionPercentage = progress.completion_percentage || 0
+              
+              // Extract counts from progress
+              const conversationsProcessed = jobProgress.conversations_processed || 0
+              const messagesProcessed = jobProgress.messages_processed || 0
+              const attendeesProcessed = jobProgress.attendees_processed || 0
               
               return (
                 <div key={job.celery_task_id} className="bg-white dark:bg-gray-800 rounded-lg p-3 border">
@@ -2210,7 +2203,7 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
                       }`}>
                         {progress.status === 'failed' ? 'Failed' :
                          progress.status === 'completed' ? 'Complete' :
-                         `${completionPercentage}% Complete`}
+                         'Running'}
                       </span>
                     </div>
                     
@@ -2243,58 +2236,65 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
                     </div>
                   </div>
                   
-                  {/* Progress Bar */}
-                  <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2 mb-2">
-                    <div 
-                      className="bg-blue-500 h-2 rounded-full transition-all duration-300 ease-out"
-                      style={{ width: `${Math.max(1, completionPercentage)}%` }}
-                    ></div>
+                  {/* Total Counts - Always Visible */}
+                  <div className="mb-3 p-2 bg-gray-50 dark:bg-gray-700 rounded">
+                    <div className="flex justify-between items-center text-sm">
+                      <div className="flex items-center space-x-4">
+                        <div className="flex items-center space-x-2">
+                          <span className="text-gray-600 dark:text-gray-300">Conversations:</span>
+                          <span className="font-medium text-gray-900 dark:text-gray-100">
+                            {conversationsProcessed}
+                          </span>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <span className="text-gray-600 dark:text-gray-300">Messages:</span>
+                          <span className="font-medium text-gray-900 dark:text-gray-100">
+                            {messagesProcessed}
+                          </span>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <span className="text-gray-600 dark:text-gray-300">Attendees:</span>
+                          <span className="font-medium text-gray-900 dark:text-gray-100">
+                            {attendeesProcessed}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-blue-500"></div>
+                        <span className="text-xs text-blue-600 dark:text-blue-400">
+                          {jobProgress.current_phase === 'processing_conversations' ? 'Processing conversations' : 
+                           jobProgress.current_phase === 'syncing_messages' ? 'Syncing messages' : 
+                           jobProgress.current_phase === 'processing_attendees' ? 'Processing attendees' :
+                           'Initializing'}
+                        </span>
+                      </div>
+                    </div>
                   </div>
                   
                   {/* Detailed Progress Info */}
-                  <div className="space-y-3 text-xs">
-                    {/* Current Status */}
-                    <div className="flex items-center justify-between">
-                      <span className="text-gray-600 dark:text-gray-400">Status:</span>
-                      <span className="font-medium text-blue-600 dark:text-blue-400">
-                        {jobProgress.current_phase === 'processing_conversations' ? 'Processing Conversations' : 
-                         jobProgress.current_phase === 'fetching_conversations' ? 'Fetching Conversations' :
-                         jobProgress.current_phase === 'syncing_messages' ? 'Syncing Messages' : 'Initializing'}
-                      </span>
-                    </div>
-                    
-                    {/* Current Conversation */}
+                  <div className="space-y-2 text-xs">
+                    {/* Current Item Being Processed */}
                     {jobProgress.current_conversation_name && (
                       <div className="flex items-center justify-between">
-                        <span className="text-gray-600 dark:text-gray-400">Current:</span>
+                        <span className="text-gray-600 dark:text-gray-400">Processing:</span>
                         <span className="font-mono text-sm max-w-48 truncate" title={jobProgress.current_conversation_name}>
                           {jobProgress.current_conversation_name}
                         </span>
                       </div>
                     )}
                     
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <div className="flex justify-between mb-1">
-                          <span className="text-gray-600 dark:text-gray-400">Conversations:</span>
-                          <span className="font-mono">
-                            {jobProgress.conversations_processed || 0} / {jobProgress.conversations_total || '?'}
-                          </span>
+                    {/* Additional Details */}
+                    {(jobProgress.batch_number || jobProgress.processing_rate_per_minute) && (
+                      <div className="grid grid-cols-2 gap-4 pt-2 border-t dark:border-gray-600">
+                        <div>
+                          {jobProgress.batch_number && (
+                            <div className="flex justify-between mb-1">
+                              <span className="text-gray-600 dark:text-gray-400">Batch:</span>
+                              <span className="font-mono">#{jobProgress.batch_number}</span>
+                            </div>
+                          )}
                         </div>
-                        <div className="flex justify-between mb-1">
-                          <span className="text-gray-600 dark:text-gray-400">Messages:</span>
-                          <span className="font-mono">
-                            {jobProgress.messages_processed || 0}
-                          </span>
-                        </div>
-                        {jobProgress.batch_number && (
-                          <div className="flex justify-between mb-1">
-                            <span className="text-gray-600 dark:text-gray-400">Batch:</span>
-                            <span className="font-mono">#{jobProgress.batch_number}</span>
-                          </div>
-                        )}
-                      </div>
-                      <div>
+                        <div>
                         {/* Performance Metrics */}
                         {jobProgress.processing_rate_per_minute && (
                           <div className="flex justify-between mb-1">
@@ -2318,6 +2318,7 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
                         )}
                       </div>
                     </div>
+                    )}
                     
                     {/* Error and Retry Information */}
                     {(jobProgress.batch_errors_count > 0 || progress.status === 'failed' || progress.status === 'retrying') && (
@@ -2390,21 +2391,6 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
                       </div>
                     )}
                     
-                    {/* Batch Progress */}
-                    {jobProgress.batch_progress_percent && (
-                      <div className="mt-2">
-                        <div className="flex justify-between items-center mb-1">
-                          <span className="text-gray-600 dark:text-gray-400">Current Batch:</span>
-                          <span className="text-xs">{jobProgress.batch_progress_percent}%</span>
-                        </div>
-                        <div className="w-full bg-gray-100 dark:bg-gray-700 rounded-full h-1">
-                          <div 
-                            className="bg-green-500 h-1 rounded-full transition-all duration-300"
-                            style={{ width: `${jobProgress.batch_progress_percent}%` }}
-                          ></div>
-                        </div>
-                      </div>
-                    )}
                   </div>
                   
                   {/* Last Updated */}

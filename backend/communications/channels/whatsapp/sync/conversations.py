@@ -137,16 +137,14 @@ class ConversationSyncService:
                         else:
                             stats['updated'] += 1
                         
+                        # Update cumulative stats in tracker
+                        if self.progress_tracker:
+                            self.progress_tracker.increment_stat('conversations_synced', 1)
+                        
                         # Attendees are now synced in a separate phase by comprehensive.py
                     
-                    # Update progress for every conversation (not just every 10)
-                    if self.progress_tracker:
-                        self.progress_tracker.update_progress(
-                            idx + 1,
-                            len(conversations_data),
-                            'conversations',
-                            f"Processing conversation {idx + 1} of {len(conversations_data)}"
-                        )
+                    # Don't call update_progress - increment_stat handles broadcasting
+                    # This prevents showing 0 for attendees and messages during conversation phase
                     
                 except Exception as e:
                     logger.error(f"Failed to process conversation: {e}")
@@ -201,7 +199,7 @@ class ConversationSyncService:
             )
             
             if created:
-                logger.debug(f"  Created conversation: {subject or external_id[:20]}")
+                logger.info(f"  ✅ Created conversation: {subject or external_id[:20]} for channel {self.channel.id}")
             
             return conversation, created
             
@@ -332,20 +330,8 @@ class ConversationSyncService:
                 logger.debug(f"  Breaking loop: cursor={cursor}, conversations_synced={batch_stats['conversations_synced']}")
                 break
             
-            # Update progress tracker
-            if self.progress_tracker:
-                self.progress_tracker.increment_stat(
-                    'conversations_synced',
-                    batch_stats['conversations_synced']
-                )
-                
-                # Update overall progress
-                self.progress_tracker.update_progress(
-                    synced,
-                    max_total,
-                    'conversations_paginated',
-                    f"Synced {synced} of {max_total} conversations"
-                )
+            # Don't call update_progress - increment_stat in _process_conversations_batch handles it
+            # This prevents broadcasting 0 for attendees and messages
         
         logger.debug(
             f"Paginated sync complete: {total_stats['conversations_synced']} "

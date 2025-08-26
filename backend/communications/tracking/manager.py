@@ -94,10 +94,13 @@ class CommunicationTracker:
             delivery_tracking.delivered_at = delivered_at or timezone.now()
             
             if delivery_time_ms:
-                delivery_tracking.total_delivery_time_ms = delivery_time_ms
+                # Ensure it fits in IntegerField range
+                delivery_tracking.total_delivery_time_ms = min(delivery_time_ms, 2147483647)
             elif delivery_tracking.first_attempt_at:
                 time_diff = delivery_tracking.delivered_at - delivery_tracking.first_attempt_at
-                delivery_tracking.total_delivery_time_ms = int(time_diff.total_seconds() * 1000)
+                time_ms = int(time_diff.total_seconds() * 1000)
+                # Cap at max int value to prevent overflow (about 24 days)
+                delivery_tracking.total_delivery_time_ms = min(time_ms, 2147483647)
             
             delivery_tracking.save()
             
@@ -120,7 +123,7 @@ class CommunicationTracker:
             return delivery_tracking
             
         except DeliveryTracking.DoesNotExist:
-            logger.error(f"No delivery tracking found for message {message.id}")
+            logger.debug(f"No delivery tracking found for message {message.id}")
             raise
         except Exception as e:
             logger.error(f"Failed to mark delivery success: {e}")
@@ -175,7 +178,7 @@ class CommunicationTracker:
             return delivery_tracking
             
         except DeliveryTracking.DoesNotExist:
-            logger.error(f"No delivery tracking found for message {message.id}")
+            logger.debug(f"No delivery tracking found for message {message.id}")
             raise
         except Exception as e:
             logger.error(f"Failed to mark delivery failure: {e}")

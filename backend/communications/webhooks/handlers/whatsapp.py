@@ -6,6 +6,7 @@ from typing import Dict, Any, Optional
 from django.utils import timezone
 from django.utils import timezone as django_timezone
 from .base import BaseWebhookHandler
+from communications.utils.message_direction import determine_message_direction
 
 logger = logging.getLogger(__name__)
 
@@ -117,11 +118,6 @@ class WhatsAppWebhookHandler(BaseWebhookHandler):
                 sender_name = sender_info.get('attendee_name', '') or sender_info.get('name', '')
                 sender_id = sender_info.get('attendee_id', '') or sender_info.get('id', '')
             
-            # Check if message is from self
-            is_self = data.get('is_from_me', False)
-            if not is_self and isinstance(sender_info, dict):
-                is_self = sender_info.get('is_me', False)
-            
             if not chat_id:
                 return {'success': False, 'error': 'Chat ID not found in webhook data'}
             
@@ -162,7 +158,20 @@ class WhatsAppWebhookHandler(BaseWebhookHandler):
                 conversation_name = f"WhatsApp Chat {chat_id[:8]}"
                 
                 # Try to extract better name from message sender
-                if sender_name and not is_self:
+                # Use the direction utility to check if message is inbound (from customer)
+                # Prepare webhook data with proper sender info for AccountOwnerDetector
+                webhook_msg_data = {
+                    **data,
+                    'sender': sender_info,
+                    'account_id': account_id,
+                }
+                msg_direction = determine_message_direction(
+                    message_data=webhook_msg_data,
+                    channel_type='whatsapp',
+                    user_identifier=None,  # Let it get from channel
+                    channel=channel
+                )
+                if sender_name and msg_direction == 'in':
                     conversation_name = sender_name
                 
                 conversation = Conversation.objects.create(
@@ -201,8 +210,31 @@ class WhatsAppWebhookHandler(BaseWebhookHandler):
                     'approach': 'sync_webhook_processor'
                 }
             
-            # Determine message direction using extracted data
-            if is_self:
+            # Determine message direction using unified utility
+            # The webhook data structure should have sender info for proper comparison
+            # Make sure the data has the proper structure for AccountOwnerDetector
+            webhook_message_data = {
+                **data,  # Include all original webhook data
+                'sender': sender_info,  # Make sure sender info is available
+                'account_id': account_id,  # Include the account ID
+            }
+            
+            # Debug logging for direction determination
+            logger.info(f"🔍 Direction determination - Account ID: {account_id}")
+            logger.info(f"🔍 Direction determination - Sender info: {sender_info}")
+            logger.info(f"🔍 Direction determination - Channel: {channel.unipile_account_id if channel else 'None'}")
+            
+            direction_str = determine_message_direction(
+                message_data=webhook_message_data,
+                channel_type='whatsapp', 
+                user_identifier=None,  # Let it get from channel
+                channel=channel  # Pass channel for automatic account detection
+            )
+            
+            logger.info(f"🔍 Direction determined: {direction_str}")
+            
+            # Convert string direction to enum
+            if direction_str == 'out':
                 direction = MessageDirection.OUTBOUND
                 status = MessageStatus.SENT
             else:

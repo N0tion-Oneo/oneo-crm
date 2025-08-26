@@ -30,8 +30,10 @@ def determine_whatsapp_direction(message_data: Dict[str, Any], business_account_
         detector = AccountOwnerDetector('whatsapp', account_identifier=business_account_id, channel=channel)
         sender_info = message_data.get('sender', {})
         
-        if isinstance(sender_info, dict):
+        if isinstance(sender_info, dict) and sender_info:  # Check sender_info is not empty
+            logger.debug(f"WhatsApp direction detection - Sender: {sender_info}, Account ID: {business_account_id}")
             is_owner = detector.is_account_owner(sender_info, message_data)
+            logger.debug(f"WhatsApp direction detection - Is owner: {is_owner}")
             if is_owner:
                 return 'out'
             elif sender_info.get('attendee_provider_id') or sender_info.get('id'):

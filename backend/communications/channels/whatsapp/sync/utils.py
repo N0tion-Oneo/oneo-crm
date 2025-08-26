@@ -95,6 +95,16 @@ class SyncProgressTracker:
         self.update_frequency_seconds = 5  # Only update DB every 5 seconds
         self.last_percentage = 0
         self.percentage_threshold = 10  # Update every 10% progress
+        
+        # Track nested progress for better UX
+        self.nested_progress = {
+            'parent_phase': None,
+            'parent_current': 0,
+            'parent_total': 0,
+            'child_phase': None,
+            'child_current': 0,
+            'child_total': 0
+        }
     
     def update_progress(
         self,
@@ -210,6 +220,62 @@ class SyncProgressTracker:
     def get_stats(self) -> Dict[str, Any]:
         """Get current statistics"""
         return self.stats.copy()
+    
+    def update_nested_progress(
+        self,
+        parent_phase: str,
+        parent_current: int,
+        parent_total: int,
+        child_phase: Optional[str] = None,
+        child_current: Optional[int] = None,
+        child_total: Optional[int] = None,
+        details: Optional[str] = None
+    ) -> None:
+        """
+        Update progress for nested operations (e.g., messages within conversations)
+        
+        Args:
+            parent_phase: Main phase name (e.g., 'conversations')
+            parent_current: Current parent item
+            parent_total: Total parent items
+            child_phase: Sub-phase name (e.g., 'message_batch')
+            child_current: Current child item
+            child_total: Total child items
+            details: Optional detail message
+        """
+        # Update nested tracking
+        self.nested_progress['parent_phase'] = parent_phase
+        self.nested_progress['parent_current'] = parent_current
+        self.nested_progress['parent_total'] = parent_total
+        
+        if child_phase:
+            self.nested_progress['child_phase'] = child_phase
+            self.nested_progress['child_current'] = child_current or 0
+            self.nested_progress['child_total'] = child_total or 0
+        
+        # Calculate combined percentage
+        parent_percentage = (parent_current / parent_total * 100) if parent_total > 0 else 0
+        
+        # Build detailed message
+        if child_phase and child_total and child_total > 0:
+            child_percentage = (child_current / child_total * 100) if child_current else 0
+            combined_message = (
+                f"{parent_phase}: {parent_current}/{parent_total} ({parent_percentage:.1f}%), "
+                f"{child_phase}: {child_current}/{child_total} ({child_percentage:.1f}%)"
+            )
+        else:
+            combined_message = f"{parent_phase}: {parent_current}/{parent_total} ({parent_percentage:.1f}%)"
+        
+        if details:
+            combined_message = f"{combined_message} - {details}"
+        
+        # Use regular update_progress with the combined message
+        self.update_progress(
+            parent_current,
+            parent_total,
+            parent_phase,
+            combined_message
+        )
     
     def finalize(self, status: str = SyncJobStatus.COMPLETED) -> None:
         """Finalize the sync job with accumulated stats"""

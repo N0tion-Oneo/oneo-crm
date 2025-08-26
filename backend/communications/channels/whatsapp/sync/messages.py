@@ -43,7 +43,8 @@ class MessageSyncService:
         self,
         conversation: Conversation,
         max_messages: int = 100,
-        since_date: Optional[datetime] = None
+        since_date: Optional[datetime] = None,
+        use_pagination: Optional[bool] = None
     ) -> Dict[str, Any]:
         """
         Sync messages for a specific conversation
@@ -52,10 +53,26 @@ class MessageSyncService:
             conversation: Conversation to sync messages for
             max_messages: Maximum number of messages to sync
             since_date: Only sync messages after this date
+            use_pagination: Whether to use pagination (defaults to config setting)
             
         Returns:
             Statistics dictionary
         """
+        # Check if pagination should be used
+        from .config import SYNC_CONFIG
+        if use_pagination is None:
+            use_pagination = SYNC_CONFIG.get('enable_message_pagination', True)
+        
+        if use_pagination:
+            batch_size = SYNC_CONFIG.get('messages_batch_size', 50)
+            return self.sync_messages_for_conversation_paginated(
+                conversation=conversation,
+                max_messages=max_messages,
+                since_date=since_date,
+                batch_size=batch_size
+            )
+        
+        # Original non-paginated implementation
         stats = {
             'messages_synced': 0,
             'messages_created': 0,
@@ -415,3 +432,156 @@ class MessageSyncService:
                 total_stats['errors'].append(error_msg)
         
         return total_stats
+    
+    def sync_messages_for_conversation_paginated(
+        self,
+        conversation: Conversation,
+        max_messages: int = 100,
+        since_date: Optional[datetime] = None,
+        batch_size: int = 50
+    ) -> Dict[str, Any]:
+        """
+        Sync messages for a specific conversation using pagination
+        
+        Args:
+            conversation: Conversation to sync messages for
+            max_messages: Maximum total number of messages to sync
+            since_date: Only sync messages after this date
+            batch_size: Number of messages per API call
+            
+        Returns:
+            Statistics dictionary
+        """
+        stats = {
+            'messages_synced': 0,
+            'messages_created': 0,
+            'messages_updated': 0,
+            'errors': [],
+            'api_calls': 0
+        }
+        
+        try:
+            external_id = conversation.external_thread_id
+            if not external_id:
+                logger.warning(f"No external ID for conversation {conversation.id}")
+                return stats
+            
+            logger.debug(f"📨 Syncing messages for conversation {external_id[:20]} with pagination...")
+            logger.debug(f"  Max messages: {max_messages}, Batch size: {batch_size}")
+            
+            cursor = None
+            total_synced = 0
+            all_messages = []
+            
+            # Track progress for the overall conversation
+            if self.progress_tracker:
+                self.progress_tracker.update_progress(
+                    0, max_messages, 'fetching_messages',
+                    f"Starting paginated fetch for {external_id[:20]}..."
+                )
+            
+            # Paginate through messages
+            while total_synced < max_messages:
+                # Calculate batch size for this iteration
+                remaining = max_messages - total_synced
+                current_batch_size = min(batch_size, remaining)
+                
+                # Update progress before API call
+                if self.progress_tracker:
+                    self.progress_tracker.update_progress(
+                        total_synced, max_messages, 'fetching_messages',
+                        f"Fetching batch {stats['api_calls'] + 1} ({total_synced}/{max_messages} messages)..."
+                    )
+                
+                # Fetch messages batch from API
+                api_result = async_to_sync(self.whatsapp_service.client.get_messages)(
+                    account_id=self.whatsapp_service.account_identifier or '',
+                    conversation_id=external_id,
+                    limit=current_batch_size,
+                    cursor=cursor
+                )
+                
+                stats['api_calls'] += 1
+                
+                if not api_result.get('success'):
+                    error_msg = f"Failed to fetch messages batch {stats['api_calls']}: {api_result.get('error')}"
+                    logger.error(error_msg)
+                    stats['errors'].append(error_msg)
+                    break
+                
+                messages_batch = api_result.get('messages', [])
+                if not messages_batch:
+                    logger.debug(f"  No more messages available after {stats['api_calls']} API calls")
+                    break
+                
+                logger.debug(f"  Retrieved batch {stats['api_calls']}: {len(messages_batch)} messages")
+                
+                # Filter messages by date if needed
+                if since_date:
+                    filtered_batch = []
+                    for msg in messages_batch:
+                        msg_date = self._parse_message_date(msg)
+                        if msg_date and msg_date >= since_date:
+                            filtered_batch.append(msg)
+                    messages_batch = filtered_batch
+                    
+                    if not messages_batch:
+                        logger.debug(f"  All messages in batch filtered out by date")
+                        # Still check for more messages
+                        cursor = api_result.get('cursor')
+                        if not cursor or not api_result.get('has_more', False):
+                            break
+                        continue
+                
+                # Add to all messages
+                all_messages.extend(messages_batch)
+                total_synced += len(messages_batch)
+                
+                # Check if we should continue
+                cursor = api_result.get('cursor')
+                has_more = api_result.get('has_more', False)
+                
+                if not cursor or not has_more or len(messages_batch) < current_batch_size:
+                    logger.debug(f"  No more messages to fetch (cursor: {bool(cursor)}, has_more: {has_more})")
+                    break
+                
+                # Log progress every few batches
+                if stats['api_calls'] % 3 == 0:
+                    logger.info(f"  Progress: {total_synced}/{max_messages} messages fetched in {stats['api_calls']} API calls")
+            
+            # Now process all collected messages
+            if all_messages:
+                logger.debug(f"  Processing {len(all_messages)} total messages...")
+                
+                if self.progress_tracker:
+                    self.progress_tracker.update_progress(
+                        0, len(all_messages), 'processing_messages',
+                        f"Processing {len(all_messages)} messages..."
+                    )
+                
+                # Process all messages at once
+                processed_stats = self._process_messages_batch(
+                    all_messages,
+                    conversation,
+                    since_date=None  # Already filtered above
+                )
+                
+                # Update stats
+                stats['messages_synced'] = processed_stats['total']
+                stats['messages_created'] = processed_stats['created']
+                stats['messages_updated'] = processed_stats['updated']
+                
+                # Update conversation metadata
+                self._update_conversation_from_messages(conversation, all_messages)
+            
+            logger.info(
+                f"  ✅ Synced {stats['messages_synced']} messages "
+                f"({stats['messages_created']} new) in {stats['api_calls']} API calls"
+            )
+            
+        except Exception as e:
+            error_msg = f"Error in paginated sync for {conversation.id}: {e}"
+            logger.error(error_msg)
+            stats['errors'].append(error_msg)
+        
+        return stats

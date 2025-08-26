@@ -287,6 +287,8 @@ class ConversationSyncService:
         Returns:
             Combined statistics
         """
+        logger.info(f"📱 Starting paginated conversation sync (max_total={max_total}, batch_size={batch_size})")
+        
         total_stats = {
             'conversations_synced': 0,
             'conversations_created': 0,
@@ -297,11 +299,15 @@ class ConversationSyncService:
         
         cursor = None
         synced = 0
+        iteration = 0
         
         while synced < max_total:
+            iteration += 1
             # Calculate batch size
             remaining = max_total - synced
             current_batch = min(batch_size, remaining)
+            
+            logger.debug(f"  Iteration {iteration}: synced={synced}, max_total={max_total}, current_batch={current_batch}, cursor={cursor}")
             
             # Sync batch
             batch_stats = self.sync_conversations(
@@ -318,9 +324,12 @@ class ConversationSyncService:
             
             synced += batch_stats['conversations_synced']
             
+            logger.debug(f"  Batch result: synced {batch_stats['conversations_synced']} conversations, total now: {synced}")
+            
             # Check if more data available
             cursor = batch_stats.get('next_cursor')
             if not cursor or batch_stats['conversations_synced'] == 0:
+                logger.debug(f"  Breaking loop: cursor={cursor}, conversations_synced={batch_stats['conversations_synced']}")
                 break
             
             # Update progress tracker

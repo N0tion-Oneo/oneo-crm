@@ -70,12 +70,20 @@ class WhatsAppClient(BaseChannelClient):
                 account_type='WHATSAPP'
             )
             
-            # Transform to our format
+            # Transform to our format  
+            # Note: UniPile doesn't return has_more, we infer it from cursor presence and item count
+            conversations = result.get('items', [])
+            cursor = result.get('cursor')
+            
+            # Determine has_more based on whether we got a full batch and have a cursor
+            # If we got exactly the limit we requested and there's a cursor, there might be more
+            has_more = len(conversations) == limit and cursor is not None
+            
             return {
                 'success': True,
-                'conversations': result.get('items', []),
-                'cursor': result.get('cursor'),
-                'has_more': result.get('has_more', False),
+                'conversations': conversations,
+                'cursor': cursor,
+                'has_more': has_more,
                 'total': result.get('total_count')
             }
             
@@ -151,11 +159,19 @@ class WhatsAppClient(BaseChannelClient):
             )
             
             # Transform to our format
+            # Note: UniPile doesn't return has_more, we infer it from cursor presence and message count
+            messages = result.get('items', [])
+            cursor = result.get('cursor')
+            
+            # Determine has_more based on whether we got a full batch and have a cursor
+            # If we got exactly the limit we requested and there's a cursor, there might be more
+            has_more = len(messages) == safe_limit and cursor is not None
+            
             return {
                 'success': True,
-                'messages': result.get('items', []),
-                'cursor': result.get('cursor'),
-                'has_more': result.get('has_more', False),
+                'messages': messages,
+                'cursor': cursor,
+                'has_more': has_more,
                 'total': result.get('total_count')
             }
             

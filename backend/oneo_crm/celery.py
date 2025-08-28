@@ -61,6 +61,13 @@ app.conf.beat_schedule = {
     #     'task': 'communications.tasks.periodic_contact_resolution_task',
     #     'schedule': 1800.0,  # Every 30 minutes
     # }
+    
+    # Auto-store email conversations that match CRM contacts
+    'auto-store-pending-emails': {
+        'task': 'communications.channels.email.tasks.auto_store_pending_emails',
+        'schedule': 300.0,  # Every 5 minutes
+        'kwargs': {'tenant_schema_name': None}  # Process all tenants
+    },
 }
 
 # Celery configuration

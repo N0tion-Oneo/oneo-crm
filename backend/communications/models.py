@@ -535,21 +535,18 @@ class Conversation(models.Model):
     # Relationships
     channel = models.ForeignKey(Channel, on_delete=models.CASCADE, related_name='conversations')
     
-    # Attendees (participants) in this conversation
+    # DEPRECATED: Legacy attendees field for backward compatibility
+    # New code should use conversation_participants relationship
     attendees = models.ManyToManyField(
         'ChatAttendee',
         through='ConversationAttendee',
         related_name='conversations',
-        help_text="Participants in this conversation"
+        help_text="DEPRECATED: Use conversation_participants instead"
     )
     
-    primary_contact_record = models.ForeignKey(
-        'pipelines.Record', 
-        on_delete=models.SET_NULL, 
-        null=True, 
-        blank=True,
-        help_text="Primary contact for this conversation"
-    )
+    # Participants in this conversation (new multi-participant support)
+    # Access via conversation.conversation_participants.all()
+    # No direct field needed - using reverse relation from ConversationParticipant
     
     # Conversation management
     status = models.CharField(
@@ -604,7 +601,6 @@ class Conversation(models.Model):
             models.Index(fields=['channel', 'status', '-last_message_at']),  # Conversation list queries
             models.Index(fields=['channel', '-last_message_at']),  # All conversations by recency
             models.Index(fields=['external_thread_id']),  # External ID lookups
-            models.Index(fields=['primary_contact_record']),  # Contact-based queries
             
             # Sync and performance optimization
             models.Index(fields=['sync_status', 'last_synced_at']),  # Sync management
@@ -649,22 +645,33 @@ class Message(models.Model):
         blank=True
     )
     
-    # Who sent this message
+    # DEPRECATED: Legacy sender field for backward compatibility
     sender = models.ForeignKey(
         'ChatAttendee',
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
         related_name='sent_messages',
-        help_text="The attendee who sent this message"
+        help_text="DEPRECATED: Use sender_participant instead"
     )
     
+    # New participant-based sender (replaces sender and contact_record)
+    sender_participant = models.ForeignKey(
+        'Participant',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='sent_messages_new',
+        help_text="The participant who sent this message"
+    )
+    
+    # DEPRECATED: Direct contact linkage - now done through participant
     contact_record = models.ForeignKey(
         'pipelines.Record', 
         on_delete=models.SET_NULL, 
         null=True, 
         blank=True,
-        help_text="Contact record associated with this message"
+        help_text="DEPRECATED: Use sender_participant.contact_record instead"
     )
     
     # Message details
@@ -720,7 +727,8 @@ class Message(models.Model):
             models.Index(fields=['status', 'direction']),  # Status filtering
             
             # Contact and relationship queries
-            models.Index(fields=['contact_record', '-created_at']),  # Contact message history
+            models.Index(fields=['contact_record', '-created_at']),  # DEPRECATED: Contact message history
+            models.Index(fields=['sender_participant', '-created_at']),  # Participant message history
             models.Index(fields=['contact_email']),  # Email-based lookups
             models.Index(fields=['contact_phone']),  # Phone-based lookups
             
@@ -801,8 +809,111 @@ class CommunicationAnalytics(models.Model):
         return f"Analytics {self.date} - {scope}"
 
 
+class Participant(models.Model):
+    """
+    Universal participant model - represents a person across all channels
+    Can be linked to multiple conversations and optionally to a CRM record
+    Replaces ChatAttendee for a cleaner multi-channel architecture
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    
+    # Channel-agnostic identifiers (fill what's available based on channel)
+    email = models.EmailField(blank=True, db_index=True)
+    phone = models.CharField(max_length=50, blank=True, db_index=True)
+    linkedin_member_urn = models.CharField(max_length=100, blank=True, db_index=True)
+    instagram_username = models.CharField(max_length=50, blank=True, db_index=True)
+    facebook_id = models.CharField(max_length=100, blank=True, db_index=True)
+    telegram_id = models.CharField(max_length=100, blank=True, db_index=True)
+    twitter_handle = models.CharField(max_length=50, blank=True, db_index=True)
+    
+    # Display information
+    name = models.CharField(max_length=255, blank=True)
+    avatar_url = models.URLField(blank=True)
+    
+    # CRM linkage (optional - only if resolved to a contact)
+    contact_record = models.ForeignKey(
+        'pipelines.Record',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='communication_participants',
+        help_text="Linked CRM contact record if resolved"
+    )
+    
+    # Secondary record linkage (e.g., company/organization resolved via domain)
+    secondary_record = models.ForeignKey(
+        'pipelines.Record',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='secondary_participants',
+        help_text="Secondary linked record (e.g., organization via domain matching)"
+    )
+    
+    # Resolution metadata for primary contact
+    resolution_confidence = models.FloatField(default=0, help_text="Confidence score of contact resolution")
+    resolution_method = models.CharField(max_length=50, blank=True, help_text="How the contact was resolved")
+    resolved_at = models.DateTimeField(null=True, blank=True, help_text="When contact was resolved")
+    
+    # Resolution metadata for secondary record
+    secondary_confidence = models.FloatField(default=0, help_text="Confidence score of secondary resolution")
+    secondary_resolution_method = models.CharField(max_length=50, blank=True, help_text="How the secondary record was resolved")
+    secondary_pipeline = models.CharField(max_length=100, blank=True, help_text="Pipeline name of secondary record")
+    
+    # Statistics
+    first_seen = models.DateTimeField(auto_now_add=True)
+    last_seen = models.DateTimeField(auto_now=True)
+    total_conversations = models.IntegerField(default=0)
+    total_messages = models.IntegerField(default=0)
+    
+    # Metadata for provider-specific data
+    metadata = models.JSONField(default=dict, help_text="Additional provider-specific data")
+    
+    class Meta:
+        # Ensure uniqueness across identifiers
+        constraints = [
+            models.UniqueConstraint(fields=['email'], condition=models.Q(email__gt=''), name='unique_participant_email'),
+            models.UniqueConstraint(fields=['phone'], condition=models.Q(phone__gt=''), name='unique_participant_phone'),
+            models.UniqueConstraint(fields=['linkedin_member_urn'], condition=models.Q(linkedin_member_urn__gt=''), name='unique_participant_linkedin'),
+            models.UniqueConstraint(fields=['instagram_username'], condition=models.Q(instagram_username__gt=''), name='unique_participant_instagram'),
+            models.UniqueConstraint(fields=['facebook_id'], condition=models.Q(facebook_id__gt=''), name='unique_participant_facebook'),
+            models.UniqueConstraint(fields=['telegram_id'], condition=models.Q(telegram_id__gt=''), name='unique_participant_telegram'),
+            models.UniqueConstraint(fields=['twitter_handle'], condition=models.Q(twitter_handle__gt=''), name='unique_participant_twitter'),
+        ]
+        indexes = [
+            models.Index(fields=['contact_record', '-last_seen']),
+            models.Index(fields=['email', 'contact_record']),
+            models.Index(fields=['phone', 'contact_record']),
+            models.Index(fields=['resolution_confidence']),
+            models.Index(fields=['-last_seen']),
+        ]
+    
+    def __str__(self):
+        return self.get_display_name()
+    
+    def get_display_name(self):
+        """Get the best available display name"""
+        if self.name:
+            return self.name
+        if self.email:
+            return self.email
+        if self.phone:
+            return self.phone
+        if self.linkedin_member_urn:
+            return f"LinkedIn: {self.linkedin_member_urn}"
+        return f"Participant {self.id}"
+    
+    def get_primary_identifier(self):
+        """Return the primary identifier based on available data"""
+        return (self.email or self.phone or self.linkedin_member_urn or 
+                self.instagram_username or self.telegram_id or 
+                self.facebook_id or self.twitter_handle or f"participant_{self.id}")
+
+
 class ChatAttendee(models.Model):
     """
+    DEPRECATED: Legacy model for backward compatibility
+    New code should use Participant model instead
     Store contact/attendee information from Unipile API
     Maps external contacts to internal conversation participants
     """
@@ -982,6 +1093,77 @@ class ConversationAttendee(models.Model):
     def __str__(self):
         return f"{self.attendee.name} in {self.conversation.subject or 'Conversation'} ({self.role})"
 
+
+class ConversationParticipant(models.Model):
+    """
+    Links participants to conversations with role and activity tracking
+    This is the new model for multi-participant support across all channels
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    
+    conversation = models.ForeignKey(
+        'Conversation',
+        on_delete=models.CASCADE,
+        related_name='conversation_participants'
+    )
+    participant = models.ForeignKey(
+        'Participant',
+        on_delete=models.CASCADE,
+        related_name='conversation_memberships'
+    )
+    
+    # Role in this specific conversation
+    role = models.CharField(
+        max_length=20,
+        choices=[
+            ('sender', 'Original Sender'),
+            ('recipient', 'Direct Recipient'),
+            ('cc', 'CC Recipient'),
+            ('bcc', 'BCC Recipient'),
+            ('member', 'Group Member'),
+            ('admin', 'Group Admin'),
+            ('owner', 'Group Owner/Creator'),
+        ],
+        default='member',
+        help_text="Participant's role in this conversation"
+    )
+    
+    # Provider-specific ID for this conversation participant
+    provider_participant_id = models.CharField(
+        max_length=255,
+        blank=True,
+        help_text="Provider-specific participant ID if different from main participant ID"
+    )
+    
+    # Activity in this conversation
+    joined_at = models.DateTimeField(auto_now_add=True, help_text="When participant joined conversation")
+    left_at = models.DateTimeField(null=True, blank=True, help_text="When participant left (null if active)")
+    is_active = models.BooleanField(default=True, help_text="Whether participant is currently in conversation")
+    message_count = models.IntegerField(default=0, help_text="Number of messages sent in this conversation")
+    last_message_at = models.DateTimeField(null=True, blank=True, help_text="Last message timestamp")
+    
+    # Read tracking
+    last_read_at = models.DateTimeField(null=True, blank=True, help_text="Last time participant read messages")
+    unread_count = models.IntegerField(default=0, help_text="Unread messages for this participant")
+    
+    # Metadata
+    metadata = models.JSONField(default=dict, help_text="Additional participant-conversation data")
+    
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        unique_together = [['conversation', 'participant']]
+        indexes = [
+            models.Index(fields=['conversation', 'is_active']),
+            models.Index(fields=['participant', '-last_message_at']),
+            models.Index(fields=['participant', 'is_active']),
+            models.Index(fields=['role', 'is_active']),
+        ]
+    
+    def __str__(self):
+        return f"{self.participant.get_display_name()} in conversation {self.conversation.id} as {self.role}"
 
 
 # =========================================================================

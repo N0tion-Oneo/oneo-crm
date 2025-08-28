@@ -27,6 +27,10 @@ from .inbox_views import (
     mark_conversation_as_read,
     send_message
 )
+from .participant_inbox_views import (
+    get_participant_inbox,
+    link_conversation_to_contact
+)
 from .conversation_messages import (
     get_conversation_messages
 )
@@ -62,6 +66,12 @@ from .local_inbox_views import (
 # Threading views removed - legacy code
 # Channel availability views removed - legacy code
 from ..views import CommunicationAnalyticsViewSet
+# Import WhatsApp inbox views from channels directory  
+from communications.channels.whatsapp.inbox_views import (
+    get_whatsapp_inbox,
+    link_whatsapp_conversation
+)
+
 # Import consolidated local-first WhatsApp views from channels directory
 from communications.channels.whatsapp.api_views import (
     get_whatsapp_chats_local_first,
@@ -86,6 +96,41 @@ from communications.channels.whatsapp.background_sync_views import (
     get_sync_job_status,
     cancel_sync_job,
     get_active_sync_jobs
+)
+
+# Import Email inbox views from channels directory
+from communications.channels.email.inbox_views_cursor import (
+    get_email_inbox_cursor
+)
+from communications.channels.email.inbox_views import (
+    get_email_inbox,
+    link_email_conversation
+)
+
+# Import Email views from channels directory
+from communications.channels.email.api_views import (
+    get_email_accounts,
+    get_email_threads,
+    get_thread_messages,
+    send_email,
+    update_email,
+    get_email_folders,
+    sync_email_data,
+    get_active_email_sync_jobs,
+    get_email_live_threads,  # New: Live data from UniPile
+    get_merged_email_threads,  # New: Merged stored + live data
+    link_thread_to_contact,  # New: Link thread to existing contact
+    create_contact_from_thread,  # New: Create contact from email
+    sync_thread_history  # New: Sync historical messages for linked thread
+)
+
+
+# Import Email background sync views from channels directory
+from communications.channels.email.background_sync_views import (
+    start_email_background_sync,
+    start_thread_sync,
+    get_email_sync_jobs,
+    cancel_email_sync_job
 )
 
 router = DefaultRouter()
@@ -162,7 +207,9 @@ urlpatterns = [
     path('local-inbox/conversations/<str:conversation_id>/mark-read/', mark_local_conversation_as_read, name='local-mark-conversation-read'),
     path('local-inbox/stats/', get_inbox_stats, name='inbox-stats'),
     
-    # Unified inbox endpoints removed - legacy code
+    # Participant-based inbox endpoints (with participant resolution)
+    path('inbox/participant/', get_participant_inbox, name='participant-inbox'),
+    path('inbox/link-contact/', link_conversation_to_contact, name='link-conversation-contact'),
     
     # Conversation threading endpoints - removed (legacy code)
     
@@ -178,6 +225,8 @@ urlpatterns = [
     
     # WhatsApp-specific endpoints for Unipile integration
     # Import new WhatsApp views from the channels structure
+    path('whatsapp/inbox/', get_whatsapp_inbox, name='whatsapp-inbox'),  # NEW: Channel-specific inbox
+    path('whatsapp/conversations/<str:chat_id>/link/', link_whatsapp_conversation, name='whatsapp-link-conversation'),  # NEW: Manual linking
     path('whatsapp/accounts/', get_whatsapp_accounts, name='whatsapp-accounts'),
     path('whatsapp/chats/', get_whatsapp_chats_local_first, name='whatsapp-chats'),
     path('whatsapp/chats/<str:chat_id>/messages/', get_chat_messages_local_first, name='whatsapp-chat-messages'),
@@ -198,4 +247,28 @@ urlpatterns = [
     path('whatsapp/sync/jobs/active/', get_active_sync_jobs, name='whatsapp-active-sync-jobs'),
     path('whatsapp/sync/jobs/<uuid:sync_job_id>/', get_sync_job_status, name='whatsapp-sync-job-status'),
     path('whatsapp/sync/jobs/<uuid:sync_job_id>/cancel/', cancel_sync_job, name='whatsapp-cancel-sync-job'),
+    
+    # Email-specific endpoints for UniPile integration
+    path('email/inbox/', get_email_inbox_cursor, name='email-inbox'),  # CURSOR: Fast cursor-based pagination
+    path('email/inbox/offset/', get_email_inbox, name='email-inbox-offset'),  # OLD: Offset-based (slow)
+    path('email/conversations/<str:thread_id>/link/', link_email_conversation, name='email-link-conversation'),  # NEW: Manual linking
+    path('email/accounts/', get_email_accounts, name='email-accounts'),
+    path('email/threads/', get_email_threads, name='email-threads'),
+    path('email/threads/live/', get_email_live_threads, name='email-live-threads'),  # New: Live data
+    path('email/threads/merged/', get_merged_email_threads, name='email-merged-threads'),  # New: Merged data
+    path('email/threads/<str:thread_id>/messages/', get_thread_messages, name='email-thread-messages'),
+    path('email/threads/<str:thread_id>/link-contact/', link_thread_to_contact, name='email-link-contact'),
+    path('email/threads/<str:thread_id>/create-contact/', create_contact_from_thread, name='email-create-contact'),
+    path('email/threads/<str:thread_id>/sync-history/', sync_thread_history, name='email-sync-history'),
+    path('email/send/', send_email, name='email-send'),
+    path('email/emails/<str:email_id>/', update_email, name='email-update'),
+    path('email/folders/', get_email_folders, name='email-folders'),
+    path('email/sync/', sync_email_data, name='email-sync'),
+    path('email/sync/jobs/active/', get_active_email_sync_jobs, name='email-active-sync-jobs'),
+    
+    # Email background sync endpoints
+    path('email/sync/background/', start_email_background_sync, name='email-background-sync'),
+    path('email/sync/threads/<str:thread_id>/', start_thread_sync, name='email-thread-sync'),
+    path('email/sync/jobs/', get_email_sync_jobs, name='email-sync-jobs'),
+    path('email/sync/jobs/<uuid:sync_job_id>/cancel/', cancel_email_sync_job, name='email-cancel-sync-job'),
 ]

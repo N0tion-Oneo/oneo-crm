@@ -1,16 +1,21 @@
 """
 Dedicated Email Webhook Handler for UniPile Gmail Integration
 Handles the complexity of email processing separate from WhatsApp
+Now with selective storage based on contact resolution
 """
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Tuple, List
 from datetime import datetime
 from django.utils import timezone
 from django.db import transaction
+from django.conf import settings
 
 from communications.models import (
     UserChannelConnection, Message, Conversation, Channel, 
-    ChannelType, MessageDirection, MessageStatus
+    ChannelType, MessageDirection, MessageStatus, Participant, ConversationParticipant
+)
+from communications.services.participant_resolution import (
+    ParticipantResolutionService, ConversationStorageDecider
 )
 from communications.utils.email_extractor import (
     extract_email_from_webhook,
@@ -35,17 +40,19 @@ class EmailWebhookHandler:
     def __init__(self):
         # Email-specific business email for direction detection
         self.business_email = 'josh@oneo.africa'  # TODO: Make configurable per tenant
+        self.resolution_service = ParticipantResolutionService()
+        self.storage_decider = ConversationStorageDecider()
     
     def handle_email_received(self, account_id: str, webhook_data: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Handle incoming email webhook with full email complexity support
+        Handle incoming email webhook with selective storage based on contact resolution
         
         Args:
             account_id: UniPile account ID
             webhook_data: Raw email webhook data from UniPile
             
         Returns:
-            Dict with processing result
+            Dict with processing result including storage decision
         """
         try:
             logger.info(f"Processing email webhook for account {account_id}")
@@ -65,52 +72,99 @@ class EmailWebhookHandler:
             # Extract email-specific data using our email extractors
             normalized_email = self._normalize_email_webhook(webhook_data)
             
-            # Check for duplicate emails
-            external_message_id = normalized_email['message_id']
-            if external_message_id:
-                existing_message = Message.objects.filter(
-                    external_message_id=external_message_id
-                ).first()
-                
-                if existing_message:
-                    logger.info(f"Email {external_message_id} already exists (ID: {existing_message.id}), skipping duplicate")
-                    return {
-                        'success': True,
-                        'message_id': str(existing_message.id),
-                        'conversation_id': str(existing_message.conversation.id),
-                        'note': 'Email already exists, skipped duplicate'
-                    }
+            # Extract all participants and check resolution
+            should_store, participants = self._check_participant_resolution(normalized_email, connection)
             
-            # Get or create email conversation
-            conversation = self._get_or_create_email_conversation(connection, normalized_email)
-            
-            # Create email message record
-            message, was_created = self._create_email_message_record(
-                connection, conversation, normalized_email, webhook_data
-            )
-            
-            if was_created:
-                logger.info(f"Created new email message {message.id} for account {account_id}")
-                
-                # Trigger real-time updates
-                self._trigger_email_real_time_update(message, conversation, connection.user)
-            else:
-                logger.info(f"Email message {message.id} already existed")
-            
-            # Auto-resolve contact if enabled
-            if was_created and not message.contact_record:
-                self._attempt_email_contact_resolution(message, normalized_email)
-            
-            return {
+            # Prepare response data (always return data even if not storing)
+            has_contact = any(p.contact_record for p in participants)
+            response_data = {
                 'success': True,
-                'message_id': str(message.id),
-                'conversation_id': str(conversation.id),
-                'was_created': was_created,
                 'channel_type': connection.channel_type,
                 'email_specific': True,
                 'subject': normalized_email['subject'],
-                'thread_id': normalized_email['thread_id']
+                'thread_id': normalized_email['thread_id'],
+                'external_message_id': normalized_email['message_id'],
+                'storage_decision': {
+                    'should_store': should_store,
+                    'reason': 'contact_match' if should_store else 'no_contact_match'
+                },
+                'participants': [
+                    {
+                        'id': str(p.id),
+                        'email': p.email,
+                        'name': p.name,
+                        'has_contact': bool(p.contact_record),
+                        'contact_id': str(p.contact_record.id) if p.contact_record else None,
+                        'confidence': p.resolution_confidence
+                    } for p in participants
+                ],
+                'contact_resolution': {
+                    'found': has_contact,
+                    'participant_count': len(participants),
+                    'with_contacts': sum(1 for p in participants if p.contact_record)
+                }
             }
+            
+            # Only store if at least one participant has a contact match
+            if should_store:
+                logger.info(f"Contact found for email, storing message. {sum(1 for p in participants if p.contact_record)} participants with contacts")
+                
+                # Check for duplicate emails
+                external_message_id = normalized_email['message_id']
+                if external_message_id:
+                    existing_message = Message.objects.filter(
+                        external_message_id=external_message_id
+                    ).first()
+                    
+                    if existing_message:
+                        logger.info(f"Email {external_message_id} already exists (ID: {existing_message.id}), skipping duplicate")
+                        response_data.update({
+                            'message_id': str(existing_message.id),
+                            'conversation_id': str(existing_message.conversation.id),
+                            'note': 'Email already exists, skipped duplicate',
+                            'was_created': False,
+                            'stored': True
+                        })
+                        return response_data
+                
+                # Get or create email conversation
+                conversation = self._get_or_create_email_conversation(connection, normalized_email)
+                
+                # Create email message record with participant links
+                from asgiref.sync import async_to_sync
+                message, was_created = async_to_sync(self._create_email_message_with_participants)(
+                    connection, conversation, normalized_email, webhook_data, participants
+                )
+                
+                if was_created:
+                    logger.info(f"Created new email message {message.id} for account {account_id} with linked contact")
+                    
+                    # Trigger real-time updates
+                    self._trigger_email_real_time_update(message, conversation, connection.user)
+                    
+                    # Trigger historical sync for any newly linked contacts
+                    for participant in participants:
+                        if participant.contact_record:
+                            self._trigger_historical_sync_if_needed(participant.contact_record, normalized_email, connection)
+                else:
+                    logger.info(f"Email message {message.id} already existed")
+                
+                response_data.update({
+                    'message_id': str(message.id),
+                    'conversation_id': str(conversation.id),
+                    'was_created': was_created,
+                    'stored': True
+                })
+            else:
+                # Not storing, but return metadata for frontend display
+                logger.info(f"No contact found for email, not storing. {len(participants)} participants identified")
+                response_data.update({
+                    'stored': False,
+                    'display_only': True,
+                    'reason': 'no_contact_found'
+                })
+            
+            return response_data
             
         except Exception as e:
             logger.error(f"Error handling email received for account {account_id}: {e}")
@@ -244,11 +298,11 @@ class EmailWebhookHandler:
         logger.info(f"Created email conversation {conversation.id} with thread ID {thread_id}")
         return conversation
     
-    def _create_email_message_record(self, connection: UserChannelConnection, 
+    async def _create_email_message_with_participants(self, connection: UserChannelConnection, 
                                    conversation: Conversation, normalized_email: Dict[str, Any],
-                                   raw_webhook_data: Dict[str, Any]) -> tuple[Message, bool]:
+                                   raw_webhook_data: Dict[str, Any], participants: List[Participant]) -> tuple[Message, bool]:
         """
-        Create email message record with full email metadata
+        Create email message record with full email metadata and optional linked contact
         """
         with transaction.atomic():
             # Check for existing message (prevent duplicates)
@@ -279,7 +333,16 @@ class EmailWebhookHandler:
             if normalized_email['attachments']:
                 email_metadata['attachments'] = normalized_email['attachments']
             
-            # Create email message
+            # Find sender participant
+            sender_participant = None
+            sender_email = normalized_email.get('contact_email')
+            if sender_email:
+                for p in participants:
+                    if p.email == sender_email:
+                        sender_participant = p
+                        break
+            
+            # Create email message with participant link
             message = Message.objects.create(
                 channel=conversation.channel,
                 conversation=conversation,
@@ -289,11 +352,38 @@ class EmailWebhookHandler:
                 subject=normalized_email['subject'],
                 contact_email=normalized_email['contact_email'],
                 contact_phone='',  # Emails don't have phone numbers
+                sender_participant=sender_participant,  # Link to participant
+                contact_record=sender_participant.contact_record if sender_participant else None,  # Keep for backward compat
                 status=normalized_email['status'],
                 metadata=email_metadata,
                 sent_at=normalized_email['timestamp'] if normalized_email['direction'] == MessageDirection.OUTBOUND else None,
                 received_at=normalized_email['timestamp'] if normalized_email['direction'] == MessageDirection.INBOUND else None
             )
+            
+            # Link all participants to the conversation
+            from asgiref.sync import sync_to_async
+            for participant in participants:
+                # Determine role based on email position
+                role = 'member'
+                if participant.email == sender_email:
+                    role = 'sender'
+                elif participant.email in [r.get('identifier') for r in normalized_email.get('recipients', {}).get('to', [])]:
+                    role = 'recipient'
+                elif participant.email in [r.get('identifier') for r in normalized_email.get('recipients', {}).get('cc', [])]:
+                    role = 'cc'
+                elif participant.email in [r.get('identifier') for r in normalized_email.get('recipients', {}).get('bcc', [])]:
+                    role = 'bcc'
+                
+                await sync_to_async(ConversationParticipant.objects.update_or_create)(
+                    conversation=conversation,
+                    participant=participant,
+                    defaults={
+                        'role': role,
+                        'is_active': True,
+                        'message_count': 1 if participant == sender_participant else 0,
+                        'last_message_at': normalized_email['timestamp'] if participant == sender_participant else None
+                    }
+                )
             
             logger.info(f"Created email message {message.id}: {normalized_email['direction']} "
                        f"from {normalized_email['contact_email']} "
@@ -514,6 +604,84 @@ class EmailWebhookHandler:
         except Exception as e:
             logger.error(f"Error handling email read for account {account_id}: {e}")
             return {'success': False, 'error': str(e)}
+
+
+    def _check_participant_resolution(self, normalized_email: Dict[str, Any], connection: UserChannelConnection) -> Tuple[bool, List[Participant]]:
+        """
+        Check all email participants and determine if we should store
+        
+        Returns:
+            Tuple of (should_store, list of resolved participants)
+        """
+        try:
+            from asgiref.sync import async_to_sync
+            
+            # Get tenant from connection
+            tenant = getattr(connection, 'tenant', None)
+            if not tenant:
+                from django_tenants.utils import get_tenant
+                tenant = get_tenant()
+            
+            # Initialize storage decider with tenant
+            storage_decider = ConversationStorageDecider(tenant)
+            
+            # Build conversation data from normalized email
+            conversation_data = {
+                'from_attendee': {
+                    'identifier': normalized_email.get('sender_info', {}).get('email') or normalized_email.get('contact_email'),
+                    'display_name': normalized_email.get('sender_info', {}).get('name') or normalized_email.get('contact_name')
+                },
+                'to_attendees': normalized_email.get('recipients', {}).get('to', []),
+                'cc_attendees': normalized_email.get('recipients', {}).get('cc', []),
+                'bcc_attendees': normalized_email.get('recipients', {}).get('bcc', [])
+            }
+            
+            # Use storage decider to check all participants
+            should_store, participants = async_to_sync(storage_decider.should_store_conversation)(
+                conversation_data,
+                connection.channel_type
+            )
+            
+            return should_store, participants
+            
+        except Exception as e:
+            logger.error(f"Error checking participant resolution: {e}")
+            # On error, default to not storing
+            return False, []
+    
+    def _trigger_historical_sync_if_needed(self, contact_record: Any, normalized_email: Dict[str, Any], connection: UserChannelConnection):
+        """
+        Trigger historical sync for a newly linked contact
+        Only triggers if this is the first communication with this contact
+        """
+        try:
+            # Check if we already have messages for this contact via participants
+            from communications.models import ConversationParticipant
+            existing_conversations = ConversationParticipant.objects.filter(
+                participant__contact_record=contact_record
+            ).count()
+            
+            if existing_conversations <= 1:  # This is the first or second conversation
+                logger.info(f"First communication with contact {contact_record.id}, triggering historical sync")
+                
+                # Import here to avoid circular dependency
+                from communications.tasks import sync_contact_history
+                
+                # Trigger async task to sync historical communications
+                sync_contact_history.delay(
+                    contact_record_id=str(contact_record.id),
+                    account_id=connection.unipile_account_id,
+                    identifiers={
+                        'email': normalized_email.get('contact_email'),
+                        'name': normalized_email.get('contact_name')
+                    }
+                )
+            else:
+                logger.debug(f"Contact {contact_record.id} already has {existing_conversations} conversations, skipping historical sync")
+                
+        except Exception as e:
+            logger.error(f"Error triggering historical sync: {e}")
+            # Don't fail the main process if historical sync fails
 
 
 # Global email handler instance

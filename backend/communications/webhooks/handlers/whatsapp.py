@@ -2,11 +2,16 @@
 WhatsApp-specific webhook handler
 """
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from django.utils import timezone
 from django.utils import timezone as django_timezone
+from asgiref.sync import async_to_sync
 from .base import BaseWebhookHandler
 from communications.utils.message_direction import determine_message_direction
+from communications.services.participant_resolution import (
+    ParticipantResolutionService, ConversationStorageDecider
+)
+from communications.models import Participant
 
 logger = logging.getLogger(__name__)
 
@@ -16,6 +21,8 @@ class WhatsAppWebhookHandler(BaseWebhookHandler):
     
     def __init__(self):
         super().__init__('whatsapp')
+        self.resolution_service = ParticipantResolutionService()
+        self.storage_decider = ConversationStorageDecider()
     
     def get_supported_events(self) -> list[str]:
         """WhatsApp supported event types"""
@@ -191,7 +198,30 @@ class WhatsAppWebhookHandler(BaseWebhookHandler):
                 )
                 logger.info(f"✅ Created conversation '{conversation.subject}' for chat {chat_id}")
             
-            # Check if message already exists
+            # Check participant resolution and storage decision
+            should_store = self._check_participant_resolution(
+                data, connection, channel, conversation
+            )
+            
+            # Always return message info but only store if should_store is True
+            response_data = {
+                'success': True,
+                'conversation_id': str(conversation.id),
+                'conversation_name': conversation.subject,
+                'chat_id': chat_id,
+                'storage_decision': {
+                    'should_store': should_store,
+                    'reason': 'contact_match' if should_store else 'no_contact_match'
+                }
+            }
+            
+            # If we shouldn't store, return early
+            if not should_store:
+                logger.info(f"📤 WhatsApp message not stored (no contact match) for chat {chat_id}")
+                response_data['note'] = 'Message not stored - no contact match'
+                return response_data
+            
+            # Check if message already exists (only if we should store)
             existing_message = None
             if message_id:
                 existing_message = Message.objects.filter(
@@ -201,14 +231,12 @@ class WhatsAppWebhookHandler(BaseWebhookHandler):
             
             if existing_message:
                 logger.info(f"✅ Message {message_id} already exists, status updated if needed")
-                return {
-                    'success': True,
+                response_data.update({
                     'message_id': str(existing_message.id),
-                    'conversation_id': str(conversation.id),
-                    'conversation_name': conversation.subject,
                     'note': 'Message already exists',
                     'approach': 'sync_webhook_processor'
-                }
+                })
+                return response_data
             
             # Determine message direction using unified utility
             # The webhook data structure should have sender info for proper comparison
@@ -547,3 +575,67 @@ class WhatsAppWebhookHandler(BaseWebhookHandler):
         
         self.logger.error("WhatsApp webhook missing required message data")
         return False
+    
+    def _check_participant_resolution(self, webhook_data: Dict[str, Any], 
+                                     connection, channel, conversation) -> bool:
+        """
+        Check if WhatsApp message participants should trigger storage
+        
+        Returns:
+            bool: True if message should be stored (has contact match)
+        """
+        try:
+            from django.db import connection as db_connection
+            
+            # Get current tenant from the schema context
+            # We're already in the right schema context from the webhook routing
+            tenant = None
+            if hasattr(db_connection, 'tenant'):
+                tenant = db_connection.tenant
+            
+            # Initialize storage decider with tenant
+            storage_decider = ConversationStorageDecider(tenant)
+            
+            # Extract attendees from webhook data
+            attendees = []
+            
+            # Add sender
+            sender_info = webhook_data.get('sender', {})
+            if sender_info:
+                attendees.append({
+                    'phone_number': sender_info.get('phone_number', ''),
+                    'name': sender_info.get('attendee_name', '') or sender_info.get('name', ''),
+                    'attendee_id': sender_info.get('attendee_id', '') or sender_info.get('id', '')
+                })
+            
+            # For WhatsApp, we typically have 1-on-1 chats or group chats
+            # The webhook might not include all participants, but we need at least the sender
+            conversation_data = {
+                'attendees': attendees
+            }
+            
+            # Use storage decider to check participants
+            should_store, participants = async_to_sync(storage_decider.should_store_conversation)(
+                conversation_data,
+                'whatsapp'
+            )
+            
+            # Link participants to conversation if storing
+            if should_store and participants:
+                from communications.models import ConversationParticipant
+                for participant in participants:
+                    async_to_sync(ConversationParticipant.objects.update_or_create)(
+                        conversation=conversation,
+                        participant=participant,
+                        defaults={
+                            'role': 'member',
+                            'is_active': True
+                        }
+                    )
+            
+            return should_store
+            
+        except Exception as e:
+            logger.warning(f"Error checking participant resolution for WhatsApp: {e}")
+            # Default to storing on error to avoid data loss
+            return True

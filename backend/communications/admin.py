@@ -1,7 +1,8 @@
 from django.contrib import admin
 from .models import (
     TenantUniPileConfig, UserChannelConnection, Channel, 
-    Conversation, Message, CommunicationAnalytics, ChatAttendee
+    Conversation, Message, CommunicationAnalytics, ChatAttendee,
+    Participant, ConversationParticipant
 )
 
 
@@ -59,30 +60,53 @@ class ChannelAdmin(admin.ModelAdmin):
 
 @admin.register(Conversation)
 class ConversationAdmin(admin.ModelAdmin):
-    list_display = ['subject', 'channel', 'status', 'message_count', 'primary_contact_record', 'last_message_at']
+    list_display = ['subject', 'channel', 'status', 'message_count', 'participant_count', 'last_message_at']
     list_filter = ['status', 'channel__channel_type', 'priority', 'is_hot']
     search_fields = ['subject', 'external_thread_id']
     readonly_fields = ['external_thread_id', 'message_count', 'created_at', 'updated_at']
-    raw_id_fields = ['primary_contact_record']
     
     def get_queryset(self, request):
-        return super().get_queryset(request).select_related('channel', 'primary_contact_record')
+        return super().get_queryset(request).select_related('channel')
 
 
 @admin.register(Message)
 class MessageAdmin(admin.ModelAdmin):
-    list_display = ['content_preview', 'conversation', 'direction', 'status', 'contact_record', 'created_at']
+    list_display = ['content_preview', 'conversation', 'direction', 'status', 'sender_participant', 'created_at']
     list_filter = ['direction', 'status', 'channel__channel_type']
     search_fields = ['content', 'subject', 'contact_email', 'contact_phone']
     readonly_fields = ['external_message_id', 'created_at', 'updated_at']
-    raw_id_fields = ['contact_record', 'conversation']
+    raw_id_fields = ['sender_participant', 'contact_record', 'conversation']
     
     def content_preview(self, obj):
         return obj.content[:50] + '...' if obj.content and len(obj.content) > 50 else obj.content
     content_preview.short_description = 'Content Preview'
     
     def get_queryset(self, request):
-        return super().get_queryset(request).select_related('channel', 'conversation', 'contact_record')
+        return super().get_queryset(request).select_related('channel', 'conversation', 'sender_participant')
+
+
+@admin.register(Participant)
+class ParticipantAdmin(admin.ModelAdmin):
+    list_display = ['get_display_name', 'email', 'phone', 'contact_record', 'resolution_confidence', 'total_conversations', 'last_seen']
+    list_filter = ['resolution_confidence', 'last_seen']
+    search_fields = ['name', 'email', 'phone', 'linkedin_member_urn']
+    readonly_fields = ['first_seen', 'last_seen', 'resolved_at', 'total_conversations', 'total_messages']
+    raw_id_fields = ['contact_record']
+    
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related('contact_record')
+
+
+@admin.register(ConversationParticipant)
+class ConversationParticipantAdmin(admin.ModelAdmin):
+    list_display = ['conversation', 'participant', 'role', 'is_active', 'message_count', 'last_message_at']
+    list_filter = ['role', 'is_active']
+    search_fields = ['conversation__subject', 'participant__name', 'participant__email']
+    readonly_fields = ['joined_at', 'created_at', 'updated_at']
+    raw_id_fields = ['conversation', 'participant']
+    
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related('conversation', 'participant')
 
 
 @admin.register(CommunicationAnalytics)

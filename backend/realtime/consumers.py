@@ -124,6 +124,16 @@ class BaseRealtimeConsumer(AsyncWebsocketConsumer):
         
         logger.debug(f"WebSocket disconnected: {close_code}")
     
+    async def email_thread_stored(self, event):
+        """Handle email thread storage notification"""
+        await self.send(text_data=json.dumps({
+            'type': 'email_thread_stored',
+            'thread_id': event.get('thread_id'),
+            'stored': event.get('stored'),
+            'subject': event.get('subject'),
+            'conversation_id': event.get('conversation_id')
+        }))
+    
     async def receive(self, text_data):
         """Handle incoming WebSocket message"""
         try:
@@ -177,6 +187,12 @@ class BaseRealtimeConsumer(AsyncWebsocketConsumer):
             'user_id': self.user_id,
             'message': 'Authentication successful'
         }))
+        
+        # Auto-subscribe to user's email channel for storage updates
+        email_channel = f"user_{self.user_id}_email"
+        await self.channel_layer.group_add(email_channel, self.channel_name)
+        self.subscriptions.add(email_channel)
+        logger.info(f"Auto-subscribed user {self.user_id} to email channel: {email_channel}")
         
         # Send initial presence data
         await self.send_initial_presence()

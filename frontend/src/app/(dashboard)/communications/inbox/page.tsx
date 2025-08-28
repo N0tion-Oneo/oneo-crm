@@ -1959,7 +1959,7 @@ export default function InboxPage() {
     switch (channel) {
       case 'gmail':
         return (
-          <div style={{ height: containerHeight }}>
+          <div style={{ height: containerHeight }} className="overflow-hidden">
             <GmailInbox className="h-full" />
           </div>
         )

@@ -213,7 +213,7 @@ def get_local_unified_inbox(request):
         # Build query for conversations
         conversations_query = Conversation.objects.filter(
             channel__in=channels
-        ).select_related('channel', 'primary_contact_record').prefetch_related(
+        ).select_related('channel').prefetch_related(
             Prefetch(
                 'messages',
                 queryset=Message.objects.order_by('-created_at')[:1],
@@ -228,8 +228,7 @@ def get_local_unified_inbox(request):
         if search:
             conversations_query = conversations_query.filter(
                 Q(subject__icontains=search) |
-                Q(messages__content__icontains=search) |
-                Q(primary_contact_record__data__name__icontains=search)
+                Q(messages__content__icontains=search)
             ).distinct()
         
         # Get conversations with latest message info
@@ -376,10 +375,13 @@ def get_local_unified_inbox(request):
             elif latest_message and latest_message.get('sender_name') and latest_message['sender_name'] not in ['Unknown', '']:
                 participant_name = latest_message['sender_name']
                 participant_email = latest_message.get('contact_email', '')
-            # Third priority: Contact record
-            elif conv.primary_contact_record:
-                participant_name = conv.primary_contact_record.data.get('name', 'Unknown')
-                participant_email = conv.primary_contact_record.data.get('email', '')
+            # Third priority: Get from conversation participants
+            elif hasattr(conv, 'conversation_participants'):
+                for cp in conv.conversation_participants.all():
+                    if cp.participant:
+                        participant_name = cp.participant.name or cp.participant.get_display_name()
+                        participant_email = cp.participant.email or ''
+                        break
             # Fourth priority: Extract from email
             elif latest_message:
                 participant_email = latest_message.get('contact_email', '')
@@ -416,12 +418,7 @@ def get_local_unified_inbox(request):
                     'unipile_account_id': conv.channel.unipile_account_id
                 },
                 'connection': connection_info,
-                'primary_contact': {
-                    'id': str(conv.primary_contact_record.id),
-                    'name': _get_contact_name(conv.primary_contact_record),
-                    'email': conv.primary_contact_record.data.get('email', conv.primary_contact_record.data.get('contact_email', '')),
-                    'pipeline_name': conv.primary_contact_record.pipeline.name if conv.primary_contact_record.pipeline else 'Unknown Pipeline'
-                } if conv.primary_contact_record else None,
+                'primary_contact': None,  # No longer using primary_contact_record, using participants instead
                 'last_message': latest_message,
                 'message_count': conv.total_messages,
                 'unread_count': conv.unread_messages,
@@ -493,7 +490,7 @@ def get_local_conversation_messages(request, conversation_id):
             try:
                 channel_type, external_thread_id = conversation_id.split('_', 1)
                 conversation = Conversation.objects.select_related(
-                    'channel', 'primary_contact_record'
+                    'channel'
                 ).get(
                     external_thread_id=external_thread_id,
                     channel__channel_type=channel_type
@@ -505,7 +502,7 @@ def get_local_conversation_messages(request, conversation_id):
         if not conversation:
             try:
                 conversation = Conversation.objects.select_related(
-                    'channel', 'primary_contact_record'
+                    'channel'
                 ).get(id=conversation_id)
             except (Conversation.DoesNotExist, ValueError):
                 pass
@@ -640,11 +637,7 @@ def get_local_conversation_messages(request, conversation_id):
                     'name': conversation.channel.name,
                     'type': conversation.channel.channel_type
                 },
-                'primary_contact': {
-                    'id': str(conversation.primary_contact_record.id),
-                    'name': conversation.primary_contact_record.data.get('name', 'Unknown'),
-                    'email': conversation.primary_contact_record.data.get('email', ''),
-                } if conversation.primary_contact_record else None,
+                'primary_contact': None,  # No longer using primary_contact_record, using participants instead
             },
             'messages': message_list,
             'total_count': total_messages,

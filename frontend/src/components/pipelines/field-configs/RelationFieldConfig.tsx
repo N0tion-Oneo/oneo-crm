@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useEffect } from 'react'
+import React from 'react'
 import { usePipelines, useRelationshipTypes, usePipelineFields } from '@/contexts/FieldConfigCacheContext'
 import {
   Label,
@@ -20,34 +20,9 @@ import {
 } from '@/components/ui'
 import { HelpCircle, AlertCircle, Info } from 'lucide-react'
 
-interface Pipeline {
-  id: string
-  name: string
-  slug: string
-}
-
-interface PipelineField {
-  id: string
-  name: string
-  slug: string
-  display_name: string
-  field_type: string
-}
-
-interface RelationshipType {
-  id: number
-  name: string
-  slug: string
-  description: string
-  cardinality: 'one_to_one' | 'one_to_many' | 'many_to_many' | 'many_to_one' | 'one_to_one_bidirectional' | 'one_to_many_bidirectional' | 'many_to_many_bidirectional'
-  is_bidirectional: boolean
-  forward_label: string
-  reverse_label: string
-}
-
 interface RelationFieldConfigProps {
   config: Record<string, any>
-  onChange: (config: Record<string, any>) => void
+  onChange: (key: string, value: any) => void
 }
 
 export const RelationFieldConfig = React.memo(function RelationFieldConfig({
@@ -65,6 +40,9 @@ export const RelationFieldConfig = React.memo(function RelationFieldConfig({
   React.useEffect(() => {
     console.log('[RelationFieldConfig] Component state:', {
       config,
+      configTargetPipelineId: config.target_pipeline_id,
+      configTargetPipelineIdType: typeof config.target_pipeline_id,
+      pipelines: pipelines,
       pipelinesCount: pipelines?.length || 0,
       pipelinesLoading,
       pipelinesError,
@@ -85,17 +63,12 @@ export const RelationFieldConfig = React.memo(function RelationFieldConfig({
       const newPipelineIdStr = value ? value.toString() : null
       const currentPipelineIdStr = config.target_pipeline_id?.toString() || null
       
-      // Clear display field when pipeline changes and update both at once
       // Convert to integer for backend compatibility
       const pipelineIdForBackend = newPipelineIdStr ? parseInt(newPipelineIdStr) : null
       if (newPipelineIdStr !== currentPipelineIdStr) {
-        const newConfig = { 
-          ...config, 
-          target_pipeline_id: pipelineIdForBackend, 
-          display_field: '' 
-        }
-        console.log('[RelationFieldConfig] Pipeline changed, updating config:', newConfig)
-        onChange(newConfig)
+        console.log('[RelationFieldConfig] Pipeline changed, updating config with:', pipelineIdForBackend)
+        // Only update target_pipeline_id for now, display_field will be cleared when user changes pipeline
+        onChange('target_pipeline_id', pipelineIdForBackend)
       }
     } catch (error) {
       console.error('[RelationFieldConfig] Error in handlePipelineChange:', error)
@@ -105,9 +78,8 @@ export const RelationFieldConfig = React.memo(function RelationFieldConfig({
   const handleDisplayFieldChange = (value: string) => {
     try {
       console.log('[RelationFieldConfig] handleDisplayFieldChange called with:', value)
-      const newConfig = { ...config, display_field: value }
-      console.log('[RelationFieldConfig] Display field changed, updating config:', newConfig)
-      onChange(newConfig)
+      console.log('[RelationFieldConfig] Display field changed, updating config')
+      onChange('display_field', value)
     } catch (error) {
       console.error('[RelationFieldConfig] Error in handleDisplayFieldChange:', error)
     }
@@ -217,7 +189,7 @@ export const RelationFieldConfig = React.memo(function RelationFieldConfig({
               <SelectContent>
                 {Array.isArray(targetPipelineFields) && targetPipelineFields.length > 0 ? (
                   targetPipelineFields.map((field) => (
-                    <SelectItem key={field.id} value={field.slug}>
+                    <SelectItem key={field.id} value={field.name}>
                       {field.display_name || field.name} ({field.field_type})
                     </SelectItem>
                   ))
@@ -270,9 +242,8 @@ export const RelationFieldConfig = React.memo(function RelationFieldConfig({
               onCheckedChange={(checked) => {
                 try {
                   console.log('[RelationFieldConfig] allow_multiple checkbox changed:', checked)
-                  const newConfig = {...config, allow_multiple: checked}
-                  console.log('[RelationFieldConfig] Updating config with allow_multiple:', newConfig)
-                  onChange(newConfig)
+                  console.log('[RelationFieldConfig] Updating config with allow_multiple')
+                  onChange('allow_multiple', checked)
                 } catch (error) {
                   console.error('[RelationFieldConfig] Error in allow_multiple checkbox:', error)
                 }
@@ -297,12 +268,9 @@ export const RelationFieldConfig = React.memo(function RelationFieldConfig({
                 onChange={(e) => {
                   try {
                     console.log('[RelationFieldConfig] max_relationships input changed:', e.target.value)
-                    const newConfig = {
-                      ...config, 
-                      max_relationships: e.target.value ? parseInt(e.target.value) : null
-                    }
-                    console.log('[RelationFieldConfig] Updating config with max_relationships:', newConfig)
-                    onChange(newConfig)
+                    const maxValue = e.target.value ? parseInt(e.target.value) : null
+                    console.log('[RelationFieldConfig] Updating config with max_relationships:', maxValue)
+                    onChange('max_relationships', maxValue)
                   } catch (error) {
                     console.error('[RelationFieldConfig] Error in max_relationships input:', error)
                   }
@@ -384,7 +352,7 @@ export const RelationFieldConfig = React.memo(function RelationFieldConfig({
               ) : (
                 <Select
                   value={config.default_relationship_type || 'related_to'}
-                  onValueChange={(value) => onChange({...config, default_relationship_type: value})}
+                  onValueChange={(value) => onChange('default_relationship_type', value)}
                 >
                   <SelectTrigger>
                     <SelectValue placeholder="Select relationship type..." />
@@ -447,7 +415,7 @@ export const RelationFieldConfig = React.memo(function RelationFieldConfig({
             <Checkbox
               id="allow-relationship-type-selection"
               checked={config.allow_relationship_type_selection || false}
-              onCheckedChange={(checked) => onChange({...config, allow_relationship_type_selection: checked})}
+              onCheckedChange={(checked) => onChange('allow_relationship_type_selection', checked)}
             />
             <Label htmlFor="allow-relationship-type-selection" className="text-sm font-normal text-gray-700 dark:text-gray-300">
               Allow users to change relationship type when creating records
@@ -482,7 +450,7 @@ export const RelationFieldConfig = React.memo(function RelationFieldConfig({
               <Checkbox
                 id="create-reverse-relationships"
                 checked={config.create_reverse_relationships !== false}
-                onCheckedChange={(checked) => onChange({...config, create_reverse_relationships: checked})}
+                onCheckedChange={(checked) => onChange('create_reverse_relationships', checked)}
               />
               <Label htmlFor="create-reverse-relationships" className="text-sm font-normal text-gray-700 dark:text-gray-300">
                 Create Reverse Relationships
@@ -494,7 +462,7 @@ export const RelationFieldConfig = React.memo(function RelationFieldConfig({
                 <Checkbox
                   id="allow-self-reference"
                   checked={config.allow_self_reference || false}
-                  onCheckedChange={(checked) => onChange({...config, allow_self_reference: checked})}
+                  onCheckedChange={(checked) => onChange('allow_self_reference', checked)}
                 />
                 <div className="flex items-center gap-2">
                   <Label htmlFor="allow-self-reference" className="text-sm font-normal text-gray-700 dark:text-gray-300">
@@ -519,7 +487,7 @@ export const RelationFieldConfig = React.memo(function RelationFieldConfig({
               <Checkbox
                 id="enforce-cardinality"
                 checked={config.enforce_cardinality !== false}
-                onCheckedChange={(checked) => onChange({...config, enforce_cardinality: checked})}
+                onCheckedChange={(checked) => onChange('enforce_cardinality', checked)}
               />
               <Label htmlFor="enforce-cardinality" className="text-sm font-normal text-gray-700 dark:text-gray-300">
                 Enforce Relationship Cardinality

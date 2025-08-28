@@ -273,6 +273,7 @@ export function WebSocketProvider({ children, autoConnect = true }: WebSocketPro
         message.type === 'new_conversation' && subscription.channel.startsWith('channel_') ||
         message.type === 'sync_progress_update' && subscription.channel.startsWith('sync_progress_') ||
         message.type === 'sync_job_update' && subscription.channel.startsWith('sync_job_') ||
+        message.type === 'email_thread_stored' && subscription.channel.startsWith('user_') && subscription.channel.endsWith('_email') ||
         subscription.channel === 'pipelines_overview' // Special case for overview page
       
       if (isRelevant) {

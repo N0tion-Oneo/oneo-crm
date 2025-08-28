@@ -77,9 +77,9 @@ export function useAutoSaveFields(pipelineId: string, options: AutoSaveOptions =
       
       // For relation fields, check if target pipeline is set
       if (fieldType === 'relation') {
-        const targetPipeline = field.field_config?.target_pipeline || field.config?.target_pipeline
-        if (!targetPipeline) {
-          console.warn('🚫 Auto-save skipped for relation field: missing target pipeline')
+        const targetPipelineId = field.field_config?.target_pipeline_id || field.config?.target_pipeline_id
+        if (!targetPipelineId) {
+          console.warn('🚫 Auto-save skipped for relation field: missing target pipeline ID')
           return
         }
       }

@@ -18,7 +18,7 @@ class UnipileEmailClient:
         """Get email folders for account"""
         try:
             params = {'account_id': account_id}
-            response = await self.client._make_request('GET', 'mails/folders', params=params)
+            response = await self.client._make_request('GET', 'folders', params=params)
             return response
         except Exception as e:
             logger.error(f"Failed to get email folders: {e}")
@@ -128,28 +128,76 @@ class UnipileEmailClient:
         email_ids: List[str], 
         folder: str
     ) -> Dict[str, Any]:
-        """Move emails to folder"""
+        """Move emails to folder using update endpoint"""
         try:
-            data = {
+            # UniPile uses the update endpoint with folders parameter to move emails
+            results = []
+            
+            for email_id in email_ids:
+                try:
+                    data = {
+                        'folders': [folder]  # UniPile expects folder names array
+                    }
+                    response = await self.client._make_request('PUT', f'emails/{email_id}', data=data)
+                    results.append({
+                        'email_id': email_id,
+                        'success': True,
+                        'response': response
+                    })
+                except Exception as email_error:
+                    logger.error(f"Failed to move email {email_id} to folder {folder}: {email_error}")
+                    results.append({
+                        'email_id': email_id,
+                        'success': False,
+                        'error': str(email_error)
+                    })
+            
+            # Return summary of results
+            successful_count = sum(1 for result in results if result['success'])
+            return {
                 'account_id': account_id,
-                'email_ids': email_ids,
-                'folder': folder
+                'total_emails': len(email_ids),
+                'successful': successful_count,
+                'failed': len(email_ids) - successful_count,
+                'results': results
             }
-            response = await self.client._make_request('POST', 'mails/move', data=data)
-            return response
+            
         except Exception as e:
             logger.error(f"Failed to move emails to folder {folder}: {e}")
             raise
     
     async def delete_emails(self, account_id: str, email_ids: List[str]) -> Dict[str, Any]:
-        """Delete emails"""
+        """Delete emails using individual delete API calls"""
         try:
-            data = {
+            results = []
+            
+            for email_id in email_ids:
+                try:
+                    # Delete each email individually using DELETE /emails/{email_id}
+                    response = await self.client._make_request('DELETE', f'emails/{email_id}')
+                    results.append({
+                        'email_id': email_id,
+                        'success': True,
+                        'response': response
+                    })
+                except Exception as email_error:
+                    logger.error(f"Failed to delete email {email_id}: {email_error}")
+                    results.append({
+                        'email_id': email_id,
+                        'success': False,
+                        'error': str(email_error)
+                    })
+            
+            # Return summary of results
+            successful_count = sum(1 for result in results if result['success'])
+            return {
                 'account_id': account_id,
-                'email_ids': email_ids
+                'total_emails': len(email_ids),
+                'successful': successful_count,
+                'failed': len(email_ids) - successful_count,
+                'results': results
             }
-            response = await self.client._make_request('DELETE', 'mails', data=data)
-            return response
+            
         except Exception as e:
             logger.error(f"Failed to delete emails: {e}")
             raise
@@ -176,7 +224,7 @@ class UnipileEmailClient:
             if bcc:
                 data['bcc'] = bcc
                 
-            response = await self.client._make_request('POST', 'mails/drafts', data=data)
+            response = await self.client._make_request('POST', 'drafts', data=data)
             return response
         except Exception as e:
             logger.error(f"Failed to create draft: {e}")

@@ -32,12 +32,14 @@ SYNC_CONFIG = {
     'messages_broadcast_interval': int(os.environ.get('SYNC_MESSAGES_BROADCAST_INTERVAL', 100)),  # Broadcast every N messages
 }
 
-# Default sync options - production ready values
-# These are the ONLY defaults that should be used across the system
+# Default sync options - DISABLED for live-first approach
+# Comprehensive sync is now opt-in only, not automatic
 DEFAULT_SYNC_OPTIONS = {
-    'max_conversations': int(os.environ.get('SYNC_MAX_CONVERSATIONS', 300)),
-    'max_messages_per_chat': int(os.environ.get('SYNC_MAX_MESSAGES', 500)),  # API limit: 250 max
-    'days_back': int(os.environ.get('SYNC_DAYS_BACK', 0)),  # 0 = no date filter (sync all), >0 = filter messages by age in days
+    'enabled': False,  # Disable automatic sync
+    'max_conversations': int(os.environ.get('SYNC_MAX_CONVERSATIONS', 50)),  # Reduced default
+    'max_messages_per_chat': int(os.environ.get('SYNC_MAX_MESSAGES', 100)),  # Reduced default
+    'days_back': int(os.environ.get('SYNC_DAYS_BACK', 30)),  # Only sync recent by default
+    'selective_storage': True,  # Only store conversations with contact matches
 }
 
 # Get sync options without overrides

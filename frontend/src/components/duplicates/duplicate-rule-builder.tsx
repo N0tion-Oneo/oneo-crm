@@ -92,7 +92,28 @@ export function DuplicateRuleBuilder({
       setRuleDescription(editingRule.description || '')
       setActionOnDuplicate(editingRule.action_on_duplicate || 'warn')
       setIsActive(editingRule.is_active ?? true)
-      setLogic(editingRule.logic || { operator: 'AND', conditions: [] })
+      
+      // Transform backend logic format to frontend format
+      if (editingRule.logic) {
+        if (editingRule.logic.operator === 'OR' && editingRule.logic.conditions) {
+          // Backend OR format: flatten nested AND conditions back to fields array
+          const fields: FieldCondition[] = []
+          editingRule.logic.conditions.forEach((condition: any) => {
+            if (condition.fields && Array.isArray(condition.fields)) {
+              fields.push(...condition.fields)
+            }
+          })
+          setLogic({ operator: 'OR', fields })
+        } else if (editingRule.logic.operator === 'AND' && editingRule.logic.fields) {
+          // Backend AND format: use as-is
+          setLogic(editingRule.logic)
+        } else {
+          // Fallback for unexpected format
+          setLogic({ operator: 'AND', fields: [] })
+        }
+      } else {
+        setLogic({ operator: 'AND', fields: [] })
+      }
     } else if (isOpen) {
       // Reset form for new rule
       setRuleName('')
@@ -205,11 +226,28 @@ export function DuplicateRuleBuilder({
     try {
       setSaving(true)
 
+      // Transform logic structure based on operator type
+      let formattedLogic: any
+      if (logic.operator === 'OR') {
+        // For OR operator, backend expects 'conditions' array with AND groups
+        // Each field becomes its own AND condition
+        formattedLogic = {
+          operator: 'OR',
+          conditions: logic.fields.map(field => ({
+            operator: 'AND',
+            fields: [field]
+          }))
+        }
+      } else {
+        // For AND operator, use the existing structure
+        formattedLogic = logic
+      }
+
       const ruleData = {
         name: ruleName,
         description: ruleDescription,
         pipeline: parseInt(pipelineId),
-        logic,
+        logic: formattedLogic,
         action_on_duplicate: actionOnDuplicate,
         is_active: isActive
       }
@@ -250,27 +288,8 @@ export function DuplicateRuleBuilder({
     }
   }
 
-  const getOperatorLabel = (operator: string) => {
-    const labels = {
-      exact_match: 'Exact Match',
-      fuzzy_match: 'Fuzzy Match',
-      contains: 'Contains',
-      starts_with: 'Starts With',
-      ends_with: 'Ends With',
-      regex: 'Regular Expression'
-    }
-    return labels[operator as keyof typeof labels] || operator
-  }
-
-  const getActionLabel = (action: string) => {
-    const labels = {
-      warn: 'Warn Only',
-      prevent: 'Prevent Creation',
-      merge: 'Suggest Merge',
-      flag: 'Flag for Review'
-    }
-    return labels[action as keyof typeof labels] || action
-  }
+  // Removed unused functions getOperatorLabel and getActionLabel
+  // These were not being used anywhere in the component
 
   if (!isOpen) return null
 

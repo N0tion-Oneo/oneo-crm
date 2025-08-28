@@ -70,7 +70,7 @@ class SyncJobProgressSerializer(ModelSerializer):
 def start_background_sync(request):
     """
     Start comprehensive background sync for WhatsApp accounts
-    Non-blocking alternative to the existing sync endpoint
+    Now requires explicit opt-in as sync is disabled by default
     """
     logger.info(f"🚀 Background sync API called by user {request.user.username}")
     logger.info(f"🔍 Request headers: {dict(request.headers)}")
@@ -79,6 +79,14 @@ def start_background_sync(request):
         # Use centralized configuration with optional overrides from request
         request_options = request.data.get('sync_options', {})
         sync_options = get_sync_options(request_options)
+        
+        # Check if sync is enabled (new live-first approach)
+        if not sync_options.get('enabled', False):
+            return Response({
+                'success': False,
+                'error': 'Comprehensive sync is disabled. WhatsApp now uses live data fetching.',
+                'message': 'Use the live inbox endpoint instead for real-time data access'
+            }, status=status.HTTP_400_BAD_REQUEST)
         
         # Get user's WhatsApp connections
         whatsapp_connections = UserChannelConnection.objects.filter(

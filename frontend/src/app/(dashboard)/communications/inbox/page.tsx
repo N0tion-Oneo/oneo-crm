@@ -30,8 +30,8 @@ import SmartCompose from '@/components/communications/smart-compose'
 import { useUnifiedInbox } from '@/hooks/use-unified-inbox'
 import { MessageContent } from '@/components/MessageContent'
 import { formatDistanceToNow } from 'date-fns'
-import GmailInbox from '@/components/communications/GmailInbox'
-import WhatsAppInbox from '@/components/communications/WhatsAppInbox'
+import GmailInboxRefactored from '@/components/communications/email/GmailInboxRefactored'
+import { WhatsAppInboxLive } from '@/components/communications/WhatsAppInboxLive'
 import LinkedInInbox from '@/components/communications/LinkedInInbox'
 
 // Enhanced types that combine old and new functionality
@@ -1960,13 +1960,13 @@ export default function InboxPage() {
       case 'gmail':
         return (
           <div style={{ height: containerHeight }} className="overflow-hidden">
-            <GmailInbox className="h-full" />
+            <GmailInboxRefactored className="h-full" />
           </div>
         )
       case 'whatsapp':
         return (
           <div style={{ height: containerHeight }}>
-            <WhatsAppInbox className="h-full" />
+            <WhatsAppInboxLive className="h-full" />
           </div>
         )
       case 'linkedin':

@@ -82,9 +82,27 @@ class FieldMatcher:
     
     def _match_phone_normalized(self, value1: Any, value2: Any, field_config: Dict) -> bool:
         """Phone matching with normalization"""
-        phone1 = self._normalize_phone(str(value1))
-        phone2 = self._normalize_phone(str(value2))
+        phone1 = self._extract_and_normalize_phone(value1)
+        phone2 = self._extract_and_normalize_phone(value2)
         return phone1 == phone2
+    
+    def _extract_and_normalize_phone(self, value: Any) -> str:
+        """Extract phone number from various formats and normalize"""
+        if not value:
+            return ""
+        
+        # Handle dict format from phone field type
+        if isinstance(value, dict):
+            # Phone field stores as {'number': '782270354', 'country_code': '+27'}
+            country_code = value.get('country_code', '')
+            number = value.get('number', '')
+            # Combine country code and number
+            phone_str = f"{country_code}{number}"
+        else:
+            # Handle string format
+            phone_str = str(value)
+        
+        return self._normalize_phone(phone_str)
     
     def _normalize_phone(self, phone: str) -> str:
         """Normalize phone number for comparison"""

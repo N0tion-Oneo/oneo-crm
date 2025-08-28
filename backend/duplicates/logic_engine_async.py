@@ -80,9 +80,27 @@ class AsyncFieldMatcher:
     
     def _match_phone_normalized(self, value1: Any, value2: Any) -> bool:
         """Phone matching with normalization"""
-        phone1 = self._normalize_phone(str(value1))
-        phone2 = self._normalize_phone(str(value2))
+        phone1 = self._extract_and_normalize_phone(value1)
+        phone2 = self._extract_and_normalize_phone(value2)
         return phone1 == phone2
+    
+    def _extract_and_normalize_phone(self, value: Any) -> str:
+        """Extract phone number from various formats and normalize"""
+        if not value:
+            return ""
+        
+        # Handle dict format from phone field type
+        if isinstance(value, dict):
+            # Phone field stores as {'number': '782270354', 'country_code': '+27'}
+            country_code = value.get('country_code', '')
+            number = value.get('number', '')
+            # Combine country code and number
+            phone_str = f"{country_code}{number}"
+        else:
+            # Handle string format
+            phone_str = str(value)
+        
+        return self._normalize_phone(phone_str)
     
     def _normalize_phone(self, phone: str) -> str:
         """Normalize phone number for comparison"""
@@ -210,8 +228,8 @@ class AsyncDuplicateLogicEngine:
         
         fields_list = await sync_to_async(get_fields)()
         
-        # Create field lookup
-        field_lookup = {field.name: field for field in fields_list}
+        # Create field lookup using slug (which matches how data is stored)
+        field_lookup = {field.slug: field for field in fields_list}
         
         # Handle simple format with just 'fields' array
         if 'fields' in logic:
@@ -222,6 +240,31 @@ class AsyncDuplicateLogicEngine:
                 field_lookup,
                 result
             )
+        
+        # Handle conditions format (new structure from UI)
+        elif 'conditions' in logic:
+            operator = logic.get('operator', 'OR')  # Default to OR
+            
+            for condition in logic.get('conditions', []):
+                fields = condition.get('fields', [])
+                if await self._evaluate_fields_async(
+                    fields,
+                    record1_data,
+                    record2_data,
+                    field_lookup,
+                    result
+                ):
+                    if operator == 'OR':
+                        # For OR, any match means duplicate
+                        result['is_duplicate'] = True
+                        break
+                    elif operator == 'AND':
+                        # For AND, continue checking
+                        result['is_duplicate'] = True
+                elif operator == 'AND':
+                    # For AND, all must match
+                    result['is_duplicate'] = False
+                    break
         
         # Handle AND groups
         elif 'and_groups' in logic:
@@ -319,22 +362,28 @@ class AsyncDuplicateLogicEngine:
             return 0.0
         
         matched_count = sum(1 for match in field_matches.values() if match.get('matched'))
-        total_count = len(field_matches)
         
-        if total_count == 0:
+        if matched_count == 0:
             return 0.0
         
-        # Base confidence from match ratio
-        confidence = matched_count / total_count
+        # For OR conditions (like email OR phone), use the highest confidence of matched fields
+        # rather than averaging across all fields
+        max_confidence = 0.0
         
-        # Boost confidence for certain field types
         for field_name, match_info in field_matches.items():
             if match_info.get('matched'):
+                # Base confidence for different field types
                 if 'email' in field_name.lower():
-                    confidence = min(1.0, confidence + 0.2)
+                    max_confidence = max(max_confidence, 0.9)  # Email is very strong
                 elif 'phone' in field_name.lower():
-                    confidence = min(1.0, confidence + 0.1)
+                    max_confidence = max(max_confidence, 0.85)  # Phone is strong
+                elif 'linkedin' in field_name.lower():
+                    max_confidence = max(max_confidence, 0.85)  # LinkedIn is unique
                 elif 'website' in field_name.lower() or 'domain' in field_name.lower():
-                    confidence = min(1.0, confidence + 0.1)
+                    max_confidence = max(max_confidence, 0.7)  # Domain is weaker
+                elif 'name' in field_name.lower():
+                    max_confidence = max(max_confidence, 0.6)  # Name alone is weak
+                else:
+                    max_confidence = max(max_confidence, 0.5)  # Unknown field type
         
-        return confidence
+        return max_confidence

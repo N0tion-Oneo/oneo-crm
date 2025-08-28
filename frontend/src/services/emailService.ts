@@ -20,6 +20,9 @@ export interface Participant {
   role: string
   has_contact: boolean
   contact_id?: string
+  contact_pipeline?: string
+  contact_record_name?: string
+  contact_record_title?: string
   confidence: number
   // Secondary record (company via domain)
   has_secondary: boolean
@@ -27,6 +30,8 @@ export interface Participant {
   secondary_pipeline?: string
   secondary_confidence?: number
   secondary_method?: string
+  secondary_record_name?: string
+  secondary_record_title?: string
 }
 
 export interface EmailThread {
@@ -52,8 +57,8 @@ export interface EmailThread {
   should_store?: boolean
   storage_reason?: 'contact_match' | 'company_match' | 'manual_link' | 'none'
   linked_records?: {
-    contacts: Array<{ id: string; name: string; confidence: number }>
-    companies: Array<{ id: string; pipeline: string; confidence: number }>
+    contacts: Array<{ id: string; name: string; title?: string; confidence: number }>
+    companies: Array<{ id: string; name?: string; title?: string; pipeline: string; confidence: number }>
   }
   can_link?: boolean
   channel_specific?: {

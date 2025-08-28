@@ -72,6 +72,15 @@ from communications.channels.whatsapp.inbox_views import (
     link_whatsapp_conversation
 )
 
+# Import NEW live WhatsApp views (selective storage approach)
+from communications.channels.whatsapp.live_inbox_views import (
+    get_whatsapp_live_inbox,
+    store_whatsapp_conversation
+)
+from communications.channels.whatsapp.live_message_views import (
+    get_whatsapp_chat_messages_live
+)
+
 # Import consolidated local-first WhatsApp views from channels directory
 from communications.channels.whatsapp.api_views import (
     get_whatsapp_chats_local_first,
@@ -232,8 +241,11 @@ urlpatterns = [
     
     # WhatsApp-specific endpoints for Unipile integration
     # Import new WhatsApp views from the channels structure
-    path('whatsapp/inbox/', get_whatsapp_inbox, name='whatsapp-inbox'),  # NEW: Channel-specific inbox
-    path('whatsapp/conversations/<str:chat_id>/link/', link_whatsapp_conversation, name='whatsapp-link-conversation'),  # NEW: Manual linking
+    path('whatsapp/inbox/', get_whatsapp_inbox, name='whatsapp-inbox'),  # OLD: Stored data inbox
+    path('whatsapp/inbox/live/', get_whatsapp_live_inbox, name='whatsapp-live-inbox'),  # NEW: Live data (like email)
+    path('whatsapp/chats/<str:chat_id>/messages/live/', get_whatsapp_chat_messages_live, name='whatsapp-messages-live'),  # NEW: Live messages
+    path('whatsapp/conversations/<str:chat_id>/link/', link_whatsapp_conversation, name='whatsapp-link-conversation'),  # OLD: Manual linking
+    path('whatsapp/conversations/<str:chat_id>/store/', store_whatsapp_conversation, name='whatsapp-store-conversation'),  # NEW: Selective storage
     path('whatsapp/accounts/', get_whatsapp_accounts, name='whatsapp-accounts'),
     path('whatsapp/chats/', get_whatsapp_chats_local_first, name='whatsapp-chats'),
     path('whatsapp/chats/<str:chat_id>/messages/', get_chat_messages_local_first, name='whatsapp-chat-messages'),

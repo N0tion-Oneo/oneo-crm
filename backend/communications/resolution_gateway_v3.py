@@ -139,6 +139,11 @@ class ContactResolutionGatewayV3:
         # Get candidate records using rule field requirements
         candidates = await self._get_candidate_records(pipeline, rules, identifiers)
         
+        # Debug logging
+        if candidates:
+            logger.debug(f"Found {len(candidates)} candidates in pipeline {pipeline.name}")
+            logger.debug(f"Pseudo record: {pseudo_record}")
+        
         # Track which records we've already matched to avoid duplicates
         matched_record_ids = set()
         
@@ -154,6 +159,9 @@ class ContactResolutionGatewayV3:
                     pseudo_record, 
                     candidate.data
                 )
+                
+                # Debug logging
+                logger.debug(f"Evaluated candidate {candidate.id}: is_duplicate={result.get('is_duplicate')}")
                 
                 if result.get('is_duplicate'):
                     # Calculate confidence based on matched fields
@@ -215,8 +223,8 @@ class ContactResolutionGatewayV3:
         # Map common identifier types to potential field names
         field_mappings = {
             'email': ['email', 'work_email', 'personal_email', 'contact_email'],
-            'phone': ['phone', 'mobile', 'work_phone', 'contact_phone'],
-            'name': ['name', 'full_name', 'contact_name'],
+            'phone': ['phone', 'phone_number', 'mobile', 'work_phone', 'contact_phone'],
+            'name': ['name', 'full_name', 'contact_name', 'first_name', 'last_name'],
             'linkedin_url': ['linkedin', 'linkedin_url', 'social_linkedin'],
             'domain': ['website', 'domain', 'company_domain', 'company_website']
         }
@@ -261,6 +269,14 @@ class ContactResolutionGatewayV3:
                     if field_name:
                         rule_fields.add(field_name)
             
+            # Handle conditions format (new structure from UI)
+            if 'conditions' in logic:
+                for condition in logic.get('conditions', []):
+                    for field_config in condition.get('fields', []):
+                        field_name = field_config.get('field')
+                        if field_name:
+                            rule_fields.add(field_name)
+            
             # Extract fields from AND groups
             for and_group in logic.get('and_groups', []):
                 for field_config in and_group.get('fields', []):
@@ -281,9 +297,20 @@ class ContactResolutionGatewayV3:
             if 'email' in field_name.lower() and identifiers.get('email'):
                 query |= Q(**{f'data__{field_name}__iexact': identifiers['email']})
             elif 'phone' in field_name.lower() and identifiers.get('phone'):
-                phone_normalized = self.field_matcher._normalize_phone(identifiers['phone'])
+                # Normalize phone for search
+                import re
+                phone_str = identifiers['phone']
+                phone_normalized = re.sub(r'[^\d]', '', phone_str)  # Remove non-digits
                 if phone_normalized:
-                    query |= Q(**{f'data__{field_name}__icontains': phone_normalized[-10:]})
+                    # For searching, we need a custom query that normalizes the stored phone
+                    # This is complex in Django ORM, so we'll fetch more candidates and filter in Python
+                    # Search broadly then filter precisely during evaluation
+                    query |= (
+                        Q(**{f'data__{field_name}__icontains': phone_normalized[-10:]}) |  # String format
+                        Q(**{f'data__{field_name}__icontains': phone_normalized[-9:]}) |   # Shorter match
+                        Q(**{f'data__{field_name}__number__icontains': phone_normalized[-9:]}) |  # Dict format (number field)
+                        Q(**{f'data__{field_name}__country_code__icontains': '27'})  # Country code match
+                    )
             elif 'name' in field_name.lower() and identifiers.get('name'):
                 query |= Q(**{f'data__{field_name}__icontains': identifiers['name']})
             elif 'linkedin' in field_name.lower() and identifiers.get('linkedin_url'):

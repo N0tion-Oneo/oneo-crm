@@ -154,60 +154,75 @@ class WhatsAppWebhookHandler(BaseWebhookHandler):
                 }
             )
             
-            # Get or create conversation
+            # Get existing conversation
             conversation = Conversation.objects.filter(
                 channel=channel,
                 external_thread_id=chat_id
             ).first()
             
-            if not conversation:
-                # Use sync conversation creation without async calls
-                conversation_name = f"WhatsApp Chat {chat_id[:8]}"
-                
-                # Try to extract better name from message sender
-                # Use the direction utility to check if message is inbound (from customer)
-                # Prepare webhook data with proper sender info for AccountOwnerDetector
-                webhook_msg_data = {
-                    **data,
-                    'sender': sender_info,
-                    'account_id': account_id,
-                }
-                msg_direction = determine_message_direction(
-                    message_data=webhook_msg_data,
-                    channel_type='whatsapp',
-                    user_identifier=None,  # Let it get from channel
-                    channel=channel
-                )
-                if sender_name and msg_direction == 'in':
-                    conversation_name = sender_name
-                
-                conversation = Conversation.objects.create(
-                    channel=channel,
-                    external_thread_id=chat_id,
-                    subject=conversation_name,
-                    status='active',
-                    sync_status='completed',
-                    last_message_at=django_timezone.now(),
-                    metadata={
-                        'conversation_name': conversation_name,
-                        'conversation_type': 'whatsapp',
-                        'created_by_user': str(channel.created_by.id if channel.created_by else 'unknown'),
-                        'chat_id': chat_id,
-                        'webhook_created': True
-                    }
-                )
-                logger.info(f"✅ Created conversation '{conversation.subject}' for chat {chat_id}")
-            
-            # Check participant resolution and storage decision
-            should_store = self._check_participant_resolution(
-                data, connection, channel, conversation
+            # Determine message direction
+            webhook_msg_data = {
+                **data,
+                'sender': sender_info,
+                'account_id': account_id,
+            }
+            msg_direction = determine_message_direction(
+                message_data=webhook_msg_data,
+                channel_type='whatsapp',
+                user_identifier=None,  # Let it get from channel
+                channel=channel
             )
             
-            # Always return message info but only store if should_store is True
+            # Check if we should store this conversation (CRM match check)
+            # We need to check BEFORE creating the conversation
+            should_store = False
+            if conversation:
+                # Conversation already exists, we should continue storing messages
+                should_store = True
+            else:
+                # Check if participants have CRM matches
+                should_store = self._check_participant_resolution(
+                    data, connection, channel, None  # No conversation yet
+                )
+                
+                # Only create conversation if we should store (has CRM match) OR if it's outbound
+                if should_store or msg_direction == 'out':
+                    conversation_name = f"WhatsApp Chat {chat_id[:8]}"
+                    
+                    # Try to extract better name from message sender
+                    if sender_name and msg_direction == 'in':
+                        conversation_name = sender_name
+                    
+                    conversation = Conversation.objects.create(
+                        channel=channel,
+                        external_thread_id=chat_id,
+                        subject=conversation_name,
+                        status='active',
+                        sync_status='completed',
+                        last_message_at=django_timezone.now(),
+                        metadata={
+                            'conversation_name': conversation_name,
+                            'conversation_type': 'whatsapp',
+                            'created_by_user': str(channel.created_by.id if channel.created_by else 'unknown'),
+                            'chat_id': chat_id,
+                            'webhook_created': True,
+                            'has_crm_match': should_store
+                        }
+                    )
+                    logger.info(f"✅ Created conversation '{conversation.subject}' for chat {chat_id} (CRM match: {should_store}, direction: {msg_direction})")
+                    
+                    # Now link participants to the newly created conversation
+                    if should_store:
+                        # Re-run participant resolution to link them to the conversation
+                        self._check_participant_resolution(
+                            data, connection, channel, conversation
+                        )
+                    
+                    should_store = True  # We created it, so we should store the message
+            
+            # Always return message info
             response_data = {
                 'success': True,
-                'conversation_id': str(conversation.id),
-                'conversation_name': conversation.subject,
                 'chat_id': chat_id,
                 'storage_decision': {
                     'should_store': should_store,
@@ -215,10 +230,15 @@ class WhatsAppWebhookHandler(BaseWebhookHandler):
                 }
             }
             
+            # Add conversation info if we have one
+            if conversation:
+                response_data['conversation_id'] = str(conversation.id)
+                response_data['conversation_name'] = conversation.subject
+            
             # If we shouldn't store, return early
             if not should_store:
-                logger.info(f"📤 WhatsApp message not stored (no contact match) for chat {chat_id}")
-                response_data['note'] = 'Message not stored - no contact match'
+                logger.info(f"📤 WhatsApp message not stored (no CRM match) for chat {chat_id}")
+                response_data['note'] = 'Message not stored - no CRM match found'
                 return response_data
             
             # Check if message already exists (only if we should store)
@@ -620,8 +640,8 @@ class WhatsAppWebhookHandler(BaseWebhookHandler):
                 'whatsapp'
             )
             
-            # Link participants to conversation if storing
-            if should_store and participants:
+            # Link participants to conversation if storing and conversation exists
+            if should_store and participants and conversation:
                 from communications.models import ConversationParticipant
                 for participant in participants:
                     async_to_sync(ConversationParticipant.objects.update_or_create)(

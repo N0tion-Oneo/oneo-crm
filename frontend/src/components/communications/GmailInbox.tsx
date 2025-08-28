@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useState, useEffect, useCallback, useRef } from 'react'
-import { Mail, Search, Filter, Archive, Reply, Forward, Star, StarOff, MoreVertical, Paperclip, RefreshCw, Trash, Send, X, Folder, Edit, Plus, Link, Unlink, User, Users, UserPlus, Cloud, ChevronDown, ChevronRight, ChevronLeft, ChevronsLeft, ChevronsRight } from 'lucide-react'
+import { Mail, MailOpen, Search, Filter, Archive, Reply, Forward, Star, StarOff, MoreVertical, Paperclip, RefreshCw, Trash, Send, X, Folder, Edit, Plus, Link, Unlink, User, Users, UserPlus, Cloud, ChevronDown, ChevronRight, ChevronLeft, ChevronsLeft, ChevronsRight } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
@@ -44,7 +44,8 @@ export default function GmailInbox({ className }: GmailInboxProps) {
   const [searchQuery, setSearchQuery] = useState('')
   const [filterStatus, setFilterStatus] = useState<'all' | 'unread' | 'starred'>('all')
   const [currentPage, setCurrentPage] = useState(1)
-  const [totalPages, setTotalPages] = useState(0)
+  const [hasMorePages, setHasMorePages] = useState(false)
+  const [totalPages, setTotalPages] = useState(0) // Keep for backwards compatibility
   const [total, setTotal] = useState(0)
   const itemsPerPage = 20
   const [folders, setFolders] = useState<EmailFolder[]>([])
@@ -65,6 +66,38 @@ export default function GmailInbox({ className }: GmailInboxProps) {
   const { subscribe, unsubscribe } = useWebSocket()
   const { user } = useAuth()
   const subscriptionRef = useRef<string | null>(null)
+  const editorRef = useRef<HTMLDivElement>(null)
+  const [editorKey, setEditorKey] = useState(0)
+  const lastOpenState = useRef(false)
+
+  // When dialog opens, increment key to force editor remount
+  useEffect(() => {
+    // Only run when dialog transitions from closed to open
+    if (composeOpen && !lastOpenState.current) {
+      // Force editor to remount with new content
+      setEditorKey(prev => prev + 1)
+      
+      // Set initial content after remount
+      setTimeout(() => {
+        if (editorRef.current && composeBody) {
+          editorRef.current.innerHTML = composeBody
+          
+          // Place cursor at the beginning for replies/forwards
+          if (replyMode && editorRef.current.firstChild) {
+            const range = document.createRange()
+            const sel = window.getSelection()
+            range.setStart(editorRef.current.firstChild, 0)
+            range.collapse(true)
+            sel?.removeAllRanges()
+            sel?.addRange(range)
+          }
+        }
+      }, 0)
+    }
+    
+    // Track the last open state
+    lastOpenState.current = composeOpen
+  }, [composeOpen, composeBody, replyMode]) // Include all dependencies
 
   // Load email accounts on mount
   useEffect(() => {
@@ -87,6 +120,14 @@ export default function GmailInbox({ className }: GmailInboxProps) {
       loadThreads(1)
     }
   }, [selectedFolder])
+  
+  // Load threads when filter changes
+  useEffect(() => {
+    if (selectedAccount) {
+      setCurrentPage(1)  // Reset to first page when filter changes
+      loadThreads(1)
+    }
+  }, [filterStatus])
   
   // Subscribe to email storage updates via WebSocket
   useEffect(() => {
@@ -200,7 +241,8 @@ export default function GmailInbox({ className }: GmailInboxProps) {
         limit: itemsPerPage,
         page: page,  // Use page instead of offset
         search: searchQuery,
-        refresh: refresh
+        refresh: refresh,
+        filter: filterStatus  // Pass filter parameter to API
       })
       
       console.log(`📧 API response:`, {
@@ -220,27 +262,20 @@ export default function GmailInbox({ className }: GmailInboxProps) {
         // Update pagination state
         setCurrentPage(result.page || page)
         
-        // Calculate total pages
-        let calculatedTotalPages = 0
-        if (result.total_pages !== undefined) {
-          calculatedTotalPages = result.total_pages
-        } else if (result.total) {
-          // Fallback to calculating from total
-          calculatedTotalPages = Math.ceil(result.total / itemsPerPage)
-        } else {
-          // Estimate based on has_more
-          calculatedTotalPages = page + (result.has_more ? 1 : 0)
-        }
-        setTotalPages(calculatedTotalPages)
+        // For cursor-based pagination, we don't know exact totals
+        // Store has_more flag instead
+        const hasMore = result.has_more || false
+        setHasMorePages(hasMore)
         
-        const totalCount = result.total || newThreads.length
-        setTotal(totalCount)
+        // Don't show misleading total pages or count
+        // With cursor pagination, we don't know the grand total
+        setTotalPages(0)
+        setTotal(0)
         
         console.log(`📧 Page ${page} loaded successfully:`, {
           threads: newThreads.length,
           currentPage: page,
-          totalPages: calculatedTotalPages,
-          total: totalCount
+          hasMore: hasMore
         })
       } else {
         console.error('📧 API returned error:', result)
@@ -357,20 +392,31 @@ export default function GmailInbox({ className }: GmailInboxProps) {
     if (!selectedThread || !selectedAccount) return
     
     try {
-      // For now, just remove from local state
-      setThreads(prev => prev.filter(t => t.id !== selectedThread.id))
-      setSelectedThread(null)
-      setThreadMessages([])
+      // Use external_thread_id if available (this is the UniPile ID)
+      // Otherwise use the thread.id (which might be the same)
+      const emailIdToDelete = selectedThread.external_thread_id || selectedThread.id
       
-      toast({
-        title: 'Success',
-        description: 'Email thread deleted',
-      })
-    } catch (error) {
+      // Call UniPile API to delete the email
+      const result = await emailService.deleteEmail(selectedAccount.account_id, emailIdToDelete)
+      
+      if (result.success) {
+        // Remove from local state after successful deletion
+        setThreads(prev => prev.filter(t => t.id !== selectedThread.id))
+        setSelectedThread(null)
+        setThreadMessages([])
+        
+        toast({
+          title: 'Success',
+          description: result.message || 'Email moved to trash',
+        })
+      } else {
+        throw new Error(result.error || 'Failed to delete email')
+      }
+    } catch (error: any) {
       console.error('Error deleting thread:', error)
       toast({
         title: 'Error',
-        description: 'Failed to delete thread',
+        description: error.message || 'Failed to delete thread',
         variant: 'destructive'
       })
     }
@@ -398,7 +444,19 @@ export default function GmailInbox({ className }: GmailInboxProps) {
     setReplyToMessage(targetMessage)
     setComposeTo(targetMessage.sender.email)
     setComposeSubject(`Re: ${targetMessage.subject || selectedThread.subject || ''}`)
-    setComposeBody(`\n\n---\nOn ${targetMessage.sent_at ? new Date(targetMessage.sent_at).toLocaleString() : 'Unknown date'}, ${targetMessage.sender.name || targetMessage.sender.email} wrote:\n${targetMessage.content}`)
+    
+    // Create HTML-formatted reply with proper separation
+    const replyBody = `<br><br><br>
+<div style="border-top: 1px solid #ccc; padding-top: 10px; margin-top: 20px;">
+  <div style="color: #666; font-size: 14px; margin-bottom: 10px;">
+    On ${targetMessage.sent_at ? new Date(targetMessage.sent_at).toLocaleString() : 'Unknown date'}, ${targetMessage.sender.name || targetMessage.sender.email} wrote:
+  </div>
+  <blockquote style="margin: 0 0 0 10px; padding-left: 10px; border-left: 2px solid #ccc;">
+    ${targetMessage.content}
+  </blockquote>
+</div>`
+    
+    setComposeBody(replyBody)
     setComposeOpen(true)
   }
 
@@ -410,7 +468,23 @@ export default function GmailInbox({ className }: GmailInboxProps) {
     setReplyToMessage(lastMessage)
     setComposeTo('')
     setComposeSubject(`Fwd: ${lastMessage.subject || selectedThread.subject || ''}`)
-    setComposeBody(`\n\n--- Forwarded message ---\nFrom: ${lastMessage.sender.name || lastMessage.sender.email}\nDate: ${lastMessage.sent_at ? new Date(lastMessage.sent_at).toLocaleString() : 'Unknown date'}\nSubject: ${lastMessage.subject || ''}\n\n${lastMessage.content}`)
+    
+    // Create HTML-formatted forward with proper separation
+    const forwardBody = `<br><br><br>
+<div style="border: 1px solid #ccc; padding: 15px; margin-top: 20px; background-color: #f9f9f9;">
+  <div style="font-weight: bold; margin-bottom: 10px;">––––––––– Forwarded Message –––––––––</div>
+  <div style="color: #666; font-size: 14px; margin-bottom: 10px;">
+    <strong>From:</strong> ${lastMessage.sender.name || lastMessage.sender.email} &lt;${lastMessage.sender.email}&gt;<br>
+    <strong>Date:</strong> ${lastMessage.sent_at ? new Date(lastMessage.sent_at).toLocaleString() : 'Unknown date'}<br>
+    <strong>Subject:</strong> ${lastMessage.subject || selectedThread.subject || '(No subject)'}<br>
+    <strong>To:</strong> ${lastMessage.recipients?.to?.join(', ') || 'Unknown recipients'}
+  </div>
+  <div style="margin-top: 15px;">
+    ${lastMessage.content}
+  </div>
+</div>`
+    
+    setComposeBody(forwardBody)
     setComposeOpen(true)
   }
 
@@ -422,7 +496,71 @@ export default function GmailInbox({ className }: GmailInboxProps) {
     setComposeBcc('')
     setComposeSubject('')
     setComposeBody('')
+    // Clear the editor
+    if (editorRef.current) {
+      editorRef.current.innerHTML = ''
+    }
     setComposeOpen(true)
+  }
+
+  const handleMarkAsRead = async (thread: EmailThread, e: React.MouseEvent) => {
+    e.stopPropagation() // Prevent thread selection
+    
+    if (!selectedAccount || !thread.external_thread_id) return
+    
+    try {
+      // Mark thread as read in backend
+      await emailService.markThreadAsRead(selectedAccount.account_id, thread.external_thread_id)
+      
+      // Update local state
+      setThreads(prev => prev.map(t => 
+        t.id === thread.id 
+          ? { ...t, unread_count: 0, is_unread: false }
+          : t
+      ))
+      
+      toast({
+        title: 'Marked as read',
+        description: 'Email marked as read successfully'
+      })
+    } catch (error) {
+      console.error('Failed to mark as read:', error)
+      toast({
+        title: 'Error',
+        description: 'Failed to mark email as read',
+        variant: 'destructive'
+      })
+    }
+  }
+  
+  const handleMarkAsUnread = async (thread: EmailThread, e: React.MouseEvent) => {
+    e.stopPropagation() // Prevent thread selection
+    
+    if (!selectedAccount || !thread.external_thread_id) return
+    
+    try {
+      // Mark thread as unread in backend
+      await emailService.markThreadAsUnread(selectedAccount.account_id, thread.external_thread_id)
+      
+      // Update local state
+      setThreads(prev => prev.map(t => 
+        t.id === thread.id 
+          ? { ...t, unread_count: Math.max(1, t.unread_count), is_unread: true }
+          : t
+      ))
+      
+      toast({
+        title: 'Marked as unread',
+        description: 'Email marked as unread successfully'
+      })
+    } catch (error) {
+      console.error('Failed to mark as unread:', error)
+      toast({
+        title: 'Error',
+        description: 'Failed to mark email as unread',
+        variant: 'destructive'
+      })
+    }
   }
 
   const handleSendEmail = async () => {
@@ -460,8 +598,20 @@ export default function GmailInbox({ className }: GmailInboxProps) {
           description: 'Email sent successfully',
         })
         setComposeOpen(false)
-        // Reload threads to show the sent email
-        loadThreads(true)
+        // Reset compose form
+        setComposeTo('')
+        setComposeCc('')
+        setComposeBcc('')
+        setComposeSubject('')
+        setComposeBody('')
+        setReplyMode(null)
+        setReplyToMessage(null)
+        // Clear the editor
+        if (editorRef.current) {
+          editorRef.current.innerHTML = ''
+        }
+        // Reload threads to show the sent email (refresh current page)
+        loadThreads(currentPage, true)
       } else {
         throw new Error(result.error || 'Failed to send email')
       }
@@ -477,9 +627,9 @@ export default function GmailInbox({ className }: GmailInboxProps) {
     }
   }
 
-  // Filter threads based on search and filter status
+  // Search filtering is still done client-side, status filtering is done server-side
   const filteredThreads = threads.filter(thread => {
-    // Apply search filter
+    // Apply search filter (client-side only for now)
     if (searchQuery) {
       const query = searchQuery.toLowerCase()
       const subjectMatch = (thread.subject || '').toLowerCase().includes(query)
@@ -502,16 +652,8 @@ export default function GmailInbox({ className }: GmailInboxProps) {
       }
     }
 
-    // Apply status filter
-    switch (filterStatus) {
-      case 'unread':
-        return thread.unread_count > 0
-      case 'starred':
-        // For now, we don't have starred status in the backend
-        return false
-      default:
-        return true
-    }
+    // Status filtering is now done server-side, so we don't filter here
+    return true
   })
 
   const getParticipantDisplay = (thread: EmailThread) => {
@@ -588,9 +730,9 @@ export default function GmailInbox({ className }: GmailInboxProps) {
 
   return (
     <div className={`h-full flex flex-col ${className}`}>
-      {/* Header with Account Selection and Filters */}
+      {/* Header with Account Selection and Filters - Single Row */}
       <div className="p-4 border-b bg-white dark:bg-gray-900 flex-shrink-0">
-        <div className="flex items-center space-x-4 mb-3">
+        <div className="flex items-center gap-3">
           {/* Account Selection */}
           {accounts.length > 0 && (
             <Select 
@@ -600,7 +742,7 @@ export default function GmailInbox({ className }: GmailInboxProps) {
                 setSelectedAccount(account || null)
               }}
             >
-              <SelectTrigger className="w-64">
+              <SelectTrigger className="w-52">
                 <Mail className="w-4 h-4 mr-2" />
                 <SelectValue placeholder="Select email account" />
               </SelectTrigger>
@@ -614,6 +756,19 @@ export default function GmailInbox({ className }: GmailInboxProps) {
             </Select>
           )}
 
+          {/* Search Bar */}
+          <div className="flex-1 max-w-md">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
+              <Input
+                placeholder="Search email conversations..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-10 h-9"
+              />
+            </div>
+          </div>
+
           {/* Compose Button */}
           <Button 
             size="sm"
@@ -624,52 +779,9 @@ export default function GmailInbox({ className }: GmailInboxProps) {
             Compose
           </Button>
 
-          {/* Sync Button */}
-          <Button 
-            variant="outline" 
-            size="sm"
-            onClick={handleSync}
-            disabled={!selectedAccount || syncing}
-          >
-            <RefreshCw className={`w-4 h-4 mr-2 ${syncing ? 'animate-spin' : ''}`} />
-            {syncing ? 'Syncing...' : 'Sync'}
-          </Button>
-
-          {/* Stats */}
-          {selectedAccount && (
-            <div className="flex items-center gap-2 text-sm text-gray-600">
-              <Badge variant="outline">
-                Page {currentPage} of {totalPages || 1}
-              </Badge>
-              <Badge variant="outline">
-                {total || threads.length} total
-              </Badge>
-              {threads.filter(t => t.unread_count > 0).length > 0 && (
-                <Badge variant="destructive">
-                  {threads.filter(t => t.unread_count > 0).length} unread
-                </Badge>
-              )}
-            </div>
-          )}
-        </div>
-
-        {/* Search and Filters */}
-        <div className="flex items-center space-x-4">
-          <div className="flex-1">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
-              <Input
-                placeholder="Search email conversations..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-10"
-              />
-            </div>
-          </div>
-          
           {/* Folder Selection */}
           <Select value={selectedFolder} onValueChange={setSelectedFolder}>
-            <SelectTrigger className="w-40">
+            <SelectTrigger className="w-32">
               <Folder className="w-4 h-4 mr-2" />
               <SelectValue placeholder="Folder" />
             </SelectTrigger>
@@ -737,8 +849,9 @@ export default function GmailInbox({ className }: GmailInboxProps) {
             </SelectContent>
           </Select>
 
+          {/* Filter Status */}
           <Select value={filterStatus} onValueChange={(value: any) => setFilterStatus(value)}>
-            <SelectTrigger className="w-32">
+            <SelectTrigger className="w-28">
               <SelectValue placeholder="Filter" />
             </SelectTrigger>
             <SelectContent>
@@ -747,6 +860,16 @@ export default function GmailInbox({ className }: GmailInboxProps) {
               <SelectItem value="starred">Starred</SelectItem>
             </SelectContent>
           </Select>
+
+          {/* Sync Button */}
+          <Button 
+            variant="outline" 
+            size="sm"
+            onClick={handleSync}
+            disabled={!selectedAccount || syncing}
+          >
+            <RefreshCw className={`w-4 h-4 ${syncing ? 'animate-spin' : ''}`} />
+          </Button>
         </div>
       </div>
 
@@ -776,8 +899,12 @@ export default function GmailInbox({ className }: GmailInboxProps) {
                   return (
                     <div
                       key={thread.id || `thread-${index}`}
-                      className={`cursor-pointer transition-colors border-b hover:bg-white dark:hover:bg-gray-800 ${
-                        isSelected ? 'bg-white dark:bg-gray-800 border-l-2 border-l-red-500' : ''
+                      className={`cursor-pointer transition-colors border-b relative ${
+                        isSelected 
+                          ? 'bg-white dark:bg-gray-800 border-l-2 border-l-red-500' 
+                          : thread.is_unread || thread.unread_count > 0
+                            ? 'bg-blue-50/70 hover:bg-blue-50 dark:bg-blue-900/10 dark:hover:bg-blue-900/20 border-l-2 border-l-blue-500'
+                            : 'hover:bg-white dark:hover:bg-gray-800'
                       } px-4 py-3`}
                       onClick={() => handleThreadSelect(thread)}
                     >
@@ -922,28 +1049,56 @@ export default function GmailInbox({ className }: GmailInboxProps) {
                           )}
                           </div>
                           
-                          {/* Timestamp on the right */}
-                          <div className="text-xs text-gray-500">
-                            {formatDistanceToNow(new Date(thread.last_message_at || thread.created_at || new Date()), { addSuffix: true })}
+                          {/* Right side - Mark as read/unread icon and timestamp */}
+                          <div className="flex items-center gap-2">
+                            {/* Mark as read/unread button */}
+                            <button
+                              onClick={(e) => {
+                                if (thread.is_unread || thread.unread_count > 0) {
+                                  handleMarkAsRead(thread, e)
+                                } else {
+                                  handleMarkAsUnread(thread, e)
+                                }
+                              }}
+                              className="p-1 hover:bg-gray-100 rounded transition-colors"
+                              title={thread.is_unread || thread.unread_count > 0 ? "Mark as read" : "Mark as unread"}
+                            >
+                              {thread.is_unread || thread.unread_count > 0 ? (
+                                <Mail className="w-4 h-4 text-blue-600" />
+                              ) : (
+                                <MailOpen className="w-4 h-4 text-gray-400" />
+                              )}
+                            </button>
+                            
+                            {/* Timestamp */}
+                            <div className="text-xs text-gray-500">
+                              {formatDistanceToNow(new Date(thread.last_message_at || thread.created_at || new Date()), { addSuffix: true })}
+                            </div>
                           </div>
                         </div>
                         
                         {/* Main content - Names, subject, preview */}
                         <div className="flex items-start justify-between">
                           <div className="flex items-start space-x-3 flex-1 min-w-0">
-                            {/* Avatar - Show group icon for multiple participants */}
-                            {participant.count > 2 ? (
-                              <div className="w-8 h-8 flex-shrink-0 bg-blue-100 rounded-full flex items-center justify-center">
-                                <Users className="w-4 h-4 text-blue-700" />
-                              </div>
-                            ) : (
-                              <SafeAvatar
-                                src=""
-                                fallbackText={participant.initial}
-                                className="w-8 h-8 flex-shrink-0"
-                                fallbackClassName="bg-red-100 text-red-700 text-xs"
-                              />
-                            )}
+                            {/* Avatar with unread indicator - Show group icon for multiple participants */}
+                            <div className="relative flex-shrink-0">
+                              {participant.count > 2 ? (
+                                <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center">
+                                  <Users className="w-4 h-4 text-blue-700" />
+                                </div>
+                              ) : (
+                                <SafeAvatar
+                                  src=""
+                                  fallbackText={participant.initial}
+                                  className="w-8 h-8"
+                                  fallbackClassName="bg-red-100 text-red-700 text-xs"
+                                />
+                              )}
+                              {/* Unread indicator dot */}
+                              {(thread.is_unread || thread.unread_count > 0) && (
+                                <div className="absolute -top-1 -right-1 w-3 h-3 bg-blue-600 rounded-full border-2 border-white" />
+                              )}
+                            </div>
                             
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center justify-between mb-1">
@@ -983,11 +1138,11 @@ export default function GmailInbox({ className }: GmailInboxProps) {
                 })}
                 
                 {/* Pagination Controls */}
-                {totalPages > 1 && (
+                {(currentPage > 1 || hasMorePages) && (
                   <div className="p-3 border-t bg-gray-50 dark:bg-gray-800">
                     <div className="flex items-center justify-between">
                       <div className="text-xs text-gray-600 dark:text-gray-400">
-                        Page {currentPage} of {totalPages} ({total} total)
+                        Page {currentPage} {threads.length > 0 && `(${threads.length} emails)`}
                       </div>
                       <div className="flex items-center gap-1">
                         <Button
@@ -1015,36 +1170,60 @@ export default function GmailInbox({ className }: GmailInboxProps) {
                           <ChevronLeft className="w-4 h-4" />
                         </Button>
                         
-                        {/* Page numbers */}
-                        {(() => {
-                          const pages = []
-                          const maxButtons = 5
-                          let startPage = Math.max(1, currentPage - Math.floor(maxButtons / 2))
-                          let endPage = Math.min(totalPages, startPage + maxButtons - 1)
-                          
-                          if (endPage - startPage < maxButtons - 1) {
-                            startPage = Math.max(1, endPage - maxButtons + 1)
-                          }
-                          
-                          for (let i = startPage; i <= endPage; i++) {
-                            pages.push(
+                        {/* Current page indicator - simpler for cursor pagination */}
+                        <div className="flex items-center gap-1">
+                          {/* Show a few recent page numbers for easy navigation */}
+                          {currentPage > 2 && (
+                            <>
                               <Button
-                                key={i}
-                                variant={i === currentPage ? "default" : "outline"}
+                                variant="outline"
                                 size="sm"
-                                onClick={() => {
-                                  console.log(`📧 Page ${i} button clicked`)
-                                  loadThreads(i)
-                                }}
+                                onClick={() => loadThreads(1)}
                                 disabled={loading}
                                 className="h-8 w-8 p-0"
                               >
-                                {i}
+                                1
                               </Button>
-                            )
-                          }
-                          return pages
-                        })()}
+                              <span className="px-1 text-gray-400">...</span>
+                            </>
+                          )}
+                          
+                          {currentPage > 1 && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => loadThreads(currentPage - 1)}
+                              disabled={loading}
+                              className="h-8 w-8 p-0"
+                            >
+                              {currentPage - 1}
+                            </Button>
+                          )}
+                          
+                          <Button
+                            variant="default"
+                            size="sm"
+                            disabled={true}
+                            className="h-8 w-10 p-0"
+                          >
+                            {currentPage}
+                          </Button>
+                          
+                          {hasMorePages && (
+                            <>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => loadThreads(currentPage + 1)}
+                                disabled={loading}
+                                className="h-8 w-8 p-0"
+                              >
+                                {currentPage + 1}
+                              </Button>
+                              <span className="px-1 text-gray-400">...</span>
+                            </>
+                          )}
+                        </div>
                         
                         <Button
                           variant="outline"
@@ -1053,22 +1232,10 @@ export default function GmailInbox({ className }: GmailInboxProps) {
                             console.log(`📧 Next page button clicked (going to page ${currentPage + 1})`)
                             loadThreads(currentPage + 1)
                           }}
-                          disabled={currentPage === totalPages || loading}
+                          disabled={!hasMorePages || loading}
                           className="h-8 w-8 p-0"
                         >
                           <ChevronRight className="w-4 h-4" />
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => {
-                            console.log(`📧 Last page button clicked (going to page ${totalPages})`)
-                            loadThreads(totalPages)
-                          }}
-                          disabled={currentPage === totalPages || loading}
-                          className="h-8 w-8 p-0"
-                        >
-                          <ChevronsRight className="w-4 h-4" />
                         </Button>
                       </div>
                     </div>
@@ -1437,21 +1604,115 @@ export default function GmailInbox({ className }: GmailInboxProps) {
             
             <div className="grid gap-2">
               <Label htmlFor="body">Message</Label>
-              <Textarea
-                id="body"
-                placeholder="Type your message here..."
-                value={composeBody}
-                onChange={(e) => setComposeBody(e.target.value)}
-                rows={12}
-                disabled={sending}
-              />
+              <div className="space-y-2">
+                {/* Rich text editor toolbar */}
+                <div className="flex items-center gap-1 p-2 border rounded-t-md bg-gray-50 dark:bg-gray-800">
+                  <button
+                    type="button"
+                    onClick={() => document.execCommand('bold', false)}
+                    className="p-1.5 hover:bg-gray-200 dark:hover:bg-gray-700 rounded"
+                    title="Bold"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 4h8a4 4 0 014 4 4 4 0 01-4 4H6z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 12h10a4 4 0 014 4 4 4 0 01-4 4H6z" />
+                    </svg>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => document.execCommand('italic', false)}
+                    className="p-1.5 hover:bg-gray-200 dark:hover:bg-gray-700 rounded"
+                    title="Italic"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 4h4M14 4l-4 16m-2 0h4" />
+                    </svg>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => document.execCommand('underline', false)}
+                    className="p-1.5 hover:bg-gray-200 dark:hover:bg-gray-700 rounded"
+                    title="Underline"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 4v7a5 5 0 0010 0V4M5 21h14" />
+                    </svg>
+                  </button>
+                  <div className="w-px h-6 bg-gray-300 dark:bg-gray-600 mx-1" />
+                  <button
+                    type="button"
+                    onClick={() => document.execCommand('insertUnorderedList', false)}
+                    className="p-1.5 hover:bg-gray-200 dark:hover:bg-gray-700 rounded"
+                    title="Bullet List"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+                    </svg>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => document.execCommand('insertOrderedList', false)}
+                    className="p-1.5 hover:bg-gray-200 dark:hover:bg-gray-700 rounded"
+                    title="Numbered List"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h16" />
+                    </svg>
+                  </button>
+                  <div className="w-px h-6 bg-gray-300 dark:bg-gray-600 mx-1" />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const url = prompt('Enter URL:')
+                      if (url) document.execCommand('createLink', false, url)
+                    }}
+                    className="p-1.5 hover:bg-gray-200 dark:hover:bg-gray-700 rounded"
+                    title="Insert Link"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+                    </svg>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => document.execCommand('removeFormat', false)}
+                    className="p-1.5 hover:bg-gray-200 dark:hover:bg-gray-700 rounded ml-auto"
+                    title="Clear Formatting"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 14l9-5-9-5-9 5 9 5z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17.5l3 3m0 0l3-3m-3 3v-6" />
+                    </svg>
+                  </button>
+                </div>
+                {/* Rich text editor content area */}
+                <div
+                  key={editorKey}
+                  ref={editorRef}
+                  id="body"
+                  contentEditable={!sending}
+                  className="min-h-[300px] p-3 border rounded-b-md bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 overflow-y-auto"
+                  onInput={(e) => {
+                    // Update state to keep track of content
+                    setComposeBody(e.currentTarget.innerHTML)
+                  }}
+                  style={{ minHeight: '300px', maxHeight: '500px' }}
+                  suppressContentEditableWarning={true}
+                />
+              </div>
             </div>
           </div>
           
           <DialogFooter>
             <Button
               variant="outline"
-              onClick={() => setComposeOpen(false)}
+              onClick={() => {
+                setComposeOpen(false)
+                // Clear editor content
+                if (editorRef.current) {
+                  editorRef.current.innerHTML = ''
+                }
+              }}
               disabled={sending}
             >
               Cancel

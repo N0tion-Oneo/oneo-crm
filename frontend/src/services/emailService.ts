@@ -128,6 +128,7 @@ class EmailService {
     page?: number  // New: page-based pagination
     search?: string
     refresh?: boolean
+    filter?: string  // New: filter by status (all, unread, starred)
   }): Promise<{
     success: boolean
     conversations: EmailThread[]
@@ -156,6 +157,7 @@ class EmailService {
       }
       if (options?.search) params.search = options.search
       if (options?.refresh) params.refresh = options.refresh
+      if (options?.filter) params.filter = options.filter
 
       const response = await api.get('/api/v1/communications/email/inbox/', { params })
       return response.data
@@ -493,6 +495,82 @@ class EmailService {
       return {
         success: false,
         error: error.response?.data?.error || 'Failed to link conversation'
+      }
+    }
+  }
+
+  // Mark emails as read
+  async markEmailsAsRead(accountId: string, emailIds: string[]): Promise<any> {
+    try {
+      const response = await api.post('/api/v1/communications/email/mark-read/', {
+        account_id: accountId,
+        email_ids: emailIds
+      })
+      return response.data
+    } catch (error) {
+      console.error('Failed to mark emails as read:', error)
+      throw error
+    }
+  }
+
+  // Mark emails as unread
+  async markEmailsAsUnread(accountId: string, emailIds: string[]): Promise<any> {
+    try {
+      const response = await api.post('/api/v1/communications/email/mark-unread/', {
+        account_id: accountId,
+        email_ids: emailIds
+      })
+      return response.data
+    } catch (error) {
+      console.error('Failed to mark emails as unread:', error)
+      throw error
+    }
+  }
+
+  // Mark entire thread as read
+  async markThreadAsRead(accountId: string, threadId: string): Promise<any> {
+    try {
+      const response = await api.post('/api/v1/communications/email/thread/mark-read/', {
+        account_id: accountId,
+        thread_id: threadId
+      })
+      return response.data
+    } catch (error) {
+      console.error('Failed to mark thread as read:', error)
+      throw error
+    }
+  }
+
+  // Mark entire thread as unread
+  async markThreadAsUnread(accountId: string, threadId: string): Promise<any> {
+    try {
+      const response = await api.post('/api/v1/communications/email/thread/mark-unread/', {
+        account_id: accountId,
+        thread_id: threadId
+      })
+      return response.data
+    } catch (error) {
+      console.error('Failed to mark thread as unread:', error)
+      throw error
+    }
+  }
+
+  // Delete email or thread (moves to trash in UniPile)
+  async deleteEmail(accountId: string, emailId: string): Promise<{
+    success: boolean
+    message?: string
+    error?: string
+  }> {
+    try {
+      const response = await api.delete(`/api/v1/communications/email/emails/${emailId}/delete/`, {
+        params: { account_id: accountId }
+      })
+      return response.data
+    } catch (error: any) {
+      console.error('Failed to delete email:', error)
+      return {
+        success: false,
+        error: error.response?.data?.error || error.message || 'Failed to delete email'
       }
     }
   }

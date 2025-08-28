@@ -883,7 +883,7 @@ def send_email(request):
     body = request.data.get('body', '')
     cc = request.data.get('cc', [])
     bcc = request.data.get('bcc', [])
-    reply_to = request.data.get('reply_to')
+    reply_to = request.data.get('reply_to_message_id') or request.data.get('reply_to')  # Support both field names
     
     if not account_id or not to or not body:
         return Response({
@@ -909,14 +909,26 @@ def send_email(request):
         # We'll initialize the service without a channel for now
         service = EmailService(account_identifier=connection.account_name)
         
+        # Format recipients as UniPile expects (list of dicts with identifier)
+        def format_recipients(emails):
+            if not emails:
+                return None
+            if isinstance(emails, str):
+                emails = [emails]
+            return [{'identifier': email.strip()} for email in emails if email.strip()]
+        
+        to_formatted = format_recipients(to)
+        cc_formatted = format_recipients(cc)
+        bcc_formatted = format_recipients(bcc)
+        
         # Send email
         result = async_to_sync(service.send_email)(
             account_id=account_id,
-            to=to,
+            to=to_formatted,
             subject=subject,
             body=body,
-            cc=cc,
-            bcc=bcc,
+            cc=cc_formatted,
+            bcc=bcc_formatted,
             reply_to=reply_to
         )
         
@@ -1402,3 +1414,84 @@ def _trigger_background_sync(connection, channel):
             
     except Exception as e:
         logger.error(f"Failed to trigger background sync: {e}")
+
+
+@api_view(['DELETE'])
+@permission_classes([IsAuthenticated])
+def delete_email(request, email_id):
+    """
+    Delete an email (move to trash in UniPile)
+    
+    Args:
+        email_id: The email or thread ID to delete
+        
+    Query params:
+        account_id: The UniPile account ID (required)
+    """
+    try:
+        account_id = request.GET.get('account_id')
+        
+        if not account_id:
+            return Response({
+                'success': False,
+                'error': 'account_id parameter is required'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Verify user has access to this account
+        tenant = getattr(request, 'tenant', None)
+        if tenant:
+            from django_tenants.utils import schema_context
+            with schema_context(tenant.schema_name):
+                connection = UserChannelConnection.objects.filter(
+                    user=request.user,
+                    unipile_account_id=account_id,
+                    auth_status='authenticated'
+                ).first()
+        else:
+            connection = UserChannelConnection.objects.filter(
+                user=request.user,
+                unipile_account_id=account_id,
+                auth_status='authenticated'
+            ).first()
+        
+        if not connection:
+            return Response({
+                'success': False,
+                'error': 'You do not have access to this email account'
+            }, status=status.HTTP_403_FORBIDDEN)
+        
+        # Delete the email using UniPile API
+        from communications.unipile_sdk import unipile_service
+        client = unipile_service.get_client()
+        
+        try:
+            # Use DELETE method to move to trash
+            # Pass account_id as query parameter
+            params = {'account_id': account_id}
+            response = async_to_sync(client._make_request)(
+                'DELETE', 
+                f'emails/{email_id}',
+                params=params
+            )
+            
+            logger.info(f"Successfully deleted email {email_id} for account {account_id}")
+            
+            return Response({
+                'success': True,
+                'message': 'Email moved to trash',
+                'email_id': email_id
+            })
+            
+        except Exception as api_error:
+            logger.error(f"Failed to delete email {email_id}: {api_error}")
+            return Response({
+                'success': False,
+                'error': f'Failed to delete email: {str(api_error)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
+    except Exception as e:
+        logger.error(f"Error in delete_email endpoint: {e}")
+        return Response({
+            'success': False,
+            'error': str(e)
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

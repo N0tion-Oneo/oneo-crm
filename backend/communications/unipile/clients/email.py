@@ -89,12 +89,15 @@ class UnipileEmailClient:
             
             for email_id in email_ids:
                 # Update each email individually using PUT /emails/{email_id}
+                # According to UniPile docs, use 'unread: false' to mark as read
                 data = {
-                    'is_read': True  # Mark as read
+                    'unread': False  # Mark as read (UniPile uses 'unread' field, not 'is_read')
                 }
                 
                 try:
-                    response = await self.client._make_request('PUT', f'emails/{email_id}', data=data)
+                    # Include account_id as query parameter as per documentation
+                    params = {'account_id': account_id} if account_id else None
+                    response = await self.client._make_request('PUT', f'emails/{email_id}', data=data, params=params)
                     results.append({
                         'email_id': email_id,
                         'success': True,

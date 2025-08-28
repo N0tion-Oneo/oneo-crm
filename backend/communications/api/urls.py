@@ -106,6 +106,12 @@ from communications.channels.email.inbox_views import (
     get_email_inbox,
     link_email_conversation
 )
+from communications.channels.email.read_status_views import (
+    mark_email_as_read,
+    mark_email_as_unread,
+    mark_thread_as_read,
+    mark_thread_as_unread
+)
 
 # Import Email views from channels directory
 from communications.channels.email.api_views import (
@@ -121,7 +127,8 @@ from communications.channels.email.api_views import (
     get_merged_email_threads,  # New: Merged stored + live data
     link_thread_to_contact,  # New: Link thread to existing contact
     create_contact_from_thread,  # New: Create contact from email
-    sync_thread_history  # New: Sync historical messages for linked thread
+    sync_thread_history,  # New: Sync historical messages for linked thread
+    delete_email  # New: Delete email endpoint
 )
 
 
@@ -253,6 +260,12 @@ urlpatterns = [
     path('email/inbox/offset/', get_email_inbox, name='email-inbox-offset'),  # OLD: Offset-based (slow)
     path('email/conversations/<str:thread_id>/link/', link_email_conversation, name='email-link-conversation'),  # NEW: Manual linking
     path('email/accounts/', get_email_accounts, name='email-accounts'),
+    
+    # Email read status management
+    path('email/mark-read/', mark_email_as_read, name='email-mark-read'),
+    path('email/mark-unread/', mark_email_as_unread, name='email-mark-unread'),
+    path('email/thread/mark-read/', mark_thread_as_read, name='email-thread-mark-read'),
+    path('email/thread/mark-unread/', mark_thread_as_unread, name='email-thread-mark-unread'),
     path('email/threads/', get_email_threads, name='email-threads'),
     path('email/threads/live/', get_email_live_threads, name='email-live-threads'),  # New: Live data
     path('email/threads/merged/', get_merged_email_threads, name='email-merged-threads'),  # New: Merged data
@@ -262,6 +275,7 @@ urlpatterns = [
     path('email/threads/<str:thread_id>/sync-history/', sync_thread_history, name='email-sync-history'),
     path('email/send/', send_email, name='email-send'),
     path('email/emails/<str:email_id>/', update_email, name='email-update'),
+    path('email/emails/<str:email_id>/delete/', delete_email, name='email-delete'),
     path('email/folders/', get_email_folders, name='email-folders'),
     path('email/sync/', sync_email_data, name='email-sync'),
     path('email/sync/jobs/active/', get_active_email_sync_jobs, name='email-active-sync-jobs'),

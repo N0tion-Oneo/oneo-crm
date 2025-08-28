@@ -396,7 +396,9 @@ async def fetch_email_inbox(
                 },
                 'can_link': not stored and not should_store,  # Can link if not stored and no matches
                 'message_count': len(thread_messages),
-                'unread_count': sum(1 for m in thread_messages if not m.get('is_read', False)),
+                # UniPile uses read_date field - if null/empty, email is unread
+                'unread_count': sum(1 for m in thread_messages if not m.get('read_date')),
+                'is_unread': not latest_message.get('read_date'),  # Thread is unread if latest message is unread
                 'last_message_at': latest_message.get('date'),
                 'created_at': thread_messages[-1].get('date') if thread_messages else None,
                 'channel_specific': {
@@ -404,7 +406,8 @@ async def fetch_email_inbox(
                     'labels': latest_message.get('labels', []),
                     'has_attachments': any(m.get('attachments', []) for m in thread_messages),
                     'account_email': connection.account_name,
-                    'account_id': connection.unipile_account_id
+                    'account_id': connection.unipile_account_id,
+                    'read_date': latest_message.get('read_date')  # Include read_date for frontend
                 }
             }
             

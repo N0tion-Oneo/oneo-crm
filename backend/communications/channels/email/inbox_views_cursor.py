@@ -31,6 +31,7 @@ def get_email_inbox_cursor(request):
         page = int(request.GET.get('page', 1))  # Page number instead of offset
         search_query = request.GET.get('search', '')
         refresh = request.GET.get('refresh', 'false').lower() == 'true'
+        filter_status = request.GET.get('filter', 'all')  # all, unread, starred
         
         print(f"📧 CURSOR INBOX CALLED: page={page}, limit={limit}, folder={folder}, account_id={account_id}")
         logger.info(f"📧 Cursor inbox request: page={page}, limit={limit}, folder={folder}, account_id={account_id}")
@@ -147,14 +148,15 @@ def get_email_inbox_cursor(request):
         cursor = CursorCacheManager.get_cursor(connection.unipile_account_id, folder, page)
         
         # Fetch emails for this page
-        logger.info(f"Calling fetch_page_with_cursor with cursor={cursor[:20] if cursor else 'None'}, account={connection.unipile_account_id}")
+        logger.info(f"Calling fetch_page_with_cursor with cursor={cursor[:20] if cursor else 'None'}, account={connection.unipile_account_id}, filter={filter_status}")
         result = async_to_sync(fetch_page_with_cursor)(
             connection=connection,
             tenant=tenant,
             folder=folder,
             limit=limit,
             cursor=cursor,
-            search=search_query
+            search=search_query,
+            filter_status=filter_status
         )
         logger.info(f"fetch_page_with_cursor returned {len(result.get('conversations', []))} conversations")
         
@@ -168,16 +170,15 @@ def get_email_inbox_cursor(request):
             )
             logger.info(f"💾 Saved cursor for page {page} to fetch page {page + 1}")
         
-        # Calculate total pages (estimate)
-        total_pages = page + (1 if result.get('has_more') else 0)
-        
+        # With cursor pagination, we don't know the exact total pages
+        # We can only know if there are more pages
+        # Don't send misleading total_pages
         logger.info(f"📧 Returning {len(result['conversations'])} threads for page {page}")
         
         return Response({
             'success': True,
             'conversations': result['conversations'],
             'page': page,
-            'total_pages': total_pages,
             'has_more': result.get('has_more', False),
             'connections': [{
                 'id': str(conn.id),
@@ -203,7 +204,8 @@ async def fetch_page_with_cursor(
     folder: str = 'INBOX',
     limit: int = 20,
     cursor: str = None,
-    search: str = ''
+    search: str = '',
+    filter_status: str = 'all'
 ) -> Dict[str, Any]:
     """
     Fetch a single page of emails using cursor
@@ -218,20 +220,24 @@ async def fetch_page_with_cursor(
         storage_decider = ConversationStorageDecider(tenant)
         
         logger.info(f"Fetching page with cursor: {cursor[:20] if cursor else 'None'}...")
-        logger.info(f"UniPile request params: account_id={connection.unipile_account_id}, folder={folder}, limit={limit + 1}")
+        logger.info(f"UniPile request params: account_id={connection.unipile_account_id}, folder={folder}, filter={filter_status}")
         
-        # Fetch exactly what we need - one page
+        # When filtering by unread, we need to fetch more emails to ensure we get enough unread ones
+        # UniPile doesn't support unread filtering directly, so we fetch more and filter locally
+        fetch_limit = limit * 3 if filter_status == 'unread' else limit + 1
+        
         try:
             logger.info(f"📧 Calling email_client.get_emails with params:")
             logger.info(f"  account_id={connection.unipile_account_id}")
             logger.info(f"  folder={folder}")
-            logger.info(f"  limit={limit + 1}")
+            logger.info(f"  limit={fetch_limit}")
             logger.info(f"  cursor={cursor[:20] if cursor else None}")
+            logger.info(f"  filter_status={filter_status}")
             
             result = await email_client.get_emails(
                 account_id=connection.unipile_account_id,
                 folder=folder,
-                limit=limit + 1,  # Fetch one extra to detect if there are more
+                limit=fetch_limit,  # Fetch more for filtering
                 cursor=cursor
             )
             
@@ -261,8 +267,20 @@ async def fetch_page_with_cursor(
         messages = result.get('items', [])
         next_cursor = result.get('cursor')
         
-        logger.info(f"📧 Raw result has {len(result.get('items', []))} items")
-        logger.info(f"📧 Messages extracted: {len(messages)} messages")
+        logger.info(f"📧 Raw result has {len(result.get('items', []))} items before filtering")
+        
+        # Apply filter based on filter_status
+        if filter_status == 'unread':
+            # Filter to only unread messages (read_date is null/empty)
+            messages = [msg for msg in messages if not msg.get('read_date')]
+            logger.info(f"📧 After unread filter: {len(messages)} unread messages")
+        elif filter_status == 'starred':
+            # Filter to starred messages (if supported by UniPile)
+            # For now, we don't have starred support, so return empty
+            messages = []
+            logger.info(f"📧 Starred filter not yet supported")
+        
+        logger.info(f"📧 Messages after filtering: {len(messages)} messages")
         logger.info(f"📧 Next cursor: {next_cursor[:20] if next_cursor else 'None'}...")
         
         # Log first message if available
@@ -280,9 +298,18 @@ async def fetch_page_with_cursor(
             }
         
         # Check if we have more pages
-        has_more = len(messages) > limit
-        if has_more:
-            messages = messages[:limit]  # Trim to requested limit
+        # For filtered results, we need to be more careful about has_more
+        if filter_status == 'unread':
+            # For unread filter, has_more if we have at least the requested limit
+            # OR if there's a next cursor (meaning more emails to check)
+            has_more = len(messages) >= limit or bool(next_cursor)
+            if len(messages) > limit:
+                messages = messages[:limit]  # Trim to requested limit
+        else:
+            # Normal pagination
+            has_more = len(messages) > limit
+            if has_more:
+                messages = messages[:limit]  # Trim to requested limit
         
         # Group messages by thread
         thread_groups = {}
@@ -368,6 +395,9 @@ async def fetch_page_with_cursor(
             participants_data, storage_reason = await sync_to_async(get_participant_data)()
             
             # Build conversation object
+            # UniPile uses read_date field - if null/empty, email is unread
+            unread_count = sum(1 for m in thread_messages if not m.get('read_date'))
+            
             conversation = {
                 'id': thread_id,
                 'external_thread_id': thread_id,
@@ -378,13 +408,15 @@ async def fetch_page_with_cursor(
                 'storage_reason': storage_reason,
                 'can_link': not should_store and not stored,
                 'message_count': len(thread_messages),
-                'unread_count': sum(1 for m in thread_messages if not m.get('is_read', False)),
+                'unread_count': unread_count,
+                'is_unread': not latest_message.get('read_date'),  # Thread is unread if latest message is unread
                 'last_message_at': latest_message.get('date'),
                 'created_at': thread_messages[-1].get('date') if thread_messages else None,
                 'channel_specific': {
                     'folder': folder,
                     'account_email': connection.account_name,
-                    'account_id': connection.unipile_account_id
+                    'account_id': connection.unipile_account_id,
+                    'read_date': latest_message.get('read_date')  # Include read_date for frontend
                 }
             }
             

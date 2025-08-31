@@ -30,9 +30,23 @@ class UnipileEmailClient:
         folder: str = "INBOX",
         limit: int = 50,
         cursor: Optional[str] = None,
-        unread_only: bool = False
+        unread_only: bool = False,
+        any_email: Optional[str] = None,
+        to: Optional[str] = None,
+        from_email: Optional[str] = None
     ) -> Dict[str, Any]:
-        """Get emails from specific folder"""
+        """Get emails from specific folder
+        
+        Args:
+            account_id: UniPile account ID
+            folder: Folder to fetch from (default INBOX)
+            limit: Number of emails to return
+            cursor: Pagination cursor
+            unread_only: Only return unread emails
+            any_email: Filter for emails to/from specific address(es)
+            to: Filter for emails to specific address
+            from_email: Filter for emails from specific address
+        """
         try:
             params = {
                 'account_id': account_id,
@@ -42,6 +56,12 @@ class UnipileEmailClient:
             }
             if cursor:
                 params['cursor'] = cursor
+            if any_email:
+                params['any_email'] = any_email
+            if to:
+                params['to'] = to
+            if from_email:
+                params['from'] = from_email
                 
             response = await self.client._make_request('GET', 'emails', params=params)
             return response

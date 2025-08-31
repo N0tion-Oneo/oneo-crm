@@ -622,7 +622,7 @@ class UnipileWebhookHandler:
     def create_simple_message_record(self, connection: UserChannelConnection, conversation: Conversation, 
                                    external_message_id: str, content: str, direction: str, 
                                    phone_number: str, contact_name: str, raw_webhook_data: Dict[str, Any],
-                                   sender_attendee: 'ChatAttendee' = None) -> tuple[Message, bool]:
+                                   sender_attendee: 'Participant' = None) -> tuple[Message, bool]:
         """Create message record with simple raw data storage approach and optional sender attendee"""
         from django.db import transaction
         

@@ -48,12 +48,52 @@ app.conf.beat_schedule = {
     # },
     
     # Generate daily communication analytics
-    # DISABLED: Not implemented yet
-    # 'communications-daily-analytics': {
-    #     'task': 'communications.tasks.generate_daily_analytics',
-    #     'schedule': 60 * 60 * 24,  # Daily
-    #     'kwargs': {'date': None}  # Use current date
-    # },
+    'communications-daily-analytics': {
+        'task': 'communications.tasks.field_maintenance.generate_daily_analytics',
+        'schedule': 60 * 60 * 24,  # Daily at midnight
+    },
+    
+    # Update participant statistics
+    'update-participant-statistics': {
+        'task': 'communications.tasks.field_maintenance.update_participant_statistics',
+        'schedule': 60 * 60 * 6,  # Every 6 hours
+    },
+    
+    # Update channel statistics
+    'update-channel-statistics': {
+        'task': 'communications.tasks.field_maintenance.update_channel_statistics',
+        'schedule': 60 * 60 * 4,  # Every 4 hours
+    },
+    
+    # Detect hot conversations
+    'detect-hot-conversations': {
+        'task': 'communications.tasks.field_maintenance.detect_hot_conversations',
+        'schedule': 60 * 60,  # Every hour
+    },
+    
+    # Cleanup expired tokens
+    'cleanup-expired-tokens': {
+        'task': 'communications.tasks.field_maintenance.cleanup_expired_tokens',
+        'schedule': 60 * 60 * 12,  # Every 12 hours
+    },
+    
+    # Process scheduled record syncs
+    'process-scheduled-syncs': {
+        'task': 'communications.tasks.field_maintenance.process_scheduled_syncs',
+        'schedule': 60 * 60,  # Every hour
+    },
+    
+    # Verify communication links
+    'verify-communication-links': {
+        'task': 'communications.tasks.field_maintenance.verify_communication_links',
+        'schedule': 60 * 60 * 24,  # Daily
+    },
+    
+    # Update conversation types
+    'update-conversation-types': {
+        'task': 'communications.tasks.field_maintenance.update_conversation_types',
+        'schedule': 60 * 60 * 12,  # Every 12 hours
+    },
     
     # Automatic contact resolution for unconnected conversations
     # DISABLED: Not implemented yet, causes unnecessary processing
@@ -92,6 +132,7 @@ app.conf.update(
     worker_hijack_root_logger=False,
     worker_prefetch_multiplier=1,
     task_acks_late=True,
+    task_reject_on_worker_lost=True,  # Reject unacked tasks if worker crashes
     worker_max_tasks_per_child=50,
     
     # Task routing and limits
@@ -133,10 +174,24 @@ app.conf.update(
         'communications.tasks_background_sync.sync_account_comprehensive_background': {'queue': 'background_sync'},
         'communications.tasks_background_sync.sync_chat_specific_background': {'queue': 'background_sync'},
         
+        # Email sync tasks
+        'communications.channels.email.sync.run_comprehensive': {'queue': 'background_sync'},
+        'communications.channels.email.sync.run_incremental': {'queue': 'background_sync'},
+        'communications.channels.email.sync.sync_single_thread': {'queue': 'background_sync'},
+        'communications.channels.email.sync.sync_folders': {'queue': 'background_sync'},
+        'communications.channels.email.sync.cleanup_old_emails': {'queue': 'maintenance'},
+        
         # Contact resolution tasks
         'communications.tasks.resolve_unconnected_conversations_task': {'queue': 'contact_resolution'},
         'communications.tasks.resolve_conversation_contact_task': {'queue': 'contact_resolution'},
         'communications.tasks.periodic_contact_resolution_task': {'queue': 'maintenance'},
+        
+        # Record-level communication sync tasks
+        'communications.record_communications.tasks.sync_tasks.sync_record_communications': {'queue': 'background_sync'},
+        'communications.record_communications.tasks.sync_tasks.process_webhook_message_task': {'queue': 'background_sync'},
+        'communications.record_communications.tasks.sync_tasks.sync_all_records_for_pipeline': {'queue': 'background_sync'},
+        'communications.record_communications.tasks.sync_tasks.cleanup_old_sync_jobs': {'queue': 'maintenance'},
+        'communications.record_communications.tasks.sync_tasks.check_stale_profiles': {'queue': 'maintenance'},
     },
     
     # Worker configuration

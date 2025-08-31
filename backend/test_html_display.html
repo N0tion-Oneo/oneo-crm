@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Email HTML</title>
+    <style>
+        .email-container {
+            max-width: 800px;
+            margin: 20px auto;
+            border: 1px solid #ccc;
+            padding: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="email-container">
+        <h2>Test Email with Images</h2>
+        
+        <h3>1. Direct HTTP Image (tracking pixel):</h3>
+        <img width="1" height="1" style="width:.0138in;height:.0138in" src="https://gmopn.com/api/v1/track/email/view/61af0ce1c52a798eae21de6a/1756466662350/pixel.gif">
+        <p>↑ Should see a 1x1 pixel above</p>
+        
+        <h3>2. Larger test image:</h3>
+        <img src="https://via.placeholder.com/150" alt="Test Image" style="max-width:100%; height:auto;">
+        <p>↑ Should see a 150x150 placeholder image above</p>
+        
+        <h3>3. CID Image (won't load):</h3>
+        <img src="cid:image-58150-1498370@za01.rocketseed.cloud" style="max-width:100%; height:auto;">
+        <p>↑ CID image won't load without backend processing</p>
+    </div>
+</body>
+</html>

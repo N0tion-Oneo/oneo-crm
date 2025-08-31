@@ -9,7 +9,8 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from asgiref.sync import async_to_sync
 
-from ..message_sync import message_sync_service
+# from ..message_sync import message_sync_service  # Removed - use record sync instead
+message_sync_service = None  # Stub for removed service
 from ..models import UserChannelConnection
 
 logger = logging.getLogger(__name__)
@@ -238,8 +239,6 @@ async def _process_webhook_message(
     Process a single message from webhook data
     """
     try:
-        from ..message_sync import message_sync_service
-        
         # Get or create channel
         channel = await message_sync_service._get_or_create_channel(connection)
         

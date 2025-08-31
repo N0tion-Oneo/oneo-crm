@@ -670,9 +670,14 @@ def download_attachment(request, message_id, attachment_id):
                 for i, att in enumerate(message.metadata['attachments']):
                     # Check both 'id' and 'attachment_id' fields for compatibility
                     att_id = att.get('id') or att.get('attachment_id')
-                    logger.info(f"📥 Processed attachment {i}: id={att_id}, keys={list(att.keys())}")
-                    if att_id == attachment_id:
+                    # ALSO check CID field for CID-based lookups
+                    att_cid = att.get('cid')
+                    logger.info(f"📥 Processed attachment {i}: id={att_id}, cid={att_cid}, keys={list(att.keys())}")
+                    
+                    # Match by ID or CID
+                    if att_id == attachment_id or (att_cid and att_cid == attachment_id):
                         attachment_metadata = att
+                        logger.info(f"📥 Matched attachment by {'CID' if att_cid == attachment_id else 'ID'}")
                         
                         # Check if this is a locally stored attachment (from our API upload)
                         if 'storage_path' in att:
@@ -723,9 +728,14 @@ def download_attachment(request, message_id, attachment_id):
                         else:
                             # Try to find a UniPile ID in the processed attachment
                             # The 'id' field should contain the actual UniPile attachment ID
+                            # When matching by CID, we need to use the actual attachment ID, not the CID
                             unipile_attachment_id = att.get('id') or att.get('attachment_id') or att.get('unipile_id')
                             logger.info(f"📥 Using processed attachment ID for UniPile: {unipile_attachment_id}")
                             logger.info(f"📥 Full attachment metadata: {att}")
+                            
+                            # Update filename if we have a name
+                            if att.get('name'):
+                                attachment_metadata['filename'] = att['name']
                         break
             
             

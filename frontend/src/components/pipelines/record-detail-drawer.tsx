@@ -15,6 +15,7 @@ import { logValidationError, getCleanErrorMessage } from '@/utils/validation-hel
 import '@/lib/field-system'
 import { DuplicateIndicator } from '@/components/duplicates/duplicate-indicator'
 import { UnifiedRecordSharing } from './UnifiedRecordSharing'
+import { RecordCommunicationsPanel } from '@/components/communications/record/RecordCommunicationsPanel'
 import { 
   X, 
   Save, 
@@ -1213,15 +1214,12 @@ export function RecordDetailDrawer({
             </div>
           )}
 
-          {activeTab === 'communications' && (
-            <div className="p-6">
-              <div className="text-center py-8">
-                <MessageSquare className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-                <p className="text-gray-500 dark:text-gray-400">No communications yet</p>
-                <p className="text-sm text-gray-400 mt-2">
-                  Communication threads will appear here when integrated with UniPile
-                </p>
-              </div>
+          {activeTab === 'communications' && record && (
+            <div className="h-full">
+              <RecordCommunicationsPanel 
+                recordId={record.id}
+                pipelineId={pipeline.id}
+              />
             </div>
           )}
         </div>

@@ -13,3 +13,9 @@ class CommunicationsConfig(AppConfig):
         
         # Import account sync signals for automatic account data collection
         from .signals import account_sync
+        
+        # Import field population signals to ensure all fields are properly set
+        from .signals import field_population
+        
+        # Import record communication sync signals for automatic sync on identifier changes
+        from .record_communications import signals as record_comm_signals

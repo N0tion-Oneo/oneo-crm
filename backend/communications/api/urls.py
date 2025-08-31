@@ -49,13 +49,29 @@ from .draft_views import (
     cleanup_stale_drafts,
     DraftSettingsView
 )
-from .message_sync_views import (
-    sync_account_messages,
-    get_sync_status,
-    sync_all_messages,
-    webhook_message_received,
-    get_message_history
-)
+# Deprecated message sync views - create stubs
+from rest_framework.decorators import api_view
+from rest_framework.response import Response
+
+@api_view(['POST', 'GET'])
+def sync_account_messages(request, connection_id=None):
+    return Response({'error': 'Deprecated - use record sync instead'}, status=501)
+
+@api_view(['GET'])
+def get_sync_status(request, connection_id=None):
+    return Response({'error': 'Deprecated - use record sync instead'}, status=501)
+
+@api_view(['POST'])
+def sync_all_messages(request):
+    return Response({'error': 'Deprecated - use record sync instead'}, status=501)
+
+@api_view(['POST'])
+def webhook_message_received(request):
+    return Response({'error': 'Deprecated - use webhooks router instead'}, status=501)
+
+@api_view(['GET'])
+def get_message_history(request, connection_id):
+    return Response({'error': 'Deprecated - use record communications instead'}, status=501)
 from .local_inbox_views import (
     get_local_unified_inbox,
     get_local_conversation_messages,
@@ -97,15 +113,31 @@ from communications.channels.whatsapp.api_views import (
     get_chat_sync_status
 )
 
-# Import WhatsApp background sync views from channels directory
-from communications.channels.whatsapp.background_sync_views import (
-    start_background_sync,
-    start_chat_specific_sync,
-    get_sync_jobs,
-    get_sync_job_status,
-    cancel_sync_job,
-    get_active_sync_jobs
-)
+# Import WhatsApp background sync views from channels directory - DEPRECATED
+# Stub views for deprecated endpoints
+@api_view(['POST'])
+def start_background_sync(request):
+    return Response({'error': 'Deprecated - use record sync instead'}, status=501)
+
+@api_view(['POST'])
+def start_chat_specific_sync(request, chat_id):
+    return Response({'error': 'Deprecated - use record sync instead'}, status=501)
+
+@api_view(['GET'])
+def get_sync_jobs(request):
+    return Response({'error': 'Deprecated - use record sync instead'}, status=501)
+
+@api_view(['GET'])
+def get_sync_job_status(request, job_id):
+    return Response({'error': 'Deprecated - use record sync instead'}, status=501)
+
+@api_view(['POST'])
+def cancel_sync_job(request, job_id):
+    return Response({'error': 'Deprecated - use record sync instead'}, status=501)
+
+@api_view(['GET'])
+def get_active_sync_jobs(request):
+    return Response({'error': 'Deprecated - use record sync instead'}, status=501)
 
 # Import Email inbox views from channels directory
 from communications.channels.email.inbox_views_cursor import (
@@ -141,13 +173,26 @@ from communications.channels.email.api_views import (
 )
 
 
-# Import Email background sync views from channels directory
-from communications.channels.email.background_sync_views import (
-    start_email_background_sync,
-    start_thread_sync,
-    get_email_sync_jobs,
-    cancel_email_sync_job
-)
+# Import Email background sync views from channels directory - DEPRECATED
+# Stub views for deprecated email sync endpoints
+@api_view(['POST'])
+def start_email_background_sync(request):
+    return Response({'error': 'Deprecated - use record sync instead'}, status=501)
+
+@api_view(['POST'])
+def start_thread_sync(request, thread_id):
+    return Response({'error': 'Deprecated - use record sync instead'}, status=501)
+
+@api_view(['GET'])
+def get_email_sync_jobs(request):
+    return Response({'error': 'Deprecated - use record sync instead'}, status=501)
+
+@api_view(['POST'])
+def cancel_email_sync_job(request, job_id):
+    return Response({'error': 'Deprecated - use record sync instead'}, status=501)
+
+# Import record-centric communication views
+from communications.record_communications.api import RecordCommunicationsViewSet
 
 router = DefaultRouter()
 router.register(r'accounts', AccountConnectionViewSet, basename='account-connection')
@@ -157,6 +202,9 @@ router.register(r'channels', ChannelViewSet, basename='channel')
 router.register(r'conversations', ConversationViewSet, basename='conversation')
 router.register(r'analytics', CommunicationAnalyticsViewSet, basename='communication-analytics')
 router.register(r'contact-resolution', ContactResolutionMonitoringView, basename='contact-resolution')
+
+# Register record-centric communications ViewSet
+router.register(r'records', RecordCommunicationsViewSet, basename='record-communications')
 
 # Register messages ViewSet AFTER function-based views to avoid conflicts
 router.register(r'messages', MessageViewSet, basename='message')

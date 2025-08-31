@@ -193,12 +193,28 @@ class EmailWebhookHandler:
         
         # Extract email content (handle both HTML and text)
         email_content = webhook_data.get('body', '')
+        content = ''
+        html_content = ''
+        
         if isinstance(email_content, dict):
             # UniPile format: {"text": "...", "html": "..."}
-            content = email_content.get('text', email_content.get('html', ''))
+            content = email_content.get('text', '')
+            html_content = email_content.get('html', '')
+            # If no plain text, use HTML as fallback
+            if not content and html_content:
+                # Strip HTML tags for plain text version
+                import re
+                content = re.sub('<[^<]+?>', '', html_content)
         else:
-            # Simple string format
-            content = str(email_content)
+            # Simple string format - check if it's HTML
+            content_str = str(email_content)
+            if '<html' in content_str.lower() or '<body' in content_str.lower():
+                html_content = content_str
+                # Strip HTML tags for plain text version
+                import re
+                content = re.sub('<[^<]+?>', '', content_str)
+            else:
+                content = content_str
         
         # Create display name
         display_name = get_display_name_or_email(contact_name, contact_email)
@@ -230,6 +246,7 @@ class EmailWebhookHandler:
             'display_name': display_name,
             'subject': subject,
             'content': content,
+            'html_content': html_content,  # Add HTML content
             'direction': direction,
             'thread_id': thread_id,
             'message_id': message_id,
@@ -328,6 +345,10 @@ class EmailWebhookHandler:
                 'processed_at': timezone.now().isoformat(),
                 'processing_version': 'email_v1.0'
             }
+            
+            # Add HTML content if present
+            if normalized_email.get('html_content'):
+                email_metadata['html_content'] = normalized_email['html_content']
             
             # Add attachment details
             if normalized_email['attachments']:

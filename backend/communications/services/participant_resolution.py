@@ -9,7 +9,13 @@ from django.db import models, transaction
 from asgiref.sync import sync_to_async, async_to_sync
 
 from communications.models import Participant, ConversationParticipant
-from communications.resolution_gateway_v3 import get_resolution_gateway
+# Resolution gateway was removed - using stub for now
+def get_resolution_gateway(tenant):
+    """Stub for removed resolution gateway"""
+    class StubGateway:
+        async def resolve_contacts(self, identifiers, min_confidence=0):
+            return {'matches': []}  # No matches for now
+    return StubGateway()
 
 logger = logging.getLogger(__name__)
 

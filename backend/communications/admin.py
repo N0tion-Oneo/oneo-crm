@@ -1,38 +1,9 @@
 from django.contrib import admin
 from .models import (
     TenantUniPileConfig, UserChannelConnection, Channel, 
-    Conversation, Message, CommunicationAnalytics, ChatAttendee,
+    Conversation, Message, CommunicationAnalytics,
     Participant, ConversationParticipant
 )
-
-
-@admin.register(ChatAttendee)
-class ChatAttendeeAdmin(admin.ModelAdmin):
-    list_display = ['name', 'provider_id', 'channel', 'is_self', 'contact_record', 'sync_status', 'last_synced_at']
-    list_filter = ['channel__channel_type', 'is_self', 'sync_status', 'last_synced_at']
-    search_fields = ['name', 'provider_id', 'external_attendee_id']
-    readonly_fields = ['external_attendee_id', 'last_synced_at', 'created_at', 'updated_at']
-    raw_id_fields = ['contact_record']
-    
-    fieldsets = (
-        ('Basic Information', {
-            'fields': ('name', 'provider_id', 'picture_url', 'is_self')
-        }),
-        ('Relationships', {
-            'fields': ('channel', 'contact_record')
-        }),
-        ('External Data', {
-            'fields': ('external_attendee_id', 'metadata'),
-            'classes': ('collapse',)
-        }),
-        ('Sync Status', {
-            'fields': ('sync_status', 'last_synced_at', 'created_at', 'updated_at'),
-            'classes': ('collapse',)
-        })
-    )
-    
-    def get_queryset(self, request):
-        return super().get_queryset(request).select_related('channel', 'contact_record')
 
 
 @admin.register(TenantUniPileConfig)

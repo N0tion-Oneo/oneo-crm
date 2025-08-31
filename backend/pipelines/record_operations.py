@@ -715,15 +715,12 @@ class RecordOperationManager:
                 # Step 2: Validate and merge data
                 self.change_manager.validate_and_merge_data(self.record, change_context)
                 
-                # Step 3: Generate title if not provided (for database storage only)
-                # Note: Titles are now generated dynamically in serializer, but we still
-                # store a basic title for database queries and admin interface
+                # Step 3: Title generation removed - titles are now fully dynamic
+                # Titles are generated on-the-fly in serializers/views for consistency
+                # This eliminates sync issues between stored titles and changing data/templates
+                # Leave title empty in database to indicate dynamic generation
                 if not self.record.title:
-                    self.record.title = RecordUtils.generate_title(
-                        self.record.data, 
-                        self.record.pipeline.name,
-                        self.record.pipeline
-                    )
+                    self.record.title = ""  # Empty string indicates dynamic title
                 
                 # Step 4: Update version if data changed
                 if not change_context.is_new and change_context.original_data != self.record.data:

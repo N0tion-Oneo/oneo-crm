@@ -14,12 +14,13 @@ from django.utils import timezone
 from datetime import timedelta
 
 from communications.models import (
-    UserChannelConnection, Conversation, Message, Channel, SyncJob, SyncJobStatus, SyncJobType,
+    UserChannelConnection, Conversation, Message, Channel,
     Participant, ConversationParticipant
 )
+# SyncJob, SyncJobStatus, SyncJobType removed - use RecordSyncJob instead
 from communications.services import ParticipantResolutionService, ConversationStorageDecider
 from .service import EmailService
-from .sync.comprehensive import EmailComprehensiveSyncService
+# from .sync.comprehensive import EmailComprehensiveSyncService  # Removed - use record sync
 
 logger = logging.getLogger(__name__)
 
@@ -1143,34 +1144,11 @@ def sync_email_data(request):
                 'error': 'Channel not found'
             }, status=status.HTTP_404_NOT_FOUND)
         
-        # Create sync job
-        sync_job = SyncJob.objects.create(
-            user=request.user,
-            channel=channel,
-            job_type=SyncJobType.COMPREHENSIVE,
-            status=SyncJobStatus.PENDING,
-            sync_options=sync_options
-        )
-        
-        # Trigger sync task
-        from .sync.tasks import run_email_comprehensive_sync
-        task = run_email_comprehensive_sync.delay(
-            str(channel.id),
-            str(connection.id),
-            sync_options
-        )
-        
-        # Update sync job with task ID
-        sync_job.celery_task_id = task.id
-        sync_job.status = SyncJobStatus.RUNNING
-        sync_job.save()
-        
+        # DEPRECATED - SyncJob removed, use record sync instead
         return Response({
-            'success': True,
-            'sync_job_id': str(sync_job.id),
-            'task_id': task.id,
-            'message': 'Email sync started'
-        })
+            'success': False,
+            'error': 'Email sync deprecated - use record communications sync instead'
+        }, status=501)
         
     except Exception as e:
         logger.error(f"Failed to start email sync: {e}")

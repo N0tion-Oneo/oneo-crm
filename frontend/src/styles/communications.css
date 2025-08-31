@@ -1,0 +1,197 @@
+/* Communications Component Styling */
+
+/* Custom Scrollbar Styles */
+.communications-scrollbar::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.communications-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.communications-scrollbar::-webkit-scrollbar-thumb {
+  background-color: rgba(156, 163, 175, 0.5);
+  border-radius: 4px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+.communications-scrollbar::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(156, 163, 175, 0.7);
+}
+
+.dark .communications-scrollbar::-webkit-scrollbar-thumb {
+  background-color: rgba(75, 85, 99, 0.5);
+}
+
+.dark .communications-scrollbar::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(75, 85, 99, 0.7);
+}
+
+/* Message animations */
+@keyframes slideInLeft {
+  from {
+    opacity: 0;
+    transform: translateX(-20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes slideInRight {
+  from {
+    opacity: 0;
+    transform: translateX(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.message-inbound {
+  animation: slideInLeft 0.3s ease-out;
+}
+
+.message-outbound {
+  animation: slideInRight 0.3s ease-out;
+}
+
+/* Conversation list hover effects */
+.conversation-item {
+  transition: all 0.2s ease-out;
+}
+
+.conversation-item:hover {
+  transform: translateX(2px);
+}
+
+/* Typing indicator animation */
+@keyframes typing {
+  0%, 60%, 100% {
+    transform: translateY(0);
+  }
+  30% {
+    transform: translateY(-10px);
+  }
+}
+
+.typing-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: #9ca3af;
+  margin: 0 2px;
+  animation: typing 1.4s infinite ease-in-out;
+}
+
+.typing-dot:nth-child(1) {
+  animation-delay: -0.32s;
+}
+
+.typing-dot:nth-child(2) {
+  animation-delay: -0.16s;
+}
+
+/* Message bubble hover effects */
+.message-bubble {
+  transition: transform 0.2s ease-out, box-shadow 0.2s ease-out;
+}
+
+.message-bubble:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.dark .message-bubble:hover {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+/* Unread indicator pulse */
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.unread-indicator {
+  animation: pulse 2s infinite;
+}
+
+/* Date separator sticky positioning */
+.date-separator {
+  position: sticky;
+  top: 10px;
+  z-index: 10;
+  backdrop-filter: blur(8px);
+}
+
+/* Loading skeleton animations */
+@keyframes shimmer {
+  0% {
+    background-position: -1000px 0;
+  }
+  100% {
+    background-position: 1000px 0;
+  }
+}
+
+.skeleton-shimmer {
+  background: linear-gradient(
+    90deg,
+    rgba(156, 163, 175, 0.1) 0%,
+    rgba(156, 163, 175, 0.2) 50%,
+    rgba(156, 163, 175, 0.1) 100%
+  );
+  background-size: 1000px 100%;
+  animation: shimmer 2s infinite;
+}
+
+.dark .skeleton-shimmer {
+  background: linear-gradient(
+    90deg,
+    rgba(75, 85, 99, 0.2) 0%,
+    rgba(75, 85, 99, 0.3) 50%,
+    rgba(75, 85, 99, 0.2) 100%
+  );
+}
+
+/* Smooth scroll behavior */
+.smooth-scroll {
+  scroll-behavior: smooth;
+}
+
+/* Focus styles for accessibility */
+.conversation-item:focus-visible,
+.message-action:focus-visible {
+  outline: 2px solid #3b82f6;
+  outline-offset: 2px;
+}
+
+/* Mobile responsive adjustments */
+@media (max-width: 768px) {
+  .communications-scrollbar::-webkit-scrollbar {
+    width: 4px;
+  }
+  
+  .conversation-item:active {
+    transform: scale(0.98);
+  }
+}
+
+/* Performance optimizations */
+.will-change-transform {
+  will-change: transform;
+}
+
+.gpu-accelerated {
+  transform: translateZ(0);
+  backface-visibility: hidden;
+}

@@ -282,9 +282,9 @@ class WhatsAppAttendeeDetector:
             channel: Channel instance (required)
             
         Returns:
-            ChatAttendee instance or None
+            Participant instance or None
         """
-        from communications.models import ChatAttendee, ConversationAttendee
+        from communications.models import Participant, ConversationParticipant
         
         # Handle UniPile API format where 'id' is the external ID
         external_id = attendee_info.get('external_id') or attendee_info.get('id')
@@ -313,67 +313,72 @@ class WhatsAppAttendeeDetector:
                 # Double-check with the owner detector
                 is_self = self.owner_detector.is_account_owner(attendee_info)
             
-            attendee, created = ChatAttendee.objects.update_or_create(
-                external_attendee_id=external_id,
-                channel=channel,
+            # Extract phone number for Participant
+            phone = attendee_info.get('phone_number', '')
+            if provider_id and '@s.whatsapp.net' in provider_id and not phone:
+                phone = provider_id.replace('@s.whatsapp.net', '')
+            
+            participant, created = Participant.objects.update_or_create(
+                phone=phone if phone else None,
                 defaults={
-                    'provider_id': provider_id,
                     'name': attendee_info.get('name', 'Unknown'),
-                    'picture_url': picture_url,  # Ensure it's never None
-                    'is_self': is_self,
+                    'avatar_url': picture_url,  # Ensure it's never None
                     'metadata': {
+                        'external_attendee_id': external_id,
+                        'provider_id': provider_id,
                         'phone_number': attendee_info.get('phone_number'),
                         'role': attendee_info.get('role', 'member'),
                         'status': attendee_info.get('status'),
                         'joined_at': attendee_info.get('joined_at'),
-                        'last_seen': timezone.now().isoformat()
+                        'last_seen': timezone.now().isoformat(),
+                        'is_self': is_self
                     }
                 }
             )
             
             if created:
-                logger.info(f"✅ Created WhatsApp attendee: {attendee.name} ({external_id}) - is_self={is_self}")
+                logger.info(f"✅ Created WhatsApp participant: {participant.name} ({external_id}) - is_self={is_self}")
             else:
                 # Update last seen and any changed info
                 updated = False
                 
-                if attendee_info.get('name') and attendee_info['name'] != attendee.name:
-                    attendee.name = attendee_info['name']
+                if attendee_info.get('name') and attendee_info['name'] != participant.name:
+                    participant.name = attendee_info['name']
                     updated = True
                 
-                if attendee_info.get('profile_picture') and attendee_info['profile_picture'] != attendee.picture_url:
-                    attendee.picture_url = attendee_info['profile_picture']
+                if attendee_info.get('profile_picture') and attendee_info['profile_picture'] != participant.avatar_url:
+                    participant.avatar_url = attendee_info['profile_picture']
                     updated = True
+                
+                # Update metadata
+                if not participant.metadata:
+                    participant.metadata = {}
                 
                 # IMPORTANT: Update is_self flag if it's different
                 # This is crucial for properly identifying the account owner
-                if is_self != attendee.is_self:
-                    attendee.is_self = is_self
+                if is_self != participant.metadata.get('is_self', False):
+                    participant.metadata['is_self'] = is_self
                     updated = True
-                    logger.info(f"📝 Updated is_self flag for {attendee.name}: {attendee.is_self}")
+                    logger.info(f"📝 Updated is_self flag for {participant.name}: {is_self}")
                 
-                # Update metadata
-                if not attendee.metadata:
-                    attendee.metadata = {}
-                
-                attendee.metadata['last_seen'] = timezone.now().isoformat()
+                participant.metadata['last_seen'] = timezone.now().isoformat()
                 
                 if attendee_info.get('phone_number'):
-                    attendee.metadata['phone_number'] = attendee_info['phone_number']
+                    participant.metadata['phone_number'] = attendee_info['phone_number']
                 
                 if attendee_info.get('status'):
-                    attendee.metadata['status'] = attendee_info['status']
+                    participant.metadata['status'] = attendee_info['status']
                 
-                if updated or attendee.metadata:
-                    attendee.save()
-                    logger.debug(f"📝 Updated WhatsApp attendee: {attendee.name}")
+                if updated or participant.metadata:
+                    participant.save()
+                    logger.debug(f"📝 Updated WhatsApp participant: {participant.name}")
             
-            # Link attendee to conversation if provided
-            if conversation and attendee:
+            # Link participant to conversation if provided
+            if conversation and participant:
                 try:
-                    conv_attendee, created = ConversationAttendee.objects.get_or_create(
+                    conv_participant, created = ConversationParticipant.objects.get_or_create(
                         conversation=conversation,
-                        attendee=attendee,
+                        participant=participant,
                         defaults={
                             'role': attendee_info.get('role', 'member'),
                             'is_active': True,
@@ -384,17 +389,17 @@ class WhatsAppAttendeeDetector:
                         }
                     )
                     if created:
-                        logger.info(f"🔗 Linked attendee {attendee.name} to conversation {conversation.id}")
+                        logger.info(f"🔗 Linked participant {participant.name} to conversation {conversation.id}")
                         # Update participant count
-                        conversation.participant_count = conversation.conversation_attendees.filter(is_active=True).count()
+                        conversation.participant_count = conversation.conversation_participants.filter(is_active=True).count()
                         conversation.save(update_fields=['participant_count'])
                 except Exception as e:
-                    logger.error(f"Failed to link attendee to conversation: {e}")
+                    logger.error(f"Failed to link participant to conversation: {e}")
             
-            return attendee
+            return participant
             
         except Exception as e:
-            logger.error(f"Failed to create/update WhatsApp attendee: {e}")
+            logger.error(f"Failed to create/update WhatsApp participant: {e}")
             return None
     
     def process_chat_attendees(

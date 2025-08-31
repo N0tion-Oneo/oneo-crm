@@ -428,7 +428,7 @@ def send_message_local_first(request, chat_id):
     """Send a WhatsApp message with optimistic updates and chat-centric approach"""
     try:
         # Import models first to avoid circular imports
-        from communications.models import Channel, Conversation, Message, MessageDirection, MessageStatus, UserChannelConnection, ChatAttendee
+        from communications.models import Channel, Conversation, Message, MessageDirection, MessageStatus, UserChannelConnection, Participant, ConversationParticipant
         from communications.unipile_sdk import unipile_service
         
         # Get message text (support both 'text' and 'message' field names for frontend compatibility)
@@ -489,21 +489,24 @@ def send_message_local_first(request, chat_id):
                 for attendee_data in attendees_list:
                     attendee_id = attendee_data.get('id')
                     if attendee_id:
-                        chat_attendee, created = ChatAttendee.objects.get_or_create(
-                            external_attendee_id=attendee_id,
-                            channel=channel,
+                        # Create or get participant
+                        provider_id = attendee_data.get('provider_id', '')
+                        phone = ''
+                        if provider_id and '@s.whatsapp.net' in provider_id:
+                            phone = provider_id.replace('@s.whatsapp.net', '')
+                        
+                        participant, created = Participant.objects.get_or_create(
+                            phone=phone if phone else None,
                             defaults={
-                                'provider_id': attendee_data.get('provider_id', ''),
                                 'name': attendee_data.get('name', ''),
-                                'picture_url': attendee_data.get('picture_url', ''),
-                                'is_self': attendee_data.get('is_self', False),
+                                'avatar_url': attendee_data.get('picture_url', ''),
                                 'metadata': attendee_data
                             }
                         )
-                        chat_attendees.append(chat_attendee)
+                        chat_attendees.append(participant)
                         
                         if created:
-                            logger.info(f"✅ Created ChatAttendee {attendee_id} for outbound message chat {chat_id}")
+                            logger.info(f"✅ Created Participant {attendee_id} for outbound message chat {chat_id}")
                 
                 # Generate conversation name based on attendees (excluding account owner)
                 conversation_name = f"WhatsApp Chat {chat_id[:8]}"  # Default name

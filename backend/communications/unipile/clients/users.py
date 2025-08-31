@@ -42,3 +42,36 @@ class UnipileUsersClient:
         except Exception as e:
             logger.error(f"Failed to search users: {e}")
             raise
+    
+    async def retrieve_profile(
+        self,
+        identifier: str,
+        account_id: str,
+        linkedin_sections: Optional[str] = None,
+        notify: bool = False
+    ) -> Dict[str, Any]:
+        """
+        Retrieve a user profile
+        
+        Args:
+            identifier: LinkedIn username or provider ID
+            account_id: Account ID to retrieve from
+            linkedin_sections: Optional LinkedIn sections to retrieve
+            notify: Whether to notify the profile owner
+            
+        Returns:
+            Profile data including provider_id
+        """
+        try:
+            params = {
+                'account_id': account_id,
+                'notify': str(notify).lower()  # Convert boolean to string
+            }
+            if linkedin_sections:
+                params['linkedin_sections'] = linkedin_sections
+                
+            response = await self.client._make_request('GET', f'users/{identifier}', params=params)
+            return response
+        except Exception as e:
+            logger.error(f"Failed to retrieve profile {identifier}: {e}")
+            raise

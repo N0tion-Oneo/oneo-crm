@@ -1,0 +1,248 @@
+/* Email HTML Content Styling */
+.email-html-content {
+  /* Reset and normalize email content */
+  color: #1f2937;
+  font-size: 14px;
+  line-height: 1.6;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+}
+
+/* Ensure dark mode text is visible */
+.dark .email-html-content {
+  color: #e5e7eb;
+}
+
+/* Style common email HTML elements */
+.email-html-content h1,
+.email-html-content h2,
+.email-html-content h3,
+.email-html-content h4,
+.email-html-content h5,
+.email-html-content h6 {
+  margin-top: 1em;
+  margin-bottom: 0.5em;
+  font-weight: 600;
+}
+
+.email-html-content h1 { font-size: 1.5em; }
+.email-html-content h2 { font-size: 1.3em; }
+.email-html-content h3 { font-size: 1.1em; }
+.email-html-content h4 { font-size: 1em; }
+.email-html-content h5 { font-size: 0.9em; }
+.email-html-content h6 { font-size: 0.85em; }
+
+.email-html-content p {
+  margin-top: 0.5em;
+  margin-bottom: 0.5em;
+}
+
+.email-html-content a {
+  color: #3b82f6;
+  text-decoration: underline;
+}
+
+.email-html-content a:hover {
+  color: #2563eb;
+}
+
+/* Dark mode */
+.dark .email-html-content a {
+  color: #60a5fa;
+}
+
+.dark .email-html-content a:hover {
+  color: #93bbfc;
+}
+
+.email-html-content ul,
+.email-html-content ol {
+  margin-top: 0.5em;
+  margin-bottom: 0.5em;
+  padding-left: 1.5em;
+}
+
+.email-html-content li {
+  margin-top: 0.25em;
+  margin-bottom: 0.25em;
+}
+
+.email-html-content blockquote {
+  border-left: 4px solid #e5e7eb;
+  padding-left: 1em;
+  margin-left: 0;
+  margin-right: 0;
+  color: #6b7280;
+}
+
+.dark .email-html-content blockquote {
+  border-left-color: #4b5563;
+  color: #9ca3af;
+}
+
+.email-html-content table {
+  border-collapse: collapse;
+  width: 100%;
+  margin-top: 0.5em;
+  margin-bottom: 0.5em;
+}
+
+.email-html-content th,
+.email-html-content td {
+  border: 1px solid #e5e7eb;
+  padding: 0.5em;
+  text-align: left;
+}
+
+.dark .email-html-content th,
+.dark .email-html-content td {
+  border-color: #4b5563;
+}
+
+.email-html-content th {
+  background-color: #f9fafb;
+  font-weight: 600;
+}
+
+.dark .email-html-content th {
+  background-color: #1f2937;
+}
+
+.email-html-content img {
+  /* Keep original sizing from email */
+  max-width: 100%;
+  height: auto;
+  /* Ensure images are visible */
+  visibility: visible !important;
+  opacity: 1 !important;
+  /* Don't force display block - some images should be inline */
+  display: initial;
+}
+
+/* Dark mode image adjustments */
+.dark .email-html-content img {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  border-color: rgba(255, 255, 255, 0.05);
+}
+
+/* Handle different image display types */
+.email-html-content img[align="left"] {
+  float: left;
+  margin-right: 1em;
+}
+
+.email-html-content img[align="right"] {
+  float: right;
+  margin-left: 1em;
+}
+
+.email-html-content img[align="center"] {
+  display: block;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* Ensure linked images are clickable */
+.email-html-content a img {
+  cursor: pointer;
+  border: none;
+}
+
+/* Inline images should remain inline */
+.email-html-content img[style*="display: inline"],
+.email-html-content img[style*="display:inline"] {
+  display: inline-block !important;
+  margin: 0.25em 0.5em !important;
+  vertical-align: middle;
+}
+
+/* Small images (likely icons or logos) should not be forced to full width */
+.email-html-content img[width] {
+  max-width: 100% !important;
+  width: auto !important;
+  height: auto !important;
+}
+
+/* Images within table cells should respect their container */
+.email-html-content td img,
+.email-html-content th img {
+  display: inline-block !important;
+  margin: 0.25em !important;
+}
+
+.email-html-content hr {
+  border: none;
+  border-top: 1px solid #e5e7eb;
+  margin-top: 1em;
+  margin-bottom: 1em;
+}
+
+.dark .email-html-content hr {
+  border-top-color: #4b5563;
+}
+
+/* Handle inline styles from emails */
+.email-html-content * {
+  /* Prevent emails from breaking the layout */
+  max-width: 100% !important;
+  word-wrap: break-word !important;
+  word-break: break-word !important;
+}
+
+/* Preserve reasonable font sizes */
+.email-html-content *[style*="font-size"] {
+  /* Allow email font sizes but constrain to reasonable range */
+  min-font-size: 11px !important;
+  max-font-size: 20px !important;
+}
+
+/* Fix white text on white background */
+.email-html-content *[style*="color: white"],
+.email-html-content *[style*="color:#fff"],
+.email-html-content *[style*="color:#ffffff"],
+.email-html-content *[style*="color: rgb(255"],
+.email-html-content *[style*="background-color: black"],
+.email-html-content *[style*="background-color:#000"] {
+  color: #1f2937 !important;
+  background-color: transparent !important;
+}
+
+.dark .email-html-content *[style*="color: white"],
+.dark .email-html-content *[style*="color:#fff"],
+.dark .email-html-content *[style*="color:#ffffff"],
+.dark .email-html-content *[style*="color: rgb(255"] {
+  color: #e5e7eb !important;
+}
+
+/* Ensure divs and spans don't break layout */
+.email-html-content div,
+.email-html-content span {
+  max-width: 100% !important;
+  overflow-wrap: break-word !important;
+}
+
+/* Handle Gmail specific styles */
+.email-html-content .gmail_default {
+  font-family: inherit !important;
+}
+
+/* Fix table widths */
+.email-html-content table {
+  max-width: 100% !important;
+  width: auto !important;
+}
+
+/* Handle email signatures */
+.email-html-content .gmail_signature,
+.email-html-content .signature {
+  margin-top: 1em;
+  padding-top: 1em;
+  border-top: 1px solid #e5e7eb;
+  font-size: 0.9em;
+  color: #6b7280;
+}
+
+.dark .email-html-content .gmail_signature,
+.dark .email-html-content .signature {
+  border-top-color: #4b5563;
+  color: #9ca3af;
+}

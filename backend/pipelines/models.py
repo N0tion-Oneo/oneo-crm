@@ -1321,6 +1321,15 @@ class Record(models.Model):
         ordering = ['-updated_at']
     
     def __str__(self):
+        # Dynamically generate title for admin display if not stored
+        if not self.title and self.pipeline:
+            from .record_operations import RecordUtils
+            generated_title = RecordUtils.generate_title(
+                self.data,
+                self.pipeline.name,
+                self.pipeline
+            )
+            return generated_title or f"Record {self.id}"
         return self.title or f"Record {self.id}"
     
     def save(self, *args, **kwargs):

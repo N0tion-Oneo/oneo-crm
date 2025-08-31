@@ -222,9 +222,21 @@ class UnipileMessagingClient:
         cursor: Optional[str] = None,
         limit: int = 50
     ) -> Dict[str, Any]:
-        """Get all chat attendees"""
+        """Get all chat attendees with pagination support
+        
+        Args:
+            account_id: Optional account ID to filter by specific account
+            cursor: Pagination cursor from previous request
+            limit: Number of attendees to return (default 50, max 100)
+            
+        Returns:
+            Dict containing:
+            - items: List of attendee objects
+            - cursor/next_cursor: Cursor for next page (if available)
+            - has_more: Boolean indicating if more pages exist
+        """
         try:
-            params = {'limit': limit}
+            params = {'limit': min(limit, 100)}  # Cap at 100 per API limits
             if account_id:
                 params['account_id'] = account_id
             if cursor:
@@ -235,6 +247,42 @@ class UnipileMessagingClient:
             return response
         except Exception as e:
             logger.error(f"Failed to get attendees: {e}")
+            raise
+    
+    async def get_chats_from_attendee(
+        self,
+        attendee_id: str,
+        account_id: Optional[str] = None,
+        cursor: Optional[str] = None,
+        limit: int = 50
+    ) -> Dict[str, Any]:
+        """Get all 1-to-1 chats for a given attendee
+        
+        Uses endpoint: GET /api/v1/chat_attendees/{attendee_id}/chats
+        
+        Args:
+            attendee_id: The UniPile ID OR provider_id of the attendee
+                        For WhatsApp: phone@s.whatsapp.net
+                        For LinkedIn: The provider_id from user profile
+            account_id: Optional account ID filter
+            cursor: Optional pagination cursor
+            limit: Number of chats to return
+            
+        Returns:
+            Dict with list of chats where attendee is involved
+        """
+        try:
+            params = {'limit': limit}
+            if account_id:
+                params['account_id'] = account_id
+            if cursor:
+                params['cursor'] = cursor
+                
+            # Endpoint: GET /api/v1/chat_attendees/{attendee_id}/chats
+            response = await self.client._make_request('GET', f'chat_attendees/{attendee_id}/chats', params=params)
+            return response
+        except Exception as e:
+            logger.error(f"Failed to get chats for attendee {attendee_id}: {e}")
             raise
     
     async def get_attendees_from_chat(

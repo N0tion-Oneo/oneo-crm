@@ -10,6 +10,7 @@ from django.utils.decorators import method_decorator
 from django.utils import timezone
 from communications.webhooks.dispatcher import webhook_dispatcher
 from communications.webhooks.validators import webhook_validator
+from communications.webhooks.field_updates import webhook_field_updater
 # Backward compatibility alias
 webhook_handler = webhook_dispatcher
 from communications.models import UserChannelConnection
@@ -60,6 +61,9 @@ def unipile_webhook(request):
                 result = fallback_result
         
         if result.get('success'):
+            # Record successful webhook reception
+            webhook_field_updater.record_webhook_received()
+            
             logger.info(f"Successfully processed webhook: {event_type}")
             return JsonResponse({
                 'success': True,

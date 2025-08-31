@@ -1,78 +1,79 @@
-#!/usr/bin/env python3
-"""
-Debug script to see all attendee provider IDs
-"""
+#!/usr/bin/env python
 import os
 import sys
 import django
-import asyncio
+import json
+from asgiref.sync import async_to_sync
 
 # Setup Django
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'oneo_crm.settings')
 django.setup()
 
-from communications.unipile_sdk import unipile_service
+from django.conf import settings
+from communications.models import UserChannelConnection
+from communications.unipile.core.client import UnipileClient
+from django_tenants.utils import schema_context
 
-
-async def debug_attendee_ids():
-    """Debug attendee provider IDs"""
-    print("🧪 Debugging attendee provider IDs...")
+# Use oneotalent schema where we have data
+with schema_context('oneotalent'):
+    # Get WhatsApp connection
+    wa_connection = UserChannelConnection.objects.filter(
+        channel_type='whatsapp',
+        is_active=True
+    ).first()
     
-    account_id = "mp9Gis3IRtuh9V5oSxZdSA"
-    
-    try:
-        client = unipile_service.get_client()
+    if wa_connection:
+        print(f'Found WhatsApp connection: {wa_connection.unipile_account_id}')
         
-        # Get all attendees
-        attendees_data = await client.messaging.get_all_attendees(
-            account_id=account_id
+        # Initialize UniPile client
+        client = UnipileClient(
+            dsn=settings.UNIPILE_DSN,
+            access_token=settings.UNIPILE_API_KEY
         )
         
-        all_attendees = attendees_data.get('items', attendees_data.get('attendees', []))
-        print(f"👥 Found {len(all_attendees)} total attendees")
-        
-        # Show all provider IDs
-        print(f"\n📋 All attendee provider IDs:")
-        for i, attendee in enumerate(all_attendees):
-            provider_id = attendee.get('provider_id')
-            name = attendee.get('name')
-            print(f"{i+1:2d}. {provider_id} → '{name}'")
-        
-        # Also get chats to see their provider IDs
-        print(f"\n💬 Chat provider IDs (first 10):")
-        chats_data = await client.messaging.get_all_chats(
-            account_id=account_id,
-            limit=10
+        # Fetch attendees to see the full structure
+        print('\nFetching attendees...')
+        response = async_to_sync(client.messaging.get_all_attendees)(
+            account_id=wa_connection.unipile_account_id,
+            limit=3  # Just get a few to see the structure
         )
         
-        chats = chats_data.get('items', chats_data.get('chats', []))
-        for i, chat in enumerate(chats):
-            provider_id = chat.get('provider_id')
-            name = chat.get('name')
-            chat_type = "group" if chat.get('type', 0) == 1 else "individual"
-            print(f"{i+1:2d}. {provider_id} ({chat_type}) → '{name}'")
+        if response and 'items' in response:
+            print(f'\nGot {len(response["items"])} attendees')
+            for i, attendee in enumerate(response['items'], 1):
+                print(f'\n--- Attendee {i} ---')
+                print(f'id: {attendee.get("id", "N/A")}')
+                print(f'provider_id: {attendee.get("provider_id", "N/A")}')
+                print(f'name: {attendee.get("name", "N/A")}')
+                
+                # Check if we've seen this ID in messages
+                # The "id" field from attendees should match "sender_attendee_id" in messages
+                print(f'  -> This is the ID that should appear as sender_attendee_id in messages')
+                
+                if i >= 2:  # Only check first 2
+                    break
         
-        # Check if any chat provider IDs match attendee provider IDs
-        print(f"\n🔍 Cross-checking chat vs attendee provider IDs:")
-        attendee_ids = {att.get('provider_id') for att in all_attendees}
-        chat_ids = {chat.get('provider_id') for chat in chats if chat.get('type', 0) == 0}  # Only individual chats
+        # Now fetch some chats directly to see what sender_attendee_id we get
+        print('\n\nFetching chats directly...')
+        chat_response = async_to_sync(client.messaging.get_all_chats)(
+            account_id=wa_connection.unipile_account_id,
+            limit=2
+        )
         
-        matches = chat_ids.intersection(attendee_ids)
-        missing = chat_ids - attendee_ids
-        
-        print(f"✅ Matching IDs: {len(matches)}")
-        print(f"❌ Missing from attendees: {len(missing)}")
-        
-        if missing:
-            print(f"\n❌ Chat provider IDs NOT in attendees:")
-            for missing_id in missing:
-                print(f"  - {missing_id}")
-        
-    except Exception as e:
-        print(f"❌ Error: {e}")
-        import traceback
-        print(f"📋 Traceback: {traceback.format_exc()}")
-
-
-if __name__ == "__main__":
-    asyncio.run(debug_attendee_ids())
+        if chat_response and 'items' in chat_response:
+            for chat in chat_response['items']:
+                print(f'\nChat ID: {chat.get("id", "N/A")}')
+                print(f'Attendee IDs: {chat.get("attendee_ids", [])}')
+                
+                # Get messages for this chat
+                msg_response = async_to_sync(client.messaging.get_all_messages)(
+                    account_id=wa_connection.unipile_account_id,
+                    chat_id=chat['id'],
+                    limit=2
+                )
+                
+                if msg_response and 'items' in msg_response:
+                    print(f'  Messages:')
+                    for msg in msg_response['items']:
+                        print(f'    - sender_attendee_id: {msg.get("sender_attendee_id", "N/A")}')
+                        print(f'      is_sender: {msg.get("is_sender", "N/A")}')

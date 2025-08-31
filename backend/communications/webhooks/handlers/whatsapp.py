@@ -60,7 +60,7 @@ class WhatsAppWebhookHandler(BaseWebhookHandler):
         """Handle incoming WhatsApp message using sync-only approach to preserve tenant context"""
         try:
             from communications.webhooks.routing import account_router
-            from communications.models import Channel, Conversation, Message, ChatAttendee, MessageDirection, MessageStatus
+            from communications.models import Channel, Conversation, Message, Participant, MessageDirection, MessageStatus
             from django.db import transaction
             
             # Log the incoming data structure for debugging

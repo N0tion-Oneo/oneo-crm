@@ -99,10 +99,13 @@ export function useRecordCommunications(recordId: string | number) {
   
   const [profile, setProfile] = useState<RecordCommunicationProfile | null>(null)
   const [conversations, setConversations] = useState<Conversation[]>([])
+  const [timelineMessages, setTimelineMessages] = useState<any[]>([])
   const [stats, setStats] = useState<CommunicationStats | null>(null)
   const [syncStatus, setSyncStatus] = useState<SyncJob[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [timelineOffset, setTimelineOffset] = useState(0)
+  const [hasMoreTimeline, setHasMoreTimeline] = useState(true)
   
   // Convert recordId to string once
   const recordIdStr = recordId ? String(recordId) : ''
@@ -225,6 +228,71 @@ export function useRecordCommunications(recordId: string | number) {
     }
   }, [recordIdStr, accessToken])
 
+  // Fetch timeline messages
+  const fetchTimeline = useCallback(async (reset = false) => {
+    console.log('fetchTimeline called', { reset, recordIdStr, hasAccessToken: !!accessToken })
+    if (!accessToken || !recordIdStr) {
+      console.log('fetchTimeline skipped - missing accessToken or recordId')
+      return
+    }
+
+    try {
+      const offset = reset ? 0 : timelineOffset
+      const limit = 50
+      
+      console.log('Fetching timeline:', `/api/v1/communications/records/${recordIdStr}/timeline/`, { limit, offset })
+      
+      const response = await api.get(
+        `/api/v1/communications/records/${recordIdStr}/timeline/`,
+        { 
+          params: { 
+            limit,
+            offset
+          } 
+        }
+      )
+      
+      console.log('Timeline response:', response.data)
+      
+      // Handle paginated response
+      const data = response.data
+      let newMessages = []
+      let totalCount = 0
+      
+      if (data.results) {
+        // Paginated response
+        newMessages = data.results
+        totalCount = data.count || newMessages.length
+      } else if (Array.isArray(data)) {
+        // Legacy non-paginated response
+        newMessages = data
+        totalCount = data.length
+      }
+      
+      console.log(`Timeline messages received: ${newMessages.length} messages`)
+      
+      if (reset) {
+        setTimelineMessages(newMessages)
+        setTimelineOffset(newMessages.length)
+      } else {
+        setTimelineMessages(prev => [...prev, ...newMessages])
+        setTimelineOffset(prev => prev + newMessages.length)
+      }
+      
+      // Check if there are more messages
+      setHasMoreTimeline(timelineOffset + newMessages.length < totalCount || newMessages.length === limit)
+      
+    } catch (err) {
+      console.error('Failed to fetch timeline:', err)
+      setError('Failed to load timeline messages')
+    }
+  }, [recordIdStr, accessToken, timelineOffset])
+
+  // Load more timeline messages
+  const loadMoreTimeline = useCallback(() => {
+    fetchTimeline(false)
+  }, [fetchTimeline])
+
   // Trigger sync
   const triggerSync = useCallback(async (force = false) => {
     if (!accessToken || !recordIdStr) return
@@ -333,14 +401,18 @@ export function useRecordCommunications(recordId: string | number) {
   return {
     profile,
     conversations,
+    timelineMessages,
     stats,
     syncStatus,
     isLoading,
     error,
+    hasMoreTimeline,
     triggerSync,
     markAsRead,
     refreshData,
     fetchConversations,  // Expose for channel filtering
-    fetchConversationMessages  // Expose for message pagination
+    fetchConversationMessages,  // Expose for message pagination
+    fetchTimeline,
+    loadMoreTimeline
   }
 }

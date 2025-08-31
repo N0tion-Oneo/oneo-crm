@@ -31,6 +31,7 @@ interface Message {
   subject?: string
   direction: 'inbound' | 'outbound'
   sender: Sender | null
+  sender_name?: string  // Direct sender name from backend
   conversation_subject?: string
   channel_type: string
   sent_at: string
@@ -44,6 +45,16 @@ interface Message {
   html_content?: string  // HTML version of email content
   read_at?: string
   delivered_at?: string
+  metadata?: {
+    from?: { name?: string; email?: string } | string
+    to?: Array<{ name?: string; email?: string }> | string
+    cc?: Array<{ name?: string; email?: string }>
+    bcc?: Array<{ name?: string; email?: string }>
+    account_owner_name?: string
+    sender_name?: string
+    contact_name?: string
+    [key: string]: any
+  }
 }
 
 interface ConversationThreadProps {
@@ -121,9 +132,21 @@ export function ConversationThread({
   
   // Helper to get a readable sender name
   const getSenderName = (message: Message): string => {
-    // For outbound messages, show "You"
+    // For WhatsApp/LinkedIn, check metadata for enriched names
+    if ((message.channel_type === 'whatsapp' || message.channel_type === 'linkedin') && message.metadata) {
+      // For outbound, use account owner name if available
+      if (message.direction === 'outbound' && message.metadata.account_owner_name) {
+        return message.metadata.account_owner_name
+      }
+      // For inbound, use contact name from metadata
+      if (message.direction === 'inbound' && message.metadata.contact_name) {
+        return message.metadata.contact_name
+      }
+    }
+    
+    // For outbound messages, use the sender_name from backend
     if (message.direction === 'outbound') {
-      return 'You'
+      return message.sender_name || message.sender?.name || 'Unknown Sender'
     }
     
     // Check for actual name
@@ -466,30 +489,80 @@ export function ConversationThread({
                   {/* Full email header when expanded */}
                   <div className="px-4 py-3 bg-gray-50 dark:bg-gray-800/50">
                     <div className="space-y-1 text-sm">
-                      <div className="flex items-center">
+                      {/* From field */}
+                      <div className="flex items-start">
                         <span className="text-gray-500 w-16">From:</span>
-                        <span className="text-gray-900 dark:text-white">
-                          {getSenderName(message)}
-                          {message.sender?.email && (
-                            <span className="text-gray-500 ml-2">&lt;{message.sender.email}&gt;</span>
-                          )}
+                        <span className="text-gray-900 dark:text-white flex-1">
+                          {(() => {
+                            const from = message.metadata?.from
+                            if (typeof from === 'object' && from) {
+                              return from.name ? `${from.name} <${from.email || ''}>` : from.email || getSenderName(message)
+                            }
+                            // Fallback to standard sender info
+                            const senderName = getSenderName(message)
+                            if (message.sender?.email) {
+                              return `${senderName} <${message.sender.email}>`
+                            }
+                            return senderName
+                          })()}
                         </span>
                       </div>
-                      {message.contact_email && message.direction === 'outbound' && (
-                        <div className="flex items-center">
-                          <span className="text-gray-500 w-16">To:</span>
-                          <span className="text-gray-900 dark:text-white">{message.contact_email}</span>
+                      
+                      {/* To field */}
+                      <div className="flex items-start">
+                        <span className="text-gray-500 w-16">To:</span>
+                        <span className="text-gray-900 dark:text-white flex-1">
+                          {(() => {
+                            const to = message.metadata?.to
+                            if (Array.isArray(to) && to.length > 0) {
+                              return to.map(recipient => 
+                                recipient.name ? `${recipient.name} <${recipient.email || ''}>` : recipient.email || ''
+                              ).filter(Boolean).join(', ')
+                            } else if (typeof to === 'string') {
+                              return to
+                            }
+                            // Fallback to contact_email
+                            return message.contact_email || 'Unknown'
+                          })()}
+                        </span>
+                      </div>
+                      
+                      {/* CC field */}
+                      {message.metadata?.cc && message.metadata.cc.length > 0 && (
+                        <div className="flex items-start">
+                          <span className="text-gray-500 w-16">Cc:</span>
+                          <span className="text-gray-900 dark:text-white flex-1">
+                            {message.metadata.cc.map(recipient => 
+                              recipient.name ? `${recipient.name} <${recipient.email || ''}>` : recipient.email || ''
+                            ).filter(Boolean).join(', ')}
+                          </span>
                         </div>
                       )}
+                      
+                      {/* BCC field */}
+                      {message.metadata?.bcc && message.metadata.bcc.length > 0 && (
+                        <div className="flex items-start">
+                          <span className="text-gray-500 w-16">Bcc:</span>
+                          <span className="text-gray-900 dark:text-white flex-1">
+                            {message.metadata.bcc.map(recipient => 
+                              recipient.name ? `${recipient.name} <${recipient.email || ''}>` : recipient.email || ''
+                            ).filter(Boolean).join(', ')}
+                          </span>
+                        </div>
+                      )}
+                      
+                      {/* Subject field */}
                       {message.subject && (
                         <div className="flex items-start">
                           <span className="text-gray-500 w-16">Subject:</span>
-                          <span className="text-gray-900 dark:text-white font-medium">{message.subject}</span>
+                          <span className="text-gray-900 dark:text-white font-medium flex-1">{message.subject}</span>
                         </div>
                       )}
-                      <div className="flex items-center">
+                      
+                      {/* Date field */}
+                      <div className="flex items-start">
                         <span className="text-gray-500 w-16">Date:</span>
-                        <span className="text-gray-700 dark:text-gray-300">
+                        <span className="text-gray-700 dark:text-gray-300 flex-1">
                           {format(new Date(message.sent_at), 'EEEE, MMMM d, yyyy \'at\' h:mm a')}
                         </span>
                       </div>
@@ -620,10 +693,18 @@ export function ConversationThread({
                     <div
                       key={message.id}
                       className={cn(
-                        "flex mb-1",
-                        message.direction === 'outbound' ? "justify-end" : "justify-start"
+                        "flex flex-col mb-2",
+                        message.direction === 'outbound' ? "items-end" : "items-start"
                       )}
                     >
+                      {/* Show sender name above message */}
+                      <div className={cn(
+                        "text-xs mb-1 px-2",
+                        message.direction === 'outbound' ? "text-blue-600 dark:text-blue-400" : "text-gray-600 dark:text-gray-400"
+                      )}>
+                        {getSenderName(message)}
+                      </div>
+                      
                       <div className={cn(
                         "max-w-[70%] rounded-2xl px-4 py-2",
                         channelStyle.bubble

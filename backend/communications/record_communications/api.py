@@ -268,28 +268,38 @@ class RecordCommunicationsViewSet(viewsets.ViewSet):
             offset = int(request.query_params.get('offset', 0))
             channel_type = request.query_params.get('channel_type')
             
-            # Get all participants linked to this record
-            participant_ids = Participant.objects.filter(
-                Q(contact_record=record) | Q(secondary_record=record)
-            ).values_list('id', flat=True)
+            # Get all conversations linked to this record through RecordCommunicationLink
+            from communications.record_communications.models import RecordCommunicationLink
+            conversation_ids = RecordCommunicationLink.objects.filter(
+                record=record
+            ).values_list('conversation_id', flat=True)
             
-            # Get all messages involving these participants
+            # Get all messages from these conversations
             messages = Message.objects.filter(
-                Q(sender_participant_id__in=participant_ids) |
-                Q(conversation__conversation_participants__participant_id__in=participant_ids)
-            ).distinct()
+                conversation_id__in=conversation_ids
+            )
             
             # Filter by channel type if specified
             if channel_type:
                 messages = messages.filter(channel__channel_type=channel_type)
             
-            # Order by time and apply pagination
+            # Get total count before pagination
+            total_count = messages.count()
+            
+            # Order by time (newest first) and apply pagination
             messages = messages.select_related(
                 'sender_participant', 'conversation', 'channel'
-            ).order_by('-created_at')[offset:offset + limit]
+            ).order_by('-sent_at')[offset:offset + limit]
             
             serializer = RecordMessageSerializer(messages, many=True)
-            return Response(serializer.data)
+            
+            # Return paginated response
+            return Response({
+                'count': total_count,
+                'next': offset + limit < total_count,
+                'previous': offset > 0,
+                'results': serializer.data
+            })
             
         except Record.DoesNotExist:
             return Response(

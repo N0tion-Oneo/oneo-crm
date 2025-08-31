@@ -68,7 +68,22 @@ class DataTransformer:
             Dict ready for Message model creation
         """
         # Determine direction based on from/to fields
-        direction = self._determine_email_direction(message_data)
+        direction = self._determine_email_direction(message_data, channel_id)
+        
+        # Get user's name for outbound messages
+        user_name = None
+        if direction == 'outbound':
+            from communications.models import Channel, UserChannelConnection
+            try:
+                channel = Channel.objects.get(id=channel_id)
+                # Get the user connection to find the actual user
+                connection = UserChannelConnection.objects.filter(
+                    unipile_account_id=channel.unipile_account_id
+                ).first()
+                if connection and connection.user:
+                    user_name = connection.user.get_full_name() or connection.user.username
+            except Exception as e:
+                logger.warning(f"Error getting user name: {e}")
         
         # Convert UniPile format to our expected format
         # UniPile uses from_attendee, to_attendees, etc.
@@ -155,6 +170,11 @@ class DataTransformer:
             'unipile_data': message_data
         }
         
+        # Add user's name for outbound messages
+        if user_name and direction == 'outbound':
+            metadata['user_name'] = user_name
+            metadata['account_owner_name'] = user_name  # Also store as account_owner_name for compatibility
+        
         # Add HTML content if present
         if html_content:
             metadata['html_content'] = html_content
@@ -237,6 +257,21 @@ class DataTransformer:
             account_identifier
         )
         
+        # Get user's name for outbound messages
+        user_name = None
+        if direction == 'outbound':
+            from communications.models import Channel, UserChannelConnection
+            try:
+                channel = Channel.objects.get(id=channel_id)
+                # Get the user connection to find the actual user
+                connection = UserChannelConnection.objects.filter(
+                    unipile_account_id=channel.unipile_account_id
+                ).first()
+                if connection and connection.user:
+                    user_name = connection.user.get_full_name() or connection.user.username
+            except Exception as e:
+                logger.warning(f"Error getting user name: {e}")
+        
         # Extract content - handle empty text with attachments
         content = message_data.get('text') or message_data.get('content', '')
         
@@ -277,6 +312,8 @@ class DataTransformer:
                 'attachments': message_data.get('attachments', []),
                 'reactions': message_data.get('reactions', []),
                 'reply_to': message_data.get('reply_to'),
+                'user_name': user_name if user_name and direction == 'outbound' else None,
+                'account_owner_name': user_name if user_name and direction == 'outbound' else None,  # For compatibility
                 'unipile_data': message_data
             },
             # Preserve enriched sender info if present
@@ -344,11 +381,29 @@ class DataTransformer:
         
         return None
     
-    def _determine_email_direction(self, message_data: Dict[str, Any]) -> str:
+    def _determine_email_direction(self, message_data: Dict[str, Any], channel_id: Optional[int] = None) -> str:
         """Determine if email is inbound or outbound"""
-        # This would need to check against the account's email address
-        # For now, we'll use a simple heuristic
-        # In production, this should check against UserChannelConnection.account_email
+        # Check if the sender is the account owner
+        from communications.models import Channel, UserChannelConnection
+        
+        if channel_id:
+            try:
+                channel = Channel.objects.get(id=channel_id)
+                connection = UserChannelConnection.objects.filter(
+                    unipile_account_id=channel.unipile_account_id
+                ).first()
+                
+                if connection and connection.account_email:
+                    # Get the sender email
+                    from_attendee = message_data.get('from_attendee', {})
+                    sender_email = from_attendee.get('identifier', '') if from_attendee else ''
+                    
+                    # Check if sender is the account owner
+                    if sender_email.lower() == connection.account_email.lower():
+                        return 'outbound'
+            except Exception as e:
+                logger.warning(f"Error checking email direction: {e}")
+        
         return 'inbound'  # Default to inbound for received emails
     
     def _determine_message_direction(

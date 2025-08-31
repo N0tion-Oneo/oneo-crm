@@ -25,6 +25,7 @@ interface Conversation {
   subject: string
   channel_name: string
   channel_type: string
+  account_name?: string
   participants: Participant[]
   last_message: LastMessage | null
   last_message_at: string | null
@@ -144,9 +145,14 @@ export function ConversationList({
               <div className="flex-1 min-w-0">
                 {/* Header row */}
                 <div className="flex items-center justify-between mb-0.5">
-                  <h4 className="text-sm font-medium text-gray-900 dark:text-white truncate">
-                    {getParticipantDisplay(conversation.participants)}
-                  </h4>
+                  <div className="flex-1 min-w-0">
+                    <h4 className="text-sm font-medium text-gray-900 dark:text-white truncate">
+                      {getParticipantDisplay(conversation.participants)}
+                    </h4>
+                    <p className="text-xs text-gray-500 dark:text-gray-400 truncate">
+                      {conversation.channel_name}
+                    </p>
+                  </div>
                   <span className="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap ml-2">
                     {conversation.last_message_at && 
                       formatDistanceToNow(new Date(conversation.last_message_at), { 

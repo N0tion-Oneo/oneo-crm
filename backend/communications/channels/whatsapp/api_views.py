@@ -294,22 +294,20 @@ def get_chat_messages_local_first(request, chat_id):
         next_cursor = str(offset + limit) if has_more else None
         
         # Get account owner info for outbound messages
-        account_owner_name = "You"  # Default name for account owner
+        from communications.utils.account_utils import get_account_owner_info
+        
+        account_info = get_account_owner_info(
+            channel=conversation.channel,
+            channel_type='whatsapp'
+        )
+        account_owner_name = account_info['name']
         account_owner_id = None
         
-        # Try to get account owner info from connection
-        from communications.models import UserChannelConnection
-        connection = UserChannelConnection.objects.filter(
-            unipile_account_id=conversation.channel.unipile_account_id,
-            channel_type='whatsapp'
-        ).first()
-        
-        if connection:
-            account_owner_name = connection.account_name or "Business Account"
-            if connection.connection_config:
-                phone = connection.connection_config.get('phone_number', '').replace('+', '')
-                if phone:
-                    account_owner_id = f"{phone}@s.whatsapp.net"
+        # Get the phone number for WhatsApp ID
+        if account_info['phone']:
+            phone = account_info['phone'].replace('+', '')
+            if phone:
+                account_owner_id = f"{phone}@s.whatsapp.net"
         
         # Format messages for response
         messages = []

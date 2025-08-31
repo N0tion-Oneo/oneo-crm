@@ -100,9 +100,13 @@ def get_whatsapp_chat_messages_live(request, chat_id):
                 'is_self': attendee_info.get('is_self', False)
             }
             
-            # If message is from self (outbound) and no name, use "You"
+            # If message is from self (outbound) and no name, get account owner name
             if attendee_info.get('is_self') and not from_attendee['name']:
-                from_attendee['name'] = 'You'
+                from communications.utils.account_utils import get_account_owner_name
+                from_attendee['name'] = get_account_owner_name(
+                    unipile_account_id=unipile_account_id,
+                    channel_type='whatsapp'
+                )
             
             message = {
                 'id': msg.get('id'),

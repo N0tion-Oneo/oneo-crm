@@ -140,18 +140,22 @@ def process_message_with_provider_logic(message: Message, conversation: Conversa
                 sender_name = sender_info['name'] or 'Unknown Member'
                 is_from_user = False
             else:
-                sender_name = 'You'
+                # Get actual account owner name
+                from communications.utils.account_utils import get_account_owner_name
+                sender_name = get_account_owner_name(channel=conversation.channel)
                 is_from_user = True
             
             # For groups, use group ID as provider_id
             contact_provider_id = raw_data.get('provider_chat_id', '')
         else:
-            # 1-ON-1 CHAT: Use contact as sender for inbound, 'You' for outbound
+            # 1-ON-1 CHAT: Use contact as sender for inbound, account owner for outbound
             if message.direction == 'inbound':
                 sender_name = contact_name or 'Unknown Contact'
                 is_from_user = False
             else:
-                sender_name = 'You'
+                # Get actual account owner name
+                from communications.utils.account_utils import get_account_owner_name
+                sender_name = get_account_owner_name(channel=conversation.channel)
                 is_from_user = True
             
             # For 1-on-1, use phone-based provider_id
@@ -178,7 +182,9 @@ def process_message_with_provider_logic(message: Message, conversation: Conversa
             sender_name = contact_name or 'Unknown Contact'
             is_from_user = False
         else:
-            sender_name = 'You'
+            # Get actual account owner name
+            from communications.utils.account_utils import get_account_owner_name
+            sender_name = get_account_owner_name(channel=conversation.channel)
             is_from_user = True
     
     # Extract attachments from raw webhook data if available
@@ -238,8 +244,8 @@ def get_conversation_metadata_with_provider_logic(conversation: Conversation) ->
         contact_phone = sender_info.get('contact_phone')
         contact_provider_id = sender_info.get('provider_id')
         
-        # If sender is "You", get the contact from the other direction
-        if contact_name == 'You' and latest_message.direction == 'outbound':
+        # If this is an outbound message, we need to get the contact (recipient) info
+        if latest_message.direction == 'outbound':
             # Look for an inbound message to get the contact name
             inbound_message = conversation.messages.filter(direction='inbound').order_by('-created_at').first()
             if inbound_message:

@@ -397,6 +397,26 @@ class UnipileWebhookHandler:
                 connection.last_sync_at = timezone.now()
                 connection.sync_error_count = 0
                 connection.last_error = ''
+                
+                # Store account owner information from UniPile
+                from communications.utils.account_utils import store_account_owner_name
+                
+                # Extract account info from webhook data
+                account_info = data.get('account', {})
+                if isinstance(account_info, dict):
+                    # Look for name in various locations
+                    account_name = (
+                        account_info.get('name') or 
+                        account_info.get('display_name') or
+                        account_info.get('account_name') or
+                        data.get('name') or
+                        data.get('display_name')
+                    )
+                    
+                    if account_name:
+                        store_account_owner_name(connection, account_name)
+                        logger.info(f"Stored account owner name: {account_name} for account {account_id}")
+                
                 connection.save()
                 
                 logger.info(f"Account {account_id} connected successfully")
@@ -638,6 +658,11 @@ class UnipileWebhookHandler:
                 # Message already exists - return without triggering real-time processing
                 return existing_message, False
             
+            # Get the user's name (for both inbound and outbound messages)
+            user_name = None
+            if connection.user:
+                user_name = connection.user.get_full_name() or connection.user.username
+            
             # Create new message with raw webhook data stored in metadata
             message = Message.objects.create(
                 channel=conversation.channel,
@@ -657,7 +682,10 @@ class UnipileWebhookHandler:
                     'webhook_processed_at': timezone.now().isoformat(),
                     'processing_version': '2.0_simplified',
                     'attendee_id': str(sender_attendee.id) if sender_attendee else None,
-                    'attendee_name': sender_attendee.name if sender_attendee else contact_name
+                    'attendee_name': sender_attendee.name if sender_attendee else contact_name,
+                    'user_name': user_name,  # Store user's name for both directions
+                    'account_owner_name': user_name if direction == MessageDirection.OUTBOUND else None,  # For outbound sender
+                    'recipient_user_name': user_name if direction == MessageDirection.INBOUND else None  # For inbound recipient
                 },
                 sent_at=timezone.now() if direction == MessageDirection.OUTBOUND else None,
                 received_at=timezone.now() if direction == MessageDirection.INBOUND else None
@@ -894,6 +922,25 @@ class UnipileWebhookHandler:
                 # Store account metadata
                 if 'account' in data:
                     connection.connection_config['account_info'] = data['account']
+                
+                # Store account owner information from UniPile
+                from communications.utils.account_utils import store_account_owner_name
+                
+                # Extract account info from webhook data
+                account_info = data.get('account', {})
+                if isinstance(account_info, dict):
+                    # Look for name in various locations
+                    account_name = (
+                        account_info.get('name') or 
+                        account_info.get('display_name') or
+                        account_info.get('account_name') or
+                        data.get('name') or
+                        data.get('display_name')
+                    )
+                    
+                    if account_name:
+                        store_account_owner_name(connection, account_name)
+                        logger.info(f"Stored account owner name: {account_name} for new account {account_id}")
                 
                 connection.save()
                 

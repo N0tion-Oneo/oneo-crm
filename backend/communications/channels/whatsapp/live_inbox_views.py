@@ -231,12 +231,17 @@ def fetch_live_whatsapp_chats_sync(
                         'phone_number': phone
                     })
                     
-                    # Add self as participant
+                    # Add self as participant (account owner)
+                    from communications.utils.account_utils import get_account_owner_info
+                    account_info = get_account_owner_info(
+                        unipile_account_id=connection.unipile_account_id,
+                        channel_type='whatsapp'
+                    )
                     attendees.append({
                         'external_id': connection.unipile_account_id,
-                        'name': 'You',
+                        'name': account_info['name'],
                         'is_self': True,
-                        'phone_number': connection.provider_config.get('phone', '') if connection.provider_config else ''
+                        'phone_number': account_info['phone'] or (connection.provider_config.get('phone', '') if connection.provider_config else '')
                     })
                 else:
                     # For groups, just use placeholder for now (avoid API call)
@@ -267,10 +272,15 @@ def fetch_live_whatsapp_chats_sync(
                     is_self = attendee.get('is_self', False)
                     
                     # Build participant data for ALL attendees (including self)
+                    # For self, use the actual account owner name
+                    if is_self:
+                        from communications.utils.account_utils import get_account_owner_name
+                        name = get_account_owner_name(channel=conversation.channel, channel_type='whatsapp')
+                    
                     participant_data = {
                         'id': attendee.get('external_id'),
                         'phone': phone,
-                        'name': name if not is_self else 'You',
+                        'name': name,
                         'is_self': is_self,
                         'has_contact': False,
                         'contact_id': None,

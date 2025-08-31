@@ -170,26 +170,42 @@ class DataTransformer:
             'unipile_data': message_data
         }
         
-        # Add user's name for outbound messages
-        if user_name and direction == 'outbound':
+        # Add user's name to metadata
+        if user_name:
             metadata['user_name'] = user_name
-            metadata['account_owner_name'] = user_name  # Also store as account_owner_name for compatibility
+            if direction == 'outbound':
+                metadata['account_owner_name'] = user_name  # For outbound sender
+            else:
+                metadata['recipient_user_name'] = user_name  # For inbound recipient
         
         # Add HTML content if present
         if html_content:
             metadata['html_content'] = html_content
         
-        return {
+        # Parse the timestamp
+        timestamp = self._parse_timestamp(message_data.get('sent_at') or message_data.get('date'))
+        
+        # Set sent_at or received_at based on direction
+        result = {
             'external_message_id': message_data.get('id'),
             'conversation_id': conversation_id,
             'channel_id': channel_id,
             'direction': direction,
             'content': content,
-            'sent_at': self._parse_timestamp(message_data.get('sent_at') or message_data.get('date')),
             'created_at': self._parse_timestamp(message_data.get('created_at') or message_data.get('date')),
             'metadata': metadata,
             'status': 'delivered'  # Emails are always delivered if we received them
         }
+        
+        # Set the appropriate timestamp field based on direction
+        if direction == 'outbound':
+            result['sent_at'] = timestamp
+            result['received_at'] = None
+        else:
+            result['sent_at'] = None
+            result['received_at'] = timestamp
+        
+        return result
     
     def transform_chat_conversation(
         self,
@@ -285,17 +301,20 @@ class DataTransformer:
             if not content and attachments:
                 content = f"Shared {len(attachments)} attachment(s)"
         
-        return {
+        # Parse the timestamp
+        timestamp = self._parse_timestamp(
+            message_data.get('timestamp') or 
+            message_data.get('sent_at') or
+            message_data.get('created_at')
+        )
+        
+        # Build the result with appropriate timestamp field based on direction
+        result = {
             'external_message_id': message_data.get('id'),
             'conversation_id': conversation_id,
             'channel_id': channel_id,
             'direction': direction,
             'content': content,
-            'sent_at': self._parse_timestamp(
-                message_data.get('timestamp') or 
-                message_data.get('sent_at') or
-                message_data.get('created_at')
-            ),
             'created_at': self._parse_timestamp(
                 message_data.get('created_at') or
                 message_data.get('timestamp')
@@ -312,8 +331,9 @@ class DataTransformer:
                 'attachments': message_data.get('attachments', []),
                 'reactions': message_data.get('reactions', []),
                 'reply_to': message_data.get('reply_to'),
-                'user_name': user_name if user_name and direction == 'outbound' else None,
-                'account_owner_name': user_name if user_name and direction == 'outbound' else None,  # For compatibility
+                'user_name': user_name,  # Always store the user's name
+                'account_owner_name': user_name if direction == 'outbound' else None,  # For outbound sender
+                'recipient_user_name': user_name if direction == 'inbound' else None,  # For inbound recipient
                 'unipile_data': message_data
             },
             # Preserve enriched sender info if present
@@ -321,6 +341,16 @@ class DataTransformer:
             'channel_type': message_data.get('channel_type'),
             'status': self._map_message_status(message_data)
         }
+        
+        # Set the appropriate timestamp field based on direction
+        if direction == 'outbound':
+            result['sent_at'] = timestamp
+            result['received_at'] = None
+        else:
+            result['sent_at'] = None
+            result['received_at'] = timestamp
+        
+        return result
     
     def transform_participant(
         self,

@@ -20,7 +20,8 @@ interface TimelineMessage {
   direction: 'inbound' | 'outbound'
   content: string
   html_content?: string
-  sent_at: string
+  sent_at: string | null
+  received_at: string | null
   created_at: string
   sender_name: string
   sender_email?: string
@@ -60,12 +61,101 @@ export function MessageTimeline({
   const scrollAreaRef = useRef<HTMLDivElement>(null)
   const loadMoreRef = useRef<HTMLDivElement>(null)
 
+  // Helper function to safely parse timestamps
+  const parseMessageTimestamp = (timestamp: string | null | undefined): Date | null => {
+    if (!timestamp || timestamp === 'null' || timestamp === 'undefined') {
+      return null
+    }
+    
+    try {
+      const date = new Date(timestamp)
+      // Check if date is valid
+      if (isNaN(date.getTime())) {
+        console.warn('Invalid date parsed from timestamp:', timestamp)
+        return null
+      }
+      
+      // Check if date is in 1970 (epoch start - likely a parsing error)
+      if (date.getFullYear() < 2000) {
+        console.warn('Date appears to be from 1970, likely invalid:', timestamp, '→', date)
+        return null
+      }
+      
+      return date
+    } catch (error) {
+      console.error('Failed to parse timestamp:', timestamp, error)
+      return null
+    }
+  }
+  
+  // Get the best available timestamp for a message
+  const getMessageTimestamp = (message: TimelineMessage): string | null => {
+    // For any message, use whichever timestamp is available
+    // Priority: sent_at, received_at, created_at
+    // We don't care about direction here - just get any valid timestamp
+    const timestamp = message.sent_at || message.received_at || message.created_at
+    
+    // Debug logging for problematic messages
+    if (!timestamp || timestamp === 'null' || timestamp === 'undefined') {
+      console.warn('Message missing all timestamps:', {
+        id: message.id,
+        content: message.content?.substring(0, 30),
+        sent_at: message.sent_at,
+        received_at: message.received_at,
+        created_at: message.created_at,
+        direction: message.direction
+      })
+    } else if (message.direction === 'inbound' && message.content?.toLowerCase().includes('vanessa')) {
+      // Debug Vanessa's messages specifically
+      console.log('Vanessa message timestamps:', {
+        content: message.content?.substring(0, 30),
+        sent_at: message.sent_at,
+        received_at: message.received_at,
+        created_at: message.created_at,
+        timestamp_used: timestamp
+      })
+    }
+    
+    return timestamp
+  }
+
   // Group messages by date
   const groupedMessages = React.useMemo(() => {
     const groups: { [date: string]: TimelineMessage[] } = {}
     
+    // Debug: Log all messages to see what we're working with
+    console.log('MessageTimeline - Processing messages:', messages.length)
+    messages.forEach((message, index) => {
+      if (message.content?.toLowerCase().includes('vanessa')) {
+        console.log(`Message ${index} (Vanessa):`, {
+          content: message.content,
+          direction: message.direction,
+          sent_at: message.sent_at,
+          received_at: message.received_at,
+          created_at: message.created_at,
+          raw_message: message
+        })
+      }
+    })
+    
     messages.forEach(message => {
-      const date = format(new Date(message.sent_at), 'yyyy-MM-dd')
+      // Get the best available timestamp
+      const timestamp = getMessageTimestamp(message)
+      const parsedDate = parseMessageTimestamp(timestamp)
+      
+      if (!parsedDate) {
+        console.warn('Message has no valid timestamp:', {
+          id: message.id,
+          content: message.content?.substring(0, 50),
+          sent_at: message.sent_at,
+          received_at: message.received_at,
+          created_at: message.created_at,
+          timestamp_attempted: timestamp
+        })
+        return
+      }
+      
+      const date = format(parsedDate, 'yyyy-MM-dd')
       if (!groups[date]) {
         groups[date] = []
       }
@@ -261,7 +351,13 @@ export function MessageTimeline({
                   <div className="flex">
                     <span className="font-medium w-12">Date:</span>
                     <span className="flex-1">
-                      {format(new Date(message.sent_at), 'EEEE, MMMM d, yyyy \'at\' h:mm a')}
+                      {(() => {
+                        const timestamp = getMessageTimestamp(message)
+                        const parsedDate = parseMessageTimestamp(timestamp)
+                        return parsedDate 
+                          ? format(parsedDate, 'EEEE, MMMM d, yyyy \'at\' h:mm a')
+                          : 'Unknown date'
+                      })()}
                     </span>
                   </div>
                 </div>
@@ -493,7 +589,21 @@ export function MessageTimeline({
                         </Badge>
                       </div>
                       <span className="text-xs text-gray-500 ml-2">
-                        {format(new Date(message.sent_at), 'h:mm a')}
+                        {(() => {
+                          const timestamp = getMessageTimestamp(message)
+                          const parsedDate = parseMessageTimestamp(timestamp)
+                          
+                          // Debug for Vanessa messages
+                          if (message.content?.toLowerCase().includes('vanessa')) {
+                            console.log('Rendering Vanessa message time:', {
+                              timestamp,
+                              parsedDate,
+                              formatted: parsedDate ? format(parsedDate, 'h:mm a') : 'Unknown time'
+                            })
+                          }
+                          
+                          return parsedDate ? format(parsedDate, 'h:mm a') : 'Unknown time'
+                        })()}
                       </span>
                     </div>
 

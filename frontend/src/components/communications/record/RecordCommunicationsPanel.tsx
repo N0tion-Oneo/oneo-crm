@@ -8,7 +8,8 @@ import {
   Phone, 
   AlertCircle,
   Users,
-  Loader2
+  Loader2,
+  CheckCircle
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -37,6 +38,7 @@ export function RecordCommunicationsPanel({
     timelineMessages,
     stats,
     syncStatus,
+    syncJustCompleted,
     isLoading,
     error,
     hasMoreTimeline,
@@ -122,7 +124,15 @@ export function RecordCommunicationsPanel({
   }
 
   return (
-    <div className="flex flex-col h-full max-h-[800px] min-h-[500px] overflow-hidden bg-gray-50 dark:bg-gray-900">
+    <div className="relative flex flex-col h-full max-h-[800px] min-h-[500px] overflow-hidden bg-gray-50 dark:bg-gray-900">
+      {/* Success notification when sync completes */}
+      {syncJustCompleted && (
+        <div className="absolute top-4 right-4 z-50 flex items-center gap-2 bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200 px-4 py-2 rounded-lg shadow-lg">
+          <CheckCircle className="w-4 h-4" />
+          <span className="text-sm font-medium">Sync completed successfully!</span>
+        </div>
+      )}
+      
       {/* Header with tabs and sync - Compact */}
       <div className="flex-shrink-0 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
         <div className="flex items-center justify-between p-3 gap-3">

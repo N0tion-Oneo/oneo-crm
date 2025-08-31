@@ -645,6 +645,7 @@ class UnipileWebhookHandler:
                                    sender_attendee: 'Participant' = None) -> tuple[Message, bool]:
         """Create message record with simple raw data storage approach and optional sender attendee"""
         from django.db import transaction
+        from dateutil import parser
         
         # Use database-level atomic transaction to prevent race conditions
         with transaction.atomic():
@@ -662,6 +663,25 @@ class UnipileWebhookHandler:
             user_name = None
             if connection.user:
                 user_name = connection.user.get_full_name() or connection.user.username
+            
+            # Parse timestamp from webhook data
+            message_timestamp = timezone.now()
+            if 'timestamp' in raw_webhook_data:
+                try:
+                    ts = raw_webhook_data['timestamp']
+                    if isinstance(ts, str):
+                        # Parse ISO format timestamp
+                        message_timestamp = parser.parse(ts)
+                        if message_timestamp.tzinfo is None:
+                            message_timestamp = timezone.make_aware(message_timestamp)
+                    elif isinstance(ts, (int, float)):
+                        # Handle Unix timestamp (seconds or milliseconds)
+                        if ts > 10000000000:  # Milliseconds
+                            ts = ts / 1000
+                        from datetime import datetime
+                        message_timestamp = datetime.fromtimestamp(ts, tz=timezone.utc)
+                except Exception as e:
+                    logger.warning(f"Failed to parse timestamp from webhook: {e}, using current time")
             
             # Create new message with raw webhook data stored in metadata
             message = Message.objects.create(
@@ -687,8 +707,8 @@ class UnipileWebhookHandler:
                     'account_owner_name': user_name if direction == MessageDirection.OUTBOUND else None,  # For outbound sender
                     'recipient_user_name': user_name if direction == MessageDirection.INBOUND else None  # For inbound recipient
                 },
-                sent_at=timezone.now() if direction == MessageDirection.OUTBOUND else None,
-                received_at=timezone.now() if direction == MessageDirection.INBOUND else None
+                sent_at=message_timestamp if direction == MessageDirection.OUTBOUND else None,
+                received_at=message_timestamp if direction == MessageDirection.INBOUND else None
             )
             
             logger.info(f"Created message {message.id}: {direction} from {sender_attendee.name if sender_attendee else phone_number}")
@@ -827,6 +847,26 @@ class UnipileWebhookHandler:
             for attachment in attachments:
                 self._process_attachment_async(connection, message_data.get('message_id'), attachment)
 
+        # Parse timestamp from message data
+        from dateutil import parser
+        message_timestamp = timezone.now()
+        if 'timestamp' in message_data:
+            try:
+                ts = message_data['timestamp']
+                if isinstance(ts, str):
+                    # Parse ISO format timestamp
+                    message_timestamp = parser.parse(ts)
+                    if message_timestamp.tzinfo is None:
+                        message_timestamp = timezone.make_aware(message_timestamp)
+                elif isinstance(ts, (int, float)):
+                    # Handle Unix timestamp (seconds or milliseconds)
+                    if ts > 10000000000:  # Milliseconds
+                        ts = ts / 1000
+                    from datetime import datetime
+                    message_timestamp = datetime.fromtimestamp(ts, tz=timezone.utc)
+            except Exception as e:
+                logger.warning(f"Failed to parse timestamp from message data: {e}, using current time")
+        
         message = Message.objects.create(
             channel=conversation.channel,
             conversation=conversation,
@@ -838,8 +878,8 @@ class UnipileWebhookHandler:
             contact_email=contact_email,
             status=MessageStatus.DELIVERED if direction == MessageDirection.INBOUND else MessageStatus.SENT,
             metadata=enhanced_metadata,
-            sent_at=timezone.now() if direction == MessageDirection.OUTBOUND else None,
-            received_at=timezone.now() if direction == MessageDirection.INBOUND else None
+            sent_at=message_timestamp if direction == MessageDirection.OUTBOUND else None,
+            received_at=message_timestamp if direction == MessageDirection.INBOUND else None
         )
         
         # Update conversation with resolved contact context

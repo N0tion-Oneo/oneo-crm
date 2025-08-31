@@ -290,16 +290,17 @@ class RecordMessageSerializer(serializers.ModelSerializer):
         
         # For inbound messages, try to get the account owner's name
         if obj.direction == 'inbound' and obj.channel:
-            # Try to find the UserChannelConnection
+            # Try to find the UserChannelConnection to get the actual user's name
             if obj.channel.unipile_account_id:
                 try:
                     from communications.models import UserChannelConnection
                     user_connection = UserChannelConnection.objects.filter(
                         unipile_account_id=obj.channel.unipile_account_id
-                    ).first()
+                    ).select_related('user').first()
                     
-                    if user_connection and user_connection.account_name:
-                        return user_connection.account_name
+                    if user_connection and user_connection.user:
+                        # Return the user's actual name, not the account name
+                        return user_connection.user.get_full_name() or user_connection.user.username
                 except:
                     pass
             

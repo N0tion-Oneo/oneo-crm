@@ -348,6 +348,87 @@ class WhatsAppWebhookHandler(BaseWebhookHandler):
             
             # Create message with sync operations only
             logger.info(f"💾 Creating message with content: '{content}' (length: {len(content)})")
+            
+            # Set timestamps correctly based on direction
+            # Both sent_at and received_at can be set - they indicate WHEN, not direction
+            # For webhooks, we typically get the timestamp when the message was created
+            sent_timestamp = None
+            received_timestamp = None
+            
+            if direction == MessageDirection.OUTBOUND:
+                # Message sent FROM this account
+                sent_timestamp = message_timestamp
+                # We might also know when it was received/delivered
+                # But for now, we only have the sent time from webhook
+            else:
+                # Message received BY this account
+                received_timestamp = message_timestamp
+                # The message was sent earlier, but we don't know exactly when
+            
+            # Get or create sender participant
+            sender_participant = None
+            logger.info(f"🔍 Processing sender participant - Direction: {direction}, Sender info: {sender_info}")
+            
+            if sender_info:
+                # Extract sender details - try multiple fields
+                sender_phone = (
+                    sender_info.get('attendee_provider_id', '') or
+                    sender_info.get('phone', '') or
+                    sender_info.get('phone_number', '')
+                )
+                
+                logger.info(f"📱 Extracted phone: {sender_phone}")
+                
+                # Clean up phone number
+                if sender_phone and '@' in sender_phone:
+                    sender_phone = sender_phone.split('@')[0]  # Remove @s.whatsapp.net
+                    logger.info(f"📱 Cleaned phone: {sender_phone}")
+                
+                # Get sender name
+                sender_name = sender_info.get('attendee_name', '') or sender_phone
+                logger.info(f"👤 Sender name: {sender_name}")
+                
+                # For outbound messages, sender is the account owner
+                if direction == MessageDirection.OUTBOUND:
+                    # Get account owner name
+                    if connection and connection.user:
+                        sender_name = connection.user.get_full_name() or connection.user.username
+                    elif connection and connection.account_name:
+                        sender_name = connection.account_name
+                    
+                    # For outbound, use the account phone number
+                    if connection and connection.account_name:
+                        import re
+                        match = re.search(r'\((\d+)\)', connection.account_name)
+                        if match:
+                            sender_phone = match.group(1)
+                
+                # Create or get participant
+                if sender_phone:
+                    from communications.models import Participant
+                    logger.info(f"🔍 Looking up/creating participant with phone: {sender_phone}, name: {sender_name}")
+                    
+                    sender_participant, created = Participant.objects.get_or_create(
+                        phone=sender_phone,
+                        defaults={'name': sender_name}
+                    )
+                    
+                    if created:
+                        logger.info(f"✅ Created new participant: {sender_name} ({sender_phone})")
+                    else:
+                        logger.info(f"✅ Found existing participant: {sender_participant.name} ({sender_phone})")
+                    
+                    # Update name if it's more informative
+                    if sender_name and sender_name != sender_phone:
+                        # Always update the name to the latest we have
+                        if sender_participant.name != sender_name:
+                            old_name = sender_participant.name
+                            sender_participant.name = sender_name
+                            sender_participant.save(update_fields=['name'])
+                            logger.info(f"📝 Updated participant name: {old_name} → {sender_name}")
+                else:
+                    logger.warning(f"⚠️ No phone number found for sender: {sender_info}")
+            
             message = Message.objects.create(
                 channel=channel,
                 conversation=conversation,
@@ -355,20 +436,35 @@ class WhatsAppWebhookHandler(BaseWebhookHandler):
                 content=content,
                 direction=direction,
                 status=status,
+                sender_participant=sender_participant,
                 created_at=message_timestamp,
-                sent_at=message_timestamp if direction == MessageDirection.OUTBOUND else None,
-                received_at=message_timestamp if direction == MessageDirection.INBOUND else None,
+                sent_at=sent_timestamp,
+                received_at=received_timestamp,
                 metadata={
                     'webhook_data': data,
                     'sender_id': sender_id,
                     'sender_name': sender_name,
                     'chat_id': chat_id,
+                    # Add enriched names for the serializer
+                    'account_owner_name': connection.user.get_full_name() or connection.user.username if connection and connection.user else None,
+                    # For outbound messages, we need to identify the recipient (contact)
+                    # For inbound messages, the sender is the contact
+                    'contact_name': self._get_contact_name_for_message(data, conversation, direction, sender_name),
                     'provider': 'whatsapp',
                     'sync_created': True,
                     'attachments': attachments,
                     'has_attachments': len(attachments) > 0
                 }
             )
+            
+            # Add sender participant to conversation if not already there
+            if sender_participant and conversation:
+                from communications.models import ConversationParticipant
+                ConversationParticipant.objects.get_or_create(
+                    conversation=conversation,
+                    participant=sender_participant,
+                    defaults={'role': 'sender'}
+                )
             
             # Update conversation's last message timestamp
             conversation.last_message_at = message.created_at
@@ -555,6 +651,34 @@ class WhatsAppWebhookHandler(BaseWebhookHandler):
             logger.info(f"Read receipt processed for message {message.id} (WebSocket updates disabled for sync compatibility)")
         except Exception as e:
             logger.warning(f"Failed to process read tracking: {e}")
+    
+    def _get_contact_name_for_message(self, data: Dict[str, Any], conversation: Any, direction: str, sender_name: str) -> Optional[str]:
+        """Get the contact name for a message based on direction"""
+        from communications.models import MessageDirection, ConversationParticipant
+        
+        if direction == MessageDirection.INBOUND:
+            # For inbound, the sender is the contact
+            return sender_name
+        else:
+            # For outbound, we need to find the other participant (recipient)
+            # Look at attendees in the webhook data
+            attendees = data.get('attendees', [])
+            for attendee in attendees:
+                # Skip the sender
+                if attendee.get('attendee_provider_id') != data.get('sender', {}).get('attendee_provider_id'):
+                    return attendee.get('attendee_name', 'Unknown')
+            
+            # Fallback: get from conversation participants
+            if conversation:
+                participants = ConversationParticipant.objects.filter(
+                    conversation=conversation
+                ).select_related('participant').exclude(
+                    participant__phone='27720720047'  # Exclude account owner
+                )
+                if participants.exists():
+                    return participants.first().participant.name
+            
+            return None
     
     def _get_mime_type(self, attachment_type: str) -> str:
         """Get MIME type from attachment type"""

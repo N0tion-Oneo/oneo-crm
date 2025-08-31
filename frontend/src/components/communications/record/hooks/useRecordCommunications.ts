@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useAuth } from '@/features/auth/context'
 import { api } from '@/lib/api'
 import Cookies from 'js-cookie'
@@ -106,6 +106,8 @@ export function useRecordCommunications(recordId: string | number) {
   const [error, setError] = useState<string | null>(null)
   const [timelineOffset, setTimelineOffset] = useState(0)
   const [hasMoreTimeline, setHasMoreTimeline] = useState(true)
+  const [syncJustCompleted, setSyncJustCompleted] = useState(false)
+  const previousSyncStatusRef = useRef<string | null>(null)
   
   // Convert recordId to string once
   const recordIdStr = recordId ? String(recordId) : ''
@@ -118,7 +120,7 @@ export function useRecordCommunications(recordId: string | number) {
         recordIdStr,
         recordIdType: typeof recordIdStr 
       })
-      return
+      return null
     }
 
     try {
@@ -129,8 +131,10 @@ export function useRecordCommunications(recordId: string | number) {
       )
       console.log('Profile response:', response.data)
       setProfile(response.data)
+      return response.data
     } catch (err) {
       console.error('Failed to fetch communication profile:', err)
+      return null
     }
   }, [recordIdStr, accessToken])
 
@@ -378,12 +382,46 @@ export function useRecordCommunications(recordId: string | number) {
 
   // Poll for sync status updates if sync is in progress
   useEffect(() => {
+    if (!profile?.sync_in_progress && !syncStatus[0]?.status) return
+
+    const currentJob = syncStatus[0]
+    const previousStatus = previousSyncStatusRef.current
+
+    // Check if sync just completed
+    if (previousStatus === 'in_progress' && 
+        currentJob?.status === 'completed' && 
+        !profile?.sync_in_progress) {
+      
+      console.log('Sync just completed - refreshing all data')
+      setSyncJustCompleted(true)
+      
+      // Refresh all data
+      Promise.all([
+        fetchConversations(),
+        fetchStats(),
+        fetchTimeline(true)
+      ]).then(() => {
+        console.log('Data refresh completed')
+      })
+      
+      // Clear the sync completed flag after 5 seconds
+      setTimeout(() => setSyncJustCompleted(false), 5000)
+    }
+
+    // Update previous status for next check
+    if (currentJob) {
+      previousSyncStatusRef.current = currentJob.status
+    }
+  }, [syncStatus, profile?.sync_in_progress, fetchConversations, fetchStats, fetchTimeline])
+
+  // Separate polling effect for when sync is in progress
+  useEffect(() => {
     if (!profile?.sync_in_progress) return
 
-    const interval = setInterval(() => {
-      fetchSyncStatus()
-      fetchProfile()
-    }, 5000) // Poll every 5 seconds
+    const interval = setInterval(async () => {
+      await fetchSyncStatus()
+      await fetchProfile()
+    }, 2000) // Poll every 2 seconds
 
     return () => clearInterval(interval)
   }, [profile?.sync_in_progress, fetchSyncStatus, fetchProfile])
@@ -404,6 +442,7 @@ export function useRecordCommunications(recordId: string | number) {
     timelineMessages,
     stats,
     syncStatus,
+    syncJustCompleted,
     isLoading,
     error,
     hasMoreTimeline,

@@ -92,19 +92,28 @@ class AccountOwnerDetector:
                 config_to_check = self.channel.connection_config
                 logger.info(f"Using channel config instead of connection config")
             
-            if not config_to_check:
-                logger.warning(f"No config found for channel {unipile_account_id}")
-                return None
-            
             # Extract based on channel type
             if self.channel_type == 'whatsapp':
                 # WhatsApp stores phone number in connection_config
                 # Try different field names that might be used
-                phone = (
-                    config_to_check.get('account_phone') or
-                    config_to_check.get('phone_number') or
-                    config_to_check.get('account_identifier')
-                )
+                phone = None
+                if config_to_check:
+                    phone = (
+                        config_to_check.get('account_phone') or
+                        config_to_check.get('phone_number') or
+                        config_to_check.get('account_identifier')
+                    )
+                
+                # If no phone in config, try to extract from account_name
+                # Format is typically "WhatsApp (27720720047)"
+                if not phone and connection and connection.account_name:
+                    import re
+                    # Extract phone number from account name
+                    match = re.search(r'\((\d+)\)', connection.account_name)
+                    if match:
+                        phone = match.group(1)
+                        logger.debug(f"Extracted WhatsApp phone from account_name: {phone}")
+                
                 if phone:
                     # Normalize phone number (remove @s.whatsapp.net if present)
                     if '@' in phone:

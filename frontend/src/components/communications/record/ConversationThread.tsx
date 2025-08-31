@@ -34,8 +34,8 @@ interface Message {
   sender_name?: string  // Direct sender name from backend
   conversation_subject?: string
   channel_type: string
-  sent_at: string
-  received_at?: string
+  sent_at: string | null
+  received_at: string | null
   status?: string
   contact_email?: string
   contact_phone?: string
@@ -288,16 +288,19 @@ export function ConversationThread({
     fetchMessages()
   }, [fetchMessages])
 
-  // Auto-scroll to bottom when messages load
+  // Auto-scroll to top when messages load (since newest are at top)
   useEffect(() => {
     if (messages.length > 0 && !isLoading) {
-      scrollToBottom(false) // Instant scroll on initial load
+      // Scroll to top for newest messages
+      if (scrollAreaRef.current) {
+        scrollAreaRef.current.scrollTop = 0
+      }
       // Determine conversation type based on channel
       const firstMessage = messages[0]
       if (firstMessage.channel_type === 'gmail' || firstMessage.channel_type === 'email') {
         setConversationType('email')
-        // Auto-expand the latest email
-        setExpandedEmails(new Set([messages[messages.length - 1].id]))
+        // Auto-expand the latest email (which is now first)
+        setExpandedEmails(new Set([messages[0].id]))
       } else {
         setConversationType('message')
       }
@@ -470,7 +473,7 @@ export function ConversationThread({
                   </div>
                   <div className="flex items-center space-x-2 ml-2">
                     <span className="text-xs text-gray-500 whitespace-nowrap">
-                      {format(new Date(message.sent_at), 'MMM d, h:mm a')}
+                      {format(new Date(message.sent_at || message.received_at || message.created_at), 'MMM d, h:mm a')}
                     </span>
                     {isExpanded ? (
                       <ChevronUp className="w-4 h-4 text-gray-400" />
@@ -563,7 +566,7 @@ export function ConversationThread({
                       <div className="flex items-start">
                         <span className="text-gray-500 w-16">Date:</span>
                         <span className="text-gray-700 dark:text-gray-300 flex-1">
-                          {format(new Date(message.sent_at), 'EEEE, MMMM d, yyyy \'at\' h:mm a')}
+                          {format(new Date(message.sent_at || message.received_at || message.created_at), 'EEEE, MMMM d, yyyy \'at\' h:mm a')}
                         </span>
                       </div>
                     </div>
@@ -655,10 +658,19 @@ export function ConversationThread({
 
   // Render message thread (WhatsApp/LinkedIn chat style)
   const renderMessageThread = () => {
-    // Group messages by date for chat style
+    // First, sort all messages by timestamp (newest first)
+    const sortedMessages = [...messages].sort((a, b) => {
+      const aTime = new Date(a.sent_at || a.received_at || a.created_at).getTime()
+      const bTime = new Date(b.sent_at || b.received_at || b.created_at).getTime()
+      return bTime - aTime // Newest first
+    })
+
+    // Group sorted messages by date for chat style
     const messagesByDate: { [key: string]: Message[] } = {}
-    messages.forEach((message) => {
-      const date = new Date(message.sent_at)
+    sortedMessages.forEach((message) => {
+      // Use sent_at for outbound, received_at for inbound, or created_at as fallback
+      const timestamp = message.sent_at || message.received_at || message.created_at
+      const date = new Date(timestamp)
       const dateKey = format(date, 'yyyy-MM-dd')
       if (!messagesByDate[dateKey]) {
         messagesByDate[dateKey] = []
@@ -666,11 +678,18 @@ export function ConversationThread({
       messagesByDate[dateKey].push(message)
     })
 
+    // Sort date keys reverse chronologically (newest first)
+    const sortedDateKeys = Object.keys(messagesByDate).sort().reverse()
+
     return (
       <div className="relative">
         <div className="space-y-6 p-4">
-          {Object.entries(messagesByDate).map(([dateKey, dateMessages]) => {
-            const date = new Date(dateMessages[0].sent_at)
+          {sortedDateKeys.map((dateKey) => {
+            const dateMessages = messagesByDate[dateKey]
+            // Get the first message's timestamp for the date label
+            const firstMessage = dateMessages[0]
+            const timestamp = firstMessage.sent_at || firstMessage.received_at || firstMessage.created_at
+            const date = new Date(timestamp)
             return (
               <div key={dateKey}>
                 {/* Date separator */}
@@ -723,7 +742,7 @@ export function ConversationThread({
                           message.direction === 'outbound' ? "justify-end" : "justify-start"
                         )}>
                           <span className="text-xs opacity-60">
-                            {format(new Date(message.sent_at), 'h:mm a')}
+                            {format(new Date(message.sent_at || message.received_at || message.created_at), 'h:mm a')}
                           </span>
                           {message.channel_type === 'whatsapp' && message.direction === 'outbound' && (
                             <div className="flex items-center">

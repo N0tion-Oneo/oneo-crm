@@ -438,9 +438,9 @@ class EmailWebhookHandler:
         display_name = normalized_email['display_name']
         
         if email_subject:
-            conversation_subject = f"Email: {email_subject}"
+            conversation_subject = f"{email_subject}"
         elif display_name:
-            conversation_subject = f"Email from {display_name}"
+            conversation_subject = f"{display_name}"
         else:
             conversation_subject = "Email conversation"
         

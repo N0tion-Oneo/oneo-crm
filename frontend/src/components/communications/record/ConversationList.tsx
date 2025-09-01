@@ -46,6 +46,21 @@ export function ConversationList({
   selectedId,
   onSelect
 }: ConversationListProps) {
+  // Strip HTML tags and decode entities for message preview
+  const stripHtml = (html: string): string => {
+    if (!html) return ''
+    
+    // Create a temporary div to parse HTML
+    const tmp = document.createElement('div')
+    tmp.innerHTML = html
+    
+    // Get text content which automatically strips tags and decodes entities
+    const text = tmp.textContent || tmp.innerText || ''
+    
+    // Clean up extra whitespace
+    return text.replace(/\s+/g, ' ').trim()
+  }
+  
   const getChannelConfig = (channelType: string) => {
     switch (channelType) {
       case 'email':
@@ -123,14 +138,14 @@ export function ConversationList({
             key={conversation.id}
             onClick={() => onSelect(conversation.id)}
             className={cn(
-              "relative px-4 py-3 cursor-pointer transition-colors duration-150",
+              "relative px-4 py-3 cursor-pointer transition-colors duration-150 overflow-hidden",
               "hover:bg-gray-50 dark:hover:bg-gray-800/50",
               selectedId === conversation.id 
                 ? "bg-blue-50 dark:bg-blue-900/20 border-l-4 border-blue-500"
                 : "border-l-4 border-transparent"
             )}
           >
-            <div className="flex items-start space-x-3">
+            <div className="flex items-start space-x-3 overflow-hidden">
               {/* Channel icon instead of avatar for cleaner look */}
               <div className={cn(
                 "flex-shrink-0 w-9 h-9 rounded-lg flex items-center justify-center mt-0.5",
@@ -142,9 +157,9 @@ export function ConversationList({
               </div>
 
               {/* Content */}
-              <div className="flex-1 min-w-0">
+              <div className="flex-1 min-w-0 overflow-hidden">
                 {/* Header row */}
-                <div className="flex items-center justify-between mb-0.5">
+                <div className="flex items-start justify-between gap-2 mb-0.5">
                   <div className="flex-1 min-w-0">
                     <h4 className="text-sm font-medium text-gray-900 dark:text-white truncate">
                       {getParticipantDisplay(conversation.participants)}
@@ -153,7 +168,7 @@ export function ConversationList({
                       {conversation.channel_name}
                     </p>
                   </div>
-                  <span className="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap ml-2">
+                  <span className="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap flex-shrink-0">
                     {conversation.last_message_at && 
                       formatDistanceToNow(new Date(conversation.last_message_at), { 
                         addSuffix: false 
@@ -164,9 +179,9 @@ export function ConversationList({
 
                 {/* Subject for emails or last message for chats */}
                 {isEmail && conversation.subject ? (
-                  <p className="text-sm font-medium text-gray-700 dark:text-gray-300 truncate">
+                  <div className="text-sm font-medium text-gray-700 dark:text-gray-300 break-words whitespace-normal max-h-10 overflow-hidden">
                     {conversation.subject}
-                  </p>
+                  </div>
                 ) : null}
 
                 {/* Last message preview */}
@@ -178,7 +193,7 @@ export function ConversationList({
                       : "text-gray-600 dark:text-gray-400"
                   )}>
                     {conversation.last_message.direction === 'outbound' && 'You: '}
-                    {conversation.last_message.content}
+                    {stripHtml(conversation.last_message.content)}
                   </p>
                 )}
 

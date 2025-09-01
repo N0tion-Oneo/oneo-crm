@@ -141,7 +141,7 @@ export function useRecordCommunications(recordId: string | number) {
   // Fetch conversations with smart loading or channel filter
   const fetchConversations = useCallback(async (channelType?: string) => {
     if (!accessToken || !recordIdStr) return
-
+    
     try {
       const params: any = {}
       

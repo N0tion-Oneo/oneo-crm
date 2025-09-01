@@ -13,7 +13,6 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import { useRecordCommunications } from './hooks/useRecordCommunications'
 import { ConversationList } from './ConversationList'
 import { ConversationThread } from './ConversationThread'
@@ -31,6 +30,7 @@ export function RecordCommunicationsPanel({
 }: RecordCommunicationsPanelProps) {
   const [selectedConversation, setSelectedConversation] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<'all' | 'email' | 'whatsapp' | 'linkedin'>('all')
+  const [loadingChannel, setLoadingChannel] = useState<string | null>(null)
   
   const {
     profile,
@@ -50,15 +50,26 @@ export function RecordCommunicationsPanel({
   } = useRecordCommunications(recordId)
 
 
+  // Clear conversations and selection when tab changes
+  useEffect(() => {
+    // Clear selected conversation when switching tabs
+    setSelectedConversation(null)
+  }, [activeTab])
+
   // Fetch data when tab changes or component mounts
   useEffect(() => {
     if (!isLoading) {
       if (activeTab === 'all' && fetchTimeline) {
+        setLoadingChannel(activeTab)
         // Fetch timeline for 'all' tab
         fetchTimeline(true) // Reset timeline
+        setLoadingChannel(null)
       } else if (fetchConversations) {
+        setLoadingChannel(activeTab)
         // Fetch conversations for specific channels
-        fetchConversations(activeTab)
+        fetchConversations(activeTab).then(() => {
+          setLoadingChannel(null)
+        })
       }
     }
   }, [activeTab, fetchConversations, fetchTimeline, isLoading])
@@ -95,7 +106,7 @@ export function RecordCommunicationsPanel({
     )
   }
 
-  if (!conversations.length && !profile?.sync_in_progress) {
+  if (!conversations.length && !profile?.sync_in_progress && !loadingChannel) {
     return (
       <div className="flex flex-col h-full max-h-[800px] min-h-[500px] bg-gray-50 dark:bg-gray-900">
         <div className="flex items-center justify-center h-full">
@@ -195,13 +206,19 @@ export function RecordCommunicationsPanel({
           <div className="flex h-full overflow-hidden">
             {/* Conversation list - Fixed width sidebar */}
             <div className="w-80 h-full border-r border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 overflow-hidden flex flex-col flex-shrink-0">
-              <ScrollArea className="flex-1">
-                <ConversationList
-                  conversations={filteredConversations}
-                  selectedId={selectedConversation}
-                  onSelect={setSelectedConversation}
-                />
-              </ScrollArea>
+              <div className="flex-1 overflow-y-auto overflow-x-hidden">
+                {loadingChannel ? (
+                  <div className="flex items-center justify-center h-32">
+                    <Loader2 className="w-6 h-6 animate-spin text-gray-400" />
+                  </div>
+                ) : (
+                  <ConversationList
+                    conversations={filteredConversations}
+                    selectedId={selectedConversation}
+                    onSelect={setSelectedConversation}
+                  />
+                )}
+              </div>
             </div>
 
             {/* Conversation detail - Takes remaining space */}

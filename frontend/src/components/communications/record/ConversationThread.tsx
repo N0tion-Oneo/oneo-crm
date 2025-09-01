@@ -60,11 +60,19 @@ interface Message {
 interface ConversationThreadProps {
   conversationId: string
   recordId: string
+  onReply?: (message: any) => void
+  onReplyAll?: (message: any) => void
+  onForward?: (message: any) => void
+  isEmail?: boolean
 }
 
 export function ConversationThread({
   conversationId,
-  recordId
+  recordId,
+  onReply,
+  onReplyAll,
+  onForward,
+  isEmail
 }: ConversationThreadProps) {
   const [messages, setMessages] = useState<Message[]>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -632,31 +640,54 @@ export function ConversationThread({
                   )}
 
                   {/* Email actions */}
-                  <div className="px-4 py-2 bg-gray-50 dark:bg-gray-800/50 border-t border-gray-200 dark:border-gray-700">
-                    <div className="flex items-center space-x-2">
-                      <Button size="sm" variant="ghost" className="text-xs">
-                        <Reply className="w-3 h-3 mr-1" />
-                        Reply
-                      </Button>
-                      <Button size="sm" variant="ghost" className="text-xs">
-                        <Forward className="w-3 h-3 mr-1" />
-                        Forward
-                      </Button>
-                      {message.direction === 'inbound' && !message.read_at && (
+                  {isEmail && (
+                    <div className="px-4 py-2 bg-gray-50 dark:bg-gray-800/50 border-t border-gray-200 dark:border-gray-700">
+                      <div className="flex items-center space-x-2">
                         <Button 
                           size="sm" 
                           variant="ghost" 
-                          className="text-xs ml-auto"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            markAsRead(message.id)
-                          }}
+                          className="text-xs"
+                          onClick={() => onReply && onReply(message)}
                         >
-                          Mark as read
+                          <Reply className="w-3 h-3 mr-1" />
+                          Reply
                         </Button>
-                      )}
+                        {message.recipients && (message.recipients.to?.length > 1 || message.recipients.cc?.length > 0) && (
+                          <Button 
+                            size="sm" 
+                            variant="ghost" 
+                            className="text-xs"
+                            onClick={() => onReplyAll && onReplyAll(message)}
+                          >
+                            <Reply className="w-3 h-3 mr-1" />
+                            Reply All
+                          </Button>
+                        )}
+                        <Button 
+                          size="sm" 
+                          variant="ghost" 
+                          className="text-xs"
+                          onClick={() => onForward && onForward(message)}
+                        >
+                          <Forward className="w-3 h-3 mr-1" />
+                          Forward
+                        </Button>
+                        {message.direction === 'inbound' && !message.read_at && (
+                          <Button 
+                            size="sm" 
+                            variant="ghost" 
+                            className="text-xs ml-auto"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              markAsRead(message.id)
+                            }}
+                          >
+                            Mark as read
+                          </Button>
+                        )}
+                      </div>
                     </div>
-                  </div>
+                  )}
                 </>
               )}
             </div>

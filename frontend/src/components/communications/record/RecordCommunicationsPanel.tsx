@@ -18,6 +18,7 @@ import { ConversationList } from './ConversationList'
 import { ConversationThread } from './ConversationThread'
 import { SyncStatusIndicator } from './SyncStatusIndicator'
 import { QuickReply } from './QuickReply'
+import { EmailCompose } from './EmailCompose'
 
 interface RecordCommunicationsPanelProps {
   recordId: string
@@ -30,6 +31,8 @@ export function RecordCommunicationsPanel({
   const [selectedConversation, setSelectedConversation] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<'email' | 'whatsapp' | 'linkedin'>('email')
   const [loadingChannel, setLoadingChannel] = useState<string | null>(null)
+  const [replyTo, setReplyTo] = useState<any>(null)
+  const [replyMode, setReplyMode] = useState<'reply' | 'reply-all' | 'forward' | null>(null)
   
   const {
     profile,
@@ -49,6 +52,9 @@ export function RecordCommunicationsPanel({
   useEffect(() => {
     // Clear selected conversation when switching tabs
     setSelectedConversation(null)
+    // Clear reply state when switching tabs
+    setReplyTo(null)
+    setReplyMode(null)
   }, [activeTab])
 
   // Fetch data when tab changes or component mounts
@@ -69,6 +75,27 @@ export function RecordCommunicationsPanel({
   const handleSync = async () => {
     // Always force sync when manually triggered from UI
     await triggerSync(true)
+  }
+
+  // Handle reply actions
+  const handleReply = (message: any) => {
+    setReplyTo(message)
+    setReplyMode('reply')
+  }
+
+  const handleReplyAll = (message: any) => {
+    setReplyTo(message)
+    setReplyMode('reply-all')
+  }
+
+  const handleForward = (message: any) => {
+    setReplyTo(message)
+    setReplyMode('forward')
+  }
+
+  const handleCancelReply = () => {
+    setReplyTo(null)
+    setReplyMode(null)
   }
 
   if (isLoading && !profile) {
@@ -184,7 +211,12 @@ export function RecordCommunicationsPanel({
                   <ConversationList
                     conversations={filteredConversations}
                     selectedId={selectedConversation}
-                    onSelect={setSelectedConversation}
+                    onSelect={(id) => {
+                      setSelectedConversation(id)
+                      // Clear reply state when switching conversations
+                      setReplyTo(null)
+                      setReplyMode(null)
+                    }}
                   />
                 )}
               </div>
@@ -199,14 +231,31 @@ export function RecordCommunicationsPanel({
                     <ConversationThread
                       conversationId={selectedConversation}
                       recordId={recordId}
+                      onReply={handleReply}
+                      onReplyAll={handleReplyAll}
+                      onForward={handleForward}
+                      isEmail={activeTab === 'email'}
                     />
                   </div>
                   {/* Reply area - Fixed at bottom */}
-                  <div className="flex-shrink-0 border-t border-gray-200 dark:border-gray-700 p-4 bg-gray-50 dark:bg-gray-900">
-                    <QuickReply
-                      conversationId={selectedConversation}
-                      recordId={recordId}
-                    />
+                  <div className="flex-shrink-0">
+                    {activeTab === 'email' ? (
+                      <EmailCompose
+                        conversationId={selectedConversation}
+                        recordId={recordId}
+                        replyTo={replyTo}
+                        replyMode={replyMode}
+                        onCancelReply={handleCancelReply}
+                        onMessageSent={refreshData}
+                      />
+                    ) : (
+                      <div className="border-t border-gray-200 dark:border-gray-700 p-4 bg-gray-50 dark:bg-gray-900">
+                        <QuickReply
+                          conversationId={selectedConversation}
+                          recordId={recordId}
+                        />
+                      </div>
+                    )}
                   </div>
                 </>
               ) : (

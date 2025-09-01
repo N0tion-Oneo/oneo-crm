@@ -134,6 +134,93 @@ class EmailWebhookHandler:
                     connection, conversation, normalized_email, webhook_data, participants
                 )
                 
+                # Create RecordCommunicationLink for ALL participants, finding records by email
+                # This ensures the email shows on all connected contacts' timelines
+                # Do this for ALL messages, not just newly created ones
+                try:
+                    from communications.record_communications.models import RecordCommunicationLink
+                    from communications.record_communications.services import RecordIdentifierExtractor
+                    
+                    # Use identifier extractor to find records like sync does
+                    identifier_extractor = RecordIdentifierExtractor()
+                    links_created = 0
+                    
+                    for participant in participants:
+                        # First try using existing contact_record
+                        record_to_link = participant.contact_record
+                        
+                        # If no contact_record, try to find record by email
+                        if not record_to_link and participant.email:
+                            # Find records that have this email as an identifier
+                            identifiers = {'email': [participant.email]}
+                            matching_records = identifier_extractor.find_records_by_identifiers(identifiers)
+                            if matching_records:
+                                record_to_link = matching_records[0]  # Use first match
+                                logger.info(f"Found record {record_to_link.id} for email {participant.email}")
+                                
+                                # Also update participant's contact_record for future use
+                                participant.contact_record = record_to_link
+                                participant.resolution_confidence = 0.9
+                                participant.resolution_method = 'email_identifier_match'
+                                participant.resolved_at = timezone.now()
+                                participant.save()
+                        
+                        if record_to_link:
+                            # Determine match type based on participant data
+                            if participant.email:
+                                match_type = 'email'
+                                match_identifier = participant.email
+                            else:
+                                match_type = 'other'
+                                match_identifier = ''
+                            
+                            # Create link between this participant's record and the conversation
+                            link, created = RecordCommunicationLink.objects.get_or_create(
+                                record=record_to_link,
+                                conversation=conversation,
+                                participant=participant,
+                                defaults={
+                                    'match_type': match_type,
+                                    'match_identifier': match_identifier,
+                                    'confidence_score': participant.resolution_confidence or 1.0,
+                                    'created_by_sync': False,  # Created by webhook
+                                    'is_primary': True
+                                }
+                            )
+                            if created:
+                                links_created += 1
+                                logger.info(
+                                    f"Created RecordCommunicationLink for participant {participant.email} "
+                                    f"-> record {record_to_link.id}"
+                                )
+                        
+                        # Also create link for secondary record (company/organization)
+                        if participant.secondary_record:
+                            secondary_link, secondary_created = RecordCommunicationLink.objects.get_or_create(
+                                record=participant.secondary_record,
+                                conversation=conversation,
+                                participant=participant,
+                                defaults={
+                                    'match_type': 'domain',
+                                    'match_identifier': participant.email.split('@')[1] if participant.email and '@' in participant.email else '',
+                                    'confidence_score': participant.secondary_confidence or 0.8,
+                                    'created_by_sync': False,  # Created by webhook
+                                    'is_primary': False  # Secondary link
+                                }
+                            )
+                            if secondary_created:
+                                links_created += 1
+                                logger.info(
+                                    f"Created secondary RecordCommunicationLink for company "
+                                    f"{participant.secondary_record.id} via domain match"
+                                )
+                    
+                    if links_created > 0:
+                        logger.info(f"Email linked to {links_created} records (contacts + companies) for timeline visibility")
+                        
+                except Exception as e:
+                    logger.warning(f"Failed to create RecordCommunicationLinks: {e}")
+                
                 if was_created:
                     logger.info(f"Created new email message {message.id} for account {account_id} with linked contact")
                     
@@ -359,14 +446,39 @@ class EmailWebhookHandler:
             if normalized_email['attachments']:
                 email_metadata['attachments'] = normalized_email['attachments']
             
-            # Find sender participant
+            # Find sender participant using sender_info, NOT contact_email
             sender_participant = None
-            sender_email = normalized_email.get('contact_email')
+            sender_info = normalized_email.get('sender_info', {})
+            sender_email = sender_info.get('email', '')
+            
+            # For proper participant matching, use the actual sender's email
             if sender_email:
                 for p in participants:
-                    if p.email == sender_email:
+                    if p.email and p.email.lower() == sender_email.lower():
                         sender_participant = p
                         break
+            
+            # Log for debugging
+            logger.info(f"Sender email from sender_info: {sender_email}, Found participant: {sender_participant is not None}")
+            
+            # Determine contact_email and contact_record based on direction
+            # For INBOUND: contact is the sender
+            # For OUTBOUND: contact is the primary recipient
+            contact_participant = None
+            if normalized_email['direction'] == MessageDirection.INBOUND:
+                contact_email_for_message = sender_email
+                contact_participant = sender_participant
+            else:
+                # For outbound, get the first recipient
+                recipients = normalized_email.get('recipients', {}).get('to', [])
+                contact_email_for_message = recipients[0].get('email', '') if recipients else ''
+                
+                # Find the recipient participant
+                if contact_email_for_message:
+                    for p in participants:
+                        if p.email and p.email.lower() == contact_email_for_message.lower():
+                            contact_participant = p
+                            break
             
             # Create email message with participant link
             message = Message.objects.create(
@@ -376,10 +488,10 @@ class EmailWebhookHandler:
                 direction=normalized_email['direction'],
                 content=normalized_email['content'],
                 subject=normalized_email['subject'],
-                contact_email=normalized_email['contact_email'],
+                contact_email=contact_email_for_message,  # Use correct email based on direction
                 contact_phone='',  # Emails don't have phone numbers
-                sender_participant=sender_participant,  # Link to participant
-                contact_record=sender_participant.contact_record if sender_participant else None,  # Keep for backward compat
+                sender_participant=sender_participant,  # Link to sender participant
+                contact_record=contact_participant.contact_record if contact_participant else None,  # Link contact record for timeline
                 status=normalized_email['status'],
                 metadata=email_metadata,
                 sent_at=normalized_email['timestamp'] if normalized_email['direction'] == MessageDirection.OUTBOUND else None,
@@ -390,13 +502,13 @@ class EmailWebhookHandler:
             for participant in participants:
                 # Determine role based on email position
                 role = 'member'
-                if participant.email == sender_email:
+                if participant.email and participant.email.lower() == sender_email.lower():
                     role = 'sender'
-                elif participant.email in [r.get('identifier') for r in normalized_email.get('recipients', {}).get('to', [])]:
+                elif participant.email and participant.email.lower() in [r.get('email', '').lower() for r in normalized_email.get('recipients', {}).get('to', [])]:
                     role = 'recipient'
-                elif participant.email in [r.get('identifier') for r in normalized_email.get('recipients', {}).get('cc', [])]:
+                elif participant.email and participant.email.lower() in [r.get('email', '').lower() for r in normalized_email.get('recipients', {}).get('cc', [])]:
                     role = 'cc'
-                elif participant.email in [r.get('identifier') for r in normalized_email.get('recipients', {}).get('bcc', [])]:
+                elif participant.email and participant.email.lower() in [r.get('email', '').lower() for r in normalized_email.get('recipients', {}).get('bcc', [])]:
                     role = 'bcc'
                 
                 ConversationParticipant.objects.update_or_create(
@@ -410,8 +522,10 @@ class EmailWebhookHandler:
                     }
                 )
             
-            logger.info(f"Created email message {message.id}: {normalized_email['direction']} "
-                       f"from {normalized_email['contact_email']} "
+            # Log with correct direction and sender info
+            direction_str = "outbound" if normalized_email['direction'] == MessageDirection.OUTBOUND else "inbound"
+            logger.info(f"Created email message {message.id}: {direction_str} "
+                       f"from {sender_email} "
                        f"subject: {normalized_email['subject'][:50]}")
             
             return message, True
@@ -718,6 +832,47 @@ class EmailWebhookHandler:
                     conversation_data,
                     connection.channel_type
                 )
+            
+            # IMPORTANT: The storage decider only checks if participants have contact_record already set,
+            # which causes a chicken-and-egg problem. We need to also search for records by email.
+            # We also need to check for secondary (company) records even if contact records are found.
+            # Always enhance participant resolution with additional searches
+            if participants:
+                from communications.record_communications.services import RecordIdentifierExtractor
+                identifier_extractor = RecordIdentifierExtractor()
+                
+                # Check each participant's email against CRM records
+                for participant in participants:
+                    if participant.email:
+                        # Search for contact records by email (if not already linked)
+                        if not participant.contact_record:
+                            identifiers = {'email': [participant.email]}
+                            matching_records = identifier_extractor.find_records_by_identifiers(identifiers)
+                            
+                            if matching_records:
+                                # Found a matching record! We should store this message
+                                should_store = True
+                                # Link the participant to the record
+                                participant.contact_record = matching_records[0]
+                                participant.save()
+                                logger.info(f"Found CRM record {matching_records[0].id} for email {participant.email}")
+                        
+                        # Always search for company records by domain (even if contact exists)
+                        if '@' in participant.email and not participant.secondary_record:
+                            domain = participant.email.split('@')[1]
+                            # Skip personal email domains
+                            personal_domains = ['gmail.com', 'yahoo.com', 'hotmail.com', 'outlook.com', 'icloud.com']
+                            if domain.lower() not in personal_domains:
+                                company_records = identifier_extractor.find_company_records_by_domain(domain)
+                                if company_records:
+                                    # Found a matching company! Link as secondary record
+                                    participant.secondary_record = company_records[0]
+                                    participant.secondary_pipeline = company_records[0].pipeline.slug
+                                    participant.secondary_resolution_method = 'domain'
+                                    participant.secondary_confidence = 0.8
+                                    participant.save()
+                                    logger.info(f"Found company record {company_records[0].id} for domain {domain}")
+                                    should_store = True  # Company match is also enough to store
             
             return should_store, participants
             

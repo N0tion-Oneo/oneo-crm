@@ -8,12 +8,12 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-def extract_email_from_webhook(webhook_data: dict, our_email: str = 'josh@oneo.africa') -> str:
+def extract_email_from_webhook(webhook_data: dict, our_email: str = '') -> str:
     """
-    Extract contact email address from raw email webhook data
+    DEPRECATED: Use extract_email_sender_info() and extract_email_recipients_info() instead
     
-    For inbound emails: Returns the sender's email address
-    For outbound emails: Returns the primary recipient's email address
+    Extract contact email address from raw email webhook data
+    For backward compatibility only - returns sender's email
     
     Args:
         webhook_data: Raw webhook data from UniPile
@@ -25,70 +25,11 @@ def extract_email_from_webhook(webhook_data: dict, our_email: str = 'josh@oneo.a
     if not isinstance(webhook_data, dict):
         return ''
     
-    # Determine direction first to know which email to extract
-    direction = determine_email_direction(webhook_data, our_email)
+    # Always return sender's email for backward compatibility
+    sender_info = extract_email_sender_info(webhook_data)
+    if isinstance(sender_info, dict):
+        return sender_info.get('email', '')
     
-    if direction == 'inbound':
-        # INBOUND: Extract sender's email
-        # Try from_attendee format first
-        from_attendee = webhook_data.get('from_attendee', {})
-        if isinstance(from_attendee, dict):
-            sender_email = from_attendee.get('identifier', '')
-            if sender_email:
-                logger.debug(f"Extracted sender email (inbound): {sender_email}")
-                return _clean_email_address(sender_email)
-        
-        # Try direct 'from' field (UniPile format)
-        from_field = webhook_data.get('from', {})
-        if isinstance(from_field, dict):
-            sender_email = from_field.get('email', from_field.get('identifier', ''))
-            if sender_email:
-                logger.debug(f"Extracted sender email from 'from' field: {sender_email}")
-                return _clean_email_address(sender_email)
-        
-        # Fallback: try other sender fields
-        sender_fields = ['sender_email', 'sender', 'from_email']
-        for field in sender_fields:
-            value = webhook_data.get(field, '')
-            if value:
-                email = _extract_email_from_field(value)
-                if email:
-                    logger.debug(f"Fallback: extracted sender email from '{field}': {email}")
-                    return email
-    
-    else:
-        # OUTBOUND: Extract primary recipient's email
-        # Try to_attendees format first
-        to_attendees = webhook_data.get('to_attendees', [])
-        if isinstance(to_attendees, list) and len(to_attendees) > 0:
-            first_recipient = to_attendees[0]
-            if isinstance(first_recipient, dict):
-                recipient_email = first_recipient.get('identifier', '')
-                if recipient_email:
-                    logger.debug(f"Extracted recipient email (outbound): {recipient_email}")
-                    return _clean_email_address(recipient_email)
-        
-        # Try direct 'to' field (UniPile format)
-        to_field = webhook_data.get('to', [])
-        if isinstance(to_field, list) and len(to_field) > 0:
-            first_recipient = to_field[0]
-            if isinstance(first_recipient, dict):
-                recipient_email = first_recipient.get('email', first_recipient.get('identifier', ''))
-                if recipient_email:
-                    logger.debug(f"Extracted recipient email from 'to' field: {recipient_email}")
-                    return _clean_email_address(recipient_email)
-        
-        # Fallback: try other recipient fields
-        recipient_fields = ['recipient_email', 'recipient', 'to_email']
-        for field in recipient_fields:
-            value = webhook_data.get(field, '')
-            if value:
-                email = _extract_email_from_field(value)
-                if email:
-                    logger.debug(f"Fallback: extracted recipient email from '{field}': {email}")
-                    return email
-    
-    logger.debug("No email found in webhook data")
     return ''
 
 
@@ -120,7 +61,7 @@ def extract_email_subject_from_webhook(webhook_data: dict) -> str:
     return ''
 
 
-def extract_email_name_from_webhook(webhook_data: dict, our_email: str = 'josh@oneo.africa') -> str:
+def extract_email_name_from_webhook(webhook_data: dict, our_email: str = '') -> str:
     """
     Extract contact display name from email webhook data
     
@@ -181,13 +122,13 @@ def extract_email_name_from_webhook(webhook_data: dict, our_email: str = 'josh@o
     return ''
 
 
-def determine_email_direction(webhook_data: dict, our_email: str = 'josh@oneo.africa') -> str:
+def determine_email_direction(webhook_data: dict, our_email: str = '') -> str:
     """
     Determine email direction from webhook data
     
     Args:
         webhook_data: Raw webhook data
-        our_email: Our business email address
+        our_email: Our business email address (account owner's email)
         
     Returns:
         'inbound' or 'outbound'
@@ -195,7 +136,16 @@ def determine_email_direction(webhook_data: dict, our_email: str = 'josh@oneo.af
     if not isinstance(webhook_data, dict):
         return 'inbound'
     
-    # Check explicit direction field first
+    # Check event type first (most reliable for webhooks)
+    event_type = webhook_data.get('event', '').lower()
+    if 'sent' in event_type or 'outbound' in event_type:
+        logger.debug(f"Direction from event type '{event_type}': outbound")
+        return 'outbound'
+    elif 'received' in event_type or 'inbound' in event_type:
+        logger.debug(f"Direction from event type '{event_type}': inbound")
+        return 'inbound'
+    
+    # Check explicit direction field
     direction_field = webhook_data.get('direction', '').lower()
     if direction_field in ['inbound', 'in', 'incoming']:
         return 'inbound'

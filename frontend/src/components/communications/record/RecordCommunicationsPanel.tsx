@@ -192,7 +192,7 @@ export function RecordCommunicationsPanel({
             />
           </div>
         ) : (
-          <div className="flex h-full">
+          <div className="flex h-full overflow-hidden">
             {/* Conversation list - Fixed width sidebar */}
             <div className="w-80 h-full border-r border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 overflow-hidden flex flex-col flex-shrink-0">
               <ScrollArea className="flex-1">

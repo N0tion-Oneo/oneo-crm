@@ -94,9 +94,10 @@ export function ConversationThread({
       content = textarea.value
     }
     
-    // Remove dangerous scripts for security
+    // Remove dangerous scripts and styles for security and to prevent CSS leakage
     let sanitized = content
     sanitized = sanitized.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+    sanitized = sanitized.replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '') // Remove style tags to prevent CSS leakage
     sanitized = sanitized.replace(/\son\w+\s*=\s*"[^"]*"/gi, '')
     sanitized = sanitized.replace(/\son\w+\s*=\s*'[^']*'/gi, '')
     sanitized = sanitized.replace(/javascript:/gi, '')
@@ -420,8 +421,8 @@ export function ConversationThread({
   // Render email thread (Gmail/Outlook style)
   const renderEmailThread = () => {
     return (
-      <div className="w-full h-full">
-        <div className="space-y-2 p-4 bg-gray-50 dark:bg-gray-900 overflow-y-auto">
+      <div className="w-full h-full bg-gray-50 dark:bg-gray-900 overflow-y-auto overflow-x-hidden">
+        <div className="space-y-2 p-4">
           {messages.map((message, index) => {
             const isExpanded = expandedEmails.has(message.id)
             const isLatest = index === messages.length - 1
@@ -575,15 +576,16 @@ export function ConversationThread({
                   
                   {/* Email body with full HTML rendering */}
                   <div className="px-4 py-4">
-                    <div className="overflow-auto max-h-[600px]">
+                    <div className="overflow-auto max-h-[600px] overflow-x-hidden">
                       {/* Use html_content if available, otherwise fall back to content */}
                       {message.html_content || isHtmlContent(message.content) ? (
                         <div 
-                          className="email-html-content"
+                          className="email-html-content email-content-isolate"
                           style={{
                             transform: 'scale(0.85)',
                             transformOrigin: 'top left',
-                            width: '117.6%' // Compensate for 0.85 scale (1/0.85 = 1.176)
+                            width: '117.6%', // Compensate for 0.85 scale (1/0.85 = 1.176)
+                            contain: 'layout style paint' // CSS containment to prevent leakage
                           }}
                           dangerouslySetInnerHTML={{ 
                             __html: prepareHtmlContent(message.html_content || message.content) 

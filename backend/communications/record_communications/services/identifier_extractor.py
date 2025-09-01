@@ -326,17 +326,23 @@ class RecordIdentifierExtractor:
         # Build query for RecordCommunicationProfile
         query = Q()
         
+        # Use __contains for JSONB array fields instead of __overlap
+        # __overlap doesn't work reliably with PostgreSQL JSONB arrays
         if identifiers.get('email'):
-            query |= Q(communication_identifiers__email__overlap=identifiers['email'])
+            for email in identifiers['email']:
+                query |= Q(communication_identifiers__email__contains=email)
         
         if identifiers.get('phone'):
-            query |= Q(communication_identifiers__phone__overlap=identifiers['phone'])
+            for phone in identifiers['phone']:
+                query |= Q(communication_identifiers__phone__contains=phone)
         
         if identifiers.get('linkedin'):
-            query |= Q(communication_identifiers__linkedin__overlap=identifiers['linkedin'])
+            for linkedin in identifiers['linkedin']:
+                query |= Q(communication_identifiers__linkedin__contains=linkedin)
         
         if identifiers.get('domain'):
-            query |= Q(communication_identifiers__domain__overlap=identifiers['domain'])
+            for domain in identifiers['domain']:
+                query |= Q(communication_identifiers__domain__contains=domain)
         
         if not query:
             return []
@@ -345,6 +351,53 @@ class RecordIdentifierExtractor:
         
         if pipeline_id:
             profiles = profiles.filter(pipeline_id=pipeline_id)
+        
+        # Get unique records
+        record_ids = profiles.values_list('record_id', flat=True).distinct()
+        return list(Record.objects.filter(id__in=record_ids))
+    
+    def find_company_records_by_domain(
+        self,
+        domain: str,
+        pipeline_slugs: Optional[List[str]] = None
+    ) -> List[Record]:
+        """
+        Find company/organization records that match the given domain.
+        
+        Args:
+            domain: Domain to search for (e.g., 'oneodigital.com')
+            pipeline_slugs: Optional list of pipeline slugs to restrict search to
+                          (defaults to common company pipeline names)
+            
+        Returns:
+            List of matching Record objects
+        """
+        from ..models import RecordCommunicationProfile
+        
+        if not domain:
+            return []
+        
+        # Default to common company/organization pipeline slugs
+        if not pipeline_slugs:
+            pipeline_slugs = ['companies', 'organizations', 'company', 'organization', 'accounts']
+        
+        # Remove www. prefix if present for better matching
+        clean_domain = domain.lower()
+        if clean_domain.startswith('www.'):
+            clean_domain = clean_domain[4:]
+        
+        # Build query for RecordCommunicationProfile
+        # Search for domain in the communication_identifiers JSONB field
+        query = Q(communication_identifiers__domain__contains=clean_domain)
+        
+        profiles = RecordCommunicationProfile.objects.filter(query)
+        
+        # Filter by pipeline if specified
+        if pipeline_slugs:
+            from pipelines.models import Pipeline
+            target_pipelines = Pipeline.objects.filter(slug__in=pipeline_slugs)
+            if target_pipelines.exists():
+                profiles = profiles.filter(pipeline__in=target_pipelines)
         
         # Get unique records
         record_ids = profiles.values_list('record_id', flat=True).distinct()

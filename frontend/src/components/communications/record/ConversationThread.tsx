@@ -420,19 +420,20 @@ export function ConversationThread({
   // Render email thread (Gmail/Outlook style)
   const renderEmailThread = () => {
     return (
-      <div className="space-y-2 p-4 bg-gray-50 dark:bg-gray-900">
-        {messages.map((message, index) => {
-          const isExpanded = expandedEmails.has(message.id)
-          const isLatest = index === messages.length - 1
-          
-          return (
-            <div 
-              key={message.id} 
-              className={cn(
-                "border rounded-lg bg-white dark:bg-gray-800 transition-all duration-200",
-                isExpanded ? "shadow-md" : "shadow-sm hover:shadow-md"
-              )}
-            >
+      <div className="w-full h-full">
+        <div className="space-y-2 p-4 bg-gray-50 dark:bg-gray-900 overflow-y-auto">
+          {messages.map((message, index) => {
+            const isExpanded = expandedEmails.has(message.id)
+            const isLatest = index === messages.length - 1
+            
+            return (
+              <div 
+                key={message.id} 
+                className={cn(
+                  "border rounded-lg bg-white dark:bg-gray-800 transition-all duration-200 overflow-hidden",
+                  isExpanded ? "shadow-md" : "shadow-sm hover:shadow-md"
+                )}
+              >
               {/* Collapsible email header */}
               <button
                 onClick={() => toggleEmailExpanded(message.id)}
@@ -573,23 +574,30 @@ export function ConversationThread({
                   </div>
                   
                   {/* Email body with full HTML rendering */}
-                  <div className="px-4 py-4 max-h-[600px] overflow-y-auto">
-                    {/* Use html_content if available, otherwise fall back to content */}
-                    {message.html_content || isHtmlContent(message.content) ? (
-                      <div 
-                        className="email-html-content email-body-container"
-                        dangerouslySetInnerHTML={{ 
-                          __html: prepareHtmlContent(message.html_content || message.content) 
-                        }}
-                      />
-                    ) : (
-                      <div 
-                        className="whitespace-pre-wrap text-sm text-gray-800 dark:text-gray-200"
-                        dangerouslySetInnerHTML={{ 
-                          __html: makeUrlsClickable(message.content || '') 
-                        }}
-                      />
-                    )}
+                  <div className="px-4 py-4">
+                    <div className="overflow-auto max-h-[600px]">
+                      {/* Use html_content if available, otherwise fall back to content */}
+                      {message.html_content || isHtmlContent(message.content) ? (
+                        <div 
+                          className="email-html-content"
+                          style={{
+                            transform: 'scale(0.85)',
+                            transformOrigin: 'top left',
+                            width: '117.6%' // Compensate for 0.85 scale (1/0.85 = 1.176)
+                          }}
+                          dangerouslySetInnerHTML={{ 
+                            __html: prepareHtmlContent(message.html_content || message.content) 
+                          }}
+                        />
+                      ) : (
+                        <div 
+                          className="whitespace-pre-wrap text-sm text-gray-800 dark:text-gray-200 break-words"
+                          dangerouslySetInnerHTML={{ 
+                            __html: makeUrlsClickable(message.content || '') 
+                          }}
+                        />
+                      )}
+                    </div>
                   </div>
 
                   {/* Attachments */}
@@ -652,6 +660,7 @@ export function ConversationThread({
             </div>
           )
         })}
+        </div>
       </div>
     )
   }

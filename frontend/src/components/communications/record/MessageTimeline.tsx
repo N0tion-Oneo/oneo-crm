@@ -162,6 +162,15 @@ export function MessageTimeline({
       groups[date].push(message)
     })
     
+    // Sort messages within each date group (newest first)
+    Object.keys(groups).forEach(date => {
+      groups[date].sort((a, b) => {
+        const aTime = new Date(a.sent_at || a.received_at || a.created_at).getTime()
+        const bTime = new Date(b.sent_at || b.received_at || b.created_at).getTime()
+        return bTime - aTime // Newest first
+      })
+    })
+    
     // Sort dates in descending order (newest first)
     return Object.entries(groups).sort((a, b) => b[0].localeCompare(a[0]))
   }, [messages])

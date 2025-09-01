@@ -30,6 +30,7 @@ def extract_email_from_webhook(webhook_data: dict, our_email: str = 'josh@oneo.a
     
     if direction == 'inbound':
         # INBOUND: Extract sender's email
+        # Try from_attendee format first
         from_attendee = webhook_data.get('from_attendee', {})
         if isinstance(from_attendee, dict):
             sender_email = from_attendee.get('identifier', '')
@@ -37,8 +38,16 @@ def extract_email_from_webhook(webhook_data: dict, our_email: str = 'josh@oneo.a
                 logger.debug(f"Extracted sender email (inbound): {sender_email}")
                 return _clean_email_address(sender_email)
         
+        # Try direct 'from' field (UniPile format)
+        from_field = webhook_data.get('from', {})
+        if isinstance(from_field, dict):
+            sender_email = from_field.get('email', from_field.get('identifier', ''))
+            if sender_email:
+                logger.debug(f"Extracted sender email from 'from' field: {sender_email}")
+                return _clean_email_address(sender_email)
+        
         # Fallback: try other sender fields
-        sender_fields = ['from', 'sender_email', 'sender', 'from_email']
+        sender_fields = ['sender_email', 'sender', 'from_email']
         for field in sender_fields:
             value = webhook_data.get(field, '')
             if value:
@@ -49,6 +58,7 @@ def extract_email_from_webhook(webhook_data: dict, our_email: str = 'josh@oneo.a
     
     else:
         # OUTBOUND: Extract primary recipient's email
+        # Try to_attendees format first
         to_attendees = webhook_data.get('to_attendees', [])
         if isinstance(to_attendees, list) and len(to_attendees) > 0:
             first_recipient = to_attendees[0]
@@ -58,8 +68,18 @@ def extract_email_from_webhook(webhook_data: dict, our_email: str = 'josh@oneo.a
                     logger.debug(f"Extracted recipient email (outbound): {recipient_email}")
                     return _clean_email_address(recipient_email)
         
+        # Try direct 'to' field (UniPile format)
+        to_field = webhook_data.get('to', [])
+        if isinstance(to_field, list) and len(to_field) > 0:
+            first_recipient = to_field[0]
+            if isinstance(first_recipient, dict):
+                recipient_email = first_recipient.get('email', first_recipient.get('identifier', ''))
+                if recipient_email:
+                    logger.debug(f"Extracted recipient email from 'to' field: {recipient_email}")
+                    return _clean_email_address(recipient_email)
+        
         # Fallback: try other recipient fields
-        recipient_fields = ['to', 'recipient_email', 'recipient', 'to_email']
+        recipient_fields = ['recipient_email', 'recipient', 'to_email']
         for field in recipient_fields:
             value = webhook_data.get(field, '')
             if value:
@@ -182,29 +202,49 @@ def determine_email_direction(webhook_data: dict, our_email: str = 'josh@oneo.af
     elif direction_field in ['outbound', 'out', 'outgoing']:
         return 'outbound'
     
-    # Extract sender email from from_attendee
-    from_attendee = webhook_data.get('from_attendee', {})
+    # Extract sender email - try both formats
     sender_email = ''
+    
+    # Try from_attendee format first
+    from_attendee = webhook_data.get('from_attendee', {})
     if isinstance(from_attendee, dict):
         sender_email = from_attendee.get('identifier', '').lower()
     
+    # Try direct 'from' field (UniPile format)
+    if not sender_email:
+        from_field = webhook_data.get('from', {})
+        if isinstance(from_field, dict):
+            sender_email = from_field.get('email', from_field.get('identifier', '')).lower()
+    
     # If sender is our email, it's outbound
-    if sender_email == our_email.lower():
+    if sender_email and sender_email == our_email.lower():
         logger.debug(f"Outbound: sender ({sender_email}) is our email")
         return 'outbound'
     
-    # Check if our email is in to_attendees (inbound)
+    # Check if our email is in recipients (inbound) - try both formats
+    
+    # Try to_attendees format
     to_attendees = webhook_data.get('to_attendees', [])
     if isinstance(to_attendees, list):
         for recipient in to_attendees:
             if isinstance(recipient, dict):
                 recipient_email = recipient.get('identifier', '').lower()
                 if recipient_email == our_email.lower():
-                    logger.debug(f"Inbound: our email ({our_email}) is in recipients")
+                    logger.debug(f"Inbound: our email ({our_email}) is in to_attendees")
+                    return 'inbound'
+    
+    # Try direct 'to' field (UniPile format)
+    to_field = webhook_data.get('to', [])
+    if isinstance(to_field, list):
+        for recipient in to_field:
+            if isinstance(recipient, dict):
+                recipient_email = recipient.get('email', recipient.get('identifier', '')).lower()
+                if recipient_email == our_email.lower():
+                    logger.debug(f"Inbound: our email ({our_email}) is in 'to' field")
                     return 'inbound'
     
     # Default to inbound if we can't determine
-    logger.debug(f"Could not determine direction - defaulting to inbound")
+    logger.debug(f"Could not determine direction - defaulting to inbound. Sender: {sender_email}, Our email: {our_email}")
     return 'inbound'
 
 
@@ -378,16 +418,25 @@ def extract_email_recipients_info(webhook_data: dict) -> dict:
         result = []
         for attendee in attendees:
             if isinstance(attendee, dict):
-                result.append({
-                    'email': attendee.get('identifier', ''),
-                    'name': attendee.get('display_name', '')
-                })
+                # Handle both formats: to_attendees and to
+                email = attendee.get('identifier', attendee.get('email', ''))
+                name = attendee.get('display_name', attendee.get('name', ''))
+                if email:
+                    result.append({
+                        'email': email,
+                        'name': name
+                    })
         return result
     
+    # Try both field formats
+    to_recipients = webhook_data.get('to_attendees', webhook_data.get('to', []))
+    cc_recipients = webhook_data.get('cc_attendees', webhook_data.get('cc', []))
+    bcc_recipients = webhook_data.get('bcc_attendees', webhook_data.get('bcc', []))
+    
     return {
-        'to': extract_attendee_list(webhook_data.get('to_attendees', [])),
-        'cc': extract_attendee_list(webhook_data.get('cc_attendees', [])),
-        'bcc': extract_attendee_list(webhook_data.get('bcc_attendees', []))
+        'to': extract_attendee_list(to_recipients),
+        'cc': extract_attendee_list(cc_recipients),
+        'bcc': extract_attendee_list(bcc_recipients)
     }
 
 
@@ -447,23 +496,31 @@ def extract_email_sender_info(webhook_data: dict) -> dict:
             'is_business_email': False
         }
     
+    # Try both formats: from_attendee and from
     from_attendee = webhook_data.get('from_attendee', {})
+    from_field = webhook_data.get('from', {})
     
     # Extract sender details
     sender_name = 'Unknown Sender'
     sender_email = ''
     sender_identifier = ''
     
-    if isinstance(from_attendee, dict):
+    # Try from_attendee format first
+    if isinstance(from_attendee, dict) and from_attendee:
         sender_identifier = from_attendee.get('identifier', '')
         sender_email = _clean_email_address(sender_identifier)
         sender_name = from_attendee.get('display_name', '')
-        
-        # If display name is same as email or empty, try to extract name from email
-        if not sender_name or sender_name == sender_email:
-            if sender_email:
-                # Extract name part from email (before @)
-                sender_name = sender_email.split('@')[0].replace('.', ' ').title()
+    # Try from field format
+    elif isinstance(from_field, dict) and from_field:
+        sender_email = _clean_email_address(from_field.get('email', from_field.get('identifier', '')))
+        sender_identifier = sender_email
+        sender_name = from_field.get('name', from_field.get('display_name', ''))
+    
+    # If display name is same as email or empty, try to extract name from email
+    if not sender_name or sender_name == sender_email:
+        if sender_email:
+            # Extract name part from email (before @)
+            sender_name = sender_email.split('@')[0].replace('.', ' ').title()
     
     # Determine if this looks like a business email
     is_business = False

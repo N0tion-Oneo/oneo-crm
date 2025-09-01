@@ -107,17 +107,36 @@ def determine_linkedin_direction(message_data: Dict[str, Any], user_profile_id: 
     Returns:
         'in' for received messages, 'out' for sent messages
     """
+    # First try to get the account owner's LinkedIn ID from account_info
+    if not user_profile_id:
+        account_info = message_data.get('account_info', {})
+        if account_info and isinstance(account_info, dict):
+            user_profile_id = account_info.get('user_id')
+            logger.debug(f"LinkedIn direction - Using account_info.user_id: {user_profile_id}")
+    
     # Check sender vs user profile
     if user_profile_id:
-        sender_id = message_data.get('sender', {}).get('profile_id', '') if isinstance(message_data.get('sender'), dict) else ''
-        if sender_id == user_profile_id:
-            return 'out'
-        elif sender_id:
-            return 'in'
+        # Check sender's provider_id (LinkedIn member URN)
+        sender_info = message_data.get('sender', {})
+        if isinstance(sender_info, dict):
+            sender_provider_id = sender_info.get('attendee_provider_id', '')
+            sender_profile_id = sender_info.get('profile_id', '')
+            
+            logger.debug(f"LinkedIn direction - Comparing sender {sender_provider_id} with account {user_profile_id}")
+            
+            # Compare both provider_id and profile_id
+            if sender_provider_id == user_profile_id or sender_profile_id == user_profile_id:
+                logger.debug("LinkedIn direction - Message is OUTBOUND (sender matches account)")
+                return 'out'
+            elif sender_provider_id or sender_profile_id:
+                logger.debug("LinkedIn direction - Message is INBOUND (sender doesn't match account)")
+                return 'in'
     
     # Use is_sender field
     if 'is_sender' in message_data:
-        return 'out' if message_data['is_sender'] else 'in'
+        is_sender = message_data['is_sender']
+        logger.debug(f"LinkedIn direction - Using is_sender field: {is_sender}")
+        return 'out' if is_sender else 'in'
     
     # Check direction field
     direction = message_data.get('direction', '').lower()
@@ -127,6 +146,7 @@ def determine_linkedin_direction(message_data: Dict[str, Any], user_profile_id: 
         return 'out'
     
     # Default to inbound
+    logger.debug("LinkedIn direction - Defaulting to INBOUND")
     return 'in'
 
 

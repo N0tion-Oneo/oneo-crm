@@ -971,7 +971,7 @@ export function RecordDetailDrawer({
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-end z-50">
       <div 
         ref={drawerRef}
-        className="bg-white dark:bg-gray-800 h-full w-full max-w-2xl shadow-xl flex flex-col animate-slide-in-right"
+        className="bg-white dark:bg-gray-800 h-full w-full max-w-4xl shadow-xl flex flex-col animate-slide-in-right"
       >
         {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-gray-200 dark:border-gray-700">

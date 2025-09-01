@@ -38,8 +38,6 @@ class EmailWebhookHandler:
     """Specialized handler for email webhook events from UniPile"""
     
     def __init__(self):
-        # Email-specific business email for direction detection
-        self.business_email = 'josh@oneo.africa'  # TODO: Make configurable per tenant
         self.resolution_service = ParticipantResolutionService()
         self.storage_decider = ConversationStorageDecider()
     
@@ -70,7 +68,7 @@ class EmailWebhookHandler:
                 return {'success': False, 'error': f'Invalid channel type for email: {connection.channel_type}'}
             
             # Extract email-specific data using our email extractors
-            normalized_email = self._normalize_email_webhook(webhook_data)
+            normalized_email = self._normalize_email_webhook(webhook_data, connection)
             
             # Extract all participants and check resolution
             should_store, participants = self._check_participant_resolution(normalized_email, connection)
@@ -131,8 +129,8 @@ class EmailWebhookHandler:
                 conversation = self._get_or_create_email_conversation(connection, normalized_email)
                 
                 # Create email message record with participant links
-                from asgiref.sync import async_to_sync
-                message, was_created = async_to_sync(self._create_email_message_with_participants)(
+                # This is now a sync method, so we can call it directly
+                message, was_created = self._create_email_message_with_participants(
                     connection, conversation, normalized_email, webhook_data, participants
                 )
                 
@@ -172,18 +170,25 @@ class EmailWebhookHandler:
             logger.error(traceback.format_exc())
             return {'success': False, 'error': str(e)}
     
-    def _normalize_email_webhook(self, webhook_data: Dict[str, Any]) -> Dict[str, Any]:
+    def _normalize_email_webhook(self, webhook_data: Dict[str, Any], connection: UserChannelConnection = None) -> Dict[str, Any]:
         """
         Normalize email webhook data using our email extractors
         
+        Args:
+            webhook_data: Raw webhook data
+            connection: User channel connection for account email
+            
         Returns:
             Dict with normalized email data
         """
         # Use our email extraction utilities
-        contact_email = extract_email_from_webhook(webhook_data, self.business_email)
-        contact_name = extract_email_name_from_webhook(webhook_data, self.business_email)
+        # Get the connected account's email for proper direction detection
+        account_email = connection.user.email if connection and connection.user else None
+        
+        contact_email = extract_email_from_webhook(webhook_data, account_email or '')
+        contact_name = extract_email_name_from_webhook(webhook_data, account_email or '')
         subject = extract_email_subject_from_webhook(webhook_data)
-        direction = determine_email_direction(webhook_data, self.business_email)
+        direction = determine_email_direction(webhook_data, account_email)
         thread_id = extract_email_thread_id(webhook_data)
         message_id = extract_email_message_id(webhook_data)
         attachments = extract_email_attachments(webhook_data)
@@ -315,7 +320,7 @@ class EmailWebhookHandler:
         logger.info(f"Created email conversation {conversation.id} with thread ID {thread_id}")
         return conversation
     
-    async def _create_email_message_with_participants(self, connection: UserChannelConnection, 
+    def _create_email_message_with_participants(self, connection: UserChannelConnection, 
                                    conversation: Conversation, normalized_email: Dict[str, Any],
                                    raw_webhook_data: Dict[str, Any], participants: List[Participant]) -> tuple[Message, bool]:
         """
@@ -382,7 +387,6 @@ class EmailWebhookHandler:
             )
             
             # Link all participants to the conversation
-            from asgiref.sync import sync_to_async
             for participant in participants:
                 # Determine role based on email position
                 role = 'member'
@@ -395,7 +399,7 @@ class EmailWebhookHandler:
                 elif participant.email in [r.get('identifier') for r in normalized_email.get('recipients', {}).get('bcc', [])]:
                     role = 'bcc'
                 
-                await sync_to_async(ConversationParticipant.objects.update_or_create)(
+                ConversationParticipant.objects.update_or_create(
                     conversation=conversation,
                     participant=participant,
                     defaults={
@@ -488,8 +492,8 @@ class EmailWebhookHandler:
                         'avatar': None  # TODO: Email avatars/Gravatar
                     },
                     'recipient': {
-                        'name': 'Business',
-                        'email': self.business_email
+                        'name': user.get_full_name() or user.username if user else 'Business',
+                        'email': user.email if user else ''
                     },
                     'timestamp': message.created_at.isoformat(),
                     'is_read': message.metadata.get('read_status', False) if message.metadata else False,
@@ -545,26 +549,33 @@ class EmailWebhookHandler:
     
     def handle_email_sent(self, account_id: str, webhook_data: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Handle outbound email confirmation webhook
+        Handle outbound email webhook - create the message if it doesn't exist
+        Similar to handle_email_received but for outbound emails
         """
         try:
             external_message_id = webhook_data.get('message_id') or webhook_data.get('id')
             
+            # First check if message already exists
             if external_message_id:
-                message = Message.objects.filter(
+                existing_message = Message.objects.filter(
                     external_message_id=external_message_id
                 ).first()
                 
-                if message:
-                    message.status = MessageStatus.SENT
-                    message.sent_at = timezone.now()
-                    message.save(update_fields=['status', 'sent_at'])
+                if existing_message:
+                    # Just update the status if message already exists
+                    existing_message.status = MessageStatus.SENT
+                    existing_message.sent_at = timezone.now()
+                    existing_message.save(update_fields=['status', 'sent_at'])
                     
-                    logger.info(f"Updated email message {message.id} status to sent")
-                    return {'success': True, 'message_id': str(message.id)}
+                    logger.info(f"Updated existing email message {existing_message.id} status to sent")
+                    return {'success': True, 'message_id': str(existing_message.id), 'action': 'updated'}
             
-            logger.warning(f"No email message record found for external ID {external_message_id}")
-            return {'success': True, 'note': 'No local email message record to update'}
+            # Message doesn't exist, create it like we do for received emails
+            # This handles outbound emails that we're notified about via webhook
+            logger.info(f"Creating new outbound email message from mail_sent webhook")
+            
+            # Use the same logic as handle_email_received but we know it's outbound
+            return self.handle_email_received(account_id, webhook_data)
             
         except Exception as e:
             logger.error(f"Error handling email sent for account {account_id}: {e}")
@@ -637,31 +648,76 @@ class EmailWebhookHandler:
         try:
             from asgiref.sync import async_to_sync
             
-            # Get tenant from connection
-            tenant = getattr(connection, 'tenant', None)
-            if not tenant:
-                from django_tenants.utils import get_tenant
-                tenant = get_tenant()
+            # Get tenant from current schema context
+            # In webhook context, we're already in the correct tenant schema
+            # from the routing layer, so we can get the current tenant
+            from django.db import connection as db_connection
+            tenant = getattr(db_connection, 'tenant', None)
+            
+            # If still no tenant, try to get from the user's tenant
+            if not tenant and hasattr(connection, 'user') and hasattr(connection.user, 'tenant'):
+                tenant = connection.user.tenant
             
             # Initialize storage decider with tenant
             storage_decider = ConversationStorageDecider(tenant)
             
             # Build conversation data from normalized email
+            # Extract recipients and transform to expected format
+            recipients = normalized_email.get('recipients', {})
+            
+            # Transform recipients to have identifier/display_name format
+            def transform_recipient(recipient):
+                """Transform recipient from email/name to identifier/display_name format"""
+                if not recipient:
+                    return recipient
+                return {
+                    'identifier': recipient.get('email', ''),
+                    'display_name': recipient.get('name', '')
+                }
+            
+            to_attendees = [transform_recipient(r) for r in recipients.get('to', [])]
+            cc_attendees = [transform_recipient(r) for r in recipients.get('cc', [])]
+            bcc_attendees = [transform_recipient(r) for r in recipients.get('bcc', [])]
+            
+            # Log for debugging
+            logger.info(f"Building conversation data - Direction: {normalized_email.get('direction')}")
+            logger.info(f"  Sender: {normalized_email.get('sender_info', {}).get('email')}")
+            logger.info(f"  TO recipients: {[r.get('identifier') for r in to_attendees]}")
+            logger.info(f"  CC recipients: {[r.get('identifier') for r in cc_attendees]}")
+            
             conversation_data = {
                 'from_attendee': {
                     'identifier': normalized_email.get('sender_info', {}).get('email') or normalized_email.get('contact_email'),
                     'display_name': normalized_email.get('sender_info', {}).get('name') or normalized_email.get('contact_name')
                 },
-                'to_attendees': normalized_email.get('recipients', {}).get('to', []),
-                'cc_attendees': normalized_email.get('recipients', {}).get('cc', []),
-                'bcc_attendees': normalized_email.get('recipients', {}).get('bcc', [])
+                'to_attendees': to_attendees,
+                'cc_attendees': cc_attendees,
+                'bcc_attendees': bcc_attendees
             }
             
             # Use storage decider to check all participants
-            should_store, participants = async_to_sync(storage_decider.should_store_conversation)(
-                conversation_data,
-                connection.channel_type
-            )
+            # The method is async, so we need to use async_to_sync
+            # In Daphne ASGI, we need to ensure we're not in an event loop
+            import asyncio
+            from concurrent.futures import ThreadPoolExecutor
+            
+            try:
+                # Check if there's a running event loop
+                asyncio.get_running_loop()
+                # There is a running loop - we need to run in a thread to avoid conflict
+                with ThreadPoolExecutor(max_workers=1) as executor:
+                    future = executor.submit(
+                        async_to_sync(storage_decider.should_store_conversation),
+                        conversation_data,
+                        connection.channel_type
+                    )
+                    should_store, participants = future.result(timeout=5)
+            except RuntimeError:
+                # No running loop, we can call async_to_sync directly
+                should_store, participants = async_to_sync(storage_decider.should_store_conversation)(
+                    conversation_data,
+                    connection.channel_type
+                )
             
             return should_store, participants
             

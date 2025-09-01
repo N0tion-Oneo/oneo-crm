@@ -1,10 +1,7 @@
 /* Email HTML Content Styling */
 .email-html-content {
-  /* Reset and normalize email content */
-  color: #1f2937;
-  font-size: 14px;
-  line-height: 1.6;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  /* Let emails display with their original styling */
+  /* Only add minimal resets for dark mode compatibility */
 }
 
 /* Ensure dark mode text is visible */
@@ -84,26 +81,45 @@
   width: 100%;
   margin-top: 0.5em;
   margin-bottom: 0.5em;
+  /* Don't add borders by default - emails use tables for layout */
+  border: none;
 }
 
 .email-html-content th,
 .email-html-content td {
-  border: 1px solid #e5e7eb;
-  padding: 0.5em;
+  /* Remove default borders - let email's own styles apply */
+  border: none;
+  padding: 0.25em;
   text-align: left;
 }
 
-.dark .email-html-content th,
-.dark .email-html-content td {
+/* Only add borders if the table has explicit border attribute or class */
+.email-html-content table[border]:not([border="0"]) th,
+.email-html-content table[border]:not([border="0"]) td,
+.email-html-content table.bordered th,
+.email-html-content table.bordered td {
+  border: 1px solid #e5e7eb;
+}
+
+.dark .email-html-content table[border]:not([border="0"]) th,
+.dark .email-html-content table[border]:not([border="0"]) td,
+.dark .email-html-content table.bordered th,
+.dark .email-html-content table.bordered td {
   border-color: #4b5563;
 }
 
 .email-html-content th {
-  background-color: #f9fafb;
   font-weight: 600;
 }
 
-.dark .email-html-content th {
+/* Only add background to th if table has borders */
+.email-html-content table[border]:not([border="0"]) th,
+.email-html-content table.bordered th {
+  background-color: #f9fafb;
+}
+
+.dark .email-html-content table[border]:not([border="0"]) th,
+.dark .email-html-content table.bordered th {
   background-color: #1f2937;
 }
 
@@ -180,12 +196,13 @@
   border-top-color: #4b5563;
 }
 
-/* Handle inline styles from emails */
-.email-html-content * {
-  /* Prevent emails from breaking the layout */
-  max-width: 100% !important;
-  word-wrap: break-word !important;
-  word-break: break-word !important;
+/* Let emails render with their original styles mostly intact */
+/* Only override where absolutely necessary for readability */
+
+/* Prevent pre-formatted text from causing overflow */
+.email-html-content pre {
+  white-space: pre-wrap;
+  overflow-x: auto;
 }
 
 /* Preserve reasonable font sizes */
@@ -213,23 +230,14 @@
   color: #e5e7eb !important;
 }
 
-/* Ensure divs and spans don't break layout */
-.email-html-content div,
-.email-html-content span {
-  max-width: 100% !important;
-  overflow-wrap: break-word !important;
-}
+/* Remove aggressive width overrides - let zoom handle it */
 
 /* Handle Gmail specific styles */
 .email-html-content .gmail_default {
   font-family: inherit !important;
 }
 
-/* Fix table widths */
-.email-html-content table {
-  max-width: 100% !important;
-  width: auto !important;
-}
+/* Let tables render naturally - zoom will handle sizing */
 
 /* Handle email signatures */
 .email-html-content .gmail_signature,

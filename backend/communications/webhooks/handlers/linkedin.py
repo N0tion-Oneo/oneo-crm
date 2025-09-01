@@ -55,6 +55,14 @@ class LinkedInWebhookHandler(BaseWebhookHandler):
         """Handle incoming LinkedIn message"""
         try:
             from communications.webhooks.routing import account_router
+            from communications.models import (
+                Channel, Conversation, Message, MessageStatus, MessageDirection,
+                Participant, ConversationParticipant
+            )
+            from communications.utils.message_direction import determine_message_direction
+            from django.utils import timezone
+            from django.db import transaction
+            from dateutil import parser
             
             # Get user connection
             connection = account_router.get_user_connection(account_id)
@@ -65,16 +73,161 @@ class LinkedInWebhookHandler(BaseWebhookHandler):
             if connection.channel_type != 'linkedin':
                 return {'success': False, 'error': f'Invalid channel type: {connection.channel_type}'}
             
-            # Use generic message handler with LinkedIn-specific processing
-            from communications.webhooks.handlers import webhook_handler
-            result = webhook_handler.handle_message_received(account_id, data)
+            # Extract message data
+            message_content = data.get('message', '')
+            message_id = data.get('message_id') or data.get('id')
+            chat_id = data.get('chat_id') or data.get('provider_chat_id')
+            sender_info = data.get('sender', {})
             
-            # Add LinkedIn-specific processing
-            if result.get('success') and result.get('message_id'):
-                self._process_linkedin_message_features(result['message_id'], data)
+            if not chat_id:
+                return {'success': False, 'error': 'Chat ID not found in webhook data'}
             
-            self.logger.info(f"LinkedIn message processed: {result.get('message_id')}")
-            return result
+            # Get or create channel
+            channel, _ = Channel.objects.get_or_create(
+                unipile_account_id=account_id,
+                channel_type='linkedin',
+                defaults={
+                    'name': f"LinkedIn - {connection.account_name or account_id}",
+                    'auth_status': 'authenticated',
+                    'is_active': True,
+                    'created_by': connection.user
+                }
+            )
+            
+            # Get or create conversation
+            conversation, created = Conversation.objects.get_or_create(
+                channel=channel,
+                external_thread_id=chat_id,
+                defaults={
+                    'subject': 'LinkedIn Conversation',
+                    'status': 'active'
+                }
+            )
+            
+            # Determine message direction
+            webhook_msg_data = {
+                **data,
+                'sender': sender_info,
+                'account_id': account_id,
+            }
+            msg_direction = determine_message_direction(
+                message_data=webhook_msg_data,
+                channel_type='linkedin',
+                user_identifier=None,
+                channel=channel
+            )
+            
+            # Convert string direction to enum
+            if msg_direction == 'out':
+                direction = MessageDirection.OUTBOUND
+                status = MessageStatus.SENT
+            else:
+                direction = MessageDirection.INBOUND
+                status = MessageStatus.DELIVERED
+            
+            # Parse timestamp
+            message_timestamp = timezone.now()
+            if 'timestamp' in data:
+                try:
+                    ts = data['timestamp']
+                    if isinstance(ts, str):
+                        message_timestamp = parser.parse(ts)
+                        if message_timestamp.tzinfo is None:
+                            message_timestamp = timezone.make_aware(message_timestamp)
+                except Exception as e:
+                    logger.warning(f"Failed to parse timestamp: {e}")
+            
+            # Set timestamps based on direction
+            sent_timestamp = message_timestamp if direction == MessageDirection.OUTBOUND else None
+            received_timestamp = message_timestamp if direction == MessageDirection.INBOUND else None
+            
+            # Get or create sender participant
+            sender_participant = None
+            if sender_info:
+                sender_name = sender_info.get('attendee_name', '')
+                sender_provider_id = sender_info.get('attendee_provider_id', '')
+                
+                if sender_provider_id:
+                    # Use linkedin_member_urn field for LinkedIn IDs
+                    sender_participant, _ = Participant.objects.get_or_create(
+                        linkedin_member_urn=sender_provider_id,
+                        defaults={'name': sender_name}
+                    )
+                    # Update name if changed
+                    if sender_name and sender_participant.name != sender_name:
+                        sender_participant.name = sender_name
+                        sender_participant.save(update_fields=['name'])
+            
+            # Extract recipient information from attendees
+            attendees = data.get('attendees', [])
+            recipient_name = None
+            account_owner_name = None
+            contact_name = None
+            
+            # Determine who is the recipient based on direction
+            if direction == MessageDirection.OUTBOUND:
+                # For outbound, sender is the account owner, recipient is the contact
+                account_owner_name = sender_name if sender_name else connection.account_name
+                # Find the recipient in attendees (not the sender)
+                for attendee in attendees:
+                    if attendee.get('attendee_provider_id') != sender_provider_id:
+                        contact_name = attendee.get('attendee_name', '')
+                        break
+            else:
+                # For inbound, sender is the contact, recipient is the account owner
+                contact_name = sender_name
+                account_owner_name = connection.account_name
+                # Or extract from attendees
+                for attendee in attendees:
+                    attendee_id = attendee.get('attendee_provider_id')
+                    if attendee_id and attendee_id != sender_provider_id:
+                        account_owner_name = attendee.get('attendee_name', connection.account_name)
+                        break
+            
+            # Create message
+            with transaction.atomic():
+                message = Message.objects.create(
+                    channel=channel,
+                    conversation=conversation,
+                    external_message_id=message_id,
+                    content=message_content,
+                    direction=direction,
+                    status=status,
+                    sender_participant=sender_participant,
+                    created_at=message_timestamp,
+                    sent_at=sent_timestamp,
+                    received_at=received_timestamp,
+                    metadata={
+                        'webhook_data': data,
+                        'sender_name': sender_info.get('attendee_name', ''),
+                        'sender_id': sender_info.get('attendee_id', ''),
+                        'provider': 'linkedin',
+                        'account_owner_name': account_owner_name,
+                        'contact_name': contact_name,
+                        'recipient_user_name': account_owner_name if direction == MessageDirection.INBOUND else None
+                    }
+                )
+                
+                # Add sender to conversation if not already there
+                if sender_participant:
+                    ConversationParticipant.objects.get_or_create(
+                        conversation=conversation,
+                        participant=sender_participant,
+                        defaults={'role': 'sender'}
+                    )
+                
+                # Update conversation's last message timestamp
+                conversation.last_message_at = message.created_at
+                conversation.save(update_fields=['last_message_at'])
+            
+            logger.info(f"✅ Created LinkedIn message {message.id} in conversation '{conversation.subject}'")
+            
+            return {
+                'success': True,
+                'message_id': str(message.id),
+                'conversation_id': str(conversation.id),
+                'provider': 'linkedin'
+            }
             
         except Exception as e:
             self.logger.error(f"LinkedIn message handling failed: {e}")
@@ -283,8 +436,18 @@ class LinkedInWebhookHandler(BaseWebhookHandler):
         if not super().validate_webhook_data(data):
             return False
         
+        # Check if this is a LinkedIn webhook by account_type
+        if data.get('account_type') == 'LINKEDIN':
+            return True
+            
+        # Check account_info for LinkedIn type
+        account_info = data.get('account_info', {})
+        if account_info.get('type') == 'LINKEDIN':
+            return True
+        
         # LinkedIn-specific validations
-        linkedin_indicators = ['profile', 'connection', 'linkedin_id', 'profile_url']
+        linkedin_indicators = ['profile', 'connection', 'linkedin_id', 'profile_url', 
+                              'attendee_profile_url', 'attendee_provider_id']
         if any(key in data for key in linkedin_indicators):
             return True
         
@@ -293,6 +456,18 @@ class LinkedInWebhookHandler(BaseWebhookHandler):
             sender_data = data['sender']
             if any(key in sender_data for key in linkedin_indicators):
                 return True
+            # Check for LinkedIn profile URL format
+            if 'attendee_profile_url' in sender_data and 'linkedin.com' in str(sender_data.get('attendee_profile_url', '')):
+                return True
+        
+        # Check attendees for LinkedIn data
+        attendees = data.get('attendees', [])
+        for attendee in attendees:
+            if isinstance(attendee, dict):
+                if any(key in attendee for key in linkedin_indicators):
+                    return True
+                if 'attendee_profile_url' in attendee and 'linkedin.com' in str(attendee.get('attendee_profile_url', '')):
+                    return True
         
         # Account-level events don't need LinkedIn-specific data
         event_type = data.get('event_type', data.get('event', ''))

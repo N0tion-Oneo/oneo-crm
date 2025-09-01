@@ -179,10 +179,10 @@ export function RecordCommunicationsPanel({
       </div>
 
       {/* Main content area - Flexible height with min-h-0 for proper scrolling */}
-      <div className="flex-1 min-h-0 flex">
+      <div className="flex-1 min-h-0 relative">
         {activeTab === 'all' ? (
           /* Timeline view for All tab - Full width */
-          <div className="flex-1 min-w-0 bg-white dark:bg-gray-800">
+          <div className="h-full bg-white dark:bg-gray-800">
             <MessageTimeline
               messages={timelineMessages}
               isLoading={isLoading}
@@ -192,9 +192,9 @@ export function RecordCommunicationsPanel({
             />
           </div>
         ) : (
-          <>
-            {/* Conversation list - Fixed width with scrolling */}
-            <div className="w-80 flex-shrink-0 border-r border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 overflow-hidden flex flex-col">
+          <div className="flex h-full">
+            {/* Conversation list - Fixed width sidebar */}
+            <div className="w-80 h-full border-r border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 overflow-hidden flex flex-col flex-shrink-0">
               <ScrollArea className="flex-1">
                 <ConversationList
                   conversations={filteredConversations}
@@ -204,18 +204,16 @@ export function RecordCommunicationsPanel({
               </ScrollArea>
             </div>
 
-            {/* Conversation detail - Flexible width with proper scrolling */}
-            <div className="flex-1 min-w-0 flex flex-col bg-white dark:bg-gray-800">
+            {/* Conversation detail - Takes remaining space */}
+            <div className="flex-1 h-full flex flex-col bg-white dark:bg-gray-800 overflow-hidden">
               {selectedConversation ? (
                 <>
-                  {/* Messages area with scroll */}
-                  <div className="flex-1 min-h-0 overflow-hidden">
-                    <ScrollArea className="h-full">
-                      <ConversationThread
-                        conversationId={selectedConversation}
-                        recordId={recordId}
-                      />
-                    </ScrollArea>
+                  {/* Messages area with native scroll */}
+                  <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
+                    <ConversationThread
+                      conversationId={selectedConversation}
+                      recordId={recordId}
+                    />
                   </div>
                   {/* Reply area - Fixed at bottom */}
                   <div className="flex-shrink-0 border-t border-gray-200 dark:border-gray-700 p-4 bg-gray-50 dark:bg-gray-900">
@@ -234,7 +232,7 @@ export function RecordCommunicationsPanel({
                 </div>
               )}
             </div>
-          </>
+          </div>
         )}
       </div>
     </div>

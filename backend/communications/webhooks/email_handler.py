@@ -193,6 +193,32 @@ class EmailWebhookHandler:
                                     f"Created RecordCommunicationLink for participant {participant.email} "
                                     f"-> record {record_to_link.id}"
                                 )
+                                
+                                # Update the primary record's communication profile
+                                from communications.record_communications.models import RecordCommunicationProfile
+                                primary_profile, _ = RecordCommunicationProfile.objects.get_or_create(
+                                    record=record_to_link,
+                                    defaults={
+                                        'pipeline': record_to_link.pipeline,
+                                        'created_by': connection.user
+                                    }
+                                )
+                                
+                                # Update metrics - increment conversation count if this is the first link for this conversation
+                                existing_links_for_conv = RecordCommunicationLink.objects.filter(
+                                    record=record_to_link,
+                                    conversation=conversation
+                                ).count()
+                                
+                                if existing_links_for_conv == 1:  # Just created the first link
+                                    primary_profile.total_conversations += 1
+                                
+                                # Always increment message count for a new message
+                                primary_profile.total_messages += 1
+                                primary_profile.last_message_at = timezone.now()
+                                primary_profile.save(update_fields=[
+                                    'total_conversations', 'total_messages', 'last_message_at'
+                                ])
                         
                         # Also create link for secondary record (company/organization)
                         if participant.secondary_record:
@@ -214,6 +240,32 @@ class EmailWebhookHandler:
                                     f"Created secondary RecordCommunicationLink for company "
                                     f"{participant.secondary_record.id} via domain match"
                                 )
+                                
+                                # Update the secondary record's communication profile
+                                from communications.record_communications.models import RecordCommunicationProfile
+                                secondary_profile, _ = RecordCommunicationProfile.objects.get_or_create(
+                                    record=participant.secondary_record,
+                                    defaults={
+                                        'pipeline': participant.secondary_record.pipeline,
+                                        'created_by': connection.user
+                                    }
+                                )
+                                
+                                # Update metrics - increment conversation count if this is the first link for this conversation
+                                existing_links_for_conv = RecordCommunicationLink.objects.filter(
+                                    record=participant.secondary_record,
+                                    conversation=conversation
+                                ).count()
+                                
+                                if existing_links_for_conv == 1:  # Just created the first link
+                                    secondary_profile.total_conversations += 1
+                                
+                                # Always increment message count for a new message
+                                secondary_profile.total_messages += 1
+                                secondary_profile.last_message_at = timezone.now()
+                                secondary_profile.save(update_fields=[
+                                    'total_conversations', 'total_messages', 'last_message_at'
+                                ])
                     
                     if links_created > 0:
                         logger.info(f"Email linked to {links_created} records (contacts + companies) for timeline visibility")

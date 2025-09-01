@@ -235,10 +235,15 @@ export function EmailCompose({
         payload.conversation_id = conversationId
       }
       
-      await api.post(
+      const response = await api.post(
         `/api/v1/communications/records/${recordId}/send_email/`,
         payload
       )
+      
+      // Check if the response was successful
+      if (!response.data.success) {
+        throw new Error(response.data.error || 'Failed to send email')
+      }
 
       // Clear form
       setTo('')

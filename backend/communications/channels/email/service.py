@@ -25,14 +25,50 @@ class EmailService:
         """
         self.channel = channel
         self.account_identifier = account_identifier
+        self._client = None  # Will be initialized on first use
+    
+    async def get_client(self):
+        """Get UniPile client with proper tenant context (async-safe)"""
+        if self._client is None:
+            from django.db import connection
+            from communications.models import TenantUniPileConfig
+            from asgiref.sync import sync_to_async
+            
+            try:
+                # Try to get tenant-specific configuration
+                if hasattr(connection, 'tenant'):
+                    tenant = connection.tenant
+                    
+                    # Use sync_to_async for database operations
+                    @sync_to_async
+                    def get_tenant_config():
+                        from django_tenants.utils import schema_context
+                        with schema_context(tenant.schema_name):
+                            config = TenantUniPileConfig.get_or_create_for_tenant()
+                            if config.is_configured():
+                                return config.get_api_credentials()
+                        return None
+                    
+                    credentials = await get_tenant_config()
+                    if credentials:
+                        self._client = unipile_service.get_client(credentials['dsn'], credentials['api_key'])
+                    else:
+                        # Fall back to global config
+                        self._client = unipile_service.get_client()
+                else:
+                    # No tenant context, use global config
+                    self._client = unipile_service.get_client()
+            except Exception as e:
+                logger.warning(f"Failed to get tenant-specific client: {e}. Using global config.")
+                self._client = unipile_service.get_client()
         
-        # Use the global unipile_service like WhatsApp does
-        self.client = unipile_service.get_client()
+        return self._client
     
     async def get_folders(self, account_id: str) -> Dict[str, Any]:
         """Get email folders for account"""
         try:
-            return await self.client.email.get_folders(account_id)
+            client = await self.get_client()
+            return await client.email.get_folders(account_id)
         except Exception as e:
             logger.error(f"Failed to get email folders: {e}")
             return {'folders': [], 'error': str(e)}
@@ -92,7 +128,8 @@ class EmailService:
             if to_email:
                 params['to'] = to_email
             
-            response = await self.client._make_request('GET', 'emails', params=params)
+            client = await self.get_client()
+            response = await client._make_request('GET', 'emails', params=params)
             
             # Ensure we have the expected structure
             if not isinstance(response, dict):
@@ -123,6 +160,7 @@ class EmailService:
         cc: Optional[List[Dict[str, str]]] = None,
         bcc: Optional[List[Dict[str, str]]] = None,
         reply_to: Optional[str] = None,
+        thread_id: Optional[str] = None,
         attachments: Optional[List[Any]] = None
     ) -> Dict[str, Any]:
         """
@@ -142,27 +180,35 @@ class EmailService:
             Send result with tracking_id
         """
         try:
-            # Prepare multipart form data
-            data = {
-                'account_id': account_id,
-                'to': to,
-                'subject': subject,
-                'body': body
-            }
+            # Recipients should stay as dicts with 'identifier' and optional 'display_name'
+            # UniPile API expects this format, not simple strings
+            to_formatted = to  # Already in correct format
+            cc_formatted = cc if cc else None
+            bcc_formatted = bcc if bcc else None
             
-            if from_email:
-                data['from'] = from_email
-            if cc:
-                data['cc'] = cc
-            if bcc:
-                data['bcc'] = bcc
-            if reply_to:
-                data['reply_to'] = reply_to
+            # Log the data being sent for debugging
+            logger.info(f"📧 Sending email - Account ID: {account_id}")
+            logger.info(f"📧 To: {to_formatted}")
+            logger.info(f"📧 Subject: {subject}")
+            logger.info(f"📧 Body length: {len(body) if body else 0} chars")
+            logger.info(f"📧 CC: {cc_formatted}")
+            logger.info(f"📧 BCC: {bcc_formatted}")
+            logger.info(f"📧 Reply To: {reply_to}")
+            logger.info(f"📧 Thread ID: {thread_id}")
             
-            # Note: Attachments need special handling with multipart/form-data
-            # This would need to be implemented in the UnipileClient
-            
-            response = await self.client._make_request('POST', 'emails', data=data)
+            # Use the UniPile email client's send_email method
+            client = await self.get_client()
+            response = await client.email.send_email(
+                account_id=account_id,
+                to=to_formatted,
+                subject=subject,
+                body=body,
+                cc=cc_formatted,
+                bcc=bcc_formatted,
+                reply_to=reply_to,  # Pass reply_to for threading
+                thread_id=thread_id,  # Pass thread_id for maintaining email threads
+                is_html=True  # We're sending HTML content
+            )
             
             return {
                 'success': True,
@@ -207,7 +253,8 @@ class EmailService:
             if account_id:
                 params['account_id'] = account_id
             
-            response = await self.client._make_request(
+            client = await self.get_client()
+            response = await client._make_request(
                 'PUT', 
                 f'emails/{email_id}',
                 data=data,
@@ -242,7 +289,8 @@ class EmailService:
             if account_id:
                 params['account_id'] = account_id
             
-            response = await self.client._make_request(
+            client = await self.get_client()
+            response = await client._make_request(
                 'DELETE',
                 f'emails/{email_id}',
                 params=params
@@ -276,7 +324,8 @@ class EmailService:
             if account_id:
                 params['account_id'] = account_id
             
-            response = await self.client._make_request(
+            client = await self.get_client()
+            response = await client._make_request(
                 'GET',
                 f'emails/{email_id}',
                 params=params

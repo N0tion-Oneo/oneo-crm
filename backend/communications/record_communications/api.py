@@ -2,6 +2,7 @@
 API endpoints for record-centric communications
 """
 import logging
+import json
 from datetime import datetime, timedelta
 
 from django.db.models import Q, Count, Max, Prefetch
@@ -10,7 +11,8 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
-from drf_spectacular.utils import extend_schema, OpenApiParameter
+from drf_spectacular.utils import extend_schema, OpenApiParameter, inline_serializer
+from rest_framework import serializers
 
 from pipelines.models import Record
 from communications.models import (
@@ -159,9 +161,17 @@ class RecordCommunicationsViewSet(viewsets.ViewSet):
                 ).select_related('channel')
                 
                 if channel_type:
-                    conversations_query = conversations_query.filter(
-                        channel__channel_type=channel_type
-                    )
+                    # Map frontend channel types to backend channel types
+                    if channel_type == 'email':
+                        # Email tab should include all email-type channels
+                        conversations_query = conversations_query.filter(
+                            channel__channel_type__in=['email', 'gmail', 'outlook', 'office365']
+                        )
+                    else:
+                        # For other channels (whatsapp, linkedin), use exact match
+                        conversations_query = conversations_query.filter(
+                            channel__channel_type=channel_type
+                        )
                 
                 total_count = conversations_query.count()
                 conversations = conversations_query.order_by('-last_message_at')[offset:offset + limit]
@@ -521,6 +531,248 @@ class RecordCommunicationsViewSet(viewsets.ViewSet):
                 {'error': 'Record not found'},
                 status=status.HTTP_404_NOT_FOUND
             )
+    
+    @extend_schema(
+        summary="Send email from record context",
+        request=inline_serializer(
+            name='SendEmailSerializer',
+            fields={
+                'from_account_id': serializers.CharField(help_text='UniPile account ID to send from'),
+                'to': serializers.ListField(child=serializers.EmailField(), help_text='Recipient email addresses'),
+                'cc': serializers.ListField(child=serializers.EmailField(), required=False, help_text='CC recipients'),
+                'bcc': serializers.ListField(child=serializers.EmailField(), required=False, help_text='BCC recipients'),
+                'subject': serializers.CharField(help_text='Email subject'),
+                'body': serializers.CharField(help_text='Email body (HTML)'),
+                'reply_to_message_id': serializers.CharField(required=False, help_text='Message ID if replying'),
+                'reply_mode': serializers.ChoiceField(choices=['reply', 'reply-all', 'forward'], required=False),
+                'conversation_id': serializers.CharField(required=False, help_text='Existing conversation ID')
+            }
+        ),
+        responses={200: {'description': 'Email sent successfully'}}
+    )
+    @action(detail=True, methods=['post'])
+    def send_email(self, request, pk=None):
+        """Send an email from record context"""
+        try:
+            from communications.channels.email.service import EmailService
+            from asgiref.sync import async_to_sync
+            
+            record = Record.objects.get(pk=pk)
+            
+            # Log the full request data for debugging
+            logger.info(f"📧 Email send request received for record {pk}")
+            logger.info(f"📧 Request data: {json.dumps(request.data, indent=2)}")
+            
+            # Get data from request
+            account_id = request.data.get('from_account_id')
+            to = request.data.get('to', [])
+            cc = request.data.get('cc', [])
+            bcc = request.data.get('bcc', [])
+            subject = request.data.get('subject', '')
+            body = request.data.get('body', '')
+            reply_to_message_id = request.data.get('reply_to_message_id')
+            reply_mode = request.data.get('reply_mode')
+            conversation_id = request.data.get('conversation_id')
+            
+            # Log parsed data
+            logger.info(f"📧 Parsed - Account ID: {account_id}")
+            logger.info(f"📧 Parsed - To: {to} (type: {type(to)})")
+            logger.info(f"📧 Parsed - Subject: {subject}")
+            logger.info(f"📧 Parsed - Body length: {len(body)} chars")
+            
+            # If replying to a specific message, get its provider_id for threading
+            reply_to_external_id = None
+            if reply_to_message_id:
+                try:
+                    reply_message = Message.objects.get(id=reply_to_message_id)
+                    
+                    # For threading, we need the provider_id (16-char hex from Gmail)
+                    if reply_message.metadata and 'provider_id' in reply_message.metadata:
+                        # Use the provider_id - this is what UniPile expects for reply_to
+                        reply_to_external_id = reply_message.metadata['provider_id']
+                        logger.info(f"Using provider_id from reply message for threading: {reply_to_external_id}")
+                    else:
+                        logger.warning(f"Reply message {reply_to_message_id} has no provider_id for threading")
+                    
+                except Message.DoesNotExist:
+                    logger.warning(f"Reply-to message {reply_to_message_id} not found")
+            
+            if not account_id or not to or not body:
+                return Response({
+                    'success': False,
+                    'error': 'from_account_id, to, and body are required'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Get the user's email connection
+            connection = UserChannelConnection.objects.filter(
+                user=request.user,
+                unipile_account_id=account_id
+            ).first()
+            
+            if not connection:
+                return Response({
+                    'success': False,
+                    'error': 'Email connection not found'
+                }, status=status.HTTP_404_NOT_FOUND)
+            
+            # Initialize email service
+            service = EmailService(account_identifier=connection.account_name)
+            
+            # Format recipients as UniPile expects
+            def format_recipients(emails):
+                if not emails:
+                    return None
+                if isinstance(emails, str):
+                    emails = [emails]
+                return [{'identifier': email.strip(), 'display_name': ''} for email in emails if email.strip()]
+            
+            to_formatted = format_recipients(to)
+            cc_formatted = format_recipients(cc)
+            bcc_formatted = format_recipients(bcc)
+            
+            # Get conversation for threading
+            conversation = None
+            email_reply_to = None  # For UniPile threading
+            
+            if conversation_id:
+                try:
+                    conversation = Conversation.objects.get(id=conversation_id)
+                    
+                    # For threading, we need to find the last message in this conversation
+                    # and use its provider_id (Gmail Message-ID) as reply_to
+                    last_message = Message.objects.filter(
+                        conversation=conversation
+                    ).order_by('-created_at').first()
+                    
+                    if last_message:
+                        # Try to get the provider_id from metadata (16-char hex from Gmail)
+                        if last_message.metadata and 'provider_id' in last_message.metadata:
+                            email_reply_to = last_message.metadata['provider_id']
+                            logger.info(f"📧 Using provider_id for reply_to: {email_reply_to}")
+                        else:
+                            logger.info(f"📧 No valid provider_id found for threading")
+                    else:
+                        logger.info(f"📧 No previous message found in conversation for threading")
+                        
+                except Conversation.DoesNotExist:
+                    logger.warning(f"Conversation {conversation_id} not found")
+                    conversation = None
+            else:
+                # No conversation_id provided - this is a new email thread
+                # Create a new conversation for it
+                logger.info(f"📧 No conversation_id provided, creating new conversation")
+                
+                # Get the channel for this account
+                from communications.models import Channel
+                channel = Channel.objects.filter(
+                    unipile_account_id=account_id,
+                    channel_type='gmail'
+                ).first()
+                
+                if channel:
+                    # Create a new conversation with a temporary thread ID
+                    # This will be updated with the real Gmail thread ID after sending
+                    conversation = Conversation.objects.create(
+                        channel=channel,
+                        external_thread_id=f"temp_{timezone.now().timestamp()}",
+                        subject=subject or "New email",
+                        status='active'
+                    )
+                    logger.info(f"📧 Created new conversation {conversation.id} for new email thread")
+                    
+                    # Link conversation to record
+                    from communications.record_communications.models import RecordCommunicationLink
+                    RecordCommunicationLink.objects.get_or_create(
+                        record=record,
+                        conversation=conversation
+                    )
+                else:
+                    logger.warning(f"📧 No Gmail channel found for account {account_id}")
+            
+            # Send email via UniPile
+            # Use email_reply_to for conversation threading, or reply_to_external_id for specific reply
+            final_reply_to = reply_to_external_id or email_reply_to
+            
+            result = async_to_sync(service.send_email)(
+                account_id=account_id,
+                to=to_formatted,
+                subject=subject,
+                body=body,
+                cc=cc_formatted,
+                bcc=bcc_formatted,
+                reply_to=final_reply_to  # Use reply_to for UniPile threading
+                # Note: thread_id is not used - UniPile uses reply_to for threading
+            )
+            
+            if result.get('success'):
+                logger.info(f"Email sent successfully from record {pk} with tracking_id: {result.get('tracking_id')}")
+                
+                # Create message record and link to record if conversation exists  
+                # Note: We already fetched conversation above for thread_id
+                if conversation and result.get('success'):
+                    # Create outbound message with external ID for future threading
+                    # UniPile returns the UniPile message ID in response.id
+                    # This is the ID we need for reply threading
+                    unipile_id = result.get('response', {}).get('id')
+                    provider_id = result.get('response', {}).get('provider_id')
+                    tracking_id = result.get('tracking_id')
+                    
+                    # Note: provider_id is the Gmail message ID, not thread ID
+                    # Threading is maintained through reply_to parameter
+                    
+                    # Store the UniPile ID as external_message_id for reply threading
+                    message = Message.objects.create(
+                        conversation=conversation,
+                        channel=conversation.channel,
+                        external_message_id=unipile_id,  # Store UniPile ID for threading
+                        direction='outbound',
+                        subject=subject,
+                        content=body,
+                        contact_email=to[0] if to else '',
+                        status='sent',
+                        sent_at=timezone.now(),
+                        metadata={
+                            'from': {'email': connection.user.email, 'name': connection.user.get_full_name()},
+                            'to': [{'email': email, 'name': ''} for email in to],
+                            'cc': [{'email': email, 'name': ''} for email in cc] if cc else [],
+                            'tracking_id': tracking_id,
+                            'unipile_id': unipile_id,
+                            'provider_id': provider_id,
+                            'reply_mode': reply_mode,
+                            'sent_via': 'record_context',
+                            'reply_to': final_reply_to if final_reply_to else None
+                        }
+                    )
+                    
+                    # Update profile metrics
+                    profile = RecordCommunicationProfile.objects.filter(record=record).first()
+                    if profile:
+                        profile.total_messages += 1
+                        profile.last_message_at = timezone.now()
+                        profile.save(update_fields=['total_messages', 'last_message_at'])
+                
+                return Response({
+                    'success': True,
+                    'tracking_id': result.get('tracking_id'),
+                    'message': 'Email sent successfully'
+                })
+            else:
+                return Response({
+                    'success': False,
+                    'error': result.get('error', 'Failed to send email')
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+                
+        except Record.DoesNotExist:
+            return Response(
+                {'error': 'Record not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            logger.error(f"Failed to send email from record {pk}: {e}")
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
     @extend_schema(
         summary="Mark conversations as read",

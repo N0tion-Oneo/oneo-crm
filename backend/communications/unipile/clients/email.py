@@ -72,19 +72,36 @@ class UnipileEmailClient:
     async def send_email(
         self, 
         account_id: str,
-        to: List[str],
+        to: List[Dict[str, str]],  # Changed to accept dict format
         subject: str,
         body: str,
-        cc: Optional[List[str]] = None,
-        bcc: Optional[List[str]] = None,
+        cc: Optional[List[Dict[str, str]]] = None,  # Changed to accept dict format
+        bcc: Optional[List[Dict[str, str]]] = None,  # Changed to accept dict format
+        reply_to: Optional[str] = None,  # Email ID to reply to (for threading)
+        thread_id: Optional[str] = None,  # DEPRECATED - use reply_to instead
         attachments: Optional[List[Dict]] = None,
         is_html: bool = True
     ) -> Dict[str, Any]:
-        """Send email"""
+        """Send email
+        
+        Args:
+            account_id: UniPile account ID
+            to: List of recipient dicts with 'identifier' and optional 'display_name'
+            subject: Email subject
+            body: Email body (HTML or plain text)
+            cc: List of CC recipient dicts
+            bcc: List of BCC recipient dicts
+            reply_to: UniPile or provider email ID to reply to (for threading)
+            thread_id: DEPRECATED - not supported by UniPile, use reply_to instead
+            attachments: List of attachment dicts
+            is_html: Whether body is HTML
+        """
         try:
+            # UniPile expects multipart/form-data for email sending
+            # Build the data payload according to UniPile API spec
             data = {
                 'account_id': account_id,
-                'to': to,
+                'to': to,  # List of dicts with 'identifier' and optional 'display_name'
                 'subject': subject,
                 'body': body,
                 'is_html': is_html
@@ -93,6 +110,9 @@ class UnipileEmailClient:
                 data['cc'] = cc
             if bcc:
                 data['bcc'] = bcc
+            if reply_to:
+                data['reply_to'] = reply_to  # Add reply_to for email threading
+            # Note: thread_id is not supported by UniPile API, only reply_to is used
             if attachments:
                 data['attachments'] = attachments
                 

@@ -201,8 +201,24 @@ class UnipileClient:
                                 f"Rate limit exceeded: {response_data.get('message', 'Too many requests')}"
                             )
                         else:
+                            # Log the full error details for debugging
+                            import logging
+                            import json
+                            logger = logging.getLogger(__name__)
+                            logger.error(f"UniPile API error - Status: {response.status}")
+                            logger.error(f"UniPile API error - URL: {url}")
+                            logger.error(f"UniPile API error - Method: {method}")
+                            logger.error(f"UniPile API error - Response: {response_data}")
+                            if data:
+                                # Log full request data for debugging (temporarily)
+                                try:
+                                    logger.error(f"UniPile API error - Request data: {json.dumps(data, indent=2)}")
+                                except:
+                                    logger.error(f"UniPile API error - Request data keys: {list(data.keys())}")
+                            
+                            error_message = response_data.get('message') or response_data.get('error', 'Unknown error')
                             raise UnipileConnectionError(
-                                f"API request failed ({response.status}): {response_data.get('message', 'Unknown error')}"
+                                f"API request failed ({response.status}): {error_message}"
                             )
                         
         except aiohttp.ClientError as e:

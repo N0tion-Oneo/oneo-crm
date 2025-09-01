@@ -149,10 +149,10 @@ export function useRecordCommunications(recordId: string | number) {
         // Use smart mode: all WhatsApp/LinkedIn + last 10 emails
         params.mode = 'smart'
       } else {
-        // Single channel mode - map frontend 'email' to backend channel types
+        // Single channel mode - backend will handle email type mapping
         params.mode = 'channel'
-        // Map 'email' tab to gmail (or could be outlook, office365)
-        params.channel_type = channelType === 'email' ? 'gmail' : channelType
+        // Send the channel type as-is, backend will map 'email' to all email types
+        params.channel_type = channelType
         params.limit = channelType === 'email' ? 10 : 100 // Limit emails, get all for social
       }
       
@@ -363,7 +363,8 @@ export function useRecordCommunications(recordId: string | number) {
       try {
         await Promise.all([
           fetchProfile(),
-          fetchConversations(),
+          // Don't fetch conversations here - let the component fetch based on active tab
+          // fetchConversations(),
           fetchStats(),
           fetchSyncStatus()
         ])
@@ -378,7 +379,7 @@ export function useRecordCommunications(recordId: string | number) {
     }
 
     fetchData()
-  }, [recordIdStr, accessToken, fetchProfile, fetchConversations, fetchStats, fetchSyncStatus])
+  }, [recordIdStr, accessToken, fetchProfile, fetchStats, fetchSyncStatus])
 
   // Poll for sync status updates if sync is in progress
   useEffect(() => {

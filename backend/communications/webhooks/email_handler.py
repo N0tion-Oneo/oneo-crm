@@ -107,9 +107,77 @@ class EmailWebhookHandler:
             if should_store:
                 logger.info(f"Contact found for email, storing message. {sum(1 for p in participants if p.contact_record)} participants with contacts")
                 
-                # Check for duplicate emails
+                # Check for duplicate emails using tracking_id first, then external_message_id
+                tracking_id = webhook_data.get('tracking_id')
                 external_message_id = normalized_email['message_id']
-                if external_message_id:
+                existing_message = None
+                
+                # First try to find by tracking_id (for messages we sent)
+                if tracking_id:
+                    existing_message = Message.objects.filter(
+                        metadata__tracking_id=tracking_id
+                    ).first()
+                    
+                    if existing_message:
+                        logger.info(f"Found existing message by tracking_id {tracking_id} (ID: {existing_message.id})")
+                        
+                        # Update the existing message with webhook data
+                        existing_message.external_message_id = external_message_id  # Update with Gmail Message-ID
+                        
+                        # Merge metadata - keep existing but add webhook data
+                        if not existing_message.metadata:
+                            existing_message.metadata = {}
+                        
+                        # Store the raw webhook data
+                        existing_message.metadata['raw_webhook_data'] = webhook_data
+                        existing_message.metadata['webhook_processed'] = True
+                        existing_message.metadata['gmail_message_id'] = external_message_id
+                        
+                        # Update status if needed
+                        if normalized_email.get('status'):
+                            existing_message.status = normalized_email['status']
+                        
+                        # Update participant if we didn't have one
+                        if not existing_message.sender_participant_id:
+                            # Find sender participant
+                            sender_info = normalized_email.get('sender_info', {})
+                            sender_email = sender_info.get('email', '')
+                            if sender_email:
+                                for p in participants:
+                                    if p.email and p.email.lower() == sender_email.lower():
+                                        existing_message.sender_participant = p
+                                        break
+                        
+                        # Update contact record if we found one
+                        if not existing_message.contact_record_id:
+                            # Determine contact based on direction
+                            if normalized_email['direction'] == MessageDirection.OUTBOUND:
+                                recipients = normalized_email.get('recipients', {}).get('to', [])
+                                contact_email = recipients[0].get('email', '') if recipients else ''
+                            else:
+                                contact_email = sender_email
+                            
+                            if contact_email:
+                                for p in participants:
+                                    if p.email and p.email.lower() == contact_email.lower() and p.contact_record:
+                                        existing_message.contact_record = p.contact_record
+                                        break
+                        
+                        existing_message.save()
+                        
+                        logger.info(f"Updated existing message {existing_message.id} with webhook data")
+                        response_data.update({
+                            'message_id': str(existing_message.id),
+                            'conversation_id': str(existing_message.conversation.id),
+                            'note': 'Updated existing message with webhook data',
+                            'was_created': False,
+                            'stored': True,
+                            'updated': True
+                        })
+                        return response_data
+                
+                # If not found by tracking_id, check by external_message_id
+                if not existing_message and external_message_id:
                     existing_message = Message.objects.filter(
                         external_message_id=external_message_id
                     ).first()
@@ -476,14 +544,31 @@ class EmailWebhookHandler:
                 return existing_message, False
             
             # Prepare email-specific metadata
+            # Format sender info for frontend compatibility
+            sender_info = normalized_email.get('sender_info', {})
+            from_field = {
+                'email': sender_info.get('email', ''),
+                'name': sender_info.get('name', '')
+            }
+            
+            # Format recipients for frontend compatibility
+            recipients = normalized_email.get('recipients', {})
+            to_field = [{'email': r.get('email', ''), 'name': r.get('name', '')} 
+                       for r in recipients.get('to', [])]
+            cc_field = [{'email': r.get('email', ''), 'name': r.get('name', '')} 
+                       for r in recipients.get('cc', [])]
+            
             email_metadata = {
                 'raw_webhook_data': raw_webhook_data,
                 'email_specific': True,
                 'folder': normalized_email['folder'],
                 'labels': normalized_email['labels'],
                 'read_status': normalized_email['read'],
-                'recipients': normalized_email['recipients'],
-                'sender_info': normalized_email['sender_info'],
+                'recipients': normalized_email['recipients'],  # Keep original for backend
+                'sender_info': normalized_email['sender_info'],  # Keep original for backend
+                'from': from_field,  # Add frontend-compatible field
+                'to': to_field,  # Add frontend-compatible field
+                'cc': cc_field,  # Add frontend-compatible field
                 'attachment_count': len(normalized_email['attachments']),
                 'has_attachments': len(normalized_email['attachments']) > 0,
                 'processed_at': timezone.now().isoformat(),

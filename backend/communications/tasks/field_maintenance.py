@@ -156,33 +156,47 @@ def cleanup_expired_tokens():
 
 @shared_task
 def process_scheduled_syncs():
-    """Process scheduled auto-syncs for records"""
+    """Process scheduled auto-syncs for records across all tenants"""
     from communications.record_communications.models import RecordCommunicationProfile
     from communications.record_communications.tasks import sync_record_communications
+    from tenants.models import Tenant
+    from django_tenants.utils import schema_context
     
     try:
         now = timezone.now()
+        total_scheduled = 0
         
-        # Find profiles due for sync
-        profiles = RecordCommunicationProfile.objects.filter(
-            auto_sync_enabled=True,
-            sync_frequency_hours__gt=0,
-            sync_in_progress=False
-        ).exclude(
-            last_full_sync__gte=now - timedelta(hours=F('sync_frequency_hours'))
-        )
+        # Process each tenant separately
+        for tenant in Tenant.objects.exclude(schema_name='public'):
+            with schema_context(tenant.schema_name):
+                # Find profiles due for sync in this tenant
+                profiles = RecordCommunicationProfile.objects.filter(
+                    auto_sync_enabled=True,
+                    sync_frequency_hours__gt=0,
+                    sync_in_progress=False
+                ).exclude(
+                    last_full_sync__gte=now - timedelta(hours=F('sync_frequency_hours'))
+                )
+                
+                scheduled_count = 0
+                for profile in profiles[:10]:  # Limit to 10 per tenant per run
+                    # Schedule the sync task with tenant schema
+                    sync_record_communications.delay(
+                        record_id=profile.record_id,
+                        tenant_schema=tenant.schema_name,
+                        trigger_reason='Scheduled periodic sync'
+                    )
+                    
+                    # Mark as in progress
+                    profile.mark_sync_started()
+                    scheduled_count += 1
+                
+                if scheduled_count > 0:
+                    logger.info(f"Scheduled {scheduled_count} record syncs in tenant {tenant.schema_name}")
+                total_scheduled += scheduled_count
         
-        scheduled_count = 0
-        for profile in profiles[:10]:  # Limit to 10 per run
-            # Schedule the sync task
-            sync_record_communications.delay(str(profile.record_id))
-            
-            # Mark as in progress
-            profile.mark_sync_started()
-            scheduled_count += 1
-        
-        logger.info(f"Scheduled {scheduled_count} record syncs")
-        return {'status': 'success', 'scheduled': scheduled_count}
+        logger.info(f"Total scheduled syncs across all tenants: {total_scheduled}")
+        return {'status': 'success', 'scheduled': total_scheduled}
         
     except Exception as e:
         logger.error(f"Failed to process scheduled syncs: {e}")

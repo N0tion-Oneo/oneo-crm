@@ -464,20 +464,33 @@ class FieldManager:
     def schedule_auto_sync(self, profile):
         """Schedule automatic sync based on frequency settings"""
         from communications.record_communications.tasks import sync_record_communications
+        from django.db import connection
         
         if not profile.auto_sync_enabled or profile.sync_frequency_hours == 0:
+            return
+        
+        # Get tenant schema
+        tenant_schema = getattr(connection, 'tenant', None)
+        tenant_schema_name = tenant_schema.schema_name if tenant_schema else 'public'
+        
+        # Don't schedule for public schema
+        if tenant_schema_name == 'public':
+            logger.warning(f"Cannot schedule auto-sync for record {profile.record_id} in public schema")
             return
         
         # Schedule next sync
         next_sync = timezone.now() + timedelta(hours=profile.sync_frequency_hours)
         
-        # Use Celery to schedule the task
+        # Use Celery to schedule the task with tenant schema
         sync_record_communications.apply_async(
-            args=[str(profile.record_id)],
+            args=[profile.record_id, tenant_schema_name],
+            kwargs={
+                'trigger_reason': 'Scheduled auto-sync'
+            },
             eta=next_sync
         )
         
-        logger.info(f"Scheduled auto-sync for record {profile.record_id} at {next_sync}")
+        logger.info(f"Scheduled auto-sync for record {profile.record_id} in tenant {tenant_schema_name} at {next_sync}")
     
     # ============== RecordCommunicationLink Field Management ==============
     

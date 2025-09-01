@@ -16,6 +16,8 @@ import '@/lib/field-system'
 import { DuplicateIndicator } from '@/components/duplicates/duplicate-indicator'
 import { UnifiedRecordSharing } from './UnifiedRecordSharing'
 import { RecordCommunicationsPanel } from '@/components/communications/record/RecordCommunicationsPanel'
+import { UnifiedActivityView } from './UnifiedActivityView'
+import { useRecordCommunications } from '@/components/communications/record/hooks/useRecordCommunications'
 import { 
   X, 
   Save, 
@@ -465,6 +467,15 @@ export function RecordDetailDrawer({
   
   const drawerRef = useRef<HTMLDivElement>(null)
   
+  // Fetch communications timeline for unified activity view
+  const {
+    timelineMessages,
+    isLoading: isLoadingCommunications,
+    fetchTimeline,
+    loadMoreTimeline,
+    hasMoreTimeline
+  } = useRecordCommunications(record?.id || '')
+  
   // FieldSaveService instance for this form
   const fieldSaveService = useRef(new FieldSaveService()).current
   const isSavingRef = useRef(false)  // Track when we're saving to prevent formData reset
@@ -648,6 +659,10 @@ export function RecordDetailDrawer({
       // Only load activities for authenticated users (not in public/readonly mode)
       if (!isReadOnly && user) {
         loadActivities(record.id)
+        // Fetch communications timeline for unified view
+        if (fetchTimeline) {
+          fetchTimeline(true)
+        }
       }
     } else {
       // New record - initialize ALL fields with appropriate defaults
@@ -1171,47 +1186,14 @@ export function RecordDetailDrawer({
           )}
 
           {activeTab === 'activity' && (
-            <div className="p-6">
-              <div className="space-y-4">
-                {activities.map((activity, index) => (
-                  <div key={activity.id || `activity-${index}-${Date.now()}`} className="flex space-x-3">
-                    <div className="flex-shrink-0">
-                      <div className="w-8 h-8 bg-gray-200 dark:bg-gray-600 rounded-full flex items-center justify-center">
-                        {activity.type === 'system' && activity.message.includes('created') && <Plus className="w-4 h-4 text-green-600 dark:text-green-400" />}
-                        {activity.type === 'field_change' && <Edit className="w-4 h-4 text-blue-600 dark:text-blue-400" />}
-                        {activity.type === 'stage_change' && <Trash2 className="w-4 h-4 text-red-600 dark:text-red-400" />}
-                        {activity.type === 'comment' && <Clock className="w-4 h-4 text-gray-600 dark:text-gray-400" />}
-                      </div>
-                    </div>
-                    
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm text-gray-900 dark:text-white">
-                        <span className="font-medium">
-                          {activity.user ? `${activity.user.first_name} ${activity.user.last_name}` : 'System'}
-                        </span>
-                        <div className="mt-1">
-                          {activity.message.split('\n').map((line, index) => (
-                            <div key={index} className={index > 0 ? 'mt-1' : ''}>
-                              {line}
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                      <div className="text-xs text-gray-500 dark:text-gray-400 mt-2">
-                        {formatActivityTime(activity.created_at)}
-                      </div>
-                    </div>
-                  </div>
-                ))}
-                
-                {activities.length === 0 && (
-                  <div className="text-center py-8">
-                    <History className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-                    <p className="text-gray-500 dark:text-gray-400">No activity yet</p>
-                  </div>
-                )}
-              </div>
-            </div>
+            <UnifiedActivityView 
+              activities={activities}
+              communications={timelineMessages}
+              isLoadingActivities={false}
+              isLoadingCommunications={isLoadingCommunications}
+              onLoadMoreCommunications={loadMoreTimeline}
+              hasMoreCommunications={hasMoreTimeline}
+            />
           )}
 
           {activeTab === 'communications' && record && (

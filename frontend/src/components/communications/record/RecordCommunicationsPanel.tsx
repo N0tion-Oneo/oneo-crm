@@ -18,7 +18,6 @@ import { ConversationList } from './ConversationList'
 import { ConversationThread } from './ConversationThread'
 import { SyncStatusIndicator } from './SyncStatusIndicator'
 import { QuickReply } from './QuickReply'
-import { MessageTimeline } from './MessageTimeline'
 
 interface RecordCommunicationsPanelProps {
   recordId: string
@@ -29,24 +28,20 @@ export function RecordCommunicationsPanel({
   recordId
 }: RecordCommunicationsPanelProps) {
   const [selectedConversation, setSelectedConversation] = useState<string | null>(null)
-  const [activeTab, setActiveTab] = useState<'all' | 'email' | 'whatsapp' | 'linkedin'>('all')
+  const [activeTab, setActiveTab] = useState<'email' | 'whatsapp' | 'linkedin'>('email')
   const [loadingChannel, setLoadingChannel] = useState<string | null>(null)
   
   const {
     profile,
     conversations,
-    timelineMessages,
     stats,
     syncStatus,
     syncJustCompleted,
     isLoading,
     error,
-    hasMoreTimeline,
     triggerSync,
     refreshData,
-    fetchConversations,
-    fetchTimeline,
-    loadMoreTimeline
+    fetchConversations
   } = useRecordCommunications(recordId)
 
 
@@ -58,21 +53,14 @@ export function RecordCommunicationsPanel({
 
   // Fetch data when tab changes or component mounts
   useEffect(() => {
-    if (!isLoading) {
-      if (activeTab === 'all' && fetchTimeline) {
-        setLoadingChannel(activeTab)
-        // Fetch timeline for 'all' tab
-        fetchTimeline(true) // Reset timeline
+    if (!isLoading && fetchConversations) {
+      setLoadingChannel(activeTab)
+      // Fetch conversations for specific channels
+      fetchConversations(activeTab).then(() => {
         setLoadingChannel(null)
-      } else if (fetchConversations) {
-        setLoadingChannel(activeTab)
-        // Fetch conversations for specific channels
-        fetchConversations(activeTab).then(() => {
-          setLoadingChannel(null)
-        })
-      }
+      })
     }
-  }, [activeTab, fetchConversations, fetchTimeline, isLoading])
+  }, [activeTab, fetchConversations, isLoading])
 
   // Use conversations directly since they're already filtered by the API
   const filteredConversations = conversations
@@ -149,13 +137,6 @@ export function RecordCommunicationsPanel({
         <div className="flex items-center justify-between p-3 gap-3">
           <Tabs value={activeTab} onValueChange={(value: any) => setActiveTab(value)} className="flex-1">
             <TabsList className="h-9">
-              <TabsTrigger value="all" className="flex-1">
-              <MessageSquare className="w-4 h-4 mr-1" />
-              All
-              {stats && stats.total_messages > 0 && (
-                <span className="ml-1 text-xs">({stats.total_messages})</span>
-              )}
-            </TabsTrigger>
             <TabsTrigger value="email" className="flex-1">
               <Mail className="w-4 h-4 mr-1" />
               Email
@@ -191,18 +172,6 @@ export function RecordCommunicationsPanel({
 
       {/* Main content area - Flexible height with min-h-0 for proper scrolling */}
       <div className="flex-1 min-h-0 relative">
-        {activeTab === 'all' ? (
-          /* Timeline view for All tab - Full width */
-          <div className="h-full bg-white dark:bg-gray-800">
-            <MessageTimeline
-              messages={timelineMessages}
-              isLoading={isLoading}
-              error={error}
-              onLoadMore={loadMoreTimeline}
-              hasMore={hasMoreTimeline}
-            />
-          </div>
-        ) : (
           <div className="flex h-full overflow-hidden">
             {/* Conversation list - Fixed width sidebar */}
             <div className="w-80 h-full border-r border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 overflow-hidden flex flex-col flex-shrink-0">
@@ -250,7 +219,6 @@ export function RecordCommunicationsPanel({
               )}
             </div>
           </div>
-        )}
       </div>
     </div>
   )

@@ -5,7 +5,7 @@ import logging
 import json
 from datetime import datetime, timedelta
 
-from django.db.models import Q, Count, Max, Prefetch
+from django.db.models import Q, Count, Max, Prefetch, Sum
 from django.utils import timezone
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
@@ -380,10 +380,15 @@ class RecordCommunicationsViewSet(viewsets.ViewSet):
                 count=Count('id')
             ).order_by('day')
             
+            # Calculate total_unread dynamically from actual conversation unread counts
+            total_unread = Conversation.objects.filter(
+                id__in=conversation_ids
+            ).aggregate(total=Sum('unread_count'))['total'] or 0
+            
             stats = {
                 'total_conversations': profile.total_conversations,
                 'total_messages': profile.total_messages,
-                'total_unread': profile.total_unread,
+                'total_unread': total_unread,  # Use computed value instead of stored field
                 'last_activity': profile.last_message_at,
                 'channels': list(channel_breakdown.keys()),
                 'participants_count': participants.count(),

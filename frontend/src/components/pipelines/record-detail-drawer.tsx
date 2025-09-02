@@ -473,12 +473,18 @@ export function RecordDetailDrawer({
     isLoading: isLoadingCommunications,
     fetchTimeline,
     loadMoreTimeline,
-    hasMoreTimeline
+    hasMoreTimeline,
+    stats: communicationStats
   } = useRecordCommunications(record?.id || '')
   
   // FieldSaveService instance for this form
   const fieldSaveService = useRef(new FieldSaveService()).current
   const isSavingRef = useRef(false)  // Track when we're saving to prevent formData reset
+
+  // Debug communication stats
+  useEffect(() => {
+    console.log('Communication stats:', communicationStats)
+  }, [communicationStats])
 
 
   // Field filtering with conditional visibility support
@@ -1087,13 +1093,18 @@ export function RecordDetailDrawer({
               <Button
                 onClick={() => setActiveTab('communications')}
                 variant="ghost"
-                className={`px-6 py-3 rounded-none border-b-2 transition-colors ${
+                className={`px-6 py-3 rounded-none border-b-2 transition-colors relative ${
                   activeTab === 'communications'
                     ? 'border-primary text-primary'
                     : 'border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'
                 }`}
               >
                 Communications
+                {communicationStats?.total_unread > 0 && (
+                  <span className="ml-2 inline-flex items-center justify-center px-2 py-0.5 text-xs font-medium rounded-full bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200">
+                    {communicationStats.total_unread}
+                  </span>
+                )}
               </Button>
             </>
           )}

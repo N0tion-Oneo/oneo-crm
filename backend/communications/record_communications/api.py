@@ -577,22 +577,25 @@ class RecordCommunicationsViewSet(viewsets.ViewSet):
             # Log parsed data
             logger.info(f"📧 Parsed - Account ID: {account_id}")
             logger.info(f"📧 Parsed - To: {to} (type: {type(to)})")
-            logger.info(f"📧 Parsed - Subject: {subject}")
+            logger.info(f"📧 Parsed - Subject: {repr(subject)} (empty: {not subject}, len: {len(subject)})")
             logger.info(f"📧 Parsed - Body length: {len(body)} chars")
+            logger.info(f"📧 Parsed - Reply mode: {reply_mode}, Reply to ID: {reply_to_message_id}")
             
-            # If replying to a specific message, get its provider_id for threading
+            # If replying to a specific message, get its UniPile ID for threading
             reply_to_external_id = None
             if reply_to_message_id:
                 try:
                     reply_message = Message.objects.get(id=reply_to_message_id)
                     
-                    # For threading, we need the provider_id (16-char hex from Gmail)
-                    if reply_message.metadata and 'provider_id' in reply_message.metadata:
-                        # Use the provider_id - this is what UniPile expects for reply_to
-                        reply_to_external_id = reply_message.metadata['provider_id']
-                        logger.info(f"Using provider_id from reply message for threading: {reply_to_external_id}")
+                    # For threading, UniPile needs the UniPile message ID
+                    if reply_message.metadata and 'unipile_id' in reply_message.metadata:
+                        # Use the unipile_id - this is what UniPile expects for reply_to
+                        reply_to_external_id = reply_message.metadata['unipile_id']
+                        logger.info(f"Using unipile_id from reply message for threading: {reply_to_external_id}")
                     else:
-                        logger.warning(f"Reply message {reply_to_message_id} has no provider_id for threading")
+                        # Can't thread to this message - it doesn't exist in UniPile
+                        # Don't try to use Gmail Message-IDs or internal IDs
+                        logger.warning(f"Reply message {reply_to_message_id} has no valid UniPile ID for threading - will send without reply_to")
                     
                 except Message.DoesNotExist:
                     logger.warning(f"Reply-to message {reply_to_message_id} not found")
@@ -634,33 +637,55 @@ class RecordCommunicationsViewSet(viewsets.ViewSet):
             conversation = None
             email_reply_to = None  # For UniPile threading
             
-            if conversation_id:
+            # IMPORTANT: Only set reply_to when this is actually a reply
+            # Check if this is a reply by looking for reply_to_message_id or reply_mode
+            is_reply = bool(reply_to_message_id or reply_mode)
+            
+            # Use the specific reply_to_external_id if we have one
+            if reply_to_external_id:
+                email_reply_to = reply_to_external_id
+                logger.info(f"📧 Using specific reply_to from message: {email_reply_to}")
+            
+            if conversation_id and is_reply:
+                # Only use existing conversation if this is a REPLY
                 try:
                     conversation = Conversation.objects.get(id=conversation_id)
+                    logger.info(f"📧 Reply email - using existing conversation {conversation_id}")
                     
-                    # For threading, we need to find the last message in this conversation
-                    # and use its provider_id (Gmail Message-ID) as reply_to
-                    last_message = Message.objects.filter(
-                        conversation=conversation
-                    ).order_by('-created_at').first()
-                    
-                    if last_message:
-                        # Try to get the provider_id from metadata (16-char hex from Gmail)
-                        if last_message.metadata and 'provider_id' in last_message.metadata:
-                            email_reply_to = last_message.metadata['provider_id']
-                            logger.info(f"📧 Using provider_id for reply_to: {email_reply_to}")
+                    # Look for reply_to from conversation if we don't already have a specific reply_to
+                    if not email_reply_to:
+                        # For threading, we need to find the last message in this conversation
+                        # and use its UniPile ID as reply_to
+                        last_message = Message.objects.filter(
+                            conversation=conversation
+                        ).order_by('-created_at').first()
+                        
+                        if last_message:
+                            # Try to get the UniPile ID from metadata or external_message_id
+                            if last_message.metadata and 'unipile_id' in last_message.metadata:
+                                email_reply_to = last_message.metadata['unipile_id']
+                                logger.info(f"📧 Using unipile_id from conversation for reply_to: {email_reply_to}")
+                            elif last_message.external_message_id:
+                                email_reply_to = last_message.external_message_id
+                                logger.info(f"📧 Using external_message_id from conversation for reply_to: {email_reply_to}")
+                            else:
+                                logger.info(f"📧 No valid UniPile ID found for threading")
                         else:
-                            logger.info(f"📧 No valid provider_id found for threading")
-                    else:
-                        logger.info(f"📧 No previous message found in conversation for threading")
+                            logger.info(f"📧 No previous message found in conversation for threading")
                         
                 except Conversation.DoesNotExist:
                     logger.warning(f"Conversation {conversation_id} not found")
                     conversation = None
-            else:
-                # No conversation_id provided - this is a new email thread
-                # Create a new conversation for it
-                logger.info(f"📧 No conversation_id provided, creating new conversation")
+            elif conversation_id and not is_reply:
+                # NEW EMAIL but conversation_id was provided
+                # This happens when user is viewing a conversation but sends a NEW email
+                # We should create a NEW conversation for this new email thread
+                logger.info(f"📧 New email requested while viewing conversation {conversation_id} - creating NEW conversation")
+                conversation = None  # Will trigger new conversation creation below
+            
+            # Create new conversation if needed (for new emails)
+            if not conversation:
+                logger.info(f"📧 Creating new conversation for new email thread")
                 
                 # Get the channel for this account
                 from communications.models import Channel
@@ -689,9 +714,37 @@ class RecordCommunicationsViewSet(viewsets.ViewSet):
                 else:
                     logger.warning(f"📧 No Gmail channel found for account {account_id}")
             
+            # Handle attachments if provided
+            attachments = request.data.get('attachments', [])
+            attachment_data = []
+            if attachments:
+                logger.info(f"Processing {len(attachments)} attachments for email")
+                for att in attachments:
+                    # Attachments come from frontend with base64 data
+                    attachment_data.append({
+                        'filename': att.get('filename', 'attachment'),
+                        'content_type': att.get('content_type', 'application/octet-stream'),
+                        'data': att.get('data'),  # Base64 encoded data from frontend
+                    })
+            
             # Send email via UniPile
-            # Use email_reply_to for conversation threading, or reply_to_external_id for specific reply
-            final_reply_to = reply_to_external_id or email_reply_to
+            # Prefer conversation threading over individual message reply if we have a valid UniPile ID
+            # This handles cases where the individual message doesn't exist in UniPile (e.g., webhook-created messages)
+            final_reply_to = email_reply_to or reply_to_external_id
+            
+            # Only include reply_to if it's a valid UniPile message ID (not a Gmail Message-ID)
+            # UniPile message IDs are typically alphanumeric without @ symbols
+            # Gmail Message-IDs have the format <...@mail.gmail.com>
+            if final_reply_to and '@' in str(final_reply_to):
+                logger.warning(f"Skipping invalid reply_to (Gmail Message-ID format): {final_reply_to}")
+                final_reply_to = None
+            
+            # Log what we're about to send to UniPile
+            logger.info(f"📧 SENDING TO UNIPILE:")
+            logger.info(f"📧   Email Type: {'REPLY' if is_reply else 'NEW EMAIL'}")
+            logger.info(f"📧   Subject being sent: {repr(subject)} (type: {type(subject)})")
+            logger.info(f"📧   Reply-to: {final_reply_to} (should be None for new emails)")
+            logger.info(f"📧   To: {to_formatted}")
             
             result = async_to_sync(service.send_email)(
                 account_id=account_id,
@@ -700,7 +753,8 @@ class RecordCommunicationsViewSet(viewsets.ViewSet):
                 body=body,
                 cc=cc_formatted,
                 bcc=bcc_formatted,
-                reply_to=final_reply_to  # Use reply_to for UniPile threading
+                reply_to=final_reply_to,  # Use reply_to for UniPile threading (if valid)
+                attachments=attachment_data if attachment_data else None
                 # Note: thread_id is not used - UniPile uses reply_to for threading
             )
             
@@ -719,6 +773,19 @@ class RecordCommunicationsViewSet(viewsets.ViewSet):
                     
                     # Note: provider_id is the Gmail message ID, not thread ID
                     # Threading is maintained through reply_to parameter
+                    
+                    # Prepare attachment metadata for storage
+                    attachment_metadata = []
+                    if attachment_data:
+                        for i, att in enumerate(attachment_data):
+                            attachment_metadata.append({
+                                'id': f"pending_{i}",  # Temporary ID until webhook provides real one
+                                'filename': att.get('filename'),
+                                'content_type': att.get('content_type'),
+                                'size': len(att.get('data', '')) if att.get('data') else 0,
+                                'pending': True,  # Mark as pending UniPile processing
+                                'attachment_id': None  # Will be filled by webhook
+                            })
                     
                     # Store the UniPile ID as external_message_id for reply threading
                     message = Message.objects.create(
@@ -740,7 +807,8 @@ class RecordCommunicationsViewSet(viewsets.ViewSet):
                             'provider_id': provider_id,
                             'reply_mode': reply_mode,
                             'sent_via': 'record_context',
-                            'reply_to': final_reply_to if final_reply_to else None
+                            'reply_to': final_reply_to if final_reply_to else None,
+                            'attachments': attachment_metadata if attachment_metadata else None
                         }
                     )
                     
@@ -751,11 +819,19 @@ class RecordCommunicationsViewSet(viewsets.ViewSet):
                         profile.last_message_at = timezone.now()
                         profile.save(update_fields=['total_messages', 'last_message_at'])
                 
-                return Response({
+                response_data = {
                     'success': True,
                     'tracking_id': result.get('tracking_id'),
                     'message': 'Email sent successfully'
-                })
+                }
+                
+                # Include conversation_id in response if a new conversation was created
+                if conversation:
+                    response_data['conversation_id'] = str(conversation.id)
+                    if not is_reply:
+                        response_data['new_conversation_created'] = True
+                
+                return Response(response_data)
             else:
                 return Response({
                     'success': False,
@@ -773,6 +849,256 @@ class RecordCommunicationsViewSet(viewsets.ViewSet):
                 'success': False,
                 'error': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @extend_schema(
+        summary="Download an attachment from a message",
+        parameters=[
+            OpenApiParameter(name='message_id', type=str, required=True),
+            OpenApiParameter(name='attachment_id', type=str, required=True),
+        ],
+        responses={200: {'description': 'Attachment file'}}
+    )
+    @action(detail=True, methods=['get'], url_path='download-attachment')
+    def download_attachment(self, request, pk=None):
+        """Download an attachment from a message"""
+        message_id = request.query_params.get('message_id')
+        attachment_id = request.query_params.get('attachment_id')
+        
+        if not message_id or not attachment_id:
+            return Response(
+                {'error': 'Both message_id and attachment_id are required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            # Get the message
+            message = Message.objects.get(id=message_id)
+            
+            # Check if message belongs to this record's conversations
+            record = Record.objects.get(pk=pk)
+            conversation_ids = RecordCommunicationLink.objects.filter(
+                record=record
+            ).values_list('conversation_id', flat=True)
+            
+            if message.conversation_id not in conversation_ids:
+                return Response(
+                    {'error': 'Message not found in record conversations'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Get attachment metadata
+            attachments = message.metadata.get('attachments', []) if message.metadata else []
+            attachment = None
+            
+            logger.info(f"Looking for attachment_id: {attachment_id}")
+            logger.info(f"Message has {len(attachments)} attachments")
+            
+            for att in attachments:
+                att_id = att.get('attachment_id') or att.get('id')
+                logger.info(f"Checking attachment: {att_id} == {attachment_id}?")
+                if att_id == attachment_id:
+                    attachment = att
+                    break
+            
+            if not attachment:
+                logger.error(f"Attachment not found. Available attachments: {[att.get('attachment_id', att.get('id')) for att in attachments]}")
+                return Response(
+                    {'error': f'Attachment {attachment_id} not found in message'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Get UniPile attachment
+            from communications.channels.email.service import EmailService
+            service = EmailService()
+            
+            # Use the external message ID (UniPile ID) and attachment ID
+            unipile_message_id = message.metadata.get('unipile_id') if message.metadata else None
+            external_message_id = message.external_message_id
+            
+            logger.info(f"Message external_message_id: {external_message_id}")
+            logger.info(f"Message metadata unipile_id: {unipile_message_id}")
+            
+            if not unipile_message_id and not external_message_id:
+                return Response(
+                    {'error': 'Unable to determine message ID for UniPile'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Download from UniPile
+            import requests
+            from django.conf import settings
+            from django.http import HttpResponse
+            
+            api_key = getattr(settings, 'UNIPILE_API_KEY', None)
+            base_url = getattr(settings, 'UNIPILE_DSN', 'https://api18.unipile.com:14890')
+            
+            if not api_key:
+                return Response(
+                    {'error': 'UniPile API key not configured'},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+            
+            # Check if this is an email message
+            conversation = message.conversation
+            channel = conversation.channel if conversation else None
+            channel_type = channel.channel_type if channel else None
+            
+            # Get the UniPile account ID from the channel
+            unipile_account_id = channel.unipile_account_id if channel else None
+            
+            # Use appropriate endpoint based on channel type
+            if channel_type in ['gmail', 'outlook', 'mail', 'email']:
+                # Try using the UniPile message ID first
+                # The unipile_id from metadata should be the correct UniPile message ID
+                if unipile_message_id:
+                    download_url = f"{base_url}/api/v1/emails/{unipile_message_id}/attachments/{attachment_id}"
+                    logger.info(f"Using UniPile message ID: {unipile_message_id}")
+                else:
+                    # Fallback to external_message_id with URL encoding
+                    import urllib.parse
+                    email_id = urllib.parse.quote(message.external_message_id, safe='')
+                    if unipile_account_id:
+                        download_url = f"{base_url}/api/v1/emails/{email_id}/attachments/{attachment_id}?account_id={unipile_account_id}"
+                    else:
+                        download_url = f"{base_url}/api/v1/emails/{email_id}/attachments/{attachment_id}"
+                    logger.info(f"Using provider email ID (encoded): {email_id}")
+            else:
+                # Use messages endpoint for other channels (WhatsApp, LinkedIn, etc.)
+                download_url = f"{base_url}/api/v1/messages/{unipile_message_id}/attachments/{attachment_id}"
+            
+            headers = {
+                "accept": "*/*",
+                "X-API-KEY": api_key
+            }
+            
+            logger.info(f"Downloading attachment from UniPile: {download_url}")
+            logger.info(f"Channel type: {channel_type}, Account ID: {unipile_account_id}")
+            
+            try:
+                import time
+                max_retries = 3
+                retry_delay = 1  # seconds
+                
+                for attempt in range(max_retries):
+                    try:
+                        response = requests.get(download_url, headers=headers, timeout=30)
+                        
+                        if response.status_code == 200:
+                            break  # Success, exit retry loop
+                        elif response.status_code == 503:
+                            # Service unavailable, retry
+                            if attempt < max_retries - 1:
+                                logger.warning(f"UniPile service unavailable, retrying in {retry_delay} seconds... (attempt {attempt + 1}/{max_retries})")
+                                time.sleep(retry_delay)
+                                retry_delay *= 2  # Exponential backoff
+                                continue
+                            else:
+                                logger.error(f"UniPile API error 503 after {max_retries} attempts: {response.text}")
+                                return Response(
+                                    {'error': 'UniPile service temporarily unavailable. Please try again later.'},
+                                    status=status.HTTP_503_SERVICE_UNAVAILABLE
+                                )
+                        else:
+                            logger.error(f"UniPile API error {response.status_code}: {response.text}")
+                            # Try to provide more specific error messages
+                            if response.status_code == 404:
+                                error_msg = 'Attachment not found. It may have been deleted or expired.'
+                            elif response.status_code == 422:
+                                error_msg = 'Invalid message or attachment ID format.'
+                            else:
+                                error_msg = f'UniPile API error: {response.status_code}'
+                            
+                            return Response(
+                                {'error': error_msg},
+                                status=status.HTTP_502_BAD_GATEWAY
+                            )
+                    except requests.exceptions.Timeout:
+                        if attempt < max_retries - 1:
+                            logger.warning(f"Request timeout, retrying... (attempt {attempt + 1}/{max_retries})")
+                            time.sleep(retry_delay)
+                            retry_delay *= 2
+                            continue
+                        else:
+                            return Response(
+                                {'error': 'Request timeout after multiple attempts'},
+                                status=status.HTTP_504_GATEWAY_TIMEOUT
+                            )
+                
+                # Return the file
+                # Get content type from UniPile response
+                response_content_type = response.headers.get('Content-Type', 'application/octet-stream')
+                
+                # Try to get filename from attachment metadata first
+                filename = attachment.get('filename', 'attachment')
+                logger.info(f"Filename from metadata: {filename}")
+                
+                # If we don't have a good filename, try to extract from attachment_id
+                if filename == 'attachment' or not filename:
+                    import base64
+                    import urllib.parse
+                    try:
+                        # Decode the base64 attachment ID
+                        decoded_id = base64.b64decode(attachment_id).decode('utf-8', errors='ignore')
+                        # The format appears to be: [garbage].size.filename
+                        # Split by dots and get the last part
+                        parts = decoded_id.split('.')
+                        if len(parts) >= 2:
+                            # The last part should be the filename (URL encoded)
+                            encoded_filename = parts[-1]
+                            # URL decode it
+                            extracted_filename = urllib.parse.unquote(encoded_filename)
+                            if extracted_filename and extracted_filename != '':
+                                filename = extracted_filename
+                                logger.info(f"Extracted filename from attachment_id: {filename}")
+                    except Exception as e:
+                        logger.warning(f"Could not extract filename from attachment_id: {e}")
+                
+                # Ensure filename has an extension based on content type if needed
+                if '.' not in filename and response_content_type:
+                    # Add extension based on content type
+                    import mimetypes
+                    ext = mimetypes.guess_extension(response_content_type)
+                    if ext:
+                        filename = f"{filename}{ext}"
+                
+                logger.info(f"Serving attachment: filename={filename}, content_type={response_content_type}")
+                
+                http_response = HttpResponse(
+                    response.content,
+                    content_type=response_content_type
+                )
+                http_response['Content-Disposition'] = f'attachment; filename="{filename}"'
+                http_response['Content-Length'] = len(response.content)
+                
+                return http_response
+                
+            except requests.exceptions.Timeout:
+                return Response(
+                    {'error': 'UniPile API timeout'},
+                    status=status.HTTP_504_GATEWAY_TIMEOUT
+                )
+            except requests.exceptions.RequestException as e:
+                return Response(
+                    {'error': f'UniPile API request failed: {str(e)}'},
+                    status=status.HTTP_502_BAD_GATEWAY
+                )
+                
+        except Record.DoesNotExist:
+            return Response(
+                {'error': 'Record not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Message.DoesNotExist:
+            return Response(
+                {'error': 'Message not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            logger.error(f"Error downloading attachment: {e}")
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
     
     @extend_schema(
         summary="Mark conversations as read",

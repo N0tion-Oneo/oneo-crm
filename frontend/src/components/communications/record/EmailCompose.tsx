@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react'
-import { Send, Paperclip, X, ChevronDown, ChevronUp, Mail } from 'lucide-react'
+import { Send, Paperclip, X, ChevronDown, ChevronUp, Mail, File, Image, FileText } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -13,6 +13,16 @@ import {
 import { api } from '@/lib/api'
 import { toast } from '@/hooks/use-toast'
 import { emailService } from '@/services/emailService'
+import { EnhancedRichEditor } from '../enhanced-rich-editor'
+
+interface Attachment {
+  id: string
+  filename: string
+  size: number
+  content_type: string
+  data?: string // Base64 encoded data
+  file?: File // Original file object
+}
 
 interface EmailComposeProps {
   conversationId: string | null
@@ -40,7 +50,9 @@ export function EmailCompose({
   const [emailAccounts, setEmailAccounts] = useState<any[]>([])
   const [selectedAccountId, setSelectedAccountId] = useState<string>('')
   const [isExpanded, setIsExpanded] = useState(false)
-  const editorRef = useRef<HTMLDivElement>(null)
+  const [attachments, setAttachments] = useState<Attachment[]>([])
+  const [bodyContent, setBodyContent] = useState<string>('')
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   // Fetch email accounts on mount
   useEffect(() => {
@@ -101,17 +113,8 @@ export function EmailCompose({
         setBcc('')
         
         // Set reply body with quoted text
-        if (editorRef.current) {
-          const quotedBody = formatQuotedReply(replyTo)
-          editorRef.current.innerHTML = `<br><br>${quotedBody}`
-          // Place cursor at the beginning
-          const selection = window.getSelection()
-          const range = document.createRange()
-          range.selectNodeContents(editorRef.current)
-          range.collapse(true)
-          selection?.removeAllRanges()
-          selection?.addRange(range)
-        }
+        const quotedBody = formatQuotedReply(replyTo)
+        setBodyContent(`<br><br>${quotedBody}`)
       } else if (replyMode === 'reply-all') {
         // Reply to sender and all recipients
         setTo(replyTo.sender?.email || replyTo.from || '')
@@ -124,10 +127,8 @@ export function EmailCompose({
         setShowCcBcc(true)
         
         // Set reply body
-        if (editorRef.current) {
-          const quotedBody = formatQuotedReply(replyTo)
-          editorRef.current.innerHTML = `<br><br>${quotedBody}`
-        }
+        const quotedBody = formatQuotedReply(replyTo)
+        setBodyContent(`<br><br>${quotedBody}`)
       } else if (replyMode === 'forward') {
         setTo('')
         setCc('')
@@ -135,10 +136,8 @@ export function EmailCompose({
         setSubject(`Fwd: ${replyTo.subject || ''}`.replace(/^(Fwd: )+/, 'Fwd: '))
         
         // Set forward body
-        if (editorRef.current) {
-          const quotedBody = formatQuotedForward(replyTo)
-          editorRef.current.innerHTML = `<br><br>${quotedBody}`
-        }
+        const quotedBody = formatQuotedForward(replyTo)
+        setBodyContent(`<br><br>${quotedBody}`)
       }
     } else if (!replyMode) {
       // Clear fields when not replying
@@ -146,9 +145,7 @@ export function EmailCompose({
       setCc('')
       setBcc('')
       setSubject('')
-      if (editorRef.current) {
-        editorRef.current.innerHTML = ''
-      }
+      setBodyContent('')
       // Collapse when no reply mode
       setIsExpanded(false)
     }
@@ -206,7 +203,7 @@ export function EmailCompose({
       return
     }
 
-    const body = editorRef.current?.innerHTML || ''
+    const body = bodyContent
     if (!body.trim()) {
       toast({
         title: 'Empty message',
@@ -225,14 +222,27 @@ export function EmailCompose({
         cc: cc ? cc.split(',').map(e => e.trim()).filter(Boolean) : [],
         bcc: bcc ? bcc.split(',').map(e => e.trim()).filter(Boolean) : [],
         subject: subject,
-        body: body,
-        reply_to_message_id: replyTo?.id,
-        reply_mode: replyMode
+        body: body
+      }
+      
+      // Only include reply fields if this is actually a reply
+      if (replyTo?.id && replyMode) {
+        payload.reply_to_message_id = replyTo.id
+        payload.reply_mode = replyMode
       }
       
       // Only include conversation_id if it exists
       if (conversationId) {
         payload.conversation_id = conversationId
+      }
+      
+      // Add attachments if any
+      if (attachments.length > 0) {
+        payload.attachments = attachments.map(att => ({
+          filename: att.filename,
+          content_type: att.content_type,
+          data: att.data // Base64 encoded data
+        }))
       }
       
       const response = await api.post(
@@ -250,9 +260,8 @@ export function EmailCompose({
       setCc('')
       setBcc('')
       setSubject('')
-      if (editorRef.current) {
-        editorRef.current.innerHTML = ''
-      }
+      setAttachments([])
+      setBodyContent('')
       setShowCcBcc(false)
       
       // Collapse after sending
@@ -289,6 +298,71 @@ export function EmailCompose({
       e.preventDefault()
       handleSend()
     }
+  }
+
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files
+    if (!files || files.length === 0) return
+
+    const newAttachments: Attachment[] = []
+    
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i]
+      
+      // Check file size (25MB limit)
+      if (file.size > 25 * 1024 * 1024) {
+        toast({
+          title: 'File too large',
+          description: `${file.name} exceeds 25MB limit`,
+          variant: 'destructive'
+        })
+        continue
+      }
+
+      // Convert to base64
+      const reader = new FileReader()
+      const base64Promise = new Promise<string>((resolve) => {
+        reader.onload = () => {
+          const base64 = reader.result as string
+          resolve(base64.split(',')[1]) // Remove data:type;base64, prefix
+        }
+      })
+      reader.readAsDataURL(file)
+      
+      const base64Data = await base64Promise
+
+      newAttachments.push({
+        id: Math.random().toString(36).substr(2, 9),
+        filename: file.name,
+        size: file.size,
+        content_type: file.type || 'application/octet-stream',
+        data: base64Data,
+        file: file
+      })
+    }
+
+    setAttachments(prev => [...prev, ...newAttachments])
+    
+    // Reset file input
+    if (fileInputRef.current) {
+      fileInputRef.current.value = ''
+    }
+  }
+
+  const removeAttachment = (id: string) => {
+    setAttachments(prev => prev.filter(a => a.id !== id))
+  }
+
+  const formatFileSize = (bytes: number) => {
+    if (bytes < 1024) return bytes + ' B'
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
+  }
+
+  const getAttachmentIcon = (mimeType: string) => {
+    if (mimeType.startsWith('image/')) return <Image className="w-4 h-4" />
+    if (mimeType.includes('pdf')) return <FileText className="w-4 h-4" />
+    return <File className="w-4 h-4" />
   }
 
   return (
@@ -334,44 +408,46 @@ export function EmailCompose({
       
       {/* Expanded view */}
       {isExpanded && (
-        <div className="flex flex-col space-y-3 p-4">
-          {/* Collapse button */}
-          <div className="flex items-center justify-between">
-            <span className="text-sm font-medium">Compose Email</span>
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => {
-                setIsExpanded(false)
-                // Also cancel reply mode if active
-                if (replyMode && onCancelReply) {
-                  onCancelReply()
-                }
-              }}
-            >
-              <ChevronUp className="w-4 h-4" />
-            </Button>
-          </div>
-          
-          {/* Reply mode indicator */}
-          {replyMode && (
-            <div className="flex items-center justify-between px-3 py-2 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
-              <span className="text-sm text-blue-700 dark:text-blue-300">
-                {replyMode === 'reply' ? 'Replying to' : replyMode === 'reply-all' ? 'Replying to all' : 'Forwarding'} message
-              </span>
+        <div className="flex flex-col max-h-[500px]">
+          {/* Header and scrollable content */}
+          <div className="flex-1 overflow-y-auto p-4 space-y-3 max-h-[450px]">
+            {/* Collapse button */}
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-medium">Compose Email</span>
               <Button
                 size="sm"
                 variant="ghost"
-                onClick={onCancelReply}
-                className="h-6 px-2"
+                onClick={() => {
+                  setIsExpanded(false)
+                  // Also cancel reply mode if active
+                  if (replyMode && onCancelReply) {
+                    onCancelReply()
+                  }
+                }}
               >
-                <X className="w-3 h-3" />
+                <ChevronUp className="w-4 h-4" />
               </Button>
             </div>
-          )}
+            
+            {/* Reply mode indicator */}
+            {replyMode && (
+              <div className="flex items-center justify-between px-3 py-2 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
+                <span className="text-sm text-blue-700 dark:text-blue-300">
+                  {replyMode === 'reply' ? 'Replying to' : replyMode === 'reply-all' ? 'Replying to all' : 'Forwarding'} message
+                </span>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={onCancelReply}
+                  className="h-6 px-2"
+                >
+                  <X className="w-3 h-3" />
+                </Button>
+              </div>
+            )}
 
-          {/* Email fields */}
-          <div className="space-y-2">
+            {/* Email fields */}
+            <div className="space-y-2">
         {/* From field - only show if multiple accounts */}
         {emailAccounts.length > 1 && (
           <div className="flex items-center space-x-2">
@@ -472,110 +548,80 @@ export function EmailCompose({
         </div>
           </div>
 
-          {/* Rich text editor */}
-          <div className="space-y-1">
-        {/* Toolbar */}
-        <div className="flex items-center gap-1 p-1 border rounded-t-md bg-gray-50 dark:bg-gray-900">
-          <button
-            type="button"
-            onClick={() => document.execCommand('bold', false)}
-            className="p-1.5 hover:bg-gray-200 dark:hover:bg-gray-700 rounded"
-            title="Bold"
-          >
-            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 4h8a4 4 0 014 4 4 4 0 01-4 4H6z" />
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 12h10a4 4 0 014 4 4 4 0 01-4 4H6z" />
-            </svg>
-          </button>
-          <button
-            type="button"
-            onClick={() => document.execCommand('italic', false)}
-            className="p-1.5 hover:bg-gray-200 dark:hover:bg-gray-700 rounded"
-            title="Italic"
-          >
-            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 4h4M14 4l-4 16m-2 0h4" />
-            </svg>
-          </button>
-          <button
-            type="button"
-            onClick={() => document.execCommand('underline', false)}
-            className="p-1.5 hover:bg-gray-200 dark:hover:bg-gray-700 rounded"
-            title="Underline"
-          >
-            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 4v7a5 5 0 0010 0V4M5 21h14" />
-            </svg>
-          </button>
-          <div className="w-px h-4 bg-gray-300 dark:bg-gray-600 mx-1" />
-          <button
-            type="button"
-            onClick={() => document.execCommand('insertUnorderedList', false)}
-            className="p-1.5 hover:bg-gray-200 dark:hover:bg-gray-700 rounded"
-            title="Bullet List"
-          >
-            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-            </svg>
-          </button>
-          <button
-            type="button"
-            onClick={() => document.execCommand('insertOrderedList', false)}
-            className="p-1.5 hover:bg-gray-200 dark:hover:bg-gray-700 rounded"
-            title="Numbered List"
-          >
-            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h16" />
-            </svg>
-          </button>
-          <div className="w-px h-4 bg-gray-300 dark:bg-gray-600 mx-1" />
-          <button
-            type="button"
-            onClick={() => {
-              const url = prompt('Enter URL:')
-              if (url) document.execCommand('createLink', false, url)
-            }}
-            className="p-1.5 hover:bg-gray-200 dark:hover:bg-gray-700 rounded"
-            title="Insert Link"
-          >
-            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
-            </svg>
-          </button>
-        </div>
-        
-        {/* Editor */}
-        <div
-          ref={editorRef}
-          contentEditable={!isSending}
-          className="min-h-[120px] max-h-[300px] p-3 border rounded-b-md bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 overflow-y-auto"
-          onKeyDown={handleKeyPress}
-          suppressContentEditableWarning={true}
-        />
+            {/* Rich HTML Email Editor */}
+            <div className="my-2">
+              <EnhancedRichEditor
+                value={bodyContent}
+                onChange={setBodyContent}
+                placeholder="Compose your email..."
+                className="min-h-[120px]"
+              />
+            </div>
+            
+            {/* Attachments */}
+            {attachments.length > 0 && (
+              <div className="p-3 border rounded-lg border-gray-200 dark:border-gray-700">
+                <div className="text-xs font-medium text-gray-500 mb-2">
+                  {attachments.length} attachment{attachments.length > 1 ? 's' : ''}
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {attachments.map(attachment => (
+                    <div
+                      key={attachment.id}
+                      className="flex items-center gap-2 px-2 py-1 bg-gray-100 dark:bg-gray-700 rounded-md"
+                    >
+                      {getAttachmentIcon(attachment.content_type)}
+                      <span className="text-xs">{attachment.filename}</span>
+                      <span className="text-xs text-gray-500">({formatFileSize(attachment.size)})</span>
+                      <button
+                        onClick={() => removeAttachment(attachment.id)}
+                        className="text-gray-400 hover:text-red-500"
+                        title="Remove attachment"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
-
-          {/* Actions */}
-          <div className="flex items-center justify-between">
-        <Button
-          variant="ghost"
-          size="sm"
-          disabled={isSending}
-          title="Add attachment"
-        >
-          <Paperclip className="w-4 h-4" />
-        </Button>
-        
-        <div className="flex items-center space-x-2">
-          <span className="text-xs text-gray-500">Ctrl+Enter to send</span>
-          <Button
-            onClick={handleSend}
-            disabled={!to.trim() || !subject.trim() || isSending}
-            size="sm"
-          >
-            <Send className="w-4 h-4 mr-1" />
-            {isSending ? 'Sending...' : 'Send'}
-          </Button>
-        </div>
+          
+          {/* Fixed Actions bar */}
+          <div className="border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-4">
+            <div className="flex items-center justify-between">
+              {/* Hidden file input */}
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                onChange={handleFileSelect}
+                className="hidden"
+                accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.txt,.csv,.zip"
+              />
+              
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={isSending}
+                title="Add attachment"
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <Paperclip className="w-4 h-4" />
+              </Button>
+              
+              <div className="flex items-center space-x-2">
+                <span className="text-xs text-gray-500">Ctrl+Enter to send</span>
+                <Button
+                  onClick={handleSend}
+                  disabled={!to.trim() || !subject.trim() || isSending}
+                  size="sm"
+                >
+                  <Send className="w-4 h-4 mr-1" />
+                  {isSending ? 'Sending...' : 'Send'}
+                </Button>
+              </div>
+            </div>
           </div>
         </div>
       )}

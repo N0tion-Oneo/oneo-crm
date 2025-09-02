@@ -73,6 +73,45 @@ class EmailService:
             logger.error(f"Failed to get email folders: {e}")
             return {'folders': [], 'error': str(e)}
     
+    async def get_email(
+        self,
+        email_id: str,
+        account_id: Optional[str] = None,
+        include_headers: bool = False
+    ) -> Dict[str, Any]:
+        """
+        Get a single email by ID
+        
+        Args:
+            email_id: The UniPile email ID or provider ID
+            account_id: The account ID (required if using provider ID)
+            include_headers: Include email headers in response
+            
+        Returns:
+            Email details including attachments
+        """
+        try:
+            params = {}
+            if account_id:
+                params['account_id'] = account_id
+            if include_headers:
+                params['include_headers'] = 'true'
+                
+            client = await self.get_client()
+            response = await client._make_request('GET', f'emails/{email_id}', params=params)
+            
+            return {
+                'success': True,
+                'email': response
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to get email {email_id}: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
     async def get_emails(
         self, 
         account_id: str,
@@ -189,12 +228,13 @@ class EmailService:
             # Log the data being sent for debugging
             logger.info(f"📧 Sending email - Account ID: {account_id}")
             logger.info(f"📧 To: {to_formatted}")
-            logger.info(f"📧 Subject: {subject}")
+            logger.info(f"📧 Subject: {repr(subject)} (type: {type(subject).__name__}, empty: {not subject})")
             logger.info(f"📧 Body length: {len(body) if body else 0} chars")
             logger.info(f"📧 CC: {cc_formatted}")
             logger.info(f"📧 BCC: {bcc_formatted}")
             logger.info(f"📧 Reply To: {reply_to}")
             logger.info(f"📧 Thread ID: {thread_id}")
+            logger.info(f"📧 Attachments: {len(attachments) if attachments else 0}")
             
             # Use the UniPile email client's send_email method
             client = await self.get_client()
@@ -207,6 +247,7 @@ class EmailService:
                 bcc=bcc_formatted,
                 reply_to=reply_to,  # Pass reply_to for threading
                 thread_id=thread_id,  # Pass thread_id for maintaining email threads
+                attachments=attachments,  # Pass attachments to UniPile
                 is_html=True  # We're sending HTML content
             )
             

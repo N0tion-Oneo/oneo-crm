@@ -134,13 +134,26 @@ class UnipileClient:
                     request_data.add_field(key, str(value))
             
             # Add files
-            for field_name, (filename, file_obj, content_type) in files.items():
-                request_data.add_field(
-                    field_name,
-                    file_obj,
-                    filename=filename,
-                    content_type=content_type
-                )
+            for field_name, file_info in files.items():
+                # Handle both single file tuple and list of file tuples
+                if isinstance(file_info, tuple) and len(file_info) == 3:
+                    # Single file: (filename, file_obj, content_type)
+                    filename, file_obj, content_type = file_info
+                    request_data.add_field(
+                        field_name,
+                        file_obj,
+                        filename=filename,
+                        content_type=content_type
+                    )
+                elif isinstance(file_info, list):
+                    # Multiple files for the same field
+                    for filename, file_obj, content_type in file_info:
+                        request_data.add_field(
+                            field_name,
+                            file_obj,
+                            filename=filename,
+                            content_type=content_type
+                        )
         else:
             # Regular JSON request
             request_headers['Content-Type'] = 'application/json'

@@ -133,6 +133,13 @@ class EmailWebhookHandler:
                         existing_message.metadata['webhook_processed'] = True
                         existing_message.metadata['gmail_message_id'] = external_message_id
                         
+                        # Update attachments if present (important for sent messages)
+                        if normalized_email.get('attachments'):
+                            existing_message.metadata['attachments'] = normalized_email['attachments']
+                            existing_message.metadata['has_attachments'] = True
+                            existing_message.metadata['attachment_count'] = len(normalized_email['attachments'])
+                            logger.info(f"Updated message {existing_message.id} with {len(normalized_email['attachments'])} attachments from webhook")
+                        
                         # Update status if needed
                         if normalized_email.get('status'):
                             existing_message.status = normalized_email['status']
@@ -541,6 +548,21 @@ class EmailWebhookHandler:
             ).first()
             
             if existing_message:
+                # Update existing message with webhook data (especially attachments)
+                # This is important for sent messages that need attachment IDs from webhook
+                if existing_message.metadata:
+                    # Check if this message has pending attachments
+                    existing_attachments = existing_message.metadata.get('attachments', [])
+                    has_pending = any(att.get('pending', False) for att in existing_attachments)
+                    
+                    if has_pending and normalized_email.get('attachments'):
+                        # Update with real attachment data from webhook
+                        existing_message.metadata['attachments'] = normalized_email['attachments']
+                        existing_message.metadata['has_attachments'] = len(normalized_email['attachments']) > 0
+                        existing_message.metadata['attachment_count'] = len(normalized_email['attachments'])
+                        existing_message.save(update_fields=['metadata'])
+                        logger.info(f"Updated message {existing_message.id} with {len(normalized_email['attachments'])} attachments from webhook")
+                
                 return existing_message, False
             
             # Prepare email-specific metadata
@@ -572,7 +594,13 @@ class EmailWebhookHandler:
                 'attachment_count': len(normalized_email['attachments']),
                 'has_attachments': len(normalized_email['attachments']) > 0,
                 'processed_at': timezone.now().isoformat(),
-                'processing_version': 'email_v1.0'
+                'processing_version': 'email_v1.0',
+                
+                # Store UniPile IDs for reply threading
+                'unipile_id': raw_webhook_data.get('email_id'),  # UniPile message ID for reply_to
+                'provider_id': raw_webhook_data.get('provider_id'),  # Provider-specific ID
+                'gmail_message_id': raw_webhook_data.get('message_id'),  # Gmail Message-ID
+                'tracking_id': raw_webhook_data.get('tracking_id'),  # Tracking ID for sent messages
             }
             
             # Add HTML content if present

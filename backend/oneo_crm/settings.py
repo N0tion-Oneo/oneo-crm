@@ -622,6 +622,13 @@ CORS_ALLOW_HEADERS = [
     'x-tenant',  # Custom tenant header for multi-tenant support
 ]
 
+# Expose headers that the frontend needs to read
+CORS_EXPOSE_HEADERS = [
+    'content-disposition',
+    'content-type',
+    'content-length',
+]
+
 # Security Headers
 SECURE_BROWSER_XSS_FILTER = True
 SECURE_CONTENT_TYPE_NOSNIFF = True

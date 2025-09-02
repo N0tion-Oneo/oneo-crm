@@ -163,6 +163,60 @@ class RecordMessageSerializer(serializers.ModelSerializer):
     contact_name = serializers.SerializerMethodField()
     metadata = serializers.JSONField(read_only=True)
     conversation_id = serializers.CharField(source='conversation.id', read_only=True)
+    attachments = serializers.SerializerMethodField()
+    
+    def get_attachments(self, obj):
+        """Extract attachments from metadata and format for frontend"""
+        if obj.metadata and isinstance(obj.metadata, dict):
+            attachments_data = obj.metadata.get('attachments', [])
+            if attachments_data:
+                # Format attachments for frontend
+                formatted_attachments = []
+                
+                # Try to get the record ID for the download URL
+                try:
+                    from communications.record_communications.models import RecordCommunicationLink
+                    link = RecordCommunicationLink.objects.filter(
+                        conversation_id=obj.conversation_id
+                    ).first()
+                    record_id = link.record_id if link else None
+                except:
+                    record_id = None
+                
+                for att in attachments_data:
+                    # Get the attachment ID - could be 'id', 'attachment_id', or generate one
+                    attachment_id = att.get('id') or att.get('attachment_id') or f"att_{obj.id}_{len(formatted_attachments)}"
+                    
+                    # Check if attachment is pending (sent but webhook hasn't updated yet)
+                    is_pending = att.get('pending', False)
+                    
+                    formatted_attachment = {
+                        'id': attachment_id,
+                        'filename': att.get('filename', 'attachment'),
+                        'size': att.get('size', 0),
+                        'mime_type': att.get('content_type', att.get('mime_type', 'application/octet-stream')),
+                        'pending': is_pending
+                    }
+                    
+                    # Only add download URL if we have a record_id and attachment is not pending
+                    if record_id and not is_pending:
+                        # Get the current request from serializer context
+                        request = self.context.get('request')
+                        if request:
+                            # Build full URL using the request's host
+                            host = request.get_host()
+                            scheme = 'https' if request.is_secure() else 'http'
+                            formatted_attachment['url'] = f"{scheme}://{host}/api/v1/communications/records/{record_id}/download-attachment?message_id={obj.id}&attachment_id={attachment_id}"
+                        else:
+                            # Relative URL as fallback
+                            formatted_attachment['url'] = f"/api/v1/communications/records/{record_id}/download-attachment?message_id={obj.id}&attachment_id={attachment_id}"
+                    else:
+                        formatted_attachment['url'] = None  # No download until webhook updates
+                    
+                    formatted_attachments.append(formatted_attachment)
+                    
+                return formatted_attachments
+        return []
     
     def get_html_content(self, obj):
         """Extract HTML content from metadata if available"""
@@ -318,7 +372,7 @@ class RecordMessageSerializer(serializers.ModelSerializer):
             'sent_at', 'received_at', 'status',
             'contact_email', 'contact_phone', 'contact_name',
             'created_at', 'html_content', 'sender_name', 'sender_email',
-            'metadata', 'conversation_id'
+            'metadata', 'conversation_id', 'attachments'
         ]
 
 

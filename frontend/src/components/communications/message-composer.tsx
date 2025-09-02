@@ -12,6 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Separator } from '@/components/ui/separator'
 import { useToast } from '@/hooks/use-toast'
 import { communicationsApi } from '@/lib/api'
+import { EnhancedRichEditor } from './enhanced-rich-editor'
 
 interface Attachment {
   id: string
@@ -314,6 +315,27 @@ export function MessageComposer({
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
   }
 
+  const convertMarkdownToHtml = (markdown: string): string => {
+    let html = markdown
+    
+    // Convert links: [text](url) to <a href="url">text</a>
+    html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>')
+    
+    // Convert bold: **text** to <strong>text</strong>
+    html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    
+    // Convert italic: *text* to <em>text</em>  
+    html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>')
+    
+    // Convert underline: _text_ to <u>text</u>
+    html = html.replace(/_([^_]+)_/g, '<u>$1</u>')
+    
+    // Convert line breaks to <br>
+    html = html.replace(/\n/g, '<br>')
+    
+    return html
+  }
+
   const insertTextAtCursor = (insertText: string, wrapText = false) => {
     if (!textareaRef.current) return
 
@@ -401,9 +423,19 @@ export function MessageComposer({
 
     setSending(true)
     try {
+      // Check if this is an email account
+      const selectedAccountData = accountConnections.find(acc => acc.id === selectedAccount)
+      const isEmailAccount = selectedAccountData?.channelType === 'gmail' || 
+                            selectedAccountData?.channelType === 'outlook' || 
+                            selectedAccountData?.channelType === 'email'
+      
+      // For emails, content is already HTML from the rich editor
+      // For other messages, we might need to convert markdown
+      const messageContent = content.trim()
+      
       const messageData = {
         conversation_id: conversationId,
-        content: content.trim(),
+        content: messageContent,
         account_id: selectedAccount,
         attachments: attachments.filter(att => !att.uploading).map(att => ({
           id: att.id,
@@ -428,7 +460,7 @@ export function MessageComposer({
         // Use the simple API for messages without attachments
         const simpleMessageData = {
           conversation_id: conversationId,
-          content: content.trim(),
+          content: messageContent,
           type: accountConnections.find(acc => acc.id === selectedAccount)?.channelType || 'email',
           recipient: recipientType === 'new' ? recipient : undefined,
           subject: subject.trim() || undefined
@@ -528,80 +560,92 @@ export function MessageComposer({
             </div>
           )}
 
-          {/* Rich Text Toolbar */}
-          <div className="flex items-center space-x-1 p-2 border rounded-md bg-muted/20">
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={() => handleRichTextAction('bold')}
-              title="Bold (**text**)"
-            >
-              <Bold className="w-4 h-4" />
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={() => handleRichTextAction('italic')}
-              title="Italic (*text*)"
-            >
-              <Italic className="w-4 h-4" />
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={() => handleRichTextAction('underline')}
-              title="Underline (_text_)"
-            >
-              <Underline className="w-4 h-4" />
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={() => handleRichTextAction('link')}
-              title="Link [text](url)"
-            >
-              <Link className="w-4 h-4" />
-            </Button>
-            <Separator orientation="vertical" className="h-6" />
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={() => handleRichTextAction('mention')}
-              title="Mention @username"
-            >
-              <AtSign className="w-4 h-4" />
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={() => handleRichTextAction('hashtag')}
-              title="Hashtag #tag"
-            >
-              <Hash className="w-4 h-4" />
-            </Button>
-          </div>
-
           {/* Message Content */}
           <div className="space-y-2">
             <Label htmlFor="content">Message</Label>
-            <Textarea
-              ref={textareaRef}
-              id="content"
-              value={content}
-              onChange={(e) => setContent(e.target.value)}
-              placeholder="Type your message here..."
-              className="min-h-[120px] resize-none"
-              rows={6}
-            />
-            <p className="text-xs text-muted-foreground">
-              Supports markdown formatting: **bold**, *italic*, _underline_, [links](url)
-            </p>
+            {isEmailType ? (
+              // Rich HTML editor for emails
+              <EnhancedRichEditor
+                value={content}
+                onChange={setContent}
+                placeholder="Compose your email..."
+                className="min-h-[200px]"
+              />
+            ) : (
+              // Simple textarea with markdown toolbar for other message types
+              <>
+                {/* Rich Text Toolbar for non-email messages */}
+                <div className="flex items-center space-x-1 p-2 border rounded-md bg-muted/20">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => handleRichTextAction('bold')}
+                    title="Bold (**text**)"
+                  >
+                    <Bold className="w-4 h-4" />
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => handleRichTextAction('italic')}
+                    title="Italic (*text*)"
+                  >
+                    <Italic className="w-4 h-4" />
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => handleRichTextAction('underline')}
+                    title="Underline (_text_)"
+                  >
+                    <Underline className="w-4 h-4" />
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => handleRichTextAction('link')}
+                    title="Link [text](url)"
+                  >
+                    <Link className="w-4 h-4" />
+                  </Button>
+                  <Separator orientation="vertical" className="h-6" />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => handleRichTextAction('mention')}
+                    title="Mention @username"
+                  >
+                    <AtSign className="w-4 h-4" />
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => handleRichTextAction('hashtag')}
+                    title="Hashtag #tag"
+                  >
+                    <Hash className="w-4 h-4" />
+                  </Button>
+                </div>
+                <Textarea
+                  ref={textareaRef}
+                  id="content"
+                  value={content}
+                  onChange={(e) => setContent(e.target.value)}
+                  placeholder="Type your message here..."
+                  className="min-h-[120px] resize-none"
+                  rows={6}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Supports markdown formatting: **bold**, *italic*, _underline_, [links](url)
+                </p>
+              </>
+            )}
           </div>
 
           {/* Attachments */}

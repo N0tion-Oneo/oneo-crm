@@ -14,7 +14,8 @@ interface Attachment {
   filename: string
   size: number
   mime_type: string
-  url: string
+  url: string | null
+  pending?: boolean
 }
 
 interface Sender {
@@ -426,6 +427,61 @@ export function ConversationThread({
     }
   }
 
+  // Handle attachment download through API client
+  const handleAttachmentDownload = async (attachment: Attachment) => {
+    if (!attachment.url) return
+    
+    try {
+      // Parse the URL to get the path
+      const url = new URL(attachment.url, window.location.origin)
+      const path = url.pathname + url.search
+      
+      // Use the api client to make the request with proper tenant context
+      const response = await api.get(path, {
+        responseType: 'blob'
+      })
+      
+      // Extract the filename from Content-Disposition header if available
+      let filename = attachment.filename
+      const contentDisposition = response.headers?.['content-disposition']
+      if (contentDisposition) {
+        const filenameMatch = contentDisposition.match(/filename="?([^"]+)"?/)
+        if (filenameMatch) {
+          filename = filenameMatch[1]
+        }
+      }
+      
+      // Get the content type from response headers
+      const contentType = response.headers?.['content-type'] || attachment.mime_type || 'application/octet-stream'
+      
+      // Create a download link from the blob with the correct content type
+      const blob = new Blob([response.data], { type: contentType })
+      const downloadUrl = window.URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = downloadUrl
+      link.download = filename
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      window.URL.revokeObjectURL(downloadUrl)
+    } catch (error: any) {
+      console.error('Failed to download attachment:', error)
+      
+      // Show user-friendly error message
+      let errorMessage = 'Failed to download attachment'
+      if (error.response?.status === 503) {
+        errorMessage = 'Service temporarily unavailable. Please try again in a few moments.'
+      } else if (error.response?.status === 404) {
+        errorMessage = 'Attachment not found. It may have been deleted or expired.'
+      } else if (error.response?.data?.error) {
+        errorMessage = error.response.data.error
+      }
+      
+      // You could show a toast notification here if you have a toast system
+      alert(errorMessage)
+    }
+  }
+
   // Render email thread (Gmail/Outlook style)
   const renderEmailThread = () => {
     return (
@@ -621,17 +677,34 @@ export function ConversationThread({
                           {message.attachments.map((attachment) => (
                             <div
                               key={attachment.id}
-                              className="flex items-center justify-between p-2 border rounded hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer"
-                              onClick={() => window.open(attachment.url, '_blank')}
+                              className={cn(
+                                "flex items-center justify-between p-2 border rounded",
+                                attachment.pending 
+                                  ? "opacity-60 cursor-not-allowed bg-gray-50 dark:bg-gray-800" 
+                                  : "hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer"
+                              )}
+                              onClick={() => {
+                                if (!attachment.pending && attachment.url) {
+                                  handleAttachmentDownload(attachment)
+                                }
+                              }}
+                              title={attachment.pending ? "Attachment processing, please wait..." : "Click to download"}
                             >
                               <div className="flex items-center space-x-2 min-w-0">
                                 {getAttachmentIcon(attachment.mime_type)}
                                 <div className="min-w-0">
                                   <p className="text-xs font-medium truncate">{attachment.filename}</p>
-                                  <p className="text-xs text-gray-500">{formatFileSize(attachment.size)}</p>
+                                  <p className="text-xs text-gray-500">
+                                    {formatFileSize(attachment.size)}
+                                    {attachment.pending && " • Processing..."}
+                                  </p>
                                 </div>
                               </div>
-                              <Download className="w-3 h-3 text-gray-400 flex-shrink-0 ml-2" />
+                              {attachment.pending ? (
+                                <Loader2 className="w-3 h-3 text-gray-400 flex-shrink-0 ml-2 animate-spin" />
+                              ) : (
+                                <Download className="w-3 h-3 text-gray-400 flex-shrink-0 ml-2" />
+                              )}
                             </div>
                           ))}
                         </div>

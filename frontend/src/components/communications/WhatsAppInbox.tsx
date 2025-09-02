@@ -782,9 +782,27 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
     if (!attachment) return
 
     try {
-      // For images, show preview in new tab
+      // For images, download through API client to maintain tenant context
       if (attachment.type === 'image' && attachment.url) {
-        window.open(attachment.url, '_blank')
+        // Parse the URL to get the path
+        const url = new URL(attachment.url, window.location.origin)
+        const path = url.pathname + url.search
+        
+        // Use the api client to make the request with proper tenant context
+        const response = await api.get(path, {
+          responseType: 'blob'
+        })
+        
+        // Create a download link from the blob
+        const blob = new Blob([response.data])
+        const downloadUrl = window.URL.createObjectURL(blob)
+        const link = document.createElement('a')
+        link.href = downloadUrl
+        link.download = attachment.filename || 'attachment'
+        document.body.appendChild(link)
+        link.click()
+        document.body.removeChild(link)
+        window.URL.revokeObjectURL(downloadUrl)
         return
       }
 

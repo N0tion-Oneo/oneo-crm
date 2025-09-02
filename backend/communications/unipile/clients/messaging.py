@@ -191,7 +191,7 @@ class UnipileMessagingClient:
                 # Send with files
                 response = await self.client._make_request(
                     'POST', 
-                    'chats/start', 
+                    'chats', 
                     data=data, 
                     files=files
                 )
@@ -209,7 +209,7 @@ class UnipileMessagingClient:
                     'attendees_ids': attendees_ids,
                     'text': text
                 }
-                response = await self.client._make_request('POST', 'chats/start', data=data)
+                response = await self.client._make_request('POST', 'chats', data=data)
                 return response
                 
         except Exception as e:

@@ -1323,3 +1323,210 @@ class RecordCommunicationsViewSet(viewsets.ViewSet):
                 {'error': 'Record not found'},
                 status=status.HTTP_404_NOT_FOUND
             )
+    
+    @action(detail=True, methods=['post'])
+    def send_message(self, request, pk=None):
+        """Send WhatsApp or LinkedIn message from record context"""
+        try:
+            from communications.channels.messaging.service import MessagingService
+            from asgiref.sync import async_to_sync
+            
+            record = Record.objects.get(pk=pk)
+            
+            # Log the request
+            logger.info(f"💬 Message send request received for record {pk}")
+            logger.info(f"💬 Request data: {json.dumps(request.data, indent=2)}")
+            
+            # Get data from request
+            account_id = request.data.get('from_account_id')
+            to = request.data.get('to')  # Phone number or LinkedIn ID
+            text = request.data.get('text', '').strip()
+            conversation_id = request.data.get('conversation_id')
+            attachments = request.data.get('attachments', [])
+            
+            if not account_id or not text:
+                return Response({
+                    'success': False,
+                    'error': 'from_account_id and text are required'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Get the user's connection to determine channel type
+            connection = UserChannelConnection.objects.filter(
+                user=request.user,
+                unipile_account_id=account_id
+            ).first()
+            
+            if not connection:
+                return Response({
+                    'success': False,
+                    'error': 'Account connection not found'
+                }, status=status.HTTP_404_NOT_FOUND)
+            
+            channel_type = connection.channel_type
+            
+            # Validate channel type
+            if channel_type not in ['whatsapp', 'linkedin']:
+                return Response({
+                    'success': False,
+                    'error': f'Channel type {channel_type} does not support messaging. Use send_email for email.'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Initialize messaging service
+            service = MessagingService(channel_type=channel_type)
+            
+            # Get or create conversation
+            conversation = None
+            chat_id = None
+            
+            if conversation_id:
+                # Use existing conversation
+                conversation = Conversation.objects.get(id=conversation_id)
+                chat_id = conversation.external_thread_id
+                logger.info(f"💬 Using existing conversation {conversation_id} with chat_id {chat_id}")
+            elif to:
+                # Find existing chat or create new one with the recipient
+                logger.info(f"💬 Looking for existing chat or creating new one with {to}")
+                
+                # Format attendee ID based on channel type
+                if channel_type == 'whatsapp':
+                    # Ensure phone number is in correct format
+                    import re
+                    phone = re.sub(r'[^\d+]', '', to)  # Remove non-digits except +
+                    if not phone.startswith('+'):
+                        # Assume US number if no country code
+                        phone = f'+1{phone}' if len(phone) == 10 else f'+{phone}'
+                    attendee_id = f"{phone.replace('+', '')}@s.whatsapp.net"
+                else:  # linkedin
+                    # to should be the LinkedIn member URN or profile ID
+                    attendee_id = to
+                
+                # Find existing chat or create new one
+                result = async_to_sync(service.find_or_create_chat)(
+                    account_id=account_id,
+                    attendee_id=attendee_id,
+                    text=text,
+                    attachments=attachments
+                )
+                
+                if result.get('success'):
+                    chat_id = result.get('chat_id')
+                    was_created = result.get('created', False)
+                    was_found = result.get('found', False)
+                    
+                    # Create conversation in database
+                    from communications.models import Channel
+                    channel, _ = Channel.objects.get_or_create(
+                        unipile_account_id=account_id,
+                        channel_type=channel_type,
+                        defaults={
+                            'name': f"{channel_type.title()} - {connection.account_name}",
+                            'auth_status': 'authenticated',
+                            'is_active': True,
+                            'created_by': request.user
+                        }
+                    )
+                    
+                    # Check if conversation already exists for this chat
+                    conversation, created = Conversation.objects.get_or_create(
+                        channel=channel,
+                        external_thread_id=chat_id,
+                        defaults={
+                            'subject': f"Chat with {to}",
+                            'status': 'active',
+                            'metadata': {
+                                'started_from_record': str(record.id),
+                                'recipient': to
+                            }
+                        }
+                    )
+                    
+                    if created:
+                        logger.info(f"✅ Created new conversation {conversation.id} for chat {chat_id}")
+                    else:
+                        logger.info(f"✅ Using existing conversation {conversation.id} for chat {chat_id}")
+                    
+                    # Link conversation to record (if not already linked)
+                    from communications.record_communications.models import RecordCommunicationLink
+                    RecordCommunicationLink.objects.get_or_create(
+                        record=record,
+                        conversation=conversation
+                    )
+                    
+                    if was_created:
+                        logger.info(f"✅ Created new chat {chat_id} and conversation {conversation.id}")
+                        # Message was already sent when creating chat
+                        return Response({
+                            'success': True,
+                            'conversation_id': str(conversation.id),
+                            'chat_id': chat_id,
+                            'new_chat': True,
+                            'message': f'{channel_type.title()} message sent and new chat created'
+                        })
+                    elif was_found:
+                        logger.info(f"✅ Found existing chat {chat_id}, need to send message")
+                        # Found existing chat, need to send the message
+                        # Continue to the send message section below
+                        pass
+                    else:
+                        logger.error(f"Unexpected state: chat not found and not created")
+                        return Response({
+                            'success': False,
+                            'error': 'Could not find or create chat'
+                        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+                else:
+                    return Response({
+                        'success': False,
+                        'error': result.get('error', 'Failed to start new chat')
+                    }, status=status.HTTP_502_BAD_GATEWAY)
+            else:
+                return Response({
+                    'success': False,
+                    'error': 'Either conversation_id or to (recipient) is required'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Send message to existing chat
+            if chat_id and conversation:
+                result = async_to_sync(service.send_message)(
+                    chat_id=chat_id,
+                    text=text,
+                    attachments=attachments
+                )
+                
+                if result.get('success'):
+                    # Create message in database
+                    message = Message.objects.create(
+                        channel=conversation.channel,
+                        conversation=conversation,
+                        external_message_id=result.get('message_id'),
+                        content=text,
+                        direction=MessageDirection.OUTBOUND,
+                        status=MessageStatus.SENT,
+                        metadata={
+                            'sent_from_record': str(record.id),
+                            'attachments': attachments
+                        }
+                    )
+                    
+                    # Update conversation last message time
+                    conversation.last_message_at = timezone.now()
+                    conversation.save(update_fields=['last_message_at'])
+                    
+                    logger.info(f"✅ Sent {channel_type} message {message.id} to chat {chat_id}")
+                    
+                    return Response({
+                        'success': True,
+                        'message_id': str(message.id),
+                        'conversation_id': str(conversation.id),
+                        'message': f'{channel_type.title()} message sent successfully'
+                    })
+                else:
+                    return Response({
+                        'success': False,
+                        'error': result.get('error', 'Failed to send message')
+                    }, status=status.HTTP_502_BAD_GATEWAY)
+            
+        except Record.DoesNotExist:
+            return Response(
+                {'error': 'Record not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )

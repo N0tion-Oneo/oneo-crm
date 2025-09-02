@@ -19,6 +19,7 @@ import { ConversationThread } from './ConversationThread'
 import { SyncStatusIndicator } from './SyncStatusIndicator'
 import { QuickReply } from './QuickReply'
 import { EmailCompose } from './EmailCompose'
+import { MessageCompose } from './MessageCompose'
 
 interface RecordCommunicationsPanelProps {
   recordId: string
@@ -253,12 +254,14 @@ export function RecordCommunicationsPanel({
                         onMessageSent={refreshData}
                       />
                     ) : (
-                      <div className="border-t border-gray-200 dark:border-gray-700 p-4 bg-gray-50 dark:bg-gray-900">
-                        <QuickReply
-                          conversationId={selectedConversation}
-                          recordId={recordId}
-                        />
-                      </div>
+                      <MessageCompose
+                        conversationId={selectedConversation}
+                        recordId={recordId}
+                        replyTo={replyTo}
+                        onCancelReply={handleCancelReply}
+                        onMessageSent={refreshData}
+                        channelType={activeTab as 'whatsapp' | 'linkedin'}
+                      />
                     )}
                   </div>
                 </>

@@ -16,6 +16,7 @@ class UserChannelConnectionSerializer(serializers.ModelSerializer):
     hostedAuthUrl = serializers.CharField(source='hosted_auth_url', read_only=True)
     lastActiveAt = serializers.DateTimeField(source='last_sync_at', read_only=True)
     createdAt = serializers.DateTimeField(source='created_at', read_only=True)
+    isActive = serializers.BooleanField(source='is_active', read_only=True)
     
     # Enhanced status information
     statusInfo = serializers.SerializerMethodField()
@@ -31,8 +32,8 @@ class UserChannelConnectionSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'channelType', 'accountName', 'authStatus', 'accountStatus',
             'externalAccountId', 'hostedAuthUrl', 'lastActiveAt', 'createdAt',
-            'statusInfo', 'canSendMessages', 'channelId', 'lastError', 'checkpointData',
-            'messagesSentToday', 'rateLimitPerHour'
+            'isActive', 'statusInfo', 'canSendMessages', 'channelId', 'lastError', 
+            'checkpointData', 'messagesSentToday', 'rateLimitPerHour'
         ]
     
     def get_statusInfo(self, obj):

@@ -21,7 +21,7 @@ from drf_spectacular.utils import extend_schema, OpenApiParameter
 from asgiref.sync import sync_to_async
 
 from .models import (
-    Channel, Conversation, Message, CommunicationAnalytics, MessageDirection
+    Channel, Conversation, Message, CommunicationAnalytics, MessageDirection, MessageStatus
 )
 from .serializers import (
     ChannelSerializer, ConversationListSerializer, ConversationDetailSerializer,
@@ -116,11 +116,11 @@ class ChannelViewSet(viewsets.ModelViewSet):
 class ConversationViewSet(viewsets.ModelViewSet):
     """ViewSet for conversations"""
     
-    queryset = Conversation.objects.select_related('channel', 'primary_contact_record')
+    queryset = Conversation.objects.select_related('channel')
     permission_classes = [CommunicationPermission]
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ['channel', 'status', 'priority']
-    search_fields = ['subject', 'external_thread_id', 'primary_contact_record__data__first_name', 'primary_contact_record__data__company']
+    search_fields = ['subject', 'external_thread_id']
     ordering_fields = ['updated_at', 'created_at', 'message_count']
     ordering = ['-updated_at']
     
@@ -166,6 +166,142 @@ class ConversationViewSet(viewsets.ModelViewSet):
         conversation.save()
         
         return Response(ConversationDetailSerializer(conversation).data)
+    
+    @action(detail=True, methods=['post'], url_path='mark-conversation-read')
+    def mark_conversation_read(self, request, pk=None):
+        """Mark all messages in a conversation as read"""
+        from communications.channels.messaging.service import MessagingService
+        from asgiref.sync import async_to_sync
+        from communications.tasks import sync_email_read_status_to_provider
+        from django.db import connection
+        
+        conversation = self.get_object()
+        channel_type = conversation.channel.channel_type if conversation.channel else None
+        
+        # Update local message status
+        messages = Message.objects.filter(
+            conversation=conversation,
+            direction=MessageDirection.INBOUND
+        ).exclude(status=MessageStatus.READ)
+        
+        # Get message IDs before updating for email sync
+        message_ids_for_sync = []
+        if channel_type in ['email', 'gmail', 'outlook']:
+            message_ids_for_sync = list(messages.values_list('id', flat=True))
+        
+        updated_count = messages.update(
+            status=MessageStatus.READ,
+            updated_at=timezone.now()
+        )
+        
+        # Update conversation unread count
+        conversation.unread_count = 0
+        conversation.save(update_fields=['unread_count'])
+        
+        # Sync with UniPile for WhatsApp/LinkedIn
+        if channel_type in ['whatsapp', 'linkedin'] and conversation.external_thread_id:
+            try:
+                service = MessagingService(channel_type=channel_type)
+                result = async_to_sync(service.mark_chat_as_read)(
+                    chat_id=conversation.external_thread_id,
+                    is_read=True
+                )
+                
+                if not result.get('success'):
+                    logger.warning(f"Failed to sync read status with UniPile: {result.get('error')}")
+            except Exception as e:
+                logger.error(f"Error syncing read status with UniPile: {e}")
+        
+        # Queue email sync tasks for each message
+        elif channel_type in ['email', 'gmail', 'outlook']:
+            email_sync_count = 0
+            for message_id in message_ids_for_sync:
+                try:
+                    sync_email_read_status_to_provider.delay(
+                        message_id=message_id,
+                        tenant_schema=connection.schema_name,
+                        mark_as_read=True
+                    )
+                    email_sync_count += 1
+                except Exception as e:
+                    logger.warning(f"Failed to queue read status sync for message {message_id}: {e}")
+            
+            if email_sync_count > 0:
+                logger.info(f"Queued {email_sync_count} email read status sync tasks for conversation {conversation.id}")
+        
+        return Response({
+            'success': True,
+            'updated_count': updated_count,
+            'conversation_id': str(conversation.id),
+            'unread_count': 0
+        })
+    
+    @action(detail=True, methods=['post'], url_path='mark-conversation-unread')
+    def mark_conversation_unread(self, request, pk=None):
+        """Mark conversation as unread by marking at least one message as unread"""
+        from communications.channels.messaging.service import MessagingService
+        from asgiref.sync import async_to_sync
+        from communications.tasks import sync_email_read_status_to_provider
+        from django.db import connection
+        
+        conversation = self.get_object()
+        channel_type = conversation.channel.channel_type if conversation.channel else None
+        
+        # Mark the most recent inbound message as unread to trigger unread state
+        last_inbound = Message.objects.filter(
+            conversation=conversation,
+            direction=MessageDirection.INBOUND
+        ).order_by('-created_at').first()
+        
+        if last_inbound:
+            last_inbound.status = MessageStatus.DELIVERED
+            last_inbound.updated_at = timezone.now()
+            last_inbound.save(update_fields=['status', 'updated_at'])
+            
+            # Update conversation unread count to at least 1
+            conversation.unread_count = max(1, Message.objects.filter(
+                conversation=conversation,
+                direction=MessageDirection.INBOUND
+            ).exclude(status=MessageStatus.READ).count())
+            
+            conversation.save(update_fields=['unread_count'])
+            
+            # Sync with UniPile for WhatsApp/LinkedIn
+            if channel_type in ['whatsapp', 'linkedin'] and conversation.external_thread_id:
+                try:
+                    service = MessagingService(channel_type=channel_type)
+                    result = async_to_sync(service.mark_chat_as_read)(
+                        chat_id=conversation.external_thread_id,
+                        is_read=False
+                    )
+                    
+                    if not result.get('success'):
+                        logger.warning(f"Failed to sync read status with UniPile: {result.get('error')}")
+                except Exception as e:
+                    logger.error(f"Error syncing read status with UniPile: {e}")
+            
+            # Queue email sync task for the message we just marked as unread
+            elif channel_type in ['email', 'gmail', 'outlook'] and last_inbound.id:
+                try:
+                    sync_email_read_status_to_provider.delay(
+                        message_id=last_inbound.id,
+                        tenant_schema=connection.schema_name,
+                        mark_as_read=False  # Mark as unread in provider
+                    )
+                    logger.info(f"Queued email unread status sync for message {last_inbound.id}")
+                except Exception as e:
+                    logger.warning(f"Failed to queue unread status sync for message {last_inbound.id}: {e}")
+            
+            return Response({
+                'success': True,
+                'conversation_id': str(conversation.id),
+                'unread_count': conversation.unread_count
+            })
+        else:
+            return Response({
+                'success': False,
+                'error': 'No messages to mark as unread'
+            }, status=status.HTTP_400_BAD_REQUEST)
 
 
 class MessageViewSet(viewsets.ModelViewSet):

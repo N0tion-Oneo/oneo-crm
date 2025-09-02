@@ -20,6 +20,7 @@ import { SyncStatusIndicator } from './SyncStatusIndicator'
 import { QuickReply } from './QuickReply'
 import { EmailCompose } from './EmailCompose'
 import { MessageCompose } from './MessageCompose'
+import { api } from '@/lib/api'
 
 interface RecordCommunicationsPanelProps {
   recordId: string
@@ -221,6 +222,23 @@ export function RecordCommunicationsPanel({
                       setReplyTo(null)
                       setReplyMode(null)
                     }}
+                    onMarkAsRead={async (conversationId, isUnread) => {
+                      try {
+                        // Use the api client which handles authentication and base URL automatically
+                        const response = await api.post(
+                          `/api/v1/communications/conversations/${conversationId}/mark-conversation-${isUnread ? 'unread' : 'read'}/`,
+                          {}
+                        )
+                        
+                        if (response.data.success) {
+                          // Refresh the conversation list to show updated unread counts
+                          // Maintain the current channel filter
+                          await fetchConversations(activeTab)
+                        }
+                      } catch (error) {
+                        console.error('Error marking conversation:', error)
+                      }
+                    }}
                   />
                 )}
               </div>
@@ -251,7 +269,7 @@ export function RecordCommunicationsPanel({
                         replyTo={replyTo}
                         replyMode={replyMode}
                         onCancelReply={handleCancelReply}
-                        onMessageSent={refreshData}
+                        onMessageSent={() => fetchConversations(activeTab)}
                       />
                     ) : (
                       <MessageCompose
@@ -259,7 +277,7 @@ export function RecordCommunicationsPanel({
                         recordId={recordId}
                         replyTo={replyTo}
                         onCancelReply={handleCancelReply}
-                        onMessageSent={refreshData}
+                        onMessageSent={() => fetchConversations(activeTab)}
                         channelType={activeTab as 'whatsapp' | 'linkedin'}
                       />
                     )}

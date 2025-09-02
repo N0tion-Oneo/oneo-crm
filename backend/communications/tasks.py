@@ -54,15 +54,21 @@ def sync_email_read_status_to_provider(
             
             message = Message.objects.get(id=message_id)
             
-            # Only sync if it's an email with an external_id
-            if not (message.channel and message.channel.channel_type == 'email' and message.external_id):
-                logger.info(f"Message {message_id} is not an email or has no external_id, skipping sync")
+            # Get the UniPile email ID from metadata
+            unipile_email_id = message.metadata.get('unipile_id') if message.metadata else None
+            
+            # Only sync if it's an email with a UniPile ID
+            if not (message.channel and message.channel.channel_type in ['email', 'gmail', 'outlook', 'office365'] and unipile_email_id):
+                logger.info(f"Message {message_id} is not an email (type: {message.channel.channel_type if message.channel else 'None'}) or has no UniPile ID in metadata, skipping sync")
                 return
             
-            # Get the account_id from the channel's connection settings
+            # Get the account_id from the channel
             account_id = None
-            if hasattr(message.channel, 'connection_settings'):
-                account_id = message.channel.connection_settings.get('account_id')
+            if message.channel and hasattr(message.channel, 'unipile_account_id'):
+                account_id = message.channel.unipile_account_id
+                logger.info(f"Using UniPile account_id: {account_id} for message {message_id}")
+            else:
+                logger.warning(f"No UniPile account_id found for channel {message.channel.id if message.channel else 'None'}, message {message_id}")
             
             # Run the async method
             email_service = EmailService()
@@ -71,7 +77,7 @@ def sync_email_read_status_to_provider(
             try:
                 result = loop.run_until_complete(
                     email_service.mark_email_as_read(
-                        email_id=message.external_id,
+                        email_id=unipile_email_id,
                         account_id=account_id,
                         mark_as_read=mark_as_read
                     )

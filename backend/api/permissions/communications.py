@@ -27,6 +27,8 @@ class CommunicationPermission(permissions.BasePermission):
             return True  # Object-level check in has_object_permission
         elif view.action in ['send', 'resend']:
             return True  # Object-level check in has_object_permission
+        elif view.action in ['mark_conversation_read', 'mark_conversation_unread', 'archive', 'stats']:
+            return True  # Object-level check in has_object_permission or general action
         
         return False
     
@@ -42,6 +44,12 @@ class CommunicationPermission(permissions.BasePermission):
             return permission_manager.has_permission('action', 'communications', 'delete', str(obj.id))
         elif view.action in ['send', 'resend']:
             return permission_manager.has_permission('action', 'communications', 'send', str(obj.id))
+        elif view.action in ['mark_conversation_read', 'mark_conversation_unread', 'archive']:
+            # Allow users to mark conversations as read/unread if they can read them
+            return permission_manager.has_permission('action', 'communications', 'update', str(obj.id))
+        elif view.action == 'stats':
+            # Stats is a list action, not object-specific
+            return permission_manager.has_permission('action', 'communications', 'read')
         
         return False
 

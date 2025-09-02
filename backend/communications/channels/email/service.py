@@ -96,7 +96,8 @@ class EmailService:
             # UniPile expects 'unread' parameter - opposite of mark_as_read
             unread = not mark_as_read
             
-            result = await client.update_email_read_status(
+            # Use the email client's update_email_read_status method
+            result = await client.email.update_email_read_status(
                 email_id=email_id,
                 unread=unread,
                 account_id=account_id

@@ -180,6 +180,7 @@ app.conf.update(
         'communications.channels.email.sync.sync_single_thread': {'queue': 'background_sync'},
         'communications.channels.email.sync.sync_folders': {'queue': 'background_sync'},
         'communications.channels.email.sync.cleanup_old_emails': {'queue': 'maintenance'},
+        'communications.tasks.sync_email_read_status_to_provider': {'queue': 'background_sync'},
         
         # Contact resolution tasks
         'communications.tasks.resolve_unconnected_conversations_task': {'queue': 'contact_resolution'},

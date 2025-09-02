@@ -1229,16 +1229,223 @@ class RecordCommunicationsViewSet(viewsets.ViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
+    @action(detail=True, methods=['post'], url_path='messages/(?P<message_id>[^/]+)/mark-read')
+    def mark_single_message_read(self, request, pk=None, message_id=None):
+        """Mark a single message as read"""
+        # Create mutable copy of request data
+        mutable_data = request.data.copy() if hasattr(request.data, 'copy') else dict(request.data)
+        mutable_data['message_id'] = message_id
+        mutable_data['mark_as_read'] = True
+        request._full_data = mutable_data
+        return self.mark_message_read(request, pk)
+    
+    @action(detail=True, methods=['post'], url_path='messages/(?P<message_id>[^/]+)/mark-unread')
+    def mark_single_message_unread(self, request, pk=None, message_id=None):
+        """Mark a single message as unread"""
+        # Create mutable copy of request data
+        mutable_data = request.data.copy() if hasattr(request.data, 'copy') else dict(request.data)
+        mutable_data['message_id'] = message_id
+        mutable_data['mark_as_read'] = False
+        request._full_data = mutable_data
+        return self.mark_message_read(request, pk)
+    
     @extend_schema(
         summary="Mark conversations as read (frontend compatibility)",
         responses={200: {'description': 'Marked as read'}}
     )
     @action(detail=True, methods=['post'], url_path='mark_read')
     def mark_read(self, request, pk=None):
-        """Mark all unread messages in record's conversations as read (frontend compatibility endpoint)"""
-        # This endpoint exists for frontend compatibility
-        # It marks all messages as read locally without syncing to email provider
-        return self.mark_all_read(request, pk)
+        """Mark messages as read - supports both single message and all messages"""
+        message_id = request.data.get('message_id')
+        conversation_id = request.data.get('conversation_id')
+        
+        if message_id:
+            # Mark single message as read
+            return self.mark_message_read(request, pk)
+        elif conversation_id:
+            # Mark all messages in conversation as read
+            return self.mark_conversation_read(request, pk)
+        else:
+            # Mark all messages for record as read
+            return self.mark_all_read(request, pk)
+    
+    @action(detail=True, methods=['post'], url_path='mark-conversation-read')
+    def mark_conversation_read(self, request, pk=None):
+        """Mark all messages in a specific conversation as read"""
+        try:
+            from communications.channels.messaging.service import MessagingService
+            from asgiref.sync import async_to_sync
+            
+            conversation_id = request.data.get('conversation_id')
+            is_read = request.data.get('is_read', True)
+            force_recalculate = request.data.get('force_recalculate', False)
+            
+            if not conversation_id:
+                return Response(
+                    {'error': 'conversation_id is required'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Get the conversation
+            conversation = Conversation.objects.get(id=conversation_id)
+            channel_type = conversation.channel.channel_type if conversation.channel else None
+            
+            # Update local message status
+            messages = Message.objects.filter(
+                conversation=conversation,
+                direction=MessageDirection.INBOUND
+            )
+            
+            if is_read:
+                messages = messages.exclude(status=MessageStatus.READ)
+                new_status = MessageStatus.READ
+            else:
+                messages = messages.filter(status=MessageStatus.READ)
+                new_status = MessageStatus.DELIVERED
+            
+            updated_count = messages.update(
+                status=new_status,
+                updated_at=timezone.now()
+            )
+            
+            # Always recalculate the unread_count to ensure it's accurate
+            # Count all inbound messages that are not marked as read
+            actual_unread_count = Message.objects.filter(
+                conversation=conversation,
+                direction=MessageDirection.INBOUND
+            ).exclude(
+                status__in=[MessageStatus.READ, 'read']  # Check both uppercase and lowercase
+            ).count()
+            
+            # Log if there's a discrepancy
+            if conversation.unread_count != actual_unread_count:
+                logger.info(f"Fixing unread_count discrepancy for conversation {conversation_id}: "
+                           f"was {conversation.unread_count}, actually {actual_unread_count}")
+            
+            # Update the conversation's unread_count
+            conversation.unread_count = actual_unread_count
+            conversation.save(update_fields=['unread_count'])
+            
+            # Sync with UniPile for WhatsApp/LinkedIn
+            if channel_type in ['whatsapp', 'linkedin'] and conversation.external_thread_id:
+                try:
+                    service = MessagingService(channel_type=channel_type)
+                    result = async_to_sync(service.mark_chat_as_read)(
+                        chat_id=conversation.external_thread_id,
+                        is_read=is_read
+                    )
+                    
+                    if not result.get('success'):
+                        logger.warning(f"Failed to sync read status with UniPile: {result.get('error')}")
+                except Exception as e:
+                    logger.error(f"Error syncing read status with UniPile: {e}")
+            
+            return Response({
+                'success': True,
+                'updated_count': updated_count,
+                'conversation_id': str(conversation.id),
+                'is_read': is_read,
+                'unread_count': conversation.unread_count
+            })
+            
+        except Conversation.DoesNotExist:
+            return Response(
+                {'error': 'Conversation not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            logger.error(f"Failed to mark conversation as read: {e}")
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @action(detail=False, methods=['post'], url_path='(?P<conversation_id>[^/]+)/mark-conversation-unread')
+    def mark_conversation_unread(self, request, conversation_id=None):
+        """Mark conversation as unread by marking at least one message as unread"""
+        try:
+            from communications.channels.messaging.service import MessagingService
+            from asgiref.sync import async_to_sync
+            
+            mark_as_unread = request.data.get('mark_as_unread', True)
+            
+            # Get the conversation
+            conversation = Conversation.objects.get(id=conversation_id)
+            channel_type = conversation.channel.channel_type if conversation.channel else None
+            
+            if mark_as_unread:
+                # Mark the most recent inbound message as unread to trigger unread state
+                last_inbound = Message.objects.filter(
+                    conversation=conversation,
+                    direction=MessageDirection.INBOUND
+                ).order_by('-created_at').first()
+                
+                if last_inbound:
+                    last_inbound.status = MessageStatus.DELIVERED
+                    last_inbound.updated_at = timezone.now()
+                    last_inbound.save(update_fields=['status', 'updated_at'])
+                    
+                    # Update conversation unread count to at least 1
+                    conversation.unread_count = max(1, Message.objects.filter(
+                        conversation=conversation,
+                        direction=MessageDirection.INBOUND
+                    ).exclude(
+                        status__in=[MessageStatus.READ, 'read']
+                    ).count())
+                else:
+                    # No inbound messages to mark as unread
+                    return Response({
+                        'success': False,
+                        'error': 'No messages to mark as unread'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+            else:
+                # Mark all as read (same as mark_conversation_read with is_read=True)
+                messages = Message.objects.filter(
+                    conversation=conversation,
+                    direction=MessageDirection.INBOUND
+                ).exclude(status=MessageStatus.READ)
+                
+                messages.update(
+                    status=MessageStatus.READ,
+                    updated_at=timezone.now()
+                )
+                
+                conversation.unread_count = 0
+            
+            conversation.save(update_fields=['unread_count'])
+            
+            # Sync with UniPile for WhatsApp/LinkedIn
+            if channel_type in ['whatsapp', 'linkedin'] and conversation.external_thread_id:
+                try:
+                    service = MessagingService(channel_type=channel_type)
+                    result = async_to_sync(service.mark_chat_as_read)(
+                        chat_id=conversation.external_thread_id,
+                        is_read=not mark_as_unread
+                    )
+                    
+                    if not result.get('success'):
+                        logger.warning(f"Failed to sync read status with UniPile: {result.get('error')}")
+                except Exception as e:
+                    logger.error(f"Error syncing read status with UniPile: {e}")
+            
+            return Response({
+                'success': True,
+                'conversation_id': str(conversation.id),
+                'is_unread': mark_as_unread,
+                'unread_count': conversation.unread_count
+            })
+            
+        except Conversation.DoesNotExist:
+            return Response(
+                {'error': 'Conversation not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            logger.error(f"Failed to mark conversation as unread: {e}")
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
     
     @extend_schema(
         summary="Mark all conversations as read",

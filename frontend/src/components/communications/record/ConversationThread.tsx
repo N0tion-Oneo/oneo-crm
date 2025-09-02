@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { formatDistanceToNow, format, isToday, isYesterday, isSameDay } from 'date-fns'
-import { User, Bot, Paperclip, Download, Image, FileText, Mail, MessageSquare, Briefcase, CheckCheck, Check, ArrowDown, Calendar, Loader2, ChevronDown, ChevronUp, Reply, Forward } from 'lucide-react'
+import { User, Bot, Paperclip, Download, Image, FileText, Mail, MessageSquare, Briefcase, CheckCheck, Check, ArrowDown, Calendar, Loader2, ChevronDown, ChevronUp, Reply, Forward, CheckCircle, CircleDot } from 'lucide-react'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -85,6 +85,7 @@ export function ConversationThread({
   const [expandedEmails, setExpandedEmails] = useState<Set<string>>(new Set())
   const scrollAreaRef = useRef<HTMLDivElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const hasMarkedAsReadRef = useRef<string | null>(null)
   
   // Helper to detect if content is HTML
   const isHtmlContent = (content: string): boolean => {
@@ -280,14 +281,32 @@ export function ConversationThread({
       )
       // Handle paginated response
       const data = response.data
+      let fetchedMessages = []
       if (data.results) {
-        setMessages(data.results)
+        fetchedMessages = data.results
       } else if (Array.isArray(data)) {
-        setMessages(data)
+        fetchedMessages = data
       } else {
         console.error('Unexpected message response format:', data)
-        setMessages([])
+        fetchedMessages = []
       }
+      
+      // Log message statuses for debugging
+      console.log('Fetched messages for conversation:', {
+        conversationId,
+        messageCount: fetchedMessages.length,
+        inboundMessages: fetchedMessages.filter(m => m.direction === 'inbound').map(m => ({
+          id: m.id,
+          direction: m.direction,
+          status: m.status,
+          statusIsRead: m.status === 'read',
+          statusType: typeof m.status,
+          content: m.content?.substring(0, 30)
+        })),
+        allStatuses: [...new Set(fetchedMessages.map(m => m.status))]
+      })
+      
+      setMessages(fetchedMessages)
     } catch (err) {
       console.error('Failed to fetch messages:', err)
       setError('Failed to load messages')
@@ -296,9 +315,72 @@ export function ConversationThread({
     }
   }, [conversationId, recordId])
 
+  // Mark message as read - Define this before any useEffect that uses it
+  const markAsRead = useCallback(async (messageId: string) => {
+    try {
+      // For WhatsApp and LinkedIn, mark the entire conversation as read
+      if (conversationType === 'message') {
+        console.log('Marking conversation as read:', { conversationId, recordId, conversationType })
+        const response = await api.post(
+          `/api/v1/communications/records/${recordId}/mark-conversation-read/`,
+          { conversation_id: conversationId }
+        )
+        
+        console.log('Mark as read response:', response.data)
+        
+        // Update all messages in the conversation to read
+        setMessages(prev => prev.map(msg => ({
+          ...msg,
+          status: 'read',
+          read_at: new Date().toISOString()
+        })))
+        
+        // Update unread count from the backend response
+        if (onConversationUpdate) {
+          const unreadCount = response.data?.unread_count ?? 0
+          console.log('Updating conversation unread count to:', unreadCount)
+          onConversationUpdate(conversationId, { unread_count: unreadCount })
+        }
+      } else {
+        // For email, mark individual message as read
+        const response = await api.post(
+          `/api/v1/communications/messages/${messageId}/mark_read/`,
+          {}
+        )
+        
+        // Update local state
+        setMessages(prev => prev.map(msg => 
+          msg.id === messageId 
+            ? { 
+                ...msg, 
+                status: 'read',
+                read_at: new Date().toISOString() 
+              }
+            : msg
+        ))
+        
+        // If the parent has an onUnreadCountChange callback, call it
+        if (onConversationUpdate && response.data?.unread_count !== undefined) {
+          // Update the conversation's unread count
+          onConversationUpdate(conversationId, { unread_count: response.data.unread_count })
+        }
+      }
+    } catch (err: any) {
+      console.error('Failed to mark message as read:', err)
+      console.error('Error details:', {
+        message: err.message,
+        response: err.response?.data,
+        status: err.response?.status
+      })
+    }
+  }, [conversationId, conversationType, recordId, onConversationUpdate])
+
+  // Fetch messages when conversation changes
   useEffect(() => {
+    // Reset the marked as read flag when conversation changes
+    hasMarkedAsReadRef.current = null
     fetchMessages()
-  }, [fetchMessages])
+  }, [conversationId, recordId, fetchMessages]) // Include fetchMessages in dependencies
 
   // Auto-scroll to top when messages load (since newest are at top)
   useEffect(() => {
@@ -318,35 +400,67 @@ export function ConversationThread({
       }
     }
   }, [messages.length, isLoading])
-
-  // Mark message as read
-  const markAsRead = useCallback(async (messageId: string) => {
-    try {
-      const response = await api.post(
-        `/api/v1/communications/messages/${messageId}/mark_read/`,
-        {}
-      )
-      
-      // Update local state
-      setMessages(prev => prev.map(msg => 
-        msg.id === messageId 
-          ? { 
-              ...msg, 
-              status: 'READ',
-              read_at: new Date().toISOString() 
-            }
-          : msg
-      ))
-      
-      // If the parent has an onUnreadCountChange callback, call it
-      if (onConversationUpdate && response.data?.unread_count !== undefined) {
-        // Update the conversation's unread count
-        onConversationUpdate(conversationId, { unread_count: response.data.unread_count })
-      }
-    } catch (err) {
-      console.error('Failed to mark message as read:', err)
+  
+  // Auto-mark WhatsApp/LinkedIn conversations as read when viewed
+  useEffect(() => {
+    console.log('Auto-mark effect running:', {
+      isLoading,
+      messageCount: messages.length,
+      conversationType,
+      conversationId,
+      hasMarkedAsReadRef: hasMarkedAsReadRef.current
+    })
+    
+    // Skip if loading or no messages
+    if (isLoading || messages.length === 0) {
+      console.log('Skipping auto-mark: loading or no messages')
+      return
     }
-  }, [conversationId, onConversationUpdate])
+    
+    // Skip if we've already marked this conversation as read
+    if (hasMarkedAsReadRef.current === conversationId) {
+      console.log('Skipping auto-mark: already marked this conversation')
+      return
+    }
+    
+    console.log('Conversation type check:', { conversationType, isMessage: conversationType === 'message' })
+    
+    if (conversationType === 'message') {
+      // Log each message's status
+      messages.forEach((msg, index) => {
+        console.log(`Message ${index}:`, {
+          id: msg.id,
+          direction: msg.direction,
+          status: msg.status,
+          statusType: typeof msg.status,
+          isInbound: msg.direction === 'inbound',
+          isNotRead: msg.status !== 'read',
+          wouldBeUnread: msg.direction === 'inbound' && msg.status !== 'read'
+        })
+      })
+      
+      const hasUnread = messages.some(msg => msg.direction === 'inbound' && msg.status !== 'read')
+      console.log('Has unread messages?', hasUnread)
+      
+      if (hasUnread) {
+        console.log('Setting timeout to mark as read...')
+        // Mark the conversation as read after a short delay to ensure user has seen it
+        const timer = setTimeout(() => {
+          console.log('Timeout fired - marking WhatsApp/LinkedIn conversation as read:', conversationId)
+          hasMarkedAsReadRef.current = conversationId
+          markAsRead(messages[0].id) // Pass any message ID, will mark whole conversation
+        }, 500)
+        return () => {
+          console.log('Cleanup: clearing timeout')
+          clearTimeout(timer)
+        }
+      } else {
+        console.log('No unread messages found')
+      }
+    } else {
+      console.log('Not a message conversation (is email)')
+    }
+  }, [conversationType, conversationId, messages, isLoading, markAsRead]) // Depend on messages array itself, not just length
 
   // Toggle email expansion and mark as read when expanding
   const toggleEmailExpanded = useCallback((messageId: string) => {
@@ -359,7 +473,7 @@ export function ConversationThread({
         // Mark as read when expanding (opening) the email
         const message = messages.find(m => m.id === messageId)
         // Only mark as read if it's an inbound message that's not already read
-        if (message && message.direction === 'inbound' && message.status !== 'READ') {
+        if (message && message.direction === 'inbound' && message.status !== 'read') {
           markAsRead(messageId)
         }
       }
@@ -763,17 +877,51 @@ export function ConversationThread({
                           <Forward className="w-3 h-3 mr-1" />
                           Forward
                         </Button>
-                        {message.direction === 'inbound' && !message.read_at && (
+                        {message.direction === 'inbound' && (
                           <Button 
                             size="sm" 
                             variant="ghost" 
                             className="text-xs ml-auto"
-                            onClick={(e) => {
+                            onClick={async (e) => {
                               e.stopPropagation()
-                              markAsRead(message.id)
+                              const isRead = message.status === 'read'
+                              
+                              try {
+                                // Update message status using api client
+                                const response = await api.post(
+                                  `/api/v1/communications/records/${recordId}/messages/${message.id}/mark-${isRead ? 'unread' : 'read'}/`,
+                                  {}
+                                )
+                                
+                                if (response.data.success) {
+                                  // Update local state
+                                  setMessages(prev => prev.map(m => 
+                                    m.id === message.id 
+                                      ? { ...m, status: isRead ? 'delivered' : 'read' }
+                                      : m
+                                  ))
+                                  
+                                  // Notify parent to update conversation
+                                  if (onConversationUpdate) {
+                                    onConversationUpdate(conversationId, {})
+                                  }
+                                }
+                              } catch (error) {
+                                console.error('Error marking message:', error)
+                              }
                             }}
                           >
-                            Mark as read
+                            {message.status === 'read' ? (
+                              <>
+                                <CircleDot className="w-3 h-3 mr-1" />
+                                Mark as unread
+                              </>
+                            ) : (
+                              <>
+                                <CheckCircle className="w-3 h-3 mr-1" />
+                                Mark as read
+                              </>
+                            )}
                           </Button>
                         )}
                       </div>

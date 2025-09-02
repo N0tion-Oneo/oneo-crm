@@ -1,9 +1,16 @@
-import React from 'react'
+import React, { useState } from 'react'
 import { formatDistanceToNow } from 'date-fns'
-import { Mail, Phone, Users, MessageSquare, User, AtSign, Briefcase, Hash, Circle } from 'lucide-react'
+import { Mail, Phone, Users, MessageSquare, User, AtSign, Briefcase, Hash, Circle, MoreVertical, CheckCircle, CircleDot } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
+import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 
 interface Participant {
   id: string
@@ -39,13 +46,16 @@ interface ConversationListProps {
   conversations: Conversation[]
   selectedId: string | null
   onSelect: (id: string) => void
+  onMarkAsRead?: (conversationId: string, isRead: boolean) => void
 }
 
 export function ConversationList({
   conversations,
   selectedId,
-  onSelect
+  onSelect,
+  onMarkAsRead
 }: ConversationListProps) {
+  const [menuOpenId, setMenuOpenId] = useState<string | null>(null)
   // Strip HTML tags and decode entities for message preview
   const stripHtml = (html: string): string => {
     if (!html) return ''
@@ -168,13 +178,53 @@ export function ConversationList({
                       {conversation.channel_name}
                     </p>
                   </div>
-                  <span className="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap flex-shrink-0">
-                    {conversation.last_message_at && 
-                      formatDistanceToNow(new Date(conversation.last_message_at), { 
-                        addSuffix: false 
-                      })
-                    }
-                  </span>
+                  <div className="flex items-center gap-1">
+                    <span className="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap flex-shrink-0">
+                      {conversation.last_message_at && 
+                        formatDistanceToNow(new Date(conversation.last_message_at), { 
+                          addSuffix: false 
+                        })
+                      }
+                    </span>
+                    {onMarkAsRead && (
+                      <DropdownMenu 
+                        open={menuOpenId === conversation.id}
+                        onOpenChange={(open) => setMenuOpenId(open ? conversation.id : null)}
+                      >
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-6 w-6 p-0"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <MoreVertical className="h-3 w-3" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-48">
+                          <DropdownMenuItem
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              onMarkAsRead(conversation.id, conversation.unread_count === 0)
+                              setMenuOpenId(null)
+                            }}
+                          >
+                            {conversation.unread_count > 0 ? (
+                              <>
+                                <CheckCircle className="mr-2 h-4 w-4" />
+                                Mark as read
+                              </>
+                            ) : (
+                              <>
+                                <CircleDot className="mr-2 h-4 w-4" />
+                                Mark as unread
+                              </>
+                            )}
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    )}
+                  </div>
                 </div>
 
                 {/* Subject for emails or last message for chats */}

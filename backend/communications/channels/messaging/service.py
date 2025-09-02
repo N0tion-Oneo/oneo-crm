@@ -268,6 +268,55 @@ class MessagingService:
         
         return f"{phone}@s.whatsapp.net"
     
+    async def mark_chat_as_read(
+        self,
+        chat_id: str,
+        is_read: bool = True
+    ) -> Dict[str, Any]:
+        """
+        Mark a chat as read or unread in UniPile
+        
+        Args:
+            chat_id: UniPile chat ID
+            is_read: True to mark as read, False to mark as unread
+            
+        Returns:
+            Dict with success status
+        """
+        try:
+            logger.info(f"{'✓' if is_read else '○'} Marking {self.channel_type} chat {chat_id} as {'read' if is_read else 'unread'}")
+            
+            # Call UniPile API to set read status
+            result = await self.client._make_request(
+                'PATCH',
+                f'chats/{chat_id}',
+                data={
+                    'action': 'setReadStatus',
+                    'value': is_read
+                }
+            )
+            
+            if result and result.get('object') == 'ChatPatched':
+                logger.info(f"✅ Successfully marked chat {chat_id} as {'read' if is_read else 'unread'}")
+                return {
+                    'success': True,
+                    'chat_id': chat_id,
+                    'is_read': is_read
+                }
+            else:
+                logger.error(f"Failed to mark chat as {'read' if is_read else 'unread'}: {result}")
+                return {
+                    'success': False,
+                    'error': result.get('error', 'Failed to update read status')
+                }
+                
+        except Exception as e:
+            logger.error(f"Error marking chat as {'read' if is_read else 'unread'}: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
     async def resolve_attendee(
         self,
         identifier: str,

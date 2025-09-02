@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { RefreshCw, CheckCircle, AlertCircle, Clock, Loader2 } from 'lucide-react'
+import { RefreshCw, CheckCircle, AlertCircle, Clock, Loader2, CheckCheck } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import {
@@ -31,20 +31,24 @@ interface RecordCommunicationProfile {
   sync_in_progress: boolean
   last_full_sync: string | null
   sync_status: Record<string, any>
+  total_unread?: number
 }
 
 interface SyncStatusIndicatorProps {
   profile: RecordCommunicationProfile | null
   syncStatus: SyncJob[]
   onSync: () => Promise<void>
+  onMarkAllRead?: () => Promise<void>
 }
 
 export function SyncStatusIndicator({
   profile,
   syncStatus,
-  onSync
+  onSync,
+  onMarkAllRead
 }: SyncStatusIndicatorProps) {
   const [isSyncing, setIsSyncing] = useState(false)
+  const [isMarkingRead, setIsMarkingRead] = useState(false)
 
   const handleSync = async () => {
     setIsSyncing(true)
@@ -53,6 +57,16 @@ export function SyncStatusIndicator({
     } finally {
       // Keep spinning for a bit to show progress
       setTimeout(() => setIsSyncing(false), 2000)
+    }
+  }
+
+  const handleMarkAllRead = async () => {
+    if (!onMarkAllRead) return
+    setIsMarkingRead(true)
+    try {
+      await onMarkAllRead()
+    } finally {
+      setIsMarkingRead(false)
     }
   }
 
@@ -163,6 +177,25 @@ export function SyncStatusIndicator({
             </div>
           </PopoverContent>
         </Popover>
+      )}
+
+      {/* Mark all as read button */}
+      {onMarkAllRead && profile?.total_unread && profile.total_unread > 0 && (
+        <Button
+          onClick={handleMarkAllRead}
+          disabled={isMarkingRead}
+          size="sm"
+          variant="ghost"
+          title="Mark all messages as read"
+        >
+          <CheckCheck className={cn(
+            "w-4 h-4",
+            !isMarkingRead && "mr-2"
+          )} />
+          {!isMarkingRead && (
+            <span>Mark all read</span>
+          )}
+        </Button>
       )}
 
       {/* Sync button */}

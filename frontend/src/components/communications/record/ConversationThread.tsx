@@ -64,6 +64,7 @@ interface ConversationThreadProps {
   onReply?: (message: any) => void
   onReplyAll?: (message: any) => void
   onForward?: (message: any) => void
+  onConversationUpdate?: (conversationId: string, updates: any) => void
   isEmail?: boolean
 }
 
@@ -73,6 +74,7 @@ export function ConversationThread({
   onReply,
   onReplyAll,
   onForward,
+  onConversationUpdate,
   isEmail
 }: ConversationThreadProps) {
   const [messages, setMessages] = useState<Message[]>([])
@@ -317,23 +319,10 @@ export function ConversationThread({
     }
   }, [messages.length, isLoading])
 
-  // Toggle email expansion
-  const toggleEmailExpanded = (messageId: string) => {
-    setExpandedEmails(prev => {
-      const newSet = new Set(prev)
-      if (newSet.has(messageId)) {
-        newSet.delete(messageId)
-      } else {
-        newSet.add(messageId)
-      }
-      return newSet
-    })
-  }
-
   // Mark message as read
   const markAsRead = useCallback(async (messageId: string) => {
     try {
-      await api.post(
+      const response = await api.post(
         `/api/v1/communications/messages/${messageId}/mark_read/`,
         {}
       )
@@ -341,13 +330,42 @@ export function ConversationThread({
       // Update local state
       setMessages(prev => prev.map(msg => 
         msg.id === messageId 
-          ? { ...msg, read_at: new Date().toISOString() }
+          ? { 
+              ...msg, 
+              status: 'READ',
+              read_at: new Date().toISOString() 
+            }
           : msg
       ))
+      
+      // If the parent has an onUnreadCountChange callback, call it
+      if (onConversationUpdate && response.data?.unread_count !== undefined) {
+        // Update the conversation's unread count
+        onConversationUpdate(conversationId, { unread_count: response.data.unread_count })
+      }
     } catch (err) {
       console.error('Failed to mark message as read:', err)
     }
-  }, [])
+  }, [conversationId, onConversationUpdate])
+
+  // Toggle email expansion and mark as read when expanding
+  const toggleEmailExpanded = useCallback((messageId: string) => {
+    setExpandedEmails(prev => {
+      const newSet = new Set(prev)
+      if (newSet.has(messageId)) {
+        newSet.delete(messageId)
+      } else {
+        newSet.add(messageId)
+        // Mark as read when expanding (opening) the email
+        const message = messages.find(m => m.id === messageId)
+        // Only mark as read if it's an inbound message that's not already read
+        if (message && message.direction === 'inbound' && message.status !== 'READ') {
+          markAsRead(messageId)
+        }
+      }
+      return newSet
+    })
+  }, [messages, markAsRead])
 
   const getAttachmentIcon = (mimeType: string) => {
     if (mimeType.startsWith('image/')) return <Image className="w-4 h-4" />

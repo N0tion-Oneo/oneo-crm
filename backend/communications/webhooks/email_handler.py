@@ -586,6 +586,7 @@ class EmailWebhookHandler:
                 'folder': normalized_email['folder'],
                 'labels': normalized_email['labels'],
                 'read_status': normalized_email['read'],
+                'read_date': normalized_email.get('read_date'),  # Store when email was read
                 'recipients': normalized_email['recipients'],  # Keep original for backend
                 'sender_info': normalized_email['sender_info'],  # Keep original for backend
                 'from': from_field,  # Add frontend-compatible field
@@ -662,6 +663,21 @@ class EmailWebhookHandler:
                 sent_at=normalized_email['timestamp'] if normalized_email['direction'] == MessageDirection.OUTBOUND else None,
                 received_at=normalized_email['timestamp'] if normalized_email['direction'] == MessageDirection.INBOUND else None
             )
+            
+            # Update conversation's unread_count if this is an inbound unread message
+            if (normalized_email['direction'] == MessageDirection.INBOUND and 
+                normalized_email['status'] != MessageStatus.READ):
+                # Calculate the new unread count for the conversation
+                unread_count = conversation.messages.filter(
+                    direction=MessageDirection.INBOUND,
+                    status__in=[MessageStatus.DELIVERED, MessageStatus.SENT, MessageStatus.PENDING]
+                ).exclude(status=MessageStatus.READ).count()
+                
+                # Update the conversation's unread_count field
+                conversation.unread_count = unread_count
+                conversation.last_message_at = message.created_at
+                conversation.save(update_fields=['unread_count', 'last_message_at'])
+                logger.info(f"Updated conversation {conversation.id} unread_count to {unread_count}")
             
             # Link all participants to the conversation
             for participant in participants:
@@ -888,26 +904,54 @@ class EmailWebhookHandler:
     
     def handle_email_read(self, account_id: str, webhook_data: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Handle email read receipt webhook
+        Handle email read receipt webhook - fired when an email is marked as read
         """
         try:
-            external_message_id = webhook_data.get('message_id') or webhook_data.get('id')
+            # Get message ID from webhook - could be email_id or message_id
+            external_message_id = webhook_data.get('email_id') or webhook_data.get('message_id') or webhook_data.get('id')
+            read_date = webhook_data.get('read_date')
             
             if external_message_id:
+                # Try to find message by external_message_id or by metadata unipile_id
                 message = Message.objects.filter(
-                    external_message_id=external_message_id
+                    models.Q(external_message_id=external_message_id) |
+                    models.Q(metadata__unipile_id=external_message_id)
                 ).first()
                 
                 if message:
-                    # For outbound emails, mark as read when recipient reads it
-                    if message.direction == MessageDirection.OUTBOUND:
-                        message.status = MessageStatus.READ
-                        message.save(update_fields=['status'])
-                        logger.info(f"Updated outbound email message {message.id} status to read")
-                    else:
-                        logger.info(f"Read receipt for inbound email message {message.id}")
+                    # Update status to READ
+                    message.status = MessageStatus.READ
                     
-                    return {'success': True, 'message_id': str(message.id)}
+                    # Update metadata with read information
+                    if message.metadata:
+                        message.metadata['read_status'] = True
+                        message.metadata['read_date'] = read_date
+                    else:
+                        message.metadata = {
+                            'read_status': True,
+                            'read_date': read_date
+                        }
+                    
+                    message.save(update_fields=['status', 'metadata'])
+                    
+                    # Update conversation's unread_count when marking as read
+                    if message.conversation:
+                        unread_count = message.conversation.messages.filter(
+                            direction=MessageDirection.INBOUND,
+                            status__in=[MessageStatus.DELIVERED, MessageStatus.SENT, MessageStatus.PENDING]
+                        ).exclude(status=MessageStatus.READ).count()
+                        
+                        message.conversation.unread_count = unread_count
+                        message.conversation.save(update_fields=['unread_count'])
+                        logger.info(f"Updated conversation {message.conversation.id} unread_count to {unread_count} after marking message as read")
+                    
+                    # Log based on direction
+                    if message.direction == MessageDirection.OUTBOUND:
+                        logger.info(f"Updated outbound email {message.id} - recipient read at {read_date}")
+                    else:
+                        logger.info(f"Updated inbound email {message.id} - marked as read at {read_date}")
+                    
+                    return {'success': True, 'message_id': str(message.id), 'read_date': read_date}
             
             logger.warning(f"No email message record found for external ID {external_message_id}")
             return {'success': True, 'note': 'No local email message record to update'}

@@ -313,15 +313,25 @@ def extract_email_folder_labels(webhook_data: dict) -> dict:
         webhook_data: Raw webhook data
         
     Returns:
-        Dictionary with folder and labels info
+        Dictionary with folder and labels info including read status
     """
     if not isinstance(webhook_data, dict):
         return {'folder': '', 'labels': [], 'read': False}
     
+    # Check read status based on read_date field
+    # read_date is null for unread emails, has timestamp for read emails
+    read_date = webhook_data.get('read_date')
+    is_read = read_date is not None
+    
+    # Also get folders (note: it's 'folders' not 'folder' in the webhook)
+    folders = webhook_data.get('folders', [])
+    folder = folders[0] if folders else ''
+    
     return {
-        'folder': webhook_data.get('folder', ''),
+        'folder': folder,
         'labels': webhook_data.get('labels', []),
-        'read': webhook_data.get('read', False)
+        'read': is_read,
+        'read_date': read_date  # Include the actual read date for reference
     }
 
 

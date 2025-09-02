@@ -73,6 +73,49 @@ class EmailService:
             logger.error(f"Failed to get email folders: {e}")
             return {'folders': [], 'error': str(e)}
     
+    async def mark_email_as_read(
+        self,
+        email_id: str,
+        account_id: Optional[str] = None,
+        mark_as_read: bool = True
+    ) -> Dict[str, Any]:
+        """
+        Mark an email as read or unread
+        
+        Args:
+            email_id: The UniPile email ID or provider ID
+            account_id: The account ID (required if using provider ID)
+            mark_as_read: True to mark as read, False to mark as unread
+            
+        Returns:
+            Success/failure response
+        """
+        try:
+            client = await self.get_client()
+            
+            # UniPile expects 'unread' parameter - opposite of mark_as_read
+            unread = not mark_as_read
+            
+            result = await client.update_email_read_status(
+                email_id=email_id,
+                unread=unread,
+                account_id=account_id
+            )
+            
+            return {
+                'success': True,
+                'email_id': email_id,
+                'marked_as': 'read' if mark_as_read else 'unread',
+                'response': result
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to mark email {email_id} as {'read' if mark_as_read else 'unread'}: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
     async def get_email(
         self,
         email_id: str,

@@ -325,16 +325,27 @@ export function useRecordCommunications(recordId: string | number) {
     if (!accessToken || !recordIdStr) return
 
     try {
-      await api.post(
+      const response = await api.post(
         `/api/v1/communications/records/${recordIdStr}/mark_read/`,
         {}
       )
       
+      console.log('Mark as read response:', response.data)
+      
       // Update local state
       setProfile(prev => prev ? { ...prev, total_unread: 0 } : prev)
       setStats(prev => prev ? { ...prev, total_unread: 0 } : prev)
+      
+      // Update conversations to reset unread counts
+      setConversations(prev => prev.map(conv => ({
+        ...conv,
+        unread_count: 0
+      })))
+      
+      return response.data
     } catch (err) {
       console.error('Failed to mark as read:', err)
+      throw err
     }
   }, [recordIdStr, accessToken])
 
@@ -427,6 +438,15 @@ export function useRecordCommunications(recordId: string | number) {
     return () => clearInterval(interval)
   }, [profile?.sync_in_progress, fetchSyncStatus, fetchProfile])
 
+  // Update a single conversation
+  const updateConversation = useCallback((conversationId: string, updates: Partial<Conversation>) => {
+    setConversations(prev => prev.map(conv => 
+      conv.id === conversationId 
+        ? { ...conv, ...updates }
+        : conv
+    ))
+  }, [])
+
   // Refresh all data
   const refreshData = useCallback(async () => {
     await Promise.all([
@@ -449,6 +469,7 @@ export function useRecordCommunications(recordId: string | number) {
     hasMoreTimeline,
     triggerSync,
     markAsRead,
+    updateConversation,
     refreshData,
     fetchConversations,  // Expose for channel filtering
     fetchConversationMessages,  // Expose for message pagination

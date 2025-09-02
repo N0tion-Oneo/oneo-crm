@@ -28,6 +28,72 @@ User = get_user_model()
 
 
 # =========================================================================
+# EMAIL SYNC TASKS  
+# =========================================================================
+
+@shared_task(bind=True, max_retries=2)
+def sync_email_read_status_to_provider(
+    self,
+    message_id: int,
+    tenant_schema: str,
+    mark_as_read: bool = True
+):
+    """
+    Sync email read status to the email provider (Gmail/Outlook) via UniPile
+    
+    Args:
+        message_id: The message ID in our database
+        tenant_schema: The tenant schema to use
+        mark_as_read: True to mark as read, False to mark as unread
+    """
+    try:
+        with schema_context(tenant_schema):
+            from .models import Message
+            from .channels.email.service import EmailService
+            import asyncio
+            
+            message = Message.objects.get(id=message_id)
+            
+            # Only sync if it's an email with an external_id
+            if not (message.channel and message.channel.channel_type == 'email' and message.external_id):
+                logger.info(f"Message {message_id} is not an email or has no external_id, skipping sync")
+                return
+            
+            # Get the account_id from the channel's connection settings
+            account_id = None
+            if hasattr(message.channel, 'connection_settings'):
+                account_id = message.channel.connection_settings.get('account_id')
+            
+            # Run the async method
+            email_service = EmailService()
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                result = loop.run_until_complete(
+                    email_service.mark_email_as_read(
+                        email_id=message.external_id,
+                        account_id=account_id,
+                        mark_as_read=mark_as_read
+                    )
+                )
+                
+                if result.get('success'):
+                    logger.info(f"Successfully synced read status for message {message_id} to UniPile")
+                else:
+                    logger.warning(f"Failed to sync read status for message {message_id}: {result}")
+                    
+                return result
+            finally:
+                loop.close()
+                
+    except Message.DoesNotExist:
+        logger.error(f"Message {message_id} not found")
+    except Exception as e:
+        logger.error(f"Error syncing read status for message {message_id}: {e}")
+        raise self.retry(exc=e)
+
+
+# =========================================================================
 # UTILITY TASKS
 # =========================================================================
 

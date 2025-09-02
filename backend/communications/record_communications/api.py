@@ -16,7 +16,8 @@ from rest_framework import serializers
 
 from pipelines.models import Record
 from communications.models import (
-    Conversation, Message, Participant, UserChannelConnection
+    Conversation, Message, Participant, UserChannelConnection,
+    MessageDirection, MessageStatus
 )
 from rest_framework.permissions import IsAuthenticated
 
@@ -1101,16 +1102,203 @@ class RecordCommunicationsViewSet(viewsets.ViewSet):
             )
     
     @extend_schema(
-        summary="Mark conversations as read",
+        summary="Mark a specific message as read or unread",
+        parameters=[
+            OpenApiParameter(name='message_id', type=str, required=True, location='query'),
+            OpenApiParameter(name='mark_as_read', type=bool, default=True, location='query'),
+        ],
+        responses={200: {'description': 'Message read status updated'}}
+    )
+    @action(detail=True, methods=['post'], url_path='mark-message-read')
+    def mark_message_read(self, request, pk=None):
+        """Mark a specific message as read or unread"""
+        try:
+            record = Record.objects.get(pk=pk)
+            message_id = request.query_params.get('message_id') or request.data.get('message_id')
+            mark_as_read = request.query_params.get('mark_as_read', 'true').lower() == 'true'
+            
+            if not message_id:
+                return Response(
+                    {'error': 'message_id is required'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Get the message and verify it belongs to this record
+            message = Message.objects.filter(id=message_id).first()
+            
+            if not message:
+                return Response(
+                    {'error': 'Message not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Verify message is linked to this record
+            link_exists = RecordCommunicationLink.objects.filter(
+                record=record,
+                conversation=message.conversation
+            ).exists()
+            
+            if not link_exists:
+                return Response(
+                    {'error': 'Message not associated with this record'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Get UniPile IDs from message metadata
+            unipile_id = None
+            account_id = None
+            
+            if message.metadata:
+                unipile_id = message.metadata.get('unipile_id')
+                # Get account ID from channel
+                if message.channel:
+                    account_id = message.channel.unipile_account_id
+            
+            # If we don't have UniPile ID, try external_message_id
+            if not unipile_id:
+                unipile_id = message.external_message_id
+            
+            if not unipile_id:
+                return Response(
+                    {'error': 'Cannot update read status - missing UniPile message ID'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Call UniPile API to update read status
+            from communications.channels.email.service import EmailService
+            from asgiref.sync import async_to_sync
+            
+            service = EmailService()
+            result = async_to_sync(service.mark_email_as_read)(
+                email_id=unipile_id,
+                account_id=account_id,
+                mark_as_read=mark_as_read
+            )
+            
+            if result.get('success'):
+                # Update local message status
+                new_status = MessageStatus.READ if mark_as_read else MessageStatus.DELIVERED
+                message.status = new_status
+                
+                # Update metadata
+                if message.metadata:
+                    message.metadata['read_status'] = mark_as_read
+                    if mark_as_read:
+                        message.metadata['read_date'] = timezone.now().isoformat()
+                else:
+                    message.metadata = {
+                        'read_status': mark_as_read,
+                        'read_date': timezone.now().isoformat() if mark_as_read else None
+                    }
+                
+                message.save(update_fields=['status', 'metadata'])
+                
+                # Update conversation unread count
+                if message.conversation:
+                    unread_count = message.conversation.messages.filter(
+                        direction=MessageDirection.INBOUND,
+                        status__in=[MessageStatus.DELIVERED, MessageStatus.SENT, MessageStatus.PENDING]
+                    ).exclude(status=MessageStatus.READ).count()
+                    
+                    message.conversation.unread_count = unread_count
+                    message.conversation.save(update_fields=['unread_count'])
+                
+                logger.info(f"Message {message_id} marked as {'read' if mark_as_read else 'unread'}")
+                
+                return Response({
+                    'success': True,
+                    'message_id': str(message_id),
+                    'status': new_status,
+                    'unread_count': message.conversation.unread_count if message.conversation else 0
+                })
+            else:
+                return Response({
+                    'success': False,
+                    'error': result.get('error', 'Failed to update read status in email provider')
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            
+        except Record.DoesNotExist:
+            return Response(
+                {'error': 'Record not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            logger.error(f"Failed to mark message as read: {e}")
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @extend_schema(
+        summary="Mark conversations as read (frontend compatibility)",
         responses={200: {'description': 'Marked as read'}}
     )
-    @action(detail=True, methods=['post'])
+    @action(detail=True, methods=['post'], url_path='mark_read')
     def mark_read(self, request, pk=None):
-        """Mark all conversations for this record as read"""
+        """Mark all unread messages in record's conversations as read (frontend compatibility endpoint)"""
+        # This endpoint exists for frontend compatibility
+        # It marks all messages as read locally without syncing to email provider
+        return self.mark_all_read(request, pk)
+    
+    @extend_schema(
+        summary="Mark all conversations as read",
+        responses={200: {'description': 'Marked as read'}}
+    )
+    @action(detail=True, methods=['post'], url_path='mark-all-read')
+    def mark_all_read(self, request, pk=None):
+        """Mark all messages for this record as read"""
         try:
             record = Record.objects.get(pk=pk)
             
-            # Get profile and reset unread count
+            # Get all unread messages for this record
+            conversations = RecordCommunicationLink.objects.filter(
+                record=record
+            ).values_list('conversation', flat=True)
+            
+            unread_messages = Message.objects.filter(
+                conversation__in=conversations,
+                direction=MessageDirection.INBOUND,
+                status__in=[MessageStatus.DELIVERED, MessageStatus.SENT, MessageStatus.PENDING]
+            ).exclude(status=MessageStatus.READ)
+            
+            from communications.tasks import sync_email_read_status_to_provider
+            from django.db import connection
+            
+            updated_count = 0
+            email_sync_count = 0
+            
+            for message in unread_messages:
+                # Update local status
+                message.status = MessageStatus.READ
+                if message.metadata:
+                    message.metadata['read_status'] = True
+                    message.metadata['read_date'] = timezone.now().isoformat()
+                else:
+                    message.metadata = {
+                        'read_status': True,
+                        'read_date': timezone.now().isoformat()
+                    }
+                message.save(update_fields=['status', 'metadata'])
+                updated_count += 1
+                
+                # Queue sync with email provider if this is an email
+                if message.channel and message.channel.channel_type == 'email' and message.external_id:
+                    try:
+                        sync_email_read_status_to_provider.delay(
+                            message_id=message.id,
+                            tenant_schema=connection.schema_name,
+                            mark_as_read=True
+                        )
+                        email_sync_count += 1
+                    except Exception as e:
+                        logger.warning(f"Failed to queue read status sync for message {message.id}: {e}")
+            
+            # Update all conversation unread counts
+            Conversation.objects.filter(
+                id__in=conversations
+            ).update(unread_count=0)
+            
+            # Update profile
             profile = RecordCommunicationProfile.objects.filter(
                 record=record
             ).first()
@@ -1119,11 +1307,15 @@ class RecordCommunicationsViewSet(viewsets.ViewSet):
                 profile.total_unread = 0
                 profile.save(update_fields=['total_unread'])
             
-            # TODO: Mark actual messages as read in the conversation
+            response_message = f'Marked {updated_count} messages as read'
+            if email_sync_count > 0:
+                response_message += f' (syncing {email_sync_count} emails to provider)'
             
             return Response({
-                'status': 'success',
-                'message': 'All conversations marked as read'
+                'success': True,
+                'messages_updated': updated_count,
+                'emails_syncing': email_sync_count,
+                'message': response_message
             })
             
         except Record.DoesNotExist:

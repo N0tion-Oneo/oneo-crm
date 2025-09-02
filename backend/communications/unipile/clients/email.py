@@ -69,6 +69,49 @@ class UnipileEmailClient:
             logger.error(f"Failed to get emails: {e}")
             raise
     
+    async def update_email_read_status(
+        self,
+        email_id: str,
+        unread: bool,
+        account_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Update the read/unread status of an email
+        
+        Args:
+            email_id: The UniPile email ID or provider ID
+            unread: True to mark as unread, False to mark as read
+            account_id: The account ID (required if using provider ID)
+            
+        Returns:
+            Response from UniPile API
+        """
+        try:
+            # Build the update payload
+            data = {
+                'unread': unread
+            }
+            
+            # Add account_id to params if provided
+            params = {}
+            if account_id:
+                params['account_id'] = account_id
+            
+            # Make the API request
+            response = await self.client._make_request(
+                'PUT', 
+                f'emails/{email_id}', 
+                data=data,
+                params=params
+            )
+            
+            logger.info(f"Updated email {email_id} read status - unread: {unread}")
+            return response
+            
+        except Exception as e:
+            logger.error(f"Failed to update email read status for {email_id}: {e}")
+            raise
+    
     async def send_email(
         self, 
         account_id: str,

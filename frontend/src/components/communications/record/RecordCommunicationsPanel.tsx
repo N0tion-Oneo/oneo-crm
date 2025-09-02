@@ -43,6 +43,8 @@ export function RecordCommunicationsPanel({
     isLoading,
     error,
     triggerSync,
+    markAsRead,
+    updateConversation,
     refreshData,
     fetchConversations
   } = useRecordCommunications(recordId)
@@ -193,6 +195,7 @@ export function RecordCommunicationsPanel({
             profile={profile}
             syncStatus={syncStatus}
             onSync={handleSync}
+            onMarkAllRead={markAsRead}
           />
         </div>
       </div>
@@ -234,6 +237,7 @@ export function RecordCommunicationsPanel({
                       onReply={handleReply}
                       onReplyAll={handleReplyAll}
                       onForward={handleForward}
+                      onConversationUpdate={updateConversation}
                       isEmail={activeTab === 'email'}
                     />
                   </div>

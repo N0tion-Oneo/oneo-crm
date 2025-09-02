@@ -60,7 +60,7 @@ class MessagePermission(permissions.BasePermission):
             return permission_manager.has_permission('action', 'communications', 'read')
         elif view.action == 'create':
             return permission_manager.has_permission('action', 'communications', 'send')
-        elif view.action in ['retrieve', 'thread', 'attachments']:
+        elif view.action in ['retrieve', 'thread', 'attachments', 'mark_read']:
             return True  # Object-level check in has_object_permission
         elif view.action in ['update', 'partial_update']:
             return True  # Object-level check in has_object_permission
@@ -81,7 +81,7 @@ class MessagePermission(permissions.BasePermission):
         """Check object-level permissions"""
         permission_manager = SyncPermissionManager(request.user)
         
-        if view.action in ['retrieve', 'thread', 'attachments']:
+        if view.action in ['retrieve', 'thread', 'attachments', 'mark_read']:
             return permission_manager.has_permission('action', 'communications', 'read')
         elif view.action in ['update', 'partial_update']:
             # Only allow editing own messages or with update permission

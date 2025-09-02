@@ -3,11 +3,14 @@ REST API Views for Communication System
 Focused purely on communication functionality - channels, messages, conversations
 """
 import asyncio
+import logging
 from datetime import datetime, timedelta
 from typing import Dict, Any
 
 from django.db.models import Q, Count, Avg
 from django.utils import timezone
+
+logger = logging.getLogger(__name__)
 from rest_framework import viewsets, status, permissions
 from api.permissions import CommunicationPermission, MessagePermission, ChannelPermission, CommunicationTrackingPermission
 from rest_framework.decorators import action
@@ -250,6 +253,50 @@ class MessageViewSet(viewsets.ModelViewSet):
             'domain_validated': {'type': 'boolean'}
         }}}
     )
+    @action(detail=True, methods=['post'])
+    def mark_read(self, request, pk=None):
+        """Mark a single message as read"""
+        message = self.get_object()
+        
+        # Update the message status to READ
+        from communications.models import MessageStatus
+        message.status = MessageStatus.READ
+        message.save(update_fields=['status'])
+        
+        # Update conversation unread count
+        conversation = message.conversation
+        if conversation:
+            from communications.models import MessageDirection
+            unread_count = conversation.messages.filter(
+                direction=MessageDirection.INBOUND,
+                status__in=[MessageStatus.DELIVERED, MessageStatus.SENT, MessageStatus.PENDING]
+            ).exclude(status=MessageStatus.READ).count()
+            
+            conversation.unread_count = unread_count
+            conversation.save(update_fields=['unread_count'])
+        
+        # Queue sync with email provider if this is an email
+        if message.channel and message.channel.channel_type == 'email' and message.external_id:
+            try:
+                from communications.tasks import sync_email_read_status_to_provider
+                from django.db import connection
+                
+                # Queue the sync task
+                sync_email_read_status_to_provider.delay(
+                    message_id=message.id,
+                    tenant_schema=connection.schema_name,
+                    mark_as_read=True
+                )
+                logger.info(f"Queued read status sync for message {message.id}")
+            except Exception as e:
+                logger.warning(f"Failed to queue read status sync: {e}")
+        
+        return Response({
+            'success': True,
+            'message': 'Message marked as read',
+            'unread_count': conversation.unread_count if conversation else 0
+        })
+    
     @action(detail=True, methods=['post'])
     def connect_contact(self, request, pk=None):
         """Manually connect a message to an existing contact with domain validation"""

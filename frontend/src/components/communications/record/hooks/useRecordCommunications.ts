@@ -109,6 +109,21 @@ export function useRecordCommunications(recordId: string | number) {
   const [syncJustCompleted, setSyncJustCompleted] = useState(false)
   const previousSyncStatusRef = useRef<string | null>(null)
   
+  // Pagination state for conversations
+  const conversationOffsetsRef = useRef<Record<string, number>>({
+    email: 0,
+    whatsapp: 0,
+    linkedin: 0,
+    all: 0
+  })
+  const [hasMoreConversations, setHasMoreConversations] = useState<Record<string, boolean>>({
+    email: true,
+    whatsapp: true,
+    linkedin: true,
+    all: true
+  })
+  const [isLoadingMore, setIsLoadingMore] = useState(false)
+  
   // Convert recordId to string once
   const recordIdStr = recordId ? String(recordId) : ''
 
@@ -139,45 +154,88 @@ export function useRecordCommunications(recordId: string | number) {
   }, [recordIdStr, accessToken])
 
   // Fetch conversations with smart loading or channel filter
-  const fetchConversations = useCallback(async (channelType?: string) => {
+  const fetchConversations = useCallback(async (channelType?: string, append: boolean = false) => {
     if (!accessToken || !recordIdStr) return
     
+    const channel = channelType || 'all'
+    const offset = append ? (conversationOffsetsRef.current[channel] || 0) : 0
+    
+    console.log('fetchConversations', { channel, append, offset, currentOffsets: conversationOffsetsRef.current })
+    
+    // Set loading state
+    if (append) {
+      setIsLoadingMore(true)
+    }
+    
     try {
-      const params: any = {}
+      const params: any = {
+        limit: 20, // Load 20 at a time
+        offset
+      }
       
-      if (channelType === 'all' || !channelType) {
-        // Use smart mode: all WhatsApp/LinkedIn + last 10 emails
+      if (channel === 'all') {
+        // Use smart mode: all WhatsApp/LinkedIn + last 20 emails
         params.mode = 'smart'
       } else {
         // Single channel mode - backend will handle email type mapping
         params.mode = 'channel'
-        // Send the channel type as-is, backend will map 'email' to all email types
-        params.channel_type = channelType
-        params.limit = channelType === 'email' ? 10 : 100 // Limit emails, get all for social
+        params.channel_type = channel
       }
       
       const response = await api.get(
         `/api/v1/communications/records/${recordIdStr}/conversations/`,
         { params }
       )
+      
       // Handle paginated response
       const data = response.data
       if (data.results) {
         // Paginated response
-        setConversations(data.results)
+        if (append) {
+          setConversations(prev => [...prev, ...data.results])
+        } else {
+          setConversations(data.results)
+        }
+        
+        // Update offset for next fetch
+        const newOffset = append ? offset + data.results.length : data.results.length
+        conversationOffsetsRef.current[channel] = newOffset
+        
+        // Check if there are more conversations
+        const hasMore = data.next || (data.count > newOffset)
+        setHasMoreConversations(prev => ({ ...prev, [channel]: hasMore }))
       } else if (Array.isArray(data)) {
         // Legacy non-paginated response
-        setConversations(data)
+        if (append) {
+          setConversations(prev => [...prev, ...data])
+        } else {
+          setConversations(data)
+        }
+        setHasMoreConversations(prev => ({ ...prev, [channel]: false }))
       } else {
         console.error('Unexpected conversation response format:', data)
-        setConversations([])
+        if (!append) {
+          setConversations([])
+        }
       }
     } catch (err) {
       console.error('Failed to fetch conversations:', err)
       setError('Failed to load conversations')
+    } finally {
+      if (append) {
+        setIsLoadingMore(false)
+      }
     }
   }, [recordIdStr, accessToken])
 
+  // Load more conversations for infinite scroll
+  const loadMoreConversations = useCallback(async (channelType?: string) => {
+    const channel = channelType || 'all'
+    if (!hasMoreConversations[channel] || isLoadingMore) return
+    
+    await fetchConversations(channelType, true) // append = true
+  }, [fetchConversations, hasMoreConversations, isLoadingMore])
+  
   // Fetch statistics
   const fetchStats = useCallback(async () => {
     if (!accessToken || !recordIdStr) return
@@ -465,13 +523,16 @@ export function useRecordCommunications(recordId: string | number) {
     syncStatus,
     syncJustCompleted,
     isLoading,
+    isLoadingMore,
     error,
     hasMoreTimeline,
+    hasMoreConversations,
     triggerSync,
     markAsRead,
     updateConversation,
     refreshData,
     fetchConversations,  // Expose for channel filtering
+    loadMoreConversations,  // Expose for infinite scroll
     fetchConversationMessages,  // Expose for message pagination
     fetchTimeline,
     loadMoreTimeline

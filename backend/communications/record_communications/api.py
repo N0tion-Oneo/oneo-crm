@@ -232,12 +232,12 @@ class RecordCommunicationsViewSet(viewsets.ViewSet):
             limit = int(request.query_params.get('limit', 30))
             offset = int(request.query_params.get('offset', 0))
             
-            # Get messages for the conversation (chronological order for reading)
+            # Get messages for the conversation (reverse chronological - newest first)
             messages = Message.objects.filter(
                 conversation_id=conversation_id
             ).select_related(
                 'sender_participant', 'conversation', 'channel'
-            ).order_by('created_at')[offset:offset + limit]
+            ).order_by('-created_at')[offset:offset + limit]
             
             # Get total count
             total_count = Message.objects.filter(

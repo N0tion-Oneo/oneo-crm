@@ -27,19 +27,19 @@ class SyncConfig:
         'gmail': {
             'enabled': True,
             'historical_days': 0,  # 0 = no limit, fetch all emails
-            'max_messages': 10,  # 0 = no limit, fetch all emails
+            'max_messages': 0,  # 0 = no limit, fetch all emails
             'batch_size': 100  # Larger batch for better performance
         },
         'whatsapp': {
             'enabled': True,
             'historical_days': 0,  # 0 = no limit, fetch all messages
-            'max_messages': 10,  # 0 = no limit, fetch all messages
+            'max_messages': 0,  # 0 = no limit, fetch all messages
             'batch_size': 100  # Larger batch for better performance
         },
         'linkedin': {
             'enabled': True,
             'historical_days': 0,  # 0 = no limit, fetch all messages
-            'max_messages': 10,  # 0 = no limit, fetch all messages
+            'max_messages': 0,  # 0 = no limit, fetch all messages
             'batch_size': 100  # Larger batch for better performance
         },
         'telegram': {

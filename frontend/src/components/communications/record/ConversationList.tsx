@@ -1,6 +1,6 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { formatDistanceToNow } from 'date-fns'
-import { Mail, Phone, Users, MessageSquare, User, AtSign, Briefcase, Hash, Circle, MoreVertical, CheckCircle, CircleDot } from 'lucide-react'
+import { Mail, Phone, Users, MessageSquare, User, AtSign, Briefcase, Hash, Circle, MoreVertical, CheckCircle, CircleDot, Loader2 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
@@ -47,15 +47,53 @@ interface ConversationListProps {
   selectedId: string | null
   onSelect: (id: string) => void
   onMarkAsRead?: (conversationId: string, isRead: boolean) => void
+  onLoadMore?: () => void
+  hasMore?: boolean
+  isLoadingMore?: boolean
 }
 
 export function ConversationList({
   conversations,
   selectedId,
   onSelect,
-  onMarkAsRead
+  onMarkAsRead,
+  onLoadMore,
+  hasMore = false,
+  isLoadingMore = false
 }: ConversationListProps) {
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null)
+  const loadMoreTriggerRef = useRef<HTMLDivElement>(null)
+  
+  // Set up IntersectionObserver for infinite scroll
+  useEffect(() => {
+    if (!onLoadMore || !hasMore || isLoadingMore) return
+    
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const [entry] = entries
+        if (entry.isIntersecting && hasMore && !isLoadingMore) {
+          onLoadMore()
+        }
+      },
+      {
+        root: null, // Use viewport as root since parent handles scrolling
+        rootMargin: '100px',
+        threshold: 0.1
+      }
+    )
+    
+    const trigger = loadMoreTriggerRef.current
+    if (trigger) {
+      observer.observe(trigger)
+    }
+    
+    return () => {
+      if (trigger) {
+        observer.unobserve(trigger)
+      }
+    }
+  }, [onLoadMore, hasMore, isLoadingMore])
+  
   // Strip HTML tags and decode entities for message preview
   const stripHtml = (html: string): string => {
     if (!html) return ''
@@ -137,13 +175,13 @@ export function ConversationList({
 
   return (
     <div className="divide-y divide-gray-100 dark:divide-gray-800">
-      {conversations.map((conversation) => {
-        const channelConfig = getChannelConfig(conversation.channel_type)
-        const primaryParticipant = conversation.participants[0]
-        const participantName = primaryParticipant?.display_name || 'Unknown'
-        const isEmail = conversation.channel_type === 'email' || conversation.channel_type === 'gmail'
-        
-        return (
+        {conversations.map((conversation) => {
+          const channelConfig = getChannelConfig(conversation.channel_type)
+          const primaryParticipant = conversation.participants[0]
+          const participantName = primaryParticipant?.display_name || 'Unknown'
+          const isEmail = conversation.channel_type === 'email' || conversation.channel_type === 'gmail'
+          
+          return (
           <div
             key={conversation.id}
             onClick={() => onSelect(conversation.id)}
@@ -258,8 +296,25 @@ export function ConversationList({
               </div>
             </div>
           </div>
-        )
-      })}
+          )
+        })}
+      
+      {/* Loading indicator and trigger for infinite scroll */}
+      {(hasMore || isLoadingMore) && (
+        <div 
+          ref={loadMoreTriggerRef}
+          className="flex items-center justify-center py-4 border-t border-gray-100 dark:border-gray-800"
+        >
+          {isLoadingMore ? (
+            <div className="flex items-center space-x-2 text-gray-500">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              <span className="text-sm">Loading more conversations...</span>
+            </div>
+          ) : hasMore ? (
+            <div className="text-sm text-gray-400">Scroll for more</div>
+          ) : null}
+        </div>
+      )}
     </div>
   )
 }

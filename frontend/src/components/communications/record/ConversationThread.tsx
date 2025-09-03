@@ -79,13 +79,20 @@ export function ConversationThread({
 }: ConversationThreadProps) {
   const [messages, setMessages] = useState<Message[]>([])
   const [isLoading, setIsLoading] = useState(true)
+  const [isLoadingMore, setIsLoadingMore] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [showScrollButton, setShowScrollButton] = useState(false)
   const [conversationType, setConversationType] = useState<'email' | 'message'>('message')
   const [expandedEmails, setExpandedEmails] = useState<Set<string>>(new Set())
+  const [hasMoreMessages, setHasMoreMessages] = useState(true)
+  const [initialLoadComplete, setInitialLoadComplete] = useState(false)
+  const messageOffsetRef = useRef(0)
   const scrollAreaRef = useRef<HTMLDivElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const hasMarkedAsReadRef = useRef<string | null>(null)
+  const loadMoreTriggerRef = useRef<HTMLDivElement>(null)
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null)
+  const isInitialLoadRef = useRef(true)
   
   // Helper to detect if content is HTML
   const isHtmlContent = (content: string): boolean => {
@@ -262,10 +269,17 @@ export function ConversationThread({
   }, [])
 
   // Fetch messages for the conversation
-  const fetchMessages = useCallback(async () => {
+  const fetchMessages = useCallback(async (append: boolean = false) => {
     if (!conversationId || !recordId) return
 
-    setIsLoading(true)
+    const offset = append ? messageOffsetRef.current : 0
+    
+    if (append) {
+      setIsLoadingMore(true)
+    } else {
+      setIsLoading(true)
+      messageOffsetRef.current = 0 // Reset offset for fresh load
+    }
     setError(null)
 
     try {
@@ -275,7 +289,7 @@ export function ConversationThread({
           params: {
             conversation_id: conversationId,
             limit: 30,
-            offset: 0
+            offset: offset
           }
         }
       )
@@ -291,29 +305,141 @@ export function ConversationThread({
         fetchedMessages = []
       }
       
+      // Update pagination state
+      let hasMore = false
+      if (data.results) {
+        // Check if there are more messages to load
+        hasMore = Boolean(data.next) || (data.count > offset + fetchedMessages.length)
+        setHasMoreMessages(hasMore)
+      } else {
+        // Legacy response format - guess based on fetched count
+        hasMore = fetchedMessages.length === 30
+        setHasMoreMessages(hasMore)
+      }
+      
+      // Update offset for next fetch
+      messageOffsetRef.current = offset + fetchedMessages.length
+      
       // Log message statuses for debugging
       console.log('Fetched messages for conversation:', {
         conversationId,
         messageCount: fetchedMessages.length,
-        inboundMessages: fetchedMessages.filter(m => m.direction === 'inbound').map(m => ({
-          id: m.id,
-          direction: m.direction,
-          status: m.status,
-          statusIsRead: m.status === 'read',
-          statusType: typeof m.status,
-          content: m.content?.substring(0, 30)
-        })),
-        allStatuses: [...new Set(fetchedMessages.map(m => m.status))]
+        offset,
+        newOffset: messageOffsetRef.current,
+        totalCount: data.count,
+        hasMore,
+        append
       })
       
-      setMessages(fetchedMessages)
+      if (append) {
+        // Always append older messages at the end (since newest are at top)
+        setMessages(prev => [...prev, ...fetchedMessages])
+      } else {
+        setMessages(fetchedMessages)
+      }
     } catch (err) {
       console.error('Failed to fetch messages:', err)
       setError('Failed to load messages')
     } finally {
       setIsLoading(false)
+      setIsLoadingMore(false)
     }
   }, [conversationId, recordId])
+
+  // Load more messages for infinite scroll
+  const loadMoreMessages = useCallback(async () => {
+    if (!hasMoreMessages || isLoadingMore) return
+    await fetchMessages(true)
+  }, [fetchMessages, hasMoreMessages, isLoadingMore])
+
+  // Set up IntersectionObserver for infinite scroll
+  useEffect(() => {
+    if (!hasMoreMessages || isLoadingMore || isLoading || messages.length === 0) return
+    
+    // Wait for initial load to complete
+    if (!initialLoadComplete) {
+      console.log('Waiting for initial load to complete before setting up IntersectionObserver')
+      return
+    }
+    
+    // Find the actual scroll container
+    const findScrollContainer = () => {
+      // Try to use the stored reference first
+      if (scrollContainerRef.current) {
+        return scrollContainerRef.current
+      }
+      
+      // Try to find by class selector
+      const element = document.querySelector('.flex-1.min-h-0.overflow-y-auto')
+      if (element) {
+        console.log('Found scroll container by selector')
+        return element as HTMLDivElement
+      }
+      
+      // Fallback to searching from trigger
+      let parent = loadMoreTriggerRef.current
+      while (parent) {
+        const style = window.getComputedStyle(parent)
+        if (style.overflowY === 'auto' || style.overflowY === 'scroll') {
+          console.log('Found scroll container:', parent.className)
+          return parent
+        }
+        parent = parent.parentElement
+      }
+      console.log('No scroll container found, using null for viewport')
+      return null
+    }
+    
+    // Set up observer
+    const scrollContainer = findScrollContainer()
+    if (!scrollContainerRef.current && scrollContainer) {
+      scrollContainerRef.current = scrollContainer as HTMLDivElement
+    }
+    
+    console.log('Setting up IntersectionObserver', { 
+      hasScrollContainer: !!scrollContainer,
+      hasTrigger: !!loadMoreTriggerRef.current,
+      hasMoreMessages,
+      messageCount: messages.length,
+      isInitialLoad: isInitialLoadRef.current
+    })
+    
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach(entry => {
+          console.log('IntersectionObserver triggered:', { 
+            isIntersecting: entry.isIntersecting,
+            intersectionRatio: entry.intersectionRatio,
+            hasMoreMessages,
+            isLoadingMore,
+            isInitialLoad: isInitialLoadRef.current
+          })
+          
+          if (entry.isIntersecting && hasMoreMessages && !isLoadingMore && !isLoading && initialLoadComplete) {
+            console.log('Loading more messages...')
+            loadMoreMessages()
+          }
+        })
+      },
+      {
+        root: scrollContainer,
+        rootMargin: '100px',
+        threshold: 0
+      }
+    )
+    
+    const trigger = loadMoreTriggerRef.current
+    if (trigger) {
+      console.log('Observing trigger element')
+      observer.observe(trigger)
+    }
+    
+    return () => {
+      if (trigger) {
+        observer.unobserve(trigger)
+      }
+    }
+  }, [hasMoreMessages, isLoadingMore, isLoading, messages.length, loadMoreMessages, initialLoadComplete])
 
   // Mark message as read - Define this before any useEffect that uses it
   const markAsRead = useCallback(async (messageId: string) => {
@@ -377,18 +503,22 @@ export function ConversationThread({
 
   // Fetch messages when conversation changes
   useEffect(() => {
+    // Reset pagination when conversation changes
+    messageOffsetRef.current = 0
+    setHasMoreMessages(true)
+    setMessages([]) // Clear messages immediately for better UX
     // Reset the marked as read flag when conversation changes
     hasMarkedAsReadRef.current = null
-    fetchMessages()
-  }, [conversationId, recordId, fetchMessages]) // Include fetchMessages in dependencies
+    // Reset initial load flag for new conversation
+    isInitialLoadRef.current = true
+    setInitialLoadComplete(false)
+    fetchMessages(false) // fresh load
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conversationId, recordId]) // Don't include fetchMessages to avoid infinite loop
 
-  // Auto-scroll to top when messages load (since newest are at top)
+  // Set conversation type and initial load complete
   useEffect(() => {
     if (messages.length > 0 && !isLoading) {
-      // Scroll to top for newest messages
-      if (scrollAreaRef.current) {
-        scrollAreaRef.current.scrollTop = 0
-      }
       // Determine conversation type based on channel
       const firstMessage = messages[0]
       if (firstMessage.channel_type === 'gmail' || firstMessage.channel_type === 'email') {
@@ -398,6 +528,12 @@ export function ConversationThread({
       } else {
         setConversationType('message')
       }
+      
+      // Mark initial load as complete
+      setTimeout(() => {
+        isInitialLoadRef.current = false
+        setInitialLoadComplete(true)
+      }, 200)
     }
   }, [messages.length, isLoading])
   
@@ -617,7 +753,7 @@ export function ConversationThread({
   // Render email thread (Gmail/Outlook style)
   const renderEmailThread = () => {
     return (
-      <div className="w-full h-full bg-gray-50 dark:bg-gray-900 overflow-y-auto overflow-x-hidden">
+      <div className="w-full h-full bg-gray-50 dark:bg-gray-900">
         <div className="space-y-2 p-4">
           {messages.map((message, index) => {
             const isExpanded = expandedEmails.has(message.id)
@@ -932,6 +1068,26 @@ export function ConversationThread({
             </div>
           )
         })}
+        
+        {/* Load more trigger at the BOTTOM for older messages - only for email view */}
+        {conversationType === 'email' && (hasMoreMessages || isLoadingMore) && (
+          <div 
+            ref={loadMoreTriggerRef}
+            className="flex items-center justify-center py-4 min-h-[60px]"
+          >
+            {isLoadingMore ? (
+              <div className="flex items-center space-x-2 text-gray-500">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                <span className="text-sm">Loading older messages...</span>
+              </div>
+            ) : (
+              <div className="text-sm text-gray-400">
+                {/* Invisible element to trigger loading */}
+                <span style={{ opacity: 0 }}>Load trigger</span>
+              </div>
+            )}
+          </div>
+        )}
         </div>
       </div>
     )
@@ -939,14 +1095,14 @@ export function ConversationThread({
 
   // Render message thread (WhatsApp/LinkedIn chat style)
   const renderMessageThread = () => {
-    // First, sort all messages by timestamp (newest first)
+    // Sort all messages by timestamp (newest first, same as email)
     const sortedMessages = [...messages].sort((a, b) => {
       const aTime = new Date(a.sent_at || a.received_at || a.created_at).getTime()
       const bTime = new Date(b.sent_at || b.received_at || b.created_at).getTime()
-      return bTime - aTime // Newest first
+      return bTime - aTime // Newest first for consistency
     })
 
-    // Group sorted messages by date for chat style
+    // Group sorted messages by date
     const messagesByDate: { [key: string]: Message[] } = {}
     sortedMessages.forEach((message) => {
       // Use sent_at for outbound, received_at for inbound, or created_at as fallback
@@ -963,7 +1119,7 @@ export function ConversationThread({
     const sortedDateKeys = Object.keys(messagesByDate).sort().reverse()
 
     return (
-      <div className="relative">
+      <div className="w-full h-full bg-gray-50 dark:bg-gray-900">
         <div className="space-y-6 p-4">
           {sortedDateKeys.map((dateKey) => {
             const dateMessages = messagesByDate[dateKey]
@@ -1044,6 +1200,26 @@ export function ConversationThread({
               </div>
             )
           })}
+          
+          {/* Load more trigger at the BOTTOM for older messages */}
+          {conversationType === 'message' && (hasMoreMessages || isLoadingMore) && (
+            <div 
+              ref={loadMoreTriggerRef}
+              className="flex items-center justify-center py-4 min-h-[60px]"
+            >
+              {isLoadingMore ? (
+                <div className="flex items-center space-x-2 text-gray-500">
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span className="text-sm">Loading older messages...</span>
+                </div>
+              ) : (
+                <div className="text-sm text-gray-400">
+                  {/* Invisible element to trigger loading */}
+                  <span style={{ opacity: 0 }}>Load trigger</span>
+                </div>
+              )}
+            </div>
+          )}
           
           {/* Scroll to bottom reference */}
           <div ref={messagesEndRef} />

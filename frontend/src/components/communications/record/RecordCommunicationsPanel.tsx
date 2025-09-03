@@ -43,12 +43,15 @@ export function RecordCommunicationsPanel({
     syncStatus,
     syncJustCompleted,
     isLoading,
+    isLoadingMore,
     error,
+    hasMoreConversations,
     triggerSync,
     markAsRead,
     updateConversation,
     refreshData,
-    fetchConversations
+    fetchConversations,
+    loadMoreConversations
   } = useRecordCommunications(recordId)
 
 
@@ -59,6 +62,8 @@ export function RecordCommunicationsPanel({
     // Clear reply state when switching tabs
     setReplyTo(null)
     setReplyMode(null)
+    // Reset loading state
+    setLoadingChannel(null)
   }, [activeTab])
 
   // Fetch data when tab changes or component mounts
@@ -239,6 +244,9 @@ export function RecordCommunicationsPanel({
                         console.error('Error marking conversation:', error)
                       }
                     }}
+                    onLoadMore={() => loadMoreConversations(activeTab)}
+                    hasMore={hasMoreConversations?.[activeTab] || false}
+                    isLoadingMore={isLoadingMore}
                   />
                 )}
               </div>

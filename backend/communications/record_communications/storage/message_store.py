@@ -158,6 +158,7 @@ class MessageStore:
                     direction=msg_data.get('direction', 'inbound'),
                     content=msg_data.get('content', ''),
                     sent_at=msg_data.get('sent_at'),
+                    received_at=msg_data.get('received_at'),
                     created_at=msg_data.get('created_at', timezone.now()),
                     metadata=msg_data.get('metadata', {}),
                     status=msg_data.get('status', 'sent')

@@ -16,10 +16,11 @@ def update_conversation_stats(sender, instance, created, **kwargs):
         conversation = instance.conversation
         old_timestamp = conversation.last_message_at
         conversation.message_count = conversation.messages.count()
-        conversation.last_message_at = instance.created_at
+        # Use actual message timestamp, not created_at (which is sync time)
+        conversation.last_message_at = instance.sent_at or instance.received_at or instance.created_at
         conversation.save(update_fields=['message_count', 'last_message_at'])
         
-        logger.debug(f"🔄 Updated conversation {conversation.id} timestamp: {old_timestamp} → {instance.created_at}")
+        logger.debug(f"🔄 Updated conversation {conversation.id} timestamp: {old_timestamp} → {conversation.last_message_at}")
         logger.debug(f"🔄 Message content: {instance.content[:100] if instance.content else 'No content'}")
         
         # Invalidate cached conversation data to ensure fresh timestamps
@@ -190,8 +191,13 @@ def update_conversation_stats_on_delete(sender, instance, **kwargs):
     if instance.conversation:
         conversation = instance.conversation
         conversation.message_count = conversation.messages.count()
-        last_message = conversation.messages.order_by('-created_at').first()
-        conversation.last_message_at = last_message.created_at if last_message else None
+        # Order by actual message timestamp, not created_at
+        from django.db.models.functions import Coalesce
+        from django.db.models import F
+        last_message = conversation.messages.annotate(
+            actual_timestamp=Coalesce('sent_at', 'received_at', 'created_at')
+        ).order_by('-actual_timestamp').first()
+        conversation.last_message_at = (last_message.sent_at or last_message.received_at or last_message.created_at) if last_message else None
         conversation.save(update_fields=['message_count', 'last_message_at'])
 
 

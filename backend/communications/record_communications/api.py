@@ -233,11 +233,16 @@ class RecordCommunicationsViewSet(viewsets.ViewSet):
             offset = int(request.query_params.get('offset', 0))
             
             # Get messages for the conversation (reverse chronological - newest first)
+            # Order by actual message timestamp, not sync time
+            from django.db.models.functions import Coalesce
+            from django.db.models import F
             messages = Message.objects.filter(
                 conversation_id=conversation_id
             ).select_related(
                 'sender_participant', 'conversation', 'channel'
-            ).order_by('-created_at')[offset:offset + limit]
+            ).annotate(
+                actual_timestamp=Coalesce('sent_at', 'received_at', 'created_at')
+            ).order_by('-actual_timestamp')[offset:offset + limit]
             
             # Get total count
             total_count = Message.objects.filter(
@@ -297,10 +302,14 @@ class RecordCommunicationsViewSet(viewsets.ViewSet):
             # Get total count before pagination
             total_count = messages.count()
             
-            # Order by time (newest first) and apply pagination
+            # Order by actual message timestamp (newest first) and apply pagination
+            from django.db.models.functions import Coalesce
+            from django.db.models import F
             messages = messages.select_related(
                 'sender_participant', 'conversation', 'channel'
-            ).order_by('-sent_at')[offset:offset + limit]
+            ).annotate(
+                actual_timestamp=Coalesce('sent_at', 'received_at', 'created_at')
+            ).order_by('-actual_timestamp')[offset:offset + limit]
             
             serializer = RecordMessageSerializer(messages, many=True)
             

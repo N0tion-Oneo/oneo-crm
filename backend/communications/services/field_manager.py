@@ -219,11 +219,19 @@ class FieldManager:
     def update_conversation_stats(self, conversation):
         """Update conversation statistics (message count, last message time)"""
         from communications.models import Message
+        from django.db.models import Case, When, F
         
-        # Get aggregated stats from messages
+        # Get aggregated stats from messages, using actual message timestamps
         stats = Message.objects.filter(conversation=conversation).aggregate(
             total=Count('id'),
-            last_message=models.Max('created_at')
+            # Use actual message timestamp, not created_at (which is sync time)
+            last_message=models.Max(
+                Case(
+                    When(sent_at__isnull=False, then=F('sent_at')),
+                    When(received_at__isnull=False, then=F('received_at')),
+                    default=F('created_at')
+                )
+            )
         )
         
         conversation.message_count = stats['total'] or 0

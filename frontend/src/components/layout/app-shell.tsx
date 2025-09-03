@@ -63,6 +63,12 @@ export function AppShell({ children }: AppShellProps) {
       icon: MessageSquare,
       description: 'Account connections and messaging',
     },
+    {
+      name: 'Settings',
+      href: '/settings',
+      icon: Settings,
+      description: 'Organization settings',
+    },
   ]
 
   // Update current state based on pathname

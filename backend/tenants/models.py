@@ -19,6 +19,37 @@ class Tenant(TenantMixin):
     features_enabled = models.JSONField(default=dict)
     billing_settings = models.JSONField(default=dict)
     
+    # Organization Profile
+    organization_logo = models.ImageField(upload_to='tenant_logos/', null=True, blank=True)
+    organization_description = models.TextField(blank=True)
+    support_email = models.EmailField(blank=True)
+    support_phone = models.CharField(max_length=20, blank=True)
+    business_hours = models.JSONField(default=dict, help_text="Business hours by day of week")
+    
+    # Localization Settings (stored in JSON)
+    localization_settings = models.JSONField(
+        default=dict,
+        help_text="Contains: timezone, date_format, time_format, currency, language, week_start_day"
+    )
+    
+    # Branding Settings (stored in JSON)
+    branding_settings = models.JSONField(
+        default=dict,
+        help_text="Contains: primary_color, secondary_color, email_header_html, login_message"
+    )
+    
+    # Security Policies (stored in JSON)
+    security_policies = models.JSONField(
+        default=dict,
+        help_text="Contains: password_min_length, password_complexity, session_timeout_minutes, require_2fa, ip_whitelist"
+    )
+    
+    # Data Policies (stored in JSON)
+    data_policies = models.JSONField(
+        default=dict,
+        help_text="Contains: retention_days, backup_frequency, auto_archive_days, export_formats"
+    )
+    
     # AI Configuration (encrypted)
     ai_config_encrypted = models.TextField(blank=True, null=True, help_text="Encrypted AI configuration including API keys")
     ai_enabled = models.BooleanField(default=False, help_text="Enable AI features for this tenant")
@@ -31,6 +62,62 @@ class Tenant(TenantMixin):
     
     def __str__(self):
         return self.name
+    
+    def get_default_localization(self):
+        """Get default localization settings"""
+        return {
+            'timezone': 'UTC',
+            'date_format': 'MM/DD/YYYY',
+            'time_format': '12h',
+            'currency': 'USD',
+            'language': 'en',
+            'week_start_day': 'sunday'
+        }
+    
+    def get_default_branding(self):
+        """Get default branding settings"""
+        return {
+            'primary_color': '#3B82F6',  # Blue
+            'secondary_color': '#10B981',  # Green
+            'email_header_html': '',
+            'login_message': ''
+        }
+    
+    def get_default_security_policies(self):
+        """Get default security policies"""
+        return {
+            'password_min_length': 8,
+            'password_complexity': {
+                'require_uppercase': True,
+                'require_lowercase': True,
+                'require_numbers': True,
+                'require_special': False
+            },
+            'session_timeout_minutes': 60,
+            'require_2fa': False,
+            'ip_whitelist': []
+        }
+    
+    def get_default_data_policies(self):
+        """Get default data policies"""
+        return {
+            'retention_days': 365,
+            'backup_frequency': 'daily',
+            'auto_archive_days': 90,
+            'export_formats': ['csv', 'json', 'excel']
+        }
+    
+    def save(self, *args, **kwargs):
+        """Override save to set defaults for JSON fields if empty"""
+        if not self.localization_settings:
+            self.localization_settings = self.get_default_localization()
+        if not self.branding_settings:
+            self.branding_settings = self.get_default_branding()
+        if not self.security_policies:
+            self.security_policies = self.get_default_security_policies()
+        if not self.data_policies:
+            self.data_policies = self.get_default_data_policies()
+        super().save(*args, **kwargs)
     
     @property
     def encryption_key(self):

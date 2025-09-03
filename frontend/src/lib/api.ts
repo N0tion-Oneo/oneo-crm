@@ -882,6 +882,43 @@ export const communicationsApi = {
       params: { account_id: accountId }
     }),
   
+  // Participant management API
+  getParticipants: (params?: any) =>
+    api.get('/api/v1/participants/', { params }),
+  
+  getParticipant: (participantId: string) =>
+    api.get(`/api/v1/participants/${participantId}/`),
+  
+  getParticipantFieldMapping: (participantId: string, params?: any) =>
+    api.get(`/api/v1/participants/${participantId}/get_field_mapping/`, { params }),
+  
+  getParticipantConversations: (participantId: string) =>
+    api.get(`/api/v1/participants/${participantId}/conversations/`),
+  
+  createRecordFromParticipant: (participantId: string, data: {
+    pipeline_id: string
+    overrides?: Record<string, any>
+    link_conversations?: boolean
+  }) => api.post(`/api/v1/participants/${participantId}/create_record/`, data),
+  
+  linkParticipantToRecord: (participantId: string, data: {
+    record_id: string
+    link_conversations?: boolean
+  }) => api.post(`/api/v1/participants/${participantId}/link_to_record/`, data),
+  
+  unlinkParticipant: (participantId: string) =>
+    api.post(`/api/v1/participants/${participantId}/unlink/`),
+  
+  bulkLinkParticipants: (data: {
+    participant_ids: string[]
+    record_id: string
+  }) => api.post('/api/v1/participants/bulk_link/', data),
+  
+  bulkCreateRecords: (data: {
+    participant_ids: string[]
+    pipeline_id: string
+  }) => api.post('/api/v1/participants/bulk_create_records/', data),
+  
   // Calendar API
   createCalendarEvent: (data: {
     account_id: string

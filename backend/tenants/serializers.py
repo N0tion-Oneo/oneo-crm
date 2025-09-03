@@ -213,3 +213,230 @@ class DomainSerializer(serializers.ModelSerializer):
         model = Domain
         fields = ['id', 'domain', 'tenant', 'tenant_name', 'is_primary']
         read_only_fields = ['id']
+
+
+class LocalizationSettingsSerializer(serializers.Serializer):
+    """Serializer for localization settings"""
+    timezone = serializers.CharField(max_length=50, default='UTC')
+    date_format = serializers.ChoiceField(
+        choices=['MM/DD/YYYY', 'DD/MM/YYYY', 'YYYY-MM-DD'],
+        default='MM/DD/YYYY'
+    )
+    time_format = serializers.ChoiceField(
+        choices=['12h', '24h'],
+        default='12h'
+    )
+    currency = serializers.CharField(max_length=3, default='USD')
+    language = serializers.CharField(max_length=2, default='en')
+    week_start_day = serializers.ChoiceField(
+        choices=['sunday', 'monday'],
+        default='sunday'
+    )
+
+
+class BrandingSettingsSerializer(serializers.Serializer):
+    """Serializer for branding settings"""
+    primary_color = serializers.RegexField(
+        regex=r'^#[0-9A-Fa-f]{6}$',
+        max_length=7,
+        default='#3B82F6',
+        error_messages={'invalid': 'Enter a valid hex color code'}
+    )
+    secondary_color = serializers.RegexField(
+        regex=r'^#[0-9A-Fa-f]{6}$',
+        max_length=7,
+        default='#10B981',
+        error_messages={'invalid': 'Enter a valid hex color code'}
+    )
+    email_header_html = serializers.CharField(
+        max_length=5000,
+        allow_blank=True,
+        required=False
+    )
+    login_message = serializers.CharField(
+        max_length=500,
+        allow_blank=True,
+        required=False
+    )
+
+
+class PasswordComplexitySerializer(serializers.Serializer):
+    """Serializer for password complexity rules"""
+    require_uppercase = serializers.BooleanField(default=True)
+    require_lowercase = serializers.BooleanField(default=True)
+    require_numbers = serializers.BooleanField(default=True)
+    require_special = serializers.BooleanField(default=False)
+
+
+class SecurityPoliciesSerializer(serializers.Serializer):
+    """Serializer for security policies"""
+    password_min_length = serializers.IntegerField(
+        min_value=8,
+        max_value=32,
+        default=8
+    )
+    password_complexity = PasswordComplexitySerializer(required=False)
+    session_timeout_minutes = serializers.IntegerField(
+        min_value=15,
+        max_value=480,  # 8 hours
+        default=60
+    )
+    require_2fa = serializers.BooleanField(default=False)
+    ip_whitelist = serializers.ListField(
+        child=serializers.IPAddressField(),
+        required=False,
+        default=list
+    )
+
+
+class DataPoliciesSerializer(serializers.Serializer):
+    """Serializer for data policies"""
+    retention_days = serializers.IntegerField(
+        min_value=30,
+        max_value=3650,  # 10 years
+        default=365
+    )
+    backup_frequency = serializers.ChoiceField(
+        choices=['hourly', 'daily', 'weekly', 'monthly'],
+        default='daily'
+    )
+    auto_archive_days = serializers.IntegerField(
+        min_value=30,
+        max_value=365,
+        default=90
+    )
+    export_formats = serializers.ListField(
+        child=serializers.ChoiceField(
+            choices=['csv', 'json', 'excel', 'pdf']
+        ),
+        default=lambda: ['csv', 'json', 'excel']
+    )
+
+
+class TenantSettingsSerializer(serializers.ModelSerializer):
+    """Main serializer for tenant settings"""
+    
+    # Nested serializers for JSON fields
+    localization_settings = LocalizationSettingsSerializer(required=False)
+    branding_settings = BrandingSettingsSerializer(required=False)
+    security_policies = SecurityPoliciesSerializer(required=False)
+    data_policies = DataPoliciesSerializer(required=False)
+    
+    # Read-only fields
+    name = serializers.CharField(read_only=True)
+    created_on = serializers.DateTimeField(read_only=True)
+    
+    # Usage statistics (computed fields)
+    current_users = serializers.SerializerMethodField()
+    storage_usage_mb = serializers.SerializerMethodField()
+    api_calls_this_month = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = Tenant
+        fields = [
+            # Basic info
+            'id', 'name', 'created_on',
+            
+            # Organization profile
+            'organization_logo', 'organization_description',
+            'support_email', 'support_phone', 'business_hours',
+            
+            # Settings
+            'localization_settings', 'branding_settings',
+            'security_policies', 'data_policies',
+            
+            # Limits and usage
+            'max_users', 'current_users',
+            'features_enabled', 'billing_settings',
+            'ai_enabled', 'ai_usage_limit', 'ai_current_usage',
+            'storage_usage_mb', 'api_calls_this_month'
+        ]
+    
+    def get_current_users(self, obj):
+        """Get current user count for this tenant"""
+        # Count users in the tenant schema
+        with schema_context(obj.schema_name):
+            return User.objects.filter(is_active=True).count()
+    
+    def get_storage_usage_mb(self, obj):
+        """Calculate storage usage for this tenant"""
+        # TODO: Implement actual storage calculation
+        # For now, return a placeholder
+        return 0
+    
+    def get_api_calls_this_month(self, obj):
+        """Get API call count for current month"""
+        # TODO: Implement API call tracking
+        # For now, return a placeholder
+        return 0
+    
+    def validate_password_min_length(self, value):
+        """Ensure password min length is reasonable"""
+        if value < 8:
+            raise serializers.ValidationError("Password minimum length must be at least 8")
+        if value > 32:
+            raise serializers.ValidationError("Password minimum length cannot exceed 32")
+        return value
+    
+    def validate_session_timeout_minutes(self, value):
+        """Ensure session timeout is reasonable"""
+        if value < 15:
+            raise serializers.ValidationError("Session timeout must be at least 15 minutes")
+        if value > 480:
+            raise serializers.ValidationError("Session timeout cannot exceed 8 hours")
+        return value
+
+
+class TenantLogoUploadSerializer(serializers.ModelSerializer):
+    """Serializer for logo upload"""
+    
+    organization_logo = serializers.ImageField(required=True)
+    
+    class Meta:
+        model = Tenant
+        fields = ['organization_logo']
+    
+    def validate_organization_logo(self, value):
+        """Validate uploaded logo"""
+        # Check file size (max 5MB)
+        if value.size > 5 * 1024 * 1024:
+            raise serializers.ValidationError("Logo file size cannot exceed 5MB")
+        
+        # Check file type
+        allowed_types = ['image/jpeg', 'image/png', 'image/gif', 'image/svg+xml']
+        if value.content_type not in allowed_types:
+            raise serializers.ValidationError(
+                f"Invalid file type. Allowed types: {', '.join(allowed_types)}"
+            )
+        
+        return value
+
+
+class TenantUsageSerializer(serializers.Serializer):
+    """Serializer for tenant usage statistics"""
+    
+    # User statistics
+    current_users = serializers.IntegerField()
+    max_users = serializers.IntegerField()
+    user_percentage = serializers.FloatField()
+    
+    # Storage statistics  
+    storage_used_mb = serializers.IntegerField()
+    storage_limit_mb = serializers.IntegerField()
+    storage_percentage = serializers.FloatField()
+    
+    # AI usage
+    ai_usage_current = serializers.DecimalField(max_digits=10, decimal_places=2)
+    ai_usage_limit = serializers.DecimalField(max_digits=10, decimal_places=2)
+    ai_usage_percentage = serializers.FloatField()
+    
+    # API usage
+    api_calls_today = serializers.IntegerField()
+    api_calls_this_month = serializers.IntegerField()
+    api_calls_limit_monthly = serializers.IntegerField()
+    
+    # Plan information
+    plan_name = serializers.CharField()
+    plan_tier = serializers.CharField()
+    billing_cycle = serializers.CharField()
+    next_billing_date = serializers.DateField()

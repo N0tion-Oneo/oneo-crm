@@ -60,7 +60,13 @@ class ParticipantSerializer(serializers.ModelSerializer):
         ]
     
     def get_display_name(self, obj):
-        return obj.get_display_name()
+        display_name = obj.get_display_name()
+        # Debug logging to track quotes
+        if display_name and ("'" in display_name or '"' in display_name):
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Participant serializer returning display_name with quotes: >>{display_name}<<")
+        return display_name
     
     def get_has_contact(self, obj):
         return obj.contact_record is not None

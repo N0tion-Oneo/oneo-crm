@@ -75,7 +75,8 @@ class UserType(models.Model):
                     'duplicates': ['create', 'read', 'update', 'delete', 'resolve', 'detect'],
                     'filters': ['create_filters', 'edit_filters', 'delete_filters'],
                     'sharing': ['create_shared_views', 'create_shared_forms', 'configure_shared_views_forms', 'revoke_shared_views_forms'],
-                    'permissions': ['read', 'update']
+                    'permissions': ['read', 'update'],
+                    'staff_profiles': ['create', 'read', 'update', 'delete', 'read_all', 'update_all', 'read_sensitive', 'update_sensitive']
                 }
             },
             {
@@ -102,7 +103,8 @@ class UserType(models.Model):
                     'duplicates': ['create', 'read', 'update', 'resolve', 'detect'],
                     'filters': ['create_filters', 'edit_filters', 'delete_filters'],
                     'sharing': ['create_shared_views', 'create_shared_forms', 'configure_shared_views_forms', 'revoke_shared_views_forms'],
-                    'permissions': ['read', 'update']
+                    'permissions': ['read', 'update'],
+                    'staff_profiles': ['read', 'update', 'read_all']
                 }
             },
             {
@@ -128,7 +130,8 @@ class UserType(models.Model):
                     'duplicates': ['read', 'detect'],
                     'filters': ['create_filters', 'edit_filters'],
                     'sharing': ['create_shared_views', 'create_shared_forms'],
-                    'permissions': ['read']
+                    'permissions': ['read'],
+                    'staff_profiles': ['read', 'update']
                 }
             },
             {
@@ -154,7 +157,8 @@ class UserType(models.Model):
                     'duplicates': ['read'],
                     'filters': [],  # Viewers cannot create or edit filters
                     'sharing': [],  # Viewers cannot create shares
-                    'permissions': ['read']
+                    'permissions': ['read'],
+                    'staff_profiles': ['read']
                 }
             }
         ]
@@ -513,3 +517,174 @@ class UserPipelinePermissionOverride(models.Model):
         if self.expires_at:
             return timezone.now() > self.expires_at
         return False
+
+
+class StaffProfile(models.Model):
+    """
+    Extended staff profile for users with comprehensive professional and personal information.
+    Designed to avoid duplicating fields already in CustomUser model.
+    """
+    
+    EMPLOYMENT_TYPE_CHOICES = [
+        ('full_time', 'Full Time'),
+        ('part_time', 'Part Time'),
+        ('contractor', 'Contractor'),
+        ('intern', 'Intern'),
+        ('consultant', 'Consultant'),
+    ]
+    
+    EMPLOYMENT_STATUS_CHOICES = [
+        ('active', 'Active'),
+        ('on_leave', 'On Leave'),
+        ('terminated', 'Terminated'),
+        ('resigned', 'Resigned'),
+    ]
+    
+    WORK_LOCATION_CHOICES = [
+        ('office', 'Office'),
+        ('remote', 'Remote'),
+        ('hybrid', 'Hybrid'),
+    ]
+    
+    # One-to-one relationship with user
+    user = models.OneToOneField(
+        CustomUser,
+        on_delete=models.CASCADE,
+        related_name='staff_profile'
+    )
+    
+    # Professional Information
+    employee_id = models.CharField(
+        max_length=50, 
+        unique=True,
+        help_text="Unique employee identifier"
+    )
+    job_title = models.CharField(max_length=255)
+    department = models.CharField(max_length=255, blank=True)
+    employment_type = models.CharField(
+        max_length=20, 
+        choices=EMPLOYMENT_TYPE_CHOICES,
+        default='full_time'
+    )
+    employment_status = models.CharField(
+        max_length=20,
+        choices=EMPLOYMENT_STATUS_CHOICES,
+        default='active'
+    )
+    start_date = models.DateField()
+    end_date = models.DateField(null=True, blank=True)
+    
+    # Work Details
+    work_location = models.CharField(
+        max_length=20,
+        choices=WORK_LOCATION_CHOICES,
+        default='office'
+    )
+    office_location = models.CharField(max_length=255, blank=True)
+    work_phone_extension = models.CharField(max_length=20, blank=True)
+    reporting_manager = models.ForeignKey(
+        CustomUser,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='direct_reports'
+    )
+    
+    # Professional Details
+    certifications = models.JSONField(
+        default=list,
+        help_text="Array of professional certifications"
+    )
+    education = models.JSONField(
+        default=dict,
+        help_text="Education details including degrees, institutions, and years"
+    )
+    bio = models.TextField(
+        blank=True,
+        help_text="Professional biography or summary"
+    )
+    linkedin_profile = models.URLField(
+        max_length=500,
+        blank=True,
+        help_text="LinkedIn profile URL"
+    )
+    professional_links = models.JSONField(
+        default=dict,
+        help_text="Other professional profile links (GitHub, portfolio, etc.)"
+    )
+    
+    # Emergency & Personal Information
+    emergency_contact_name = models.CharField(max_length=255, blank=True)
+    emergency_contact_phone = models.CharField(max_length=50, blank=True)
+    emergency_contact_relationship = models.CharField(max_length=100, blank=True)
+    
+    # Sensitive personal information (consider encryption in production)
+    date_of_birth = models.DateField(null=True, blank=True)
+    nationality = models.CharField(max_length=100, blank=True)
+    personal_email = models.EmailField(blank=True)
+    home_address = models.JSONField(
+        default=dict,
+        help_text="Home address details"
+    )
+    
+    # Administrative
+    internal_notes = models.TextField(
+        blank=True,
+        help_text="Internal HR notes (permission-restricted)"
+    )
+    
+    # Metadata
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    created_by = models.ForeignKey(
+        CustomUser,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='created_staff_profiles'
+    )
+    
+    class Meta:
+        db_table = 'auth_staffprofile'
+        indexes = [
+            models.Index(fields=['employee_id']),
+            models.Index(fields=['department']),
+            models.Index(fields=['reporting_manager']),
+            models.Index(fields=['employment_status']),
+        ]
+        ordering = ['employee_id']
+    
+    def __str__(self):
+        return f"{self.user.get_full_name()} - {self.job_title} ({self.employee_id})"
+    
+    @property
+    def is_manager(self):
+        """Check if this staff member is a manager"""
+        return self.direct_reports.exists()
+    
+    @property
+    def full_name(self):
+        """Get full name from associated user"""
+        return self.user.get_full_name()
+    
+    @property
+    def email(self):
+        """Get work email from associated user"""
+        return self.user.email
+    
+    def get_direct_reports(self):
+        """Get all direct reports"""
+        return StaffProfile.objects.filter(reporting_manager=self.user)
+    
+    def get_reporting_chain(self):
+        """Get the reporting chain up to the top"""
+        chain = []
+        current = self.reporting_manager
+        while current:
+            try:
+                profile = current.staff_profile
+                chain.append(profile)
+                current = profile.reporting_manager
+            except StaffProfile.DoesNotExist:
+                break
+        return chain

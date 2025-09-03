@@ -182,6 +182,7 @@ class UnipileClient:
                     # Check content type to determine how to parse response
                     content_type = response.headers.get('content-type', '').lower()
                     
+                    
                     if content_type.startswith('image/') or 'binary' in content_type or 'octet-stream' in content_type:
                         # Handle binary data (images, files, etc.)
                         if response.status in [200, 201]:

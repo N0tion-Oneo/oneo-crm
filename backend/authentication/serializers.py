@@ -10,7 +10,8 @@ from django.core.exceptions import ValidationError
 from django.utils import timezone
 from .models import (
     UserType, UserSession, ExtendedPermission, UserTypePermission,
-    UserTypePipelinePermission, UserTypeFieldPermission, UserPipelinePermissionOverride
+    UserTypePipelinePermission, UserTypeFieldPermission, UserPipelinePermissionOverride,
+    StaffProfile
 )
 
 User = get_user_model()
@@ -461,3 +462,190 @@ class UserPipelinePermissionOverrideSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Expiry date must be in the future")
         
         return data
+
+
+class DynamicFieldsModelSerializer(serializers.ModelSerializer):
+    """
+    A ModelSerializer that can dynamically include/exclude fields
+    based on permissions.
+    """
+    
+    def __init__(self, *args, **kwargs):
+        # Don't pass the 'fields' arg up to the superclass
+        fields = kwargs.pop('fields', None)
+        exclude_fields = kwargs.pop('exclude_fields', None)
+
+        # Instantiate the superclass normally
+        super().__init__(*args, **kwargs)
+
+        if fields is not None:
+            # Drop any fields that are not specified in the `fields` argument.
+            allowed = set(fields)
+            existing = set(self.fields)
+            for field_name in existing - allowed:
+                self.fields.pop(field_name)
+
+        if exclude_fields is not None:
+            # Remove fields specified in the `exclude_fields` argument.
+            for field_name in exclude_fields:
+                self.fields.pop(field_name, None)
+
+
+class StaffProfileSerializer(DynamicFieldsModelSerializer):
+    """
+    Full StaffProfile serializer with all fields.
+    Field visibility is controlled by the ViewSet based on permissions.
+    """
+    
+    # Read-only fields from the related user
+    user_email = serializers.EmailField(source='user.email', read_only=True)
+    user_full_name = serializers.CharField(source='user.get_full_name', read_only=True)
+    user_phone = serializers.CharField(source='user.phone', read_only=True)
+    user_type = serializers.CharField(source='user.user_type.name', read_only=True)
+    
+    # Manager information
+    reporting_manager_email = serializers.EmailField(
+        source='reporting_manager.email', 
+        read_only=True,
+        allow_null=True
+    )
+    reporting_manager_name = serializers.CharField(
+        source='reporting_manager.get_full_name',
+        read_only=True,
+        allow_null=True
+    )
+    
+    # Computed fields
+    is_manager = serializers.BooleanField(read_only=True)
+    direct_reports_count = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = StaffProfile
+        fields = [
+            'id', 'user', 'user_email', 'user_full_name', 'user_phone', 'user_type',
+            
+            # Professional Information
+            'employee_id', 'job_title', 'department', 'employment_type',
+            'employment_status', 'start_date', 'end_date',
+            
+            # Work Details
+            'work_location', 'office_location', 'work_phone_extension',
+            'reporting_manager', 'reporting_manager_email', 'reporting_manager_name',
+            
+            # Professional Details
+            'certifications', 'education',
+            'bio', 'linkedin_profile', 'professional_links',
+            
+            # Emergency & Personal (Sensitive)
+            'emergency_contact_name', 'emergency_contact_phone',
+            'emergency_contact_relationship', 'date_of_birth',
+            'nationality', 'personal_email', 'home_address',
+            
+            # Administrative (Restricted)
+            'internal_notes',
+            
+            # Metadata
+            'is_manager', 'direct_reports_count',
+            'created_at', 'updated_at', 'created_by'
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at', 'is_manager']
+    
+    def get_direct_reports_count(self, obj):
+        """Get count of direct reports"""
+        return obj.user.direct_reports.count()
+    
+    def validate_employee_id(self, value):
+        """Ensure employee_id is unique"""
+        qs = StaffProfile.objects.filter(employee_id=value)
+        if self.instance:
+            qs = qs.exclude(pk=self.instance.pk)
+        if qs.exists():
+            raise serializers.ValidationError("Employee ID must be unique")
+        return value
+    
+    def validate_reporting_manager(self, value):
+        """Validate reporting manager to prevent circular references"""
+        if self.instance and value:
+            # Check if this would create a circular reference
+            current = value
+            while current:
+                if current == self.instance.user:
+                    raise serializers.ValidationError(
+                        "This would create a circular reporting structure"
+                    )
+                try:
+                    current = current.staff_profile.reporting_manager
+                except StaffProfile.DoesNotExist:
+                    break
+        return value
+
+
+class StaffProfilePublicSerializer(serializers.ModelSerializer):
+    """
+    Limited StaffProfile serializer for public/peer viewing.
+    Only includes non-sensitive professional information.
+    """
+    
+    user_email = serializers.EmailField(source='user.email', read_only=True)
+    user_full_name = serializers.CharField(source='user.get_full_name', read_only=True)
+    user_type = serializers.CharField(source='user.user_type.name', read_only=True)
+    reporting_manager_name = serializers.CharField(
+        source='reporting_manager.get_full_name',
+        read_only=True,
+        allow_null=True
+    )
+    
+    class Meta:
+        model = StaffProfile
+        fields = [
+            'id', 'user_email', 'user_full_name', 'user_type',
+            'job_title', 'department', 'work_location', 'office_location',
+            'bio', 'linkedin_profile', 'reporting_manager_name'
+        ]
+        read_only_fields = fields
+
+
+class StaffProfileCreateSerializer(serializers.ModelSerializer):
+    """
+    Serializer for creating new staff profiles.
+    """
+    
+    class Meta:
+        model = StaffProfile
+        fields = [
+            'user', 'employee_id', 'job_title', 'department',
+            'employment_type', 'employment_status', 'start_date',
+            'work_location', 'office_location', 'work_phone_extension',
+            'reporting_manager'
+        ]
+    
+    def validate_user(self, value):
+        """Ensure user doesn't already have a profile"""
+        if StaffProfile.objects.filter(user=value).exists():
+            raise serializers.ValidationError(
+                "This user already has a staff profile"
+            )
+        return value
+    
+    def validate_employee_id(self, value):
+        """Ensure employee_id is unique"""
+        if StaffProfile.objects.filter(employee_id=value).exists():
+            raise serializers.ValidationError("Employee ID must be unique")
+        return value
+
+
+class StaffProfileSummarySerializer(serializers.ModelSerializer):
+    """
+    Minimal serializer for listing staff profiles.
+    """
+    
+    user_email = serializers.EmailField(source='user.email', read_only=True)
+    user_full_name = serializers.CharField(source='user.get_full_name', read_only=True)
+    
+    class Meta:
+        model = StaffProfile
+        fields = [
+            'id', 'employee_id', 'user_email', 'user_full_name',
+            'job_title', 'department', 'employment_status'
+        ]
+        read_only_fields = fields

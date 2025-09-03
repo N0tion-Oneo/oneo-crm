@@ -64,6 +64,7 @@ class UnipileEmailClient:
                 params['from'] = from_email
                 
             response = await self.client._make_request('GET', 'emails', params=params)
+            
             return response
         except Exception as e:
             logger.error(f"Failed to get emails: {e}")

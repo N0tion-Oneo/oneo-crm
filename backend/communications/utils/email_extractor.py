@@ -250,9 +250,11 @@ def extract_email_message_id(webhook_data: dict) -> str:
         return ''
     
     # Priority order for message ID fields
+    # IMPORTANT: email_id is checked first to ensure webhook and sync use same UniPile ID
     id_fields = [
-        'message_id',        # Standard email Message-ID header
-        'id',                # UniPile message ID
+        'email_id',          # UniPile email ID (used in webhooks)
+        'id',                # UniPile message ID (used in sync)
+        'message_id',        # Standard email Message-ID header (Gmail/Outlook)
         'external_id',       # External system ID
         'uid'                # UID from email server
     ]

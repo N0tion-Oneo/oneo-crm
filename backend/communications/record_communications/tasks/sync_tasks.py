@@ -68,6 +68,32 @@ def sync_record_communications(
                 except User.DoesNotExist:
                     pass
             
+            # Check if there's an existing sync job for this Celery task
+            # This prevents creating duplicate sync jobs
+            sync_job = None
+            celery_task_id = self.request.id
+            if celery_task_id:
+                try:
+                    sync_job = RecordSyncJob.objects.get(
+                        celery_task_id=celery_task_id,
+                        record_id=record_id
+                    )
+                    logger.info(f"Found existing sync job {sync_job.id} for Celery task {celery_task_id}")
+                    # Update status to running since we're starting now
+                    if sync_job.status == 'pending':
+                        sync_job.status = 'running'
+                        sync_job.started_at = timezone.now()
+                        sync_job.save(update_fields=['status', 'started_at'])
+                except RecordSyncJob.DoesNotExist:
+                    logger.debug(f"No existing sync job found for Celery task {celery_task_id}")
+                except RecordSyncJob.MultipleObjectsReturned:
+                    # If somehow there are multiple, use the most recent
+                    sync_job = RecordSyncJob.objects.filter(
+                        celery_task_id=celery_task_id,
+                        record_id=record_id
+                    ).order_by('-created_at').first()
+                    logger.warning(f"Multiple sync jobs found for Celery task {celery_task_id}, using most recent")
+            
             # Initialize UniPile client using global settings
             from django.conf import settings
             
@@ -88,6 +114,7 @@ def sync_record_communications(
                 record_id=record_id,
                 triggered_by=triggered_by,
                 trigger_reason=trigger_reason,
+                sync_job=sync_job,  # Pass the existing sync job to the orchestrator
                 channels_to_sync=channels_to_sync
             )
             

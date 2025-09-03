@@ -2,7 +2,7 @@ from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.contrib.auth.forms import UserCreationForm, UserChangeForm
 from django.utils.html import format_html
-from .models import CustomUser, UserType, UserSession, ExtendedPermission, UserTypePermission
+from .models import CustomUser, UserType, UserSession, ExtendedPermission, UserTypePermission, StaffProfile
 
 
 class CustomUserCreationForm(UserCreationForm):
@@ -17,11 +17,28 @@ class CustomUserChangeForm(UserChangeForm):
         fields = '__all__'
 
 
+class StaffProfileInline(admin.StackedInline):
+    """Inline admin for StaffProfile in CustomUser admin"""
+    model = StaffProfile
+    fk_name = 'user'  # Specify which ForeignKey to use (not reporting_manager)
+    extra = 0
+    fields = (
+        'employee_id', 'job_title', 'department',
+        'employment_type', 'employment_status', 'start_date', 'end_date',
+        'work_location', 'office_location', 'work_phone_extension',
+        'reporting_manager', 'bio', 'linkedin_profile'
+    )
+    verbose_name = 'Staff Profile'
+    verbose_name_plural = 'Staff Profile'
+    can_delete = False
+
+
 @admin.register(CustomUser)
 class CustomUserAdmin(BaseUserAdmin):
     add_form = CustomUserCreationForm
     form = CustomUserChangeForm
     model = CustomUser
+    inlines = [StaffProfileInline]  # Add inline for staff profile
     
     list_display = (
         'username', 'email', 'user_type', 'is_active', 
@@ -203,3 +220,78 @@ class UserTypePermissionAdmin(admin.ModelAdmin):
     )
     
     readonly_fields = ('created_at',)
+
+
+@admin.register(StaffProfile)
+class StaffProfileAdmin(admin.ModelAdmin):
+    """Admin for StaffProfile model with comprehensive management"""
+    
+    list_display = (
+        'employee_id', 'get_user_name', 'get_user_email', 'job_title', 
+        'department', 'employment_status', 'reporting_manager', 'start_date'
+    )
+    list_filter = (
+        'employment_status', 'employment_type', 'work_location', 
+        'department', 'start_date'
+    )
+    search_fields = (
+        'employee_id', 'user__email', 'user__first_name', 
+        'user__last_name', 'job_title', 'department'
+    )
+    ordering = ('employee_id',)
+    
+    fieldsets = (
+        ('User Information', {
+            'fields': ('user',),
+        }),
+        ('Professional Information', {
+            'fields': (
+                'employee_id', 'job_title', 'department',
+                'employment_type', 'employment_status',
+                'start_date', 'end_date'
+            )
+        }),
+        ('Work Details', {
+            'fields': (
+                'work_location', 'office_location', 
+                'work_phone_extension', 'reporting_manager'
+            )
+        }),
+        ('Professional Details', {
+            'fields': (
+                'certifications', 'languages_spoken', 'education',
+                'bio', 'linkedin_profile', 'professional_links'
+            ),
+            'classes': ('collapse',)
+        }),
+        ('Emergency & Personal Information', {
+            'fields': (
+                'emergency_contact_name', 'emergency_contact_phone',
+                'emergency_contact_relationship', 'date_of_birth',
+                'nationality', 'personal_email', 'home_address'
+            ),
+            'classes': ('collapse',)
+        }),
+        ('Administrative', {
+            'fields': ('internal_notes', 'created_at', 'updated_at', 'created_by'),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    readonly_fields = ('created_at', 'updated_at')
+    raw_id_fields = ('user', 'reporting_manager', 'created_by')
+    
+    def get_user_name(self, obj):
+        return obj.user.get_full_name()
+    get_user_name.short_description = 'Name'
+    get_user_name.admin_order_field = 'user__first_name'
+    
+    def get_user_email(self, obj):
+        return obj.user.email
+    get_user_email.short_description = 'Email'
+    get_user_email.admin_order_field = 'user__email'
+    
+    def save_model(self, request, obj, form, change):
+        if not change:  # Creating a new object
+            obj.created_by = request.user
+        super().save_model(request, obj, form, change)

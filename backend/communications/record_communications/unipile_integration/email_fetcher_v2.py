@@ -147,6 +147,7 @@ class EmailFetcherV2:
                 
                 logger.info(f"  Fetching page {page} for {email_address} (batch size: {batch_size}, cursor: {cursor[:20] if cursor else 'None'}...)")
                 
+                # Make the UniPile API call
                 response = async_to_sync(self.unipile_client.email.get_emails)(**params)
                 
                 if not response or 'items' not in response:
@@ -154,6 +155,33 @@ class EmailFetcherV2:
                     break
                 
                 emails = response.get('items', [])
+                
+                # Log raw UniPile response for cowanr emails
+                for email in emails:
+                    from_attendee = email.get('from_attendee', {})
+                    if 'cowanr' in from_attendee.get('identifier', '').lower():
+                        logger.info(f"RAW UNIPILE RESPONSE for cowanr email:")
+                        logger.info(f"  from_attendee: {from_attendee}")
+                        logger.info(f"  display_name raw: {repr(from_attendee.get('display_name', ''))}")
+                    
+                    for to_att in email.get('to_attendees', []):
+                        if 'cowanr' in to_att.get('identifier', '').lower():
+                            logger.info(f"RAW UNIPILE RESPONSE for cowanr in to_attendees:")
+                            logger.info(f"  to_attendee: {to_att}")
+                            logger.info(f"  display_name raw: {repr(to_att.get('display_name', ''))}")
+                
+                # Log if we see any quotes in display names from UniPile
+                for email in emails:
+                    from_att = email.get('from_attendee', {})
+                    if from_att and from_att.get('display_name', ''):
+                        if '"' in from_att['display_name'] or "'" in from_att['display_name']:
+                            logger.warning(f"RAW UniPile API returned quoted display_name in from_attendee: >>{from_att['display_name']}<<")
+                    
+                    for field in ['to_attendees', 'cc_attendees', 'bcc_attendees']:
+                        for att in email.get(field, []):
+                            if att and att.get('display_name', ''):
+                                if '"' in att['display_name'] or "'" in att['display_name']:
+                                    logger.warning(f"RAW UniPile API returned quoted display_name in {field}: >>{att['display_name']}<<")
                 if not emails:
                     logger.debug(f"No emails in page {page}")
                     break
@@ -162,6 +190,13 @@ class EmailFetcherV2:
                 batch_added = 0
                 for email in emails:
                     if self._is_email_involved(email_address, email):
+                        # Log first email structure to see what fields UniPile sends
+                        if total_fetched == 0:
+                            logger.info(f"First email structure from UniPile:")
+                            logger.info(f"  from_attendee: {email.get('from_attendee', {})}")
+                            if email.get('to_attendees'):
+                                logger.info(f"  to_attendees[0]: {email.get('to_attendees', [])[0] if email.get('to_attendees') else 'none'}")
+                        
                         all_emails.append(email)
                         batch_added += 1
                         total_fetched += 1
@@ -286,11 +321,18 @@ class EmailFetcherV2:
             from_attendee = email.get('from_attendee', {})
             if from_attendee:
                 identifier = from_attendee.get('identifier', '')
+                display_name = from_attendee.get('display_name', '')
+                
+                # Log when we have an identifier but no display name
+                if identifier and not display_name:
+                    logger.debug(f"No display_name for from_attendee: {identifier}")
+                    logger.debug(f"Raw from_attendee data: {from_attendee}")
+                
                 if identifier and identifier not in participants_set:
                     participants_set.add(identifier)
                     participants.append({
                         'email': identifier,
-                        'name': from_attendee.get('display_name', ''),
+                        'name': display_name,
                         'type': 'from'
                     })
             

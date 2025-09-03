@@ -13,6 +13,7 @@ from .views.auth import AuthViewSet
 from .views.field_types import FieldTypeViewSet
 from .views.global_options import GlobalOptionsViewSet
 from .views.users import UserViewSet
+from .views.staff_profiles import StaffProfileViewSet
 
 from .views.duplicates import (
     DuplicateRuleViewSet, URLExtractionRuleViewSet, DuplicateRuleTestViewSet,
@@ -70,6 +71,7 @@ router.register(r'auth', AuthViewSet, basename='auth')
 router.register(r'field-types', FieldTypeViewSet, basename='field-types')
 router.register(r'global-options', GlobalOptionsViewSet, basename='global-options')
 router.register(r'users', UserViewSet, basename='users')
+router.register(r'staff-profiles', StaffProfileViewSet, basename='staff-profiles')
 
 # Duplicates endpoints (simplified system)
 router.register(r'duplicate-rules', DuplicateRuleViewSet, basename='duplicate-rule')

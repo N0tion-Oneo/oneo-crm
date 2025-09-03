@@ -67,6 +67,25 @@ class DataTransformer:
         Returns:
             Dict ready for Message model creation
         """
+        # Log if we see quotes in display names
+        from_attendee = message_data.get('from_attendee', {})
+        if from_attendee and from_attendee.get('display_name', ''):
+            if '"' in from_attendee['display_name'] or "'" in from_attendee['display_name']:
+                logger.warning(f"UniPile sent quoted display_name in from_attendee: {from_attendee['display_name']}")
+        
+        for field in ['to_attendees', 'cc_attendees', 'bcc_attendees']:
+            for att in message_data.get(field, []):
+                if att and att.get('display_name', ''):
+                    if '"' in att['display_name'] or "'" in att['display_name']:
+                        logger.warning(f"UniPile sent quoted display_name in {field}: {att['display_name']}")
+        
+        # Extract subject from the message data
+        subject = message_data.get('subject', '')
+        
+        # Log if subject is missing for debugging
+        if not subject:
+            logger.debug(f"Email message {message_data.get('id', 'unknown')} has no subject field")
+        
         # Determine direction based on from/to fields
         direction = self._determine_email_direction(message_data, channel_id)
         
@@ -90,33 +109,49 @@ class DataTransformer:
         from_data = None
         from_attendee = message_data.get('from_attendee', {})
         if from_attendee:
+            # Clean quotes that UniPile preserves from email headers
+            display_name = from_attendee.get('display_name', '')
+            if display_name:
+                display_name = display_name.strip('\'"')
             from_data = {
                 'email': from_attendee.get('identifier', ''),
-                'name': from_attendee.get('display_name', '')
+                'name': display_name
             }
         
         # Convert to_attendees to simpler format
         to_data = []
         for attendee in message_data.get('to_attendees', []):
+            # Clean quotes that UniPile preserves from email headers
+            display_name = attendee.get('display_name', '')
+            if display_name:
+                display_name = display_name.strip('\'"')
             to_data.append({
                 'email': attendee.get('identifier', ''),
-                'name': attendee.get('display_name', '')
+                'name': display_name
             })
         
         # Convert cc_attendees
         cc_data = []
         for attendee in message_data.get('cc_attendees', []):
+            # Clean quotes that UniPile preserves from email headers
+            display_name = attendee.get('display_name', '')
+            if display_name:
+                display_name = display_name.strip('\'"')
             cc_data.append({
                 'email': attendee.get('identifier', ''),
-                'name': attendee.get('display_name', '')
+                'name': display_name
             })
         
         # Convert bcc_attendees
         bcc_data = []
         for attendee in message_data.get('bcc_attendees', []):
+            # Clean quotes that UniPile preserves from email headers
+            display_name = attendee.get('display_name', '')
+            if display_name:
+                display_name = display_name.strip('\'"')
             bcc_data.append({
                 'email': attendee.get('identifier', ''),
-                'name': attendee.get('display_name', '')
+                'name': display_name
             })
         
         # Extract content - UniPile provides body (HTML) and body_plain (text)
@@ -167,6 +202,8 @@ class DataTransformer:
             'in_reply_to': message_data.get('in_reply_to'),
             'references': message_data.get('references', []),
             'attachments': message_data.get('attachments', []),
+            'subject': subject,  # Also store subject in metadata for redundancy
+            'unipile_id': message_data.get('id'),  # Store UniPile ID for reference
             'unipile_data': message_data
         }
         
@@ -192,6 +229,7 @@ class DataTransformer:
             'channel_id': channel_id,
             'direction': direction,
             'content': content,
+            'subject': subject,  # Use the subject we extracted earlier
             'created_at': self._parse_timestamp(message_data.get('created_at') or message_data.get('date')),
             'metadata': metadata,
             'status': 'delivered'  # Emails are always delivered if we received them

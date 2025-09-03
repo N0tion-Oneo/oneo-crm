@@ -50,6 +50,7 @@ class MessageStore:
                 'sender_participant': sender_participant,
                 'direction': message_data.get('direction', 'inbound'),
                 'content': message_data.get('content', ''),
+                'subject': message_data.get('subject', ''),  # Include subject for emails
                 'sent_at': message_data.get('sent_at'),
                 'created_at': message_data.get('created_at', timezone.now()),
                 'metadata': message_data.get('metadata', {}),
@@ -157,6 +158,7 @@ class MessageStore:
                     sender_participant=sender_participant,
                     direction=msg_data.get('direction', 'inbound'),
                     content=msg_data.get('content', ''),
+                    subject=msg_data.get('subject', ''),  # Include subject field
                     sent_at=msg_data.get('sent_at'),
                     received_at=msg_data.get('received_at'),
                     created_at=msg_data.get('created_at', timezone.now()),

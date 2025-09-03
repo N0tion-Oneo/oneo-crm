@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
-import { MoreHorizontal, Edit, Shield, Mail, Trash2, UserCheck, UserX, Key } from 'lucide-react'
+import { MoreHorizontal, Edit, Shield, Mail, Trash2, UserCheck, UserX, Key, Briefcase } from 'lucide-react'
 import { api } from '@/lib/api'
 import UserPermissionModal from './UserPermissionModal'
 
@@ -21,9 +21,10 @@ interface UserActionsDropdownProps {
   user: User
   onUserUpdated: () => void
   onEditUser: (user: User) => void
+  onViewStaffProfile: (user: User) => void
 }
 
-export default function UserActionsDropdown({ user, onUserUpdated, onEditUser }: UserActionsDropdownProps) {
+export default function UserActionsDropdown({ user, onUserUpdated, onEditUser, onViewStaffProfile }: UserActionsDropdownProps) {
   const [isOpen, setIsOpen] = useState(false)
   const [loading, setLoading] = useState(false)
   const [showPermissionModal, setShowPermissionModal] = useState(false)
@@ -209,6 +210,18 @@ export default function UserActionsDropdown({ user, onUserUpdated, onEditUser }:
             >
               <Edit className="w-4 h-4 mr-3" />
               Edit User
+            </button>
+
+            {/* Staff Profile */}
+            <button
+              onClick={() => {
+                onViewStaffProfile(user)
+                setIsOpen(false)
+              }}
+              className="flex items-center w-full px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700"
+            >
+              <Briefcase className="w-4 h-4 mr-3" />
+              Staff Profile
             </button>
 
             {/* View Permissions */}

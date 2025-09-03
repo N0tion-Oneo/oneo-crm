@@ -149,10 +149,41 @@ export function ConversationList({
     }
   }
 
-  const getParticipantDisplay = (participants: Participant[]) => {
+  const getParticipantDisplay = (conversation: Conversation) => {
+    // For conversations with a last message, prefer the sender name
+    if (conversation.last_message?.sender_name && 
+        conversation.last_message.sender_name !== 'Unknown') {
+      // For outbound messages, show the recipient
+      if (conversation.last_message.direction === 'outbound') {
+        // Try to get the first participant that isn't the sender
+        const recipient = conversation.participants[0]
+        if (recipient) {
+          // If the name looks like an email, try to extract a better display
+          const displayName = recipient.name || recipient.display_name
+          if (displayName && !displayName.includes('@')) {
+            return displayName
+          }
+          // Fall back to email if that's all we have
+          return recipient.display_name
+        }
+      } else {
+        // For inbound messages, use the sender name from last message
+        return conversation.last_message.sender_name
+      }
+    }
+    
+    // Fall back to participants list
+    const participants = conversation.participants
     if (participants.length === 0) return 'Unknown'
-    if (participants.length === 1) return participants[0].display_name
-    return `${participants[0].display_name} +${participants.length - 1}`
+    
+    // Check if first participant has a real name (not email)
+    const firstParticipant = participants[0]
+    const displayName = firstParticipant.name || firstParticipant.display_name
+    
+    if (participants.length === 1) {
+      return displayName
+    }
+    return `${displayName} +${participants.length - 1}`
   }
 
   const getInitials = (name: string) => {
@@ -210,7 +241,7 @@ export function ConversationList({
                 <div className="flex items-start justify-between gap-2 mb-0.5">
                   <div className="flex-1 min-w-0">
                     <h4 className="text-sm font-medium text-gray-900 dark:text-white truncate">
-                      {getParticipantDisplay(conversation.participants)}
+                      {getParticipantDisplay(conversation)}
                     </h4>
                     <p className="text-xs text-gray-500 dark:text-gray-400 truncate">
                       {conversation.channel_name}

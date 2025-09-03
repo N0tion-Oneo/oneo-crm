@@ -99,13 +99,28 @@ echo "🤖 Starting Celery workers..."
 
 # AI Processing worker
 echo "  • Starting AI processing worker..."
-celery -A oneo_crm worker --loglevel=info --queues=ai_processing,maintenance --concurrency=1 --pool=solo &
+celery -A oneo_crm worker -n ai_worker@%h --loglevel=info --queues=ai_processing --concurrency=1 --pool=solo &
 CELERY_AI_PID=$!
+
+# Workflows worker (handles workflow execution and management)
+echo "  • Starting workflows worker..."
+celery -A oneo_crm worker -n workflows_worker@%h --loglevel=info --queues=workflows --concurrency=1 --pool=solo &
+CELERY_WORKFLOWS_PID=$!
+
+# Communications Maintenance worker (handles communication cleanup and maintenance)
+echo "  • Starting communications maintenance worker..."
+celery -A oneo_crm worker -n comm_maint_worker@%h --loglevel=info --queues=communications_maintenance --concurrency=1 --pool=solo &
+CELERY_COMM_MAINT_PID=$!
 
 # Background sync worker (handles record-level communication sync)
 echo "  • Starting background sync worker (record communications)..."
-celery -A oneo_crm worker --loglevel=info --queues=background_sync --concurrency=1 --pool=solo &
+celery -A oneo_crm worker -n sync_worker@%h --loglevel=info --queues=background_sync --concurrency=1 --pool=solo &
 CELERY_SYNC_PID=$!
+
+# Analytics worker (handles statistics and analytics tasks)
+echo "  • Starting analytics worker (communication statistics)..."
+celery -A oneo_crm worker -n analytics_worker@%h --loglevel=info --queues=analytics --concurrency=1 --pool=solo &
+CELERY_ANALYTICS_PID=$!
 
 # Give Celery workers a moment to start
 echo "  • Waiting for workers to initialize..."
@@ -119,10 +134,28 @@ else
     echo "  ❌ AI processing worker failed to start"
 fi
 
+if ps -p $CELERY_WORKFLOWS_PID > /dev/null; then
+    echo "  ✅ Workflows worker started (PID: $CELERY_WORKFLOWS_PID) - handles workflow execution"
+else
+    echo "  ❌ Workflows worker failed to start"
+fi
+
+if ps -p $CELERY_COMM_MAINT_PID > /dev/null; then
+    echo "  ✅ Communications maintenance worker started (PID: $CELERY_COMM_MAINT_PID)"
+else
+    echo "  ❌ Communications maintenance worker failed to start"
+fi
+
 if ps -p $CELERY_SYNC_PID > /dev/null; then
     echo "  ✅ Background sync worker started (PID: $CELERY_SYNC_PID) - handles record communications"
 else
     echo "  ❌ Background sync worker failed to start"
+fi
+
+if ps -p $CELERY_ANALYTICS_PID > /dev/null; then
+    echo "  ✅ Analytics worker started (PID: $CELERY_ANALYTICS_PID) - handles communication analytics"
+else
+    echo "  ❌ Analytics worker failed to start"
 fi
 
 # Start the Django development server with ASGI support
@@ -140,8 +173,11 @@ echo "   • Workflows: ws://localhost:8000/ws/workflows/"
 echo ""
 echo "🤖 Background services:"
 echo "   ✅ Django ASGI server (WebSocket + HTTP)"
-echo "   ✅ Celery AI worker (AI processing + maintenance)"
+echo "   ✅ Celery AI worker (AI processing)"
+echo "   ✅ Celery workflows worker (workflow execution and management)"
+echo "   ✅ Celery communications maintenance worker (cleanup and maintenance)"
 echo "   ✅ Celery sync worker (background sync + record-level communications)"
+echo "   ✅ Celery analytics worker (statistics + hot conversations)"
 echo ""
 echo "📋 Useful commands:"
 echo "   • View Celery logs: celery -A oneo_crm events"

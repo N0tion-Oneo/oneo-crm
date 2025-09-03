@@ -15,12 +15,35 @@ from .models import Message, CommunicationAnalytics
 
 # Import record communication tasks to ensure they're discovered
 # Note: tasks.py re-exports from sync_tasks.py for proper autodiscovery
+# Import both ways to ensure Celery properly discovers the tasks
 from .record_communications.tasks import (
     sync_record_communications,
     process_webhook_message_task,
     sync_all_records_for_pipeline,
     cleanup_old_sync_jobs,
     check_stale_profiles
+)
+
+# Also import directly from sync_tasks for Celery autodiscovery
+from .record_communications.tasks.sync_tasks import (
+    sync_record_communications as sync_record_communications_task,
+    process_webhook_message_task as process_webhook_message,
+    sync_all_records_for_pipeline as sync_all_records,
+    cleanup_old_sync_jobs as cleanup_sync_jobs,
+    check_stale_profiles as check_stale
+)
+
+# Import field maintenance tasks for autodiscovery
+# Import all tasks from field_maintenance to ensure Celery discovers them
+from communications.tasks.field_maintenance import (
+    generate_daily_analytics,
+    update_participant_statistics,
+    update_channel_statistics,
+    detect_hot_conversations,
+    cleanup_expired_tokens,
+    process_scheduled_syncs,
+    verify_communication_links,
+    update_conversation_types
 )
 
 logger = logging.getLogger(__name__)

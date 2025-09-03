@@ -869,9 +869,17 @@ class Participant(models.Model):
     
     def get_display_name(self):
         """Get the best available display name"""
+        # Debug logging to track quotes
+        import logging
+        logger = logging.getLogger(__name__)
+        
         if self.name:
+            if "'" in self.name or '"' in self.name:
+                logger.warning(f"Participant.name contains quotes: >>{self.name}<< (email: {self.email})")
             return self.name
         if self.email:
+            if "'" in self.email or '"' in self.email:
+                logger.warning(f"Participant.email contains quotes: >>{self.email}<<")
             return self.email
         if self.phone:
             return self.phone

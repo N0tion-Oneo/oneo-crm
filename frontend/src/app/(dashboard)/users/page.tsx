@@ -1,13 +1,14 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Search, Plus, MoreHorizontal, Edit, Trash2, Shield, Mail } from 'lucide-react'
+import { Search, Plus, MoreHorizontal, Edit, Trash2, Shield, Mail, Briefcase } from 'lucide-react'
 import { useAuth } from '@/features/auth/context'
 import { api } from '@/lib/api'
 import { PermissionGuard, PermissionButton } from '@/components/permissions/PermissionGuard'
 import UserCreateModal from './components/UserCreateModal'
 import UserEditModal from './components/UserEditModal'
 import UserActionsDropdown from './components/UserActionsDropdown'
+import StaffProfileModal from './components/StaffProfileModal'
 
 interface User {
   id: number
@@ -25,6 +26,12 @@ interface User {
   is_staff: boolean
   last_login: string | null
   date_joined: string
+  // Staff profile fields (if loaded)
+  staff_profile?: {
+    job_title?: string
+    department?: string
+    employment_status?: string
+  }
 }
 
 interface UserType {
@@ -63,6 +70,8 @@ export default function UsersPage() {
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [showEditModal, setShowEditModal] = useState(false)
   const [selectedUser, setSelectedUser] = useState<User | null>(null)
+  const [showStaffProfileModal, setShowStaffProfileModal] = useState(false)
+  const [staffProfileUser, setStaffProfileUser] = useState<User | null>(null)
 
   // Load users and user types
   const loadData = async () => {
@@ -90,7 +99,8 @@ export default function UsersPage() {
         is_active: userData.is_active || false,
         is_staff: userData.is_staff || false,
         last_login: userData.last_login,
-        date_joined: userData.date_joined || ''
+        date_joined: userData.date_joined || '',
+        staff_profile: userData.staff_profile || null
       }))
       
       setUsers(transformedUsers)
@@ -117,6 +127,11 @@ export default function UsersPage() {
   const handleEditUser = (user: User) => {
     setSelectedUser(user)
     setShowEditModal(true)
+  }
+
+  const handleViewStaffProfile = (user: User) => {
+    setStaffProfileUser(user)
+    setShowStaffProfileModal(true)
   }
 
   // Filter users based on search and user type
@@ -238,6 +253,12 @@ export default function UsersPage() {
                   User
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                  Job Title
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                  Department
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
                   Role
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
@@ -267,14 +288,25 @@ export default function UsersPage() {
                         </div>
                       </div>
                       <div className="ml-4">
-                        <div className="text-sm font-medium text-gray-900 dark:text-white">
-                          {user.full_name}
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-medium text-gray-900 dark:text-white">
+                            {user.full_name}
+                          </span>
+                          {user.staff_profile && (
+                            <Briefcase className="w-3 h-3 text-blue-500" title="Has Staff Profile" />
+                          )}
                         </div>
                         <div className="text-sm text-gray-500 dark:text-gray-400">
                           {user.email}
                         </div>
                       </div>
                     </div>
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">
+                    {user.staff_profile?.job_title || '-'}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">
+                    {user.staff_profile?.department || '-'}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
                     <span className={`inline-flex px-2 py-1 text-xs font-medium rounded-full ${getUserTypeColor(user.user_type_name)}`}>
@@ -301,6 +333,7 @@ export default function UsersPage() {
                       user={user as any}
                       onUserUpdated={handleUserUpdated}
                       onEditUser={handleEditUser as any}
+                      onViewStaffProfile={handleViewStaffProfile as any}
                     />
                   </td>
                 </tr>
@@ -371,6 +404,16 @@ export default function UsersPage() {
           setSelectedUser(null)
         }}
         onUserUpdated={handleUserUpdated}
+      />
+      
+      <StaffProfileModal
+        user={staffProfileUser}
+        isOpen={showStaffProfileModal}
+        onClose={() => {
+          setShowStaffProfileModal(false)
+          setStaffProfileUser(null)
+        }}
+        onProfileUpdated={handleUserUpdated}
       />
       </div>
     </PermissionGuard>

@@ -100,7 +100,7 @@ class RecordSyncOrchestrator:
                 }
             )
             
-            # Create sync job if not provided
+            # Create sync job if not provided, otherwise update existing one
             if not sync_job:
                 sync_job = RecordSyncJob.objects.create(
                     record=record,
@@ -118,6 +118,13 @@ class RecordSyncOrchestrator:
                     user=triggered_by, 
                     reason=trigger_reason or 'Manual sync'
                 )
+            else:
+                # Update existing sync job status if it's still pending
+                if sync_job.status == 'pending':
+                    sync_job.status = 'running'
+                    sync_job.started_at = timezone.now()
+                    sync_job.save(update_fields=['status', 'started_at'])
+                    logger.info(f"Updated existing sync job {sync_job.id} to running status")
             
             # Mark sync in progress
             profile.mark_sync_started()
@@ -312,9 +319,63 @@ class RecordSyncOrchestrator:
             all_email_messages = []
             threads_to_process = []
             
+            # Collect attendee names from email threads
+            # PRIORITIZE FROM (sender) names as they're more reliable
+            all_attendee_names = {}
+            from_names = {}  # Track names from FROM field separately
+            
             # Process each email address
             for email_address, threads in email_data.items():
                 for thread_data in threads:
+                    # First pass: Collect FROM names (most reliable)
+                    for msg_data in thread_data.get('messages', []):
+                        from_attendee = msg_data.get('from_attendee', {})
+                        if from_attendee:
+                            email_id = from_attendee.get('identifier', '').lower()
+                            display_name = from_attendee.get('display_name', '')
+                            
+                            # Clean up display name - remove quotes and check if it's just the email
+                            if display_name:
+                                # Strip surrounding quotes
+                                cleaned_name = display_name.strip().strip("'\"")
+                                
+                                # If it's not just the email address, store it
+                                if cleaned_name and cleaned_name.lower() != email_id:
+                                    # FROM names are the most reliable - always use them
+                                    from_names[email_id] = cleaned_name
+                                    all_attendee_names[email_id] = cleaned_name
+                                    logger.debug(f"Found FROM name for {email_id}: '{cleaned_name}'")
+                    
+                    # Second pass: Collect TO/CC/BCC names only if we don't have a FROM name
+                    for msg_data in thread_data.get('messages', []):
+                        for field in ['to_attendees', 'cc_attendees', 'bcc_attendees']:
+                            for attendee in msg_data.get(field, []):
+                                email_id = attendee.get('identifier', '').lower()
+                                display_name = attendee.get('display_name', '')
+                                
+                                # Only use TO/CC/BCC names if we don't have a FROM name for this email
+                                if email_id not in from_names and display_name:
+                                    # Clean up display name
+                                    cleaned_name = display_name.strip().strip("'\"")
+                                    
+                                    # If it's not just the email address and better than what we have
+                                    if cleaned_name and cleaned_name.lower() != email_id:
+                                        if email_id not in all_attendee_names or len(cleaned_name) > len(all_attendee_names.get(email_id, '')):
+                                            all_attendee_names[email_id] = cleaned_name
+                                            logger.debug(f"Found TO/CC/BCC name for {email_id}: '{cleaned_name}'")
+                    
+                    # Also check thread participants (but FROM names still take priority)
+                    for participant in thread_data.get('participants', []):
+                        email_id = participant.get('email', '').lower()
+                        name = participant.get('name', '')
+                        
+                        # Only use participant name if we don't have a FROM name
+                        if email_id not in from_names and email_id and name and name != email_id:
+                            cleaned_name = name.strip().strip("'\"")
+                            if cleaned_name and cleaned_name.lower() != email_id:
+                                if email_id not in all_attendee_names or len(cleaned_name) > len(all_attendee_names.get(email_id, '')):
+                                    all_attendee_names[email_id] = cleaned_name
+                    
                     # Transform and store conversation
                     conv_data = self.data_transformer.transform_email_thread(
                         thread_data,
@@ -347,9 +408,18 @@ class RecordSyncOrchestrator:
                     total_conversations += 1
                     total_messages += len(messages_data)
             
-            # Build shared participant cache for ALL email messages
+            logger.info(f"Collected {len(all_attendee_names)} unique email attendee names")
+            
+            # DEBUG: Log what names we collected
+            for email, name in list(all_attendee_names.items())[:5]:
+                logger.info(f"  Attendee: {email} -> '{name}'")
+            
+            # Build shared participant cache for ALL email messages with attendee names
             logger.info(f"Building participant cache for {len(all_email_messages)} email messages")
-            participant_cache = self.message_store.build_participant_cache_for_all_messages(all_email_messages)
+            participant_cache = self.message_store.build_participant_cache_for_all_messages(
+                all_email_messages,
+                attendee_names=all_attendee_names
+            )
             
             # Now store all messages using the shared cache
             for thread_info in threads_to_process:

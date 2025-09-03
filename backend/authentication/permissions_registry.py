@@ -116,6 +116,11 @@ PERMISSION_CATEGORIES = {
         'actions': ['read', 'update', 'grant', 'revoke', 'assign', 'manage_roles'],
         'description': 'Permission management and role assignment',
         'category_display': 'Permission Management'
+    },
+    'staff_profiles': {
+        'actions': ['create', 'read', 'update', 'delete', 'read_all', 'update_all', 'read_sensitive', 'update_sensitive', 'read_admin', 'update_admin'],
+        'description': 'Staff profile management and HR information',
+        'category_display': 'Staff Profiles'
     }
 }
 
@@ -145,6 +150,12 @@ ACTION_DESCRIPTIONS = {
     'access': 'Access and view specific resources',
     'read_all': 'Read all items regardless of ownership or restrictions',
     'submit': 'Submit forms and applications',
+    # Staff profile permissions
+    'update_all': 'Update all staff profiles',
+    'read_sensitive': 'View sensitive personal information',
+    'update_sensitive': 'Edit sensitive personal information', 
+    'read_admin': 'View administrative notes',
+    'update_admin': 'Edit administrative notes',
     # Filter permissions
     'create_filters': 'Create and save new filters',
     'edit_filters': 'Modify existing filters',
@@ -273,7 +284,8 @@ def get_default_permissions_for_role(role_level: str) -> Dict[str, List[str]]:
             'filters': ['create_filters', 'edit_filters', 'delete_filters'],
             'sharing': ['create_shared_views', 'create_shared_forms', 'configure_shared_views_forms', 'revoke_shared_views_forms'],
             'forms': ['create', 'read', 'update', 'delete', 'configure'],
-            'permissions': ['read', 'update', 'grant', 'revoke', 'assign', 'manage_roles']
+            'permissions': ['read', 'update', 'grant', 'revoke', 'assign', 'manage_roles'],
+            'staff_profiles': ['create', 'read', 'update', 'read_all', 'update_all', 'read_sensitive', 'update_sensitive']
         }
     
     elif role_level == 'user':
@@ -296,7 +308,8 @@ def get_default_permissions_for_role(role_level: str) -> Dict[str, List[str]]:
             'filters': ['create_filters', 'edit_filters'],
             'sharing': ['create_shared_views'],
             'forms': ['read', 'submit'],
-            'permissions': ['read']
+            'permissions': ['read'],
+            'staff_profiles': ['read', 'update']  # Users can view and update their own profile
         }
     
     elif role_level == 'viewer':
@@ -319,7 +332,8 @@ def get_default_permissions_for_role(role_level: str) -> Dict[str, List[str]]:
             'filters': [],  # Viewers cannot create or edit filters
             'sharing': [],  # Viewers cannot share
             'forms': ['read'],  # Viewers can only read forms
-            'permissions': ['read']
+            'permissions': ['read'],
+            'staff_profiles': ['read']  # Viewers can only view staff profiles
         }
     
     else:

@@ -33,6 +33,7 @@ interface EmailComposeProps {
   replyTo?: any // Email message to reply to
   replyMode?: 'reply' | 'reply-all' | 'forward' | null
   onCancelReply?: () => void
+  defaultRecipient?: string // For new messages at record level
 }
 
 export function EmailCompose({
@@ -41,9 +42,13 @@ export function EmailCompose({
   onMessageSent,
   replyTo,
   replyMode,
-  onCancelReply
+  onCancelReply,
+  defaultRecipient
 }: EmailComposeProps) {
-  const [to, setTo] = useState('')
+  const [to, setTo] = useState(() => {
+    if (typeof defaultRecipient === 'string') return defaultRecipient
+    return ''
+  })
   const [cc, setCc] = useState('')
   const [bcc, setBcc] = useState('')
   const [subject, setSubject] = useState('')
@@ -124,6 +129,15 @@ export function EmailCompose({
     window.addEventListener('keydown', handleKeyPress)
     return () => window.removeEventListener('keydown', handleKeyPress)
   }, [isExpanded, replyMode, onCancelReply])
+
+  // Initialize recipient for new messages
+  useEffect(() => {
+    if (defaultRecipient && !conversationId && !replyTo) {
+      // Ensure defaultRecipient is a string
+      const recipientStr = typeof defaultRecipient === 'string' ? defaultRecipient : String(defaultRecipient || '')
+      setTo(recipientStr)
+    }
+  }, [defaultRecipient, conversationId, replyTo])
 
   // Initialize fields based on reply mode
   useEffect(() => {
@@ -252,7 +266,7 @@ export function EmailCompose({
     try {
       const payload: any = {
         from_account_id: selectedAccountId,
-        to: to.split(',').map(e => e.trim()).filter(Boolean),
+        to: (to || '').split(',').map(e => e.trim()).filter(Boolean),
         cc: cc ? cc.split(',').map(e => e.trim()).filter(Boolean) : [],
         bcc: bcc ? bcc.split(',').map(e => e.trim()).filter(Boolean) : [],
         subject: subject,
@@ -420,7 +434,7 @@ export function EmailCompose({
               {/* Show draft preview if there's content */}
               {(subject || to) && (
                 <span className="text-xs text-gray-500 dark:text-gray-500 truncate max-w-md">
-                  {to && <span>To: {to.split(',')[0]}{to.includes(',') ? '...' : ''}</span>}
+                  {to && <span>To: {(to || '').split(',')[0]}{(to || '').includes(',') ? '...' : ''}</span>}
                   {to && subject && ' • '}
                   {subject && <span>{subject}</span>}
                 </span>

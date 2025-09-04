@@ -9,7 +9,8 @@ import {
   AlertCircle,
   Users,
   Loader2,
-  CheckCircle
+  CheckCircle,
+  Plus
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -35,6 +36,7 @@ export function RecordCommunicationsPanel({
   const [loadingChannel, setLoadingChannel] = useState<string | null>(null)
   const [replyTo, setReplyTo] = useState<any>(null)
   const [replyMode, setReplyMode] = useState<'reply' | 'reply-all' | 'forward' | null>(null)
+  const [isComposingNew, setIsComposingNew] = useState(false)
   
   const {
     profile,
@@ -62,6 +64,8 @@ export function RecordCommunicationsPanel({
     // Clear reply state when switching tabs
     setReplyTo(null)
     setReplyMode(null)
+    // Clear composing new state
+    setIsComposingNew(false)
     // Reset loading state
     setLoadingChannel(null)
   }, [activeTab])
@@ -130,42 +134,8 @@ export function RecordCommunicationsPanel({
     )
   }
 
-  // Only show "No communications yet" if we have no stats at all (no channels have been synced)
-  // If we have stats but current channel is empty, we'll show the regular UI with empty conversation list
-  const hasAnyMessages = stats && (
-    (stats.channel_breakdown?.email?.messages || 0) +
-    (stats.channel_breakdown?.gmail?.messages || 0) +
-    (stats.channel_breakdown?.whatsapp?.messages || 0) +
-    (stats.channel_breakdown?.linkedin?.messages || 0) > 0
-  )
-  
-  if (!hasAnyMessages && !conversations.length && !profile?.sync_in_progress && !loadingChannel) {
-    return (
-      <div className="flex flex-col h-full max-h-[800px] min-h-[500px] bg-gray-50 dark:bg-gray-900">
-        <div className="flex items-center justify-center h-full">
-          <div className="text-center space-y-4">
-            <div className="flex justify-center">
-              <div className="rounded-full bg-gray-100 dark:bg-gray-800 p-4">
-                <MessageSquare className="w-8 h-8 text-gray-400" />
-              </div>
-            </div>
-            <div>
-              <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
-                No communications yet
-              </p>
-              <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                Start syncing to see emails, messages, and conversations
-              </p>
-            </div>
-            <Button onClick={handleSync} size="sm">
-              <RefreshCw className="w-4 h-4 mr-2" />
-              Start Sync
-            </Button>
-          </div>
-        </div>
-      </div>
-    )
-  }
+  // Remove the blocking "No communications yet" screen entirely
+  // Users can still sync via the sync button in the header or initiate new conversations
 
   return (
     <div className="relative flex flex-col h-full max-h-[800px] min-h-[500px] overflow-hidden bg-gray-50 dark:bg-gray-900">
@@ -180,6 +150,20 @@ export function RecordCommunicationsPanel({
       {/* Header with tabs and sync - Compact */}
       <div className="flex-shrink-0 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
         <div className="flex items-center justify-between p-3 gap-3">
+          <Button
+            onClick={() => {
+              setIsComposingNew(true)
+              setSelectedConversation(null)
+              setReplyTo(null)
+              setReplyMode(null)
+            }}
+            size="sm"
+            variant="outline"
+            className="mr-2"
+          >
+            <Plus className="w-4 h-4 mr-1" />
+            New
+          </Button>
           <Tabs value={activeTab} onValueChange={(value: any) => setActiveTab(value)} className="flex-1">
             <TabsList className="h-9">
             <TabsTrigger value="email" className="flex-1">
@@ -235,6 +219,8 @@ export function RecordCommunicationsPanel({
                       // Clear reply state when switching conversations
                       setReplyTo(null)
                       setReplyMode(null)
+                      // Clear composing new state when selecting a conversation
+                      setIsComposingNew(false)
                     }}
                     onMarkAsRead={async (conversationId, isUnread) => {
                       try {
@@ -265,21 +251,49 @@ export function RecordCommunicationsPanel({
 
             {/* Conversation detail - Takes remaining space */}
             <div className="flex-1 h-full flex flex-col bg-white dark:bg-gray-800 overflow-hidden">
-              {selectedConversation ? (
+              {selectedConversation || isComposingNew ? (
                 <>
                   {/* Messages area with native scroll */}
-                  <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
-                    <ConversationThread
-                      conversationId={selectedConversation}
-                      recordId={recordId}
-                      onReply={handleReply}
-                      onReplyAll={handleReplyAll}
-                      onForward={handleForward}
-                      onConversationUpdate={updateConversation}
-                      isEmail={activeTab === 'email'}
-                    />
-                  </div>
-                  {/* Reply area - Fixed at bottom */}
+                  {selectedConversation && (
+                    <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
+                      <ConversationThread
+                        conversationId={selectedConversation}
+                        recordId={recordId}
+                        onReply={handleReply}
+                        onReplyAll={handleReplyAll}
+                        onForward={handleForward}
+                        onConversationUpdate={updateConversation}
+                        isEmail={activeTab === 'email'}
+                      />
+                    </div>
+                  )}
+                  
+                  {/* New message header when composing new */}
+                  {!selectedConversation && isComposingNew && (
+                    <div className="flex-1 min-h-0 flex flex-col">
+                      <div className="border-b border-gray-200 dark:border-gray-700 p-4">
+                        <div className="flex items-center justify-between">
+                          <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
+                            New {activeTab === 'email' ? 'Email' : activeTab === 'whatsapp' ? 'WhatsApp Message' : 'LinkedIn Message'}
+                          </h3>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => {
+                              setIsComposingNew(false)
+                              setReplyTo(null)
+                              setReplyMode(null)
+                            }}
+                          >
+                            Cancel
+                          </Button>
+                        </div>
+                      </div>
+                      <div className="flex-1" />
+                    </div>
+                  )}
+                  
+                  {/* Reply/compose area - Fixed at bottom */}
                   <div className="flex-shrink-0">
                     {activeTab === 'email' ? (
                       <EmailCompose
@@ -288,7 +302,11 @@ export function RecordCommunicationsPanel({
                         replyTo={replyTo}
                         replyMode={replyMode}
                         onCancelReply={handleCancelReply}
-                        onMessageSent={() => fetchConversations(activeTab)}
+                        onMessageSent={() => {
+                          fetchConversations(activeTab)
+                          setIsComposingNew(false)
+                        }}
+                        defaultRecipient={isComposingNew && !selectedConversation ? profile?.communication_identifiers?.email?.[0] : undefined}
                       />
                     ) : (
                       <MessageCompose
@@ -296,17 +314,37 @@ export function RecordCommunicationsPanel({
                         recordId={recordId}
                         replyTo={replyTo}
                         onCancelReply={handleCancelReply}
-                        onMessageSent={() => fetchConversations(activeTab)}
+                        onMessageSent={() => {
+                          fetchConversations(activeTab)
+                          setIsComposingNew(false)
+                        }}
                         channelType={activeTab as 'whatsapp' | 'linkedin'}
+                        defaultRecipient={isComposingNew && !selectedConversation ? 
+                          (activeTab === 'whatsapp' ? profile?.communication_identifiers?.phone?.[0] : 
+                           profile?.communication_identifiers?.linkedin?.[0]) : 
+                          undefined}
                       />
                     )}
                   </div>
                 </>
               ) : (
                 <div className="flex items-center justify-center h-full text-gray-500">
-                  <div className="text-center">
-                    <MessageSquare className="w-12 h-12 mx-auto mb-3 text-gray-400" />
-                    <p className="text-sm">Select a conversation to view messages</p>
+                  <div className="text-center space-y-4">
+                    <MessageSquare className="w-12 h-12 mx-auto text-gray-400" />
+                    <p className="text-sm">Select a conversation or start a new one</p>
+                    <Button
+                      onClick={() => {
+                        setIsComposingNew(true)
+                        setSelectedConversation(null)
+                        setReplyTo(null)
+                        setReplyMode(null)
+                      }}
+                      size="sm"
+                      className="mt-3"
+                    >
+                      <Plus className="w-4 h-4 mr-2" />
+                      New {activeTab === 'email' ? 'Email' : 'Message'}
+                    </Button>
                   </div>
                 </div>
               )}

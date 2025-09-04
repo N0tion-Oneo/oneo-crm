@@ -30,6 +30,7 @@ interface MessageComposeProps {
   replyTo?: any // Message to reply to
   onCancelReply?: () => void
   channelType: 'whatsapp' | 'linkedin'
+  defaultRecipient?: string // For new messages at record level (phone for WhatsApp, name for LinkedIn)
 }
 
 export function MessageCompose({
@@ -38,9 +39,13 @@ export function MessageCompose({
   onMessageSent,
   replyTo,
   onCancelReply,
-  channelType
+  channelType,
+  defaultRecipient
 }: MessageComposeProps) {
-  const [to, setTo] = useState('')
+  const [to, setTo] = useState(() => {
+    if (typeof defaultRecipient === 'string') return defaultRecipient
+    return ''
+  })
   const [text, setText] = useState('')
   const [isSending, setIsSending] = useState(false)
   const [accounts, setAccounts] = useState<any[]>([])
@@ -84,6 +89,15 @@ export function MessageCompose({
     }
     fetchAccounts()
   }, [channelType])
+  
+  // Initialize recipient for new messages
+  useEffect(() => {
+    if (defaultRecipient && !conversationId && !replyTo) {
+      // Ensure defaultRecipient is a string
+      const recipientStr = typeof defaultRecipient === 'string' ? defaultRecipient : String(defaultRecipient || '')
+      setTo(recipientStr)
+    }
+  }, [defaultRecipient, conversationId, replyTo])
   
   // Auto-expand when replying
   useEffect(() => {

@@ -557,28 +557,33 @@ class StaffProfile(models.Model):
     employee_id = models.CharField(
         max_length=50, 
         unique=True,
+        null=True,
+        blank=True,
         help_text="Unique employee identifier"
     )
-    job_title = models.CharField(max_length=255)
+    job_title = models.CharField(max_length=255, blank=True)
     department = models.CharField(max_length=255, blank=True)
     employment_type = models.CharField(
         max_length=20, 
         choices=EMPLOYMENT_TYPE_CHOICES,
-        default='full_time'
+        default='full_time',
+        blank=True
     )
     employment_status = models.CharField(
         max_length=20,
         choices=EMPLOYMENT_STATUS_CHOICES,
-        default='active'
+        default='active',
+        blank=True
     )
-    start_date = models.DateField()
+    start_date = models.DateField(null=True, blank=True)
     end_date = models.DateField(null=True, blank=True)
     
     # Work Details
     work_location = models.CharField(
         max_length=20,
         choices=WORK_LOCATION_CHOICES,
-        default='office'
+        default='office',
+        blank=True
     )
     office_location = models.CharField(max_length=255, blank=True)
     work_phone_extension = models.CharField(max_length=20, blank=True)
@@ -591,10 +596,6 @@ class StaffProfile(models.Model):
     )
     
     # Professional Details
-    certifications = models.JSONField(
-        default=list,
-        help_text="Array of professional certifications"
-    )
     education = models.JSONField(
         default=dict,
         help_text="Education details including degrees, institutions, and years"
@@ -606,6 +607,7 @@ class StaffProfile(models.Model):
     linkedin_profile = models.URLField(
         max_length=500,
         blank=True,
+        null=True,
         help_text="LinkedIn profile URL"
     )
     professional_links = models.JSONField(
@@ -614,14 +616,14 @@ class StaffProfile(models.Model):
     )
     
     # Emergency & Personal Information
-    emergency_contact_name = models.CharField(max_length=255, blank=True)
-    emergency_contact_phone = models.CharField(max_length=50, blank=True)
-    emergency_contact_relationship = models.CharField(max_length=100, blank=True)
+    emergency_contact_name = models.CharField(max_length=255, blank=True, null=True)
+    emergency_contact_phone = models.CharField(max_length=50, blank=True, null=True)
+    emergency_contact_relationship = models.CharField(max_length=100, blank=True, null=True)
     
     # Sensitive personal information (consider encryption in production)
     date_of_birth = models.DateField(null=True, blank=True)
-    nationality = models.CharField(max_length=100, blank=True)
-    personal_email = models.EmailField(blank=True)
+    nationality = models.CharField(max_length=100, blank=True, null=True)
+    personal_email = models.EmailField(blank=True, null=True)
     home_address = models.JSONField(
         default=dict,
         help_text="Home address details"
@@ -630,6 +632,7 @@ class StaffProfile(models.Model):
     # Administrative
     internal_notes = models.TextField(
         blank=True,
+        null=True,
         help_text="Internal HR notes (permission-restricted)"
     )
     

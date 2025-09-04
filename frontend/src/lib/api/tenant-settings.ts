@@ -9,11 +9,21 @@ export interface LocalizationSettings {
   week_start_day: 'sunday' | 'monday';
 }
 
+export interface EmailSignatureVariables {
+  user_basic: string[];
+  user_preferences: string[];
+  staff_profile: string[];
+  organization: string[];
+}
+
 export interface BrandingSettings {
   primary_color: string;
   secondary_color: string;
   email_header_html?: string;
   login_message?: string;
+  email_signature_template?: string;
+  email_signature_enabled?: boolean;
+  email_signature_variables?: EmailSignatureVariables;
 }
 
 export interface PasswordComplexity {
@@ -46,6 +56,7 @@ export interface TenantSettings {
   // Organization profile
   organization_logo?: string;
   organization_description?: string;
+  organization_website?: string;
   support_email?: string;
   support_phone?: string;
   business_hours?: Record<string, any>;
@@ -140,6 +151,33 @@ class TenantSettingsAPI {
     business_hours?: Record<string, any>;
   }): Promise<TenantSettings> {
     return this.updateSettings(profile);
+  }
+
+  async getEmailSignaturePreview(template?: string): Promise<{
+    preview_html: string;
+    available_variables: EmailSignatureVariables;
+  }> {
+    if (template !== undefined) {
+      // Use POST to preview a specific template
+      const response = await api.post(`${this.basePath}/current/email_signature_preview/`, {
+        template: template
+      });
+      return response.data;
+    } else {
+      // Use GET for saved template preview
+      const response = await api.get(`${this.basePath}/current/email_signature_preview/`);
+      return response.data;
+    }
+  }
+
+  async renderEmailSignature(userId?: string): Promise<{
+    signature_html: string;
+    enabled: boolean;
+  }> {
+    const response = await api.post(`${this.basePath}/current/render_email_signature/`, {
+      user_id: userId,
+    });
+    return response.data;
   }
 }
 

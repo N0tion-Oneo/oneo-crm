@@ -157,35 +157,42 @@ class RecordSyncOrchestrator:
                 total_messages = 0
                 channel_results = {}
                 
-                # Step 3: Sync each channel
-                for connection in connections:
-                    channel_type = connection.channel_type
-                    
-                    # Check if we should sync this channel based on filter
-                    if channels_to_sync and channel_type not in channels_to_sync:
-                        logger.info(f"Skipping channel {channel_type} - not in channels_to_sync filter: {channels_to_sync}")
-                        continue
-                    
-                    # Check if channel is enabled
-                    if not self.sync_config.is_channel_enabled(channel_type):
-                        logger.info(f"Skipping disabled channel: {channel_type}")
-                        continue
-                    
-                    # Get or create channel
-                    channel, _ = Channel.objects.get_or_create(
-                        channel_type=channel_type,
-                        unipile_account_id=connection.unipile_account_id,
-                        defaults={
-                            'name': f"{channel_type.title()} Channel",
-                            'auth_status': 'authenticated'
-                        }
-                    )
-                    
-                    # Sync this channel
-                    logger.info(f"Syncing {channel_type} for record {record_id}")
-                    
-                    if channel_type in ['email', 'gmail']:
-                        result = self._sync_email_channel(
+                # Special case: If only syncing 'domain' channel, skip API calls and just link participants
+                if channels_to_sync == ['domain']:
+                    logger.info(f"🔗 Domain-only sync requested - skipping API calls, doing lightweight participant linking")
+                    logger.info(f"   📊 Extracted identifiers: {identifiers}")
+                    logger.info(f"   🌐 Domain identifiers: {identifiers.get('domain', [])}")
+                    # Skip the expensive API sync and go straight to domain linking below
+                else:
+                    # Step 3: Sync each channel
+                    for connection in connections:
+                        channel_type = connection.channel_type
+                        
+                        # Check if we should sync this channel based on filter
+                        if channels_to_sync and channel_type not in channels_to_sync:
+                            logger.info(f"Skipping channel {channel_type} - not in channels_to_sync filter: {channels_to_sync}")
+                            continue
+                        
+                        # Check if channel is enabled
+                        if not self.sync_config.is_channel_enabled(channel_type):
+                            logger.info(f"Skipping disabled channel: {channel_type}")
+                            continue
+                        
+                        # Get or create channel
+                        channel, _ = Channel.objects.get_or_create(
+                            channel_type=channel_type,
+                            unipile_account_id=connection.unipile_account_id,
+                            defaults={
+                                'name': f"{channel_type.title()} Channel",
+                                'auth_status': 'authenticated'
+                            }
+                        )
+                        
+                        # Sync this channel
+                        logger.info(f"Syncing {channel_type} for record {record_id}")
+                        
+                        if channel_type in ['email', 'gmail']:
+                            result = self._sync_email_channel(
                             identifiers.get('email', []),
                             record,
                             channel,
@@ -193,9 +200,9 @@ class RecordSyncOrchestrator:
                             sync_job,
                             identifiers
                         )
-                    else:
-                        # Use messaging sync for WhatsApp/LinkedIn
-                        result = self._sync_messaging_channel(
+                        else:
+                            # Use messaging sync for WhatsApp/LinkedIn
+                            result = self._sync_messaging_channel(
                             identifiers,
                             record,
                             channel,
@@ -203,14 +210,25 @@ class RecordSyncOrchestrator:
                             channel_type,
                             sync_job
                         )
-                    
-                    channel_results[channel_type] = result
-                    total_conversations += result.get('conversations', 0)
-                    total_messages += result.get('messages', 0)
+                        
+                        channel_results[channel_type] = result
+                        total_conversations += result.get('conversations', 0)
+                        total_messages += result.get('messages', 0)
                 
                 # Step 4: Link any existing participants that match this record's identifiers
                 logger.info(f"Linking existing participants to record {record_id}")
                 self._link_existing_participants_to_record(record, identifiers)
+                
+                # Step 4b: Link participants by domain if this record has domain identifiers
+                logger.info(f"Checking for domain-based secondary linking for record {record_id}")
+                # Pass the extracted domains from identifiers
+                domains = identifiers.get('domain', [])
+                logger.info(f"   🌐 Domains to link: {domains}")
+                if domains:
+                    logger.info(f"   🔗 Calling _link_existing_participants_by_domain with domains: {domains}")
+                    self._link_existing_participants_by_domain(record, domains)
+                else:
+                    logger.info(f"   ⏭️  No domains found in identifiers, skipping domain linking")
                 
                 # Step 5: Update metrics
                 logger.info(f"Updating metrics for record {record_id}")
@@ -878,6 +896,127 @@ class RecordSyncOrchestrator:
             logger.info(f"Linked {linked_count} existing participants to record {record.id}")
         else:
             logger.debug(f"No unlinked participants found matching record {record.id}")
+    
+    def _link_existing_participants_by_domain(self, record: Record, domains: List[str] = None):
+        """
+        Link existing participants to this record as secondary (company) based on domain.
+        Uses either provided domains or extracts them from record fields.
+        
+        Args:
+            record: Record instance
+            domains: Optional list of domains already extracted from the record
+        """
+        from communications.models import Participant
+        
+        logger.info(f"🔗 _link_existing_participants_by_domain called for record {record.id}")
+        logger.info(f"   📊 Input domains: {domains}")
+        
+        # If domains weren't provided, try to extract them from the record
+        if not domains:
+            from communications.record_communications.signals import get_identifier_fields_from_duplicate_rules
+            from duplicates.models import URLExtractionRule
+            
+            # Get identifier fields from duplicate rules for this pipeline
+            identifier_fields_info = get_identifier_fields_from_duplicate_rules(record.pipeline)
+            if not identifier_fields_info:
+                logger.debug(f"No duplicate rules configured for pipeline {record.pipeline.name}")
+                return
+            
+            # Check if any field uses url_normalized with domain extraction rules
+            domain_fields = []
+            for field_slug, field_info in identifier_fields_info.items():
+                if field_info.get('match_type') == 'url_normalized':
+                    # Check if this field has URL extraction rules for domains
+                    url_rule_ids = field_info.get('url_extraction_rules', [])
+                    if url_rule_ids:
+                        # Check if any of the rules are domain extraction rules
+                        domain_rules = URLExtractionRule.objects.filter(
+                            id__in=url_rule_ids,
+                            template_type='domain',
+                            is_active=True
+                        ).exists()
+                        if domain_rules:
+                            domain_fields.append(field_slug)
+                    else:
+                        # No specific rules, but url_normalized fields can contain domains
+                        domain_fields.append(field_slug)
+            
+            if not domain_fields:
+                logger.debug(f"No domain-normalized fields in pipeline {record.pipeline.name}")
+                return
+            
+            # Extract domains from the record
+            domains = set()
+            for field_slug in domain_fields:
+                domain_value = record.data.get(field_slug)
+                if domain_value:
+                    # Clean the domain (remove www., lowercase)
+                    clean_domain = str(domain_value).lower().strip()
+                    if clean_domain.startswith('www.'):
+                        clean_domain = clean_domain[4:]
+                    if clean_domain:  # Only add non-empty domains
+                        domains.add(clean_domain)
+        else:
+            # Clean provided domains
+            clean_domains = set()
+            for domain in domains:
+                clean_domain = str(domain).lower().strip()
+                if clean_domain.startswith('www.'):
+                    clean_domain = clean_domain[4:]
+                if clean_domain:
+                    clean_domains.add(clean_domain)
+            domains = clean_domains
+        
+        if not domains:
+            logger.debug(f"No domain values found in record {record.id}")
+            return
+        
+        logger.info(f"   🌐 Processing domains for secondary linking: {domains}")
+        
+        # Personal email domains to skip
+        PERSONAL_EMAIL_DOMAINS = [
+            'gmail.com', 'yahoo.com', 'hotmail.com', 'outlook.com', 
+            'icloud.com', 'me.com', 'aol.com', 'msn.com', 'live.com'
+        ]
+        
+        linked_count = 0
+        
+        # Link participants with matching email domains as secondary
+        for domain in domains:
+            # Skip personal domains
+            if domain in PERSONAL_EMAIL_DOMAINS:
+                logger.debug(f"Skipping personal domain: {domain}")
+                continue
+            
+            logger.info(f"   🔍 Searching for participants with domain: {domain}")
+            
+            # Find participants with this email domain who don't have a secondary record
+            participants = Participant.objects.filter(
+                email__iendswith=f"@{domain}",
+                secondary_record__isnull=True
+            )
+            
+            logger.info(f"   👥 Found {participants.count()} unlinked participants with @{domain}")
+            
+            for participant in participants:
+                # Link as secondary (company) record
+                if self.participant_link_manager.link_participant_to_record(
+                    participant=participant,
+                    record=record,
+                    confidence=0.8,
+                    method='domain_match',
+                    as_secondary=True
+                ):
+                    linked_count += 1
+                    logger.info(
+                        f"Linked participant {participant.id} ({participant.email}) "
+                        f"to company record {record.id} via domain {domain}"
+                    )
+        
+        if linked_count > 0:
+            logger.info(f"Linked {linked_count} participants to company record {record.id} via domain matching")
+        else:
+            logger.debug(f"No unlinked participants found with domains matching record {record.id}")
     
     def _store_attendee_mappings(
         self,

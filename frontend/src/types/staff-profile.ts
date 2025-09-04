@@ -47,7 +47,6 @@ export interface StaffProfile {
   reporting_manager_name?: string
   
   // Professional Details
-  certifications: string[]
   education: EducationRecord[] | Record<string, any>
   bio: string
   linkedin_profile: string
@@ -90,7 +89,6 @@ export interface StaffProfileFormData {
   reporting_manager?: number | null
   
   // Professional Details
-  certifications: string[]
   education: EducationRecord[]
   bio: string
   linkedin_profile: string
@@ -146,7 +144,6 @@ export const FIELD_LABELS: Record<string, string> = {
   office_location: 'Office Location',
   work_phone_extension: 'Extension',
   reporting_manager: 'Reporting Manager',
-  certifications: 'Certifications',
   languages_spoken: 'Languages',
   education: 'Education',
   bio: 'Biography',

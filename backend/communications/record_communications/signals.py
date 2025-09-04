@@ -269,12 +269,21 @@ def trigger_communication_sync_on_identifier_change(sender, instance, created, *
             return
         
         # Check if recently synced (unless it's a new record with identifiers)
-        if not created and profile.last_full_sync:
+        # Special case: If only domain fields changed, we can do lightweight linking without throttling
+        is_domain_only_change = (
+            not created and 
+            channels_to_sync == {'domain'} and 
+            changes.get('changed_types') == {'domain'}
+        )
+        
+        if not created and profile.last_full_sync and not is_domain_only_change:
             time_since_sync = timezone.now() - profile.last_full_sync
             # Allow re-sync after 5 minutes for automatic triggers
             if time_since_sync.total_seconds() < 300:  # 5 minutes
                 logger.info(f"   ⏰ Record was synced {time_since_sync.total_seconds():.0f}s ago, skipping")
                 return
+        elif is_domain_only_change:
+            logger.info(f"   🔗 Domain-only change detected, bypassing throttle for lightweight linking")
         
         # Extract and update identifiers in profile
         extractor = RecordIdentifierExtractor()

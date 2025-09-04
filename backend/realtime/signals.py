@@ -156,7 +156,7 @@ if MODELS_AVAILABLE:
             if not instance.is_deleted:  # Only broadcast if record is not deleted
                 # Debug logging removed for production
                 
-                # Create event data
+                # Create event data with complete user information
                 event_data = {
                     'type': 'record_created' if created else 'record_updated',
                     'record_id': str(instance.id),
@@ -164,10 +164,19 @@ if MODELS_AVAILABLE:
                     'title': getattr(instance, 'title', f'Record {instance.id}'),
                     'data': instance.data,  # Use the actual saved data, not cleaned data
                     'updated_at': instance.updated_at.isoformat() if instance.updated_at else None,
+                    'created_by': {
+                        'id': instance.created_by.id if instance.created_by else None,
+                        'first_name': instance.created_by.first_name if instance.created_by else None,
+                        'last_name': instance.created_by.last_name if instance.created_by else None,
+                        'email': instance.created_by.email if instance.created_by else None,
+                    } if instance.created_by else None,
                     'updated_by': {
                         'id': instance.updated_by.id if instance.updated_by else None,
-                        'username': instance.updated_by.username if instance.updated_by else None,
-                    },
+                        'first_name': instance.updated_by.first_name if instance.updated_by else None,
+                        'last_name': instance.updated_by.last_name if instance.updated_by else None,
+                        'email': instance.updated_by.email if instance.updated_by else None,
+                    } if instance.updated_by else None,
+                    'created_at': instance.created_at.isoformat() if instance.created_at else None,
                     'new_count': new_record_count,  # Add the updated count
                     'timestamp': time.time()
                 }

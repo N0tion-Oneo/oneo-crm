@@ -295,10 +295,17 @@ class PipelineCreateSerializer(serializers.ModelSerializer):
         return pipeline
 
 
+class UserSerializer(serializers.ModelSerializer):
+    """Minimal user serializer for record created_by/updated_by fields"""
+    class Meta:
+        model = User
+        fields = ['id', 'first_name', 'last_name', 'email']
+
+
 class RecordSerializer(serializers.ModelSerializer):
     """Serializer for pipeline records"""
-    created_by = serializers.StringRelatedField(read_only=True)
-    updated_by = serializers.StringRelatedField(read_only=True)
+    created_by = UserSerializer(read_only=True)
+    updated_by = UserSerializer(read_only=True)
     pipeline_name = serializers.CharField(source='pipeline.name', read_only=True)
     
     class Meta:

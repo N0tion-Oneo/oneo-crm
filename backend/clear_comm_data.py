@@ -25,14 +25,23 @@ def clear_communication_data(tenant_schema):
         print(f"Clearing communication data for tenant: {tenant_schema}")
         
         # Clear record-specific models
-        count = RecordAttendeeMapping.objects.all().delete()[0]
-        print(f"  - Deleted {count} RecordAttendeeMappings")
+        try:
+            count = RecordAttendeeMapping.objects.all().delete()[0]
+            print(f"  - Deleted {count} RecordAttendeeMappings")
+        except Exception as e:
+            print(f"  - Skipping RecordAttendeeMappings: table may not exist")
         
-        count = RecordSyncJob.objects.all().delete()[0]
-        print(f"  - Deleted {count} RecordSyncJobs")
+        try:
+            count = RecordSyncJob.objects.all().delete()[0]
+            print(f"  - Deleted {count} RecordSyncJobs")
+        except Exception as e:
+            print(f"  - Skipping RecordSyncJobs: table may not exist")
         
-        count = RecordCommunicationProfile.objects.all().delete()[0]
-        print(f"  - Deleted {count} RecordCommunicationProfiles")
+        try:
+            count = RecordCommunicationProfile.objects.all().delete()[0]
+            print(f"  - Deleted {count} RecordCommunicationProfiles")
+        except Exception as e:
+            print(f"  - Skipping RecordCommunicationProfiles: table may not exist")
         
         # Clear messages
         count = Message.objects.all().delete()[0]
@@ -47,8 +56,22 @@ def clear_communication_data(tenant_schema):
         print(f"  - Deleted {count} Conversations")
         
         # Clear participant record links first
-        count = Participant.objects.filter(contact_record__isnull=False).update(contact_record=None)
-        print(f"  - Cleared {count} Participant record links")
+        count = Participant.objects.filter(contact_record__isnull=False).update(
+            contact_record=None,
+            resolution_confidence=0,
+            resolution_method='',
+            resolved_at=None
+        )
+        print(f"  - Cleared {count} Participant primary record links")
+        
+        # Clear secondary record links
+        count = Participant.objects.filter(secondary_record__isnull=False).update(
+            secondary_record=None,
+            secondary_confidence=0,
+            secondary_resolution_method='',
+            secondary_pipeline=''
+        )
+        print(f"  - Cleared {count} Participant secondary record links")
         
         # Clear participants
         count = Participant.objects.all().delete()[0]

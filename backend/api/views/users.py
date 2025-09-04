@@ -274,6 +274,45 @@ class UserViewSet(viewsets.ReadOnlyModelViewSet):
             'departments': sorted(departments)
         })
     
+    @action(detail=True, methods=['get'], url_path='staff-profile')
+    def staff_profile(self, request, pk=None):
+        """
+        Get the staff profile for a specific user
+        """
+        from authentication.models import StaffProfile
+        from authentication.serializers import StaffProfileSerializer
+        from api.permissions.staff import StaffProfilePermission
+        
+        try:
+            user = self.get_queryset().get(pk=pk)
+            
+            # Check if user has a staff profile
+            try:
+                profile = StaffProfile.objects.select_related(
+                    'user', 'user__user_type', 'reporting_manager', 'created_by'
+                ).get(user=user)
+                
+                # Use permission filtering
+                serializer = StaffProfileSerializer(profile)
+                StaffProfilePermission.filter_serializer_fields(
+                    serializer, request.user, profile
+                )
+                
+                return Response(serializer.data)
+            
+            except StaffProfile.DoesNotExist:
+                # Return 404 if no staff profile exists
+                return Response(
+                    {'detail': 'Staff profile not found for this user'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+        
+        except User.DoesNotExist:
+            return Response(
+                {'detail': 'User not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+    
     def retrieve(self, request, pk=None):
         """
         Get detailed user information for USER fields

@@ -91,6 +91,7 @@ export async function updateStaffProfile(
   profileId: number,
   data: Partial<StaffProfileFormData>
 ): Promise<StaffProfile> {
+  // All fields are optional now, just send the data as-is
   const response = await api.patch(`/api/v1/staff-profiles/${profileId}/`, data)
   return response.data
 }

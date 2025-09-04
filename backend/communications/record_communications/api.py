@@ -58,9 +58,12 @@ class RecordCommunicationsViewSet(viewsets.ViewSet):
     def _get_record_conversation_ids(self, record):
         """Helper method to get all conversation IDs for a record through participants"""
         from communications.models import ConversationParticipant
+        from django.db.models import Q
         
-        # Get all participants linked to this record
-        participants = Participant.objects.filter(contact_record=record)
+        # Get all participants linked to this record (both primary and secondary)
+        participants = Participant.objects.filter(
+            Q(contact_record=record) | Q(secondary_record=record)
+        )
         
         # Get conversations through participants
         return ConversationParticipant.objects.filter(

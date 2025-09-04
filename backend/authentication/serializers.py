@@ -533,7 +533,7 @@ class StaffProfileSerializer(DynamicFieldsModelSerializer):
             'reporting_manager', 'reporting_manager_email', 'reporting_manager_name',
             
             # Professional Details
-            'certifications', 'education',
+            'education',
             'bio', 'linkedin_profile', 'professional_links',
             
             # Emergency & Personal (Sensitive)
@@ -555,7 +555,11 @@ class StaffProfileSerializer(DynamicFieldsModelSerializer):
         return obj.user.direct_reports.count()
     
     def validate_employee_id(self, value):
-        """Ensure employee_id is unique"""
+        """Ensure employee_id is unique if provided"""
+        # Allow empty employee_id
+        if not value:
+            return value
+            
         qs = StaffProfile.objects.filter(employee_id=value)
         if self.instance:
             qs = qs.exclude(pk=self.instance.pk)

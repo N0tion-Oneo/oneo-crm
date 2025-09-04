@@ -141,7 +141,7 @@ export default function PipelineRecordsPage() {
   }
 
   // Handle record save
-  const handleRecordSave = async (recordId: string, data: { [key: string]: any }) => {
+  const handleRecordSave = async (recordId: string, data: { [key: string]: any }, fullRecord?: any) => {
     console.log(`🚨 PARENT PAGE BULK SAVE TRIGGERED:`, {
       recordId,
       dataKeys: Object.keys(data),
@@ -152,15 +152,21 @@ export default function PipelineRecordsPage() {
     
     try {
       let savedRecord
-      if (creatingNewRecord && recordId === 'new') {
+      
+      // If fullRecord is provided (from drawer creation), use it directly
+      if (fullRecord && creatingNewRecord) {
+        savedRecord = fullRecord
+        console.log('Using full record from drawer:', savedRecord)
+      } else if (creatingNewRecord && recordId === 'new') {
         // Create new record (only if not already created)
         const response = await pipelinesApi.createRecord(pipelineId, { data })
         savedRecord = response.data
         console.log('Created record:', savedRecord)
       } else if (creatingNewRecord && recordId !== 'new') {
-        // Record was already created by the drawer, just update UI state
-        console.log('Record already created with ID:', recordId, 'updating UI state only')
-        savedRecord = { id: recordId, data }
+        // Record was already created by the drawer, fetch the full record
+        console.log('Record already created with ID:', recordId, 'fetching full record')
+        const response = await pipelinesApi.getRecord(pipelineId, recordId)
+        savedRecord = response.data
       } else {
         // Update existing record
         const response = await pipelinesApi.updateRecord(pipelineId, recordId, { data })
@@ -168,8 +174,14 @@ export default function PipelineRecordsPage() {
         console.log('Updated record:', savedRecord)
       }
       
-      // Update local state
-      if (selectedRecord) {
+      // Update local state with the full record from the server
+      if (savedRecord) {
+        setSelectedRecord(savedRecord)
+        // Mark that we're no longer creating a new record
+        if (creatingNewRecord) {
+          setCreatingNewRecord(false)
+        }
+      } else if (selectedRecord) {
         setSelectedRecord({
           ...selectedRecord,
           data: data,
@@ -180,6 +192,11 @@ export default function PipelineRecordsPage() {
       // Refresh the pipeline data to update record count (for new records)
       if (creatingNewRecord) {
         const pipelineResponse = await pipelinesApi.get(pipelineId)
+        
+        // Also fetch field groups to maintain them
+        const fieldGroupsResponse = await pipelinesApi.getFieldGroups(pipelineId)
+        const fieldGroups = (fieldGroupsResponse.data as any)?.results || (fieldGroupsResponse as any).results || fieldGroupsResponse.data || fieldGroupsResponse || []
+        
         const transformedPipeline: Pipeline = {
           id: pipelineResponse.data.id?.toString() || pipelineId,
           name: pipelineResponse.data.name || 'Unknown Pipeline',
@@ -188,17 +205,38 @@ export default function PipelineRecordsPage() {
           fields: (pipelineResponse.data.fields || []).map((field: any) => ({
             id: field.id?.toString() || `field_${Date.now()}`,
             name: field.slug || field.name?.toLowerCase().replace(/\s+/g, '_'),
-            label: field.name || field.slug || 'Unknown Field',
+            display_name: field.name || field.display_name || field.slug || 'Unknown Field',
             field_type: field.field_type || 'text',
-            // required removed - use stage-specific business rules only
+            is_visible_in_list: field.is_visible_in_list !== false,
+            is_visible_in_detail: field.is_visible_in_detail !== false,
+            is_visible_in_public_forms: field.is_visible_in_public_forms || false,
+            display_order: field.display_order || 0,
+            field_config: field.field_config || {},
+            config: field.field_config || {}, // Legacy support
+            ai_config: field.ai_config || {}, // AI field configuration
+            original_slug: field.slug,
+            business_rules: field.business_rules || {},
+            field_group: field.field_group?.toString() || null,
+            // Legacy compatibility
+            label: field.name || field.slug || 'Unknown Field',
             visible: field.is_visible_in_list !== false,
-            order: field.display_order || 0,
-            config: field.field_config || {},
-            ai_config: field.ai_config || {} // AI field configuration
+            order: field.display_order || 0
+          })),
+          field_groups: fieldGroups.map((group: any) => ({
+            id: group.id?.toString() || `group_${Date.now()}`,
+            name: group.name || 'Unknown Group',
+            description: group.description || '',
+            color: group.color || '#3B82F6',
+            icon: group.icon || 'folder',
+            display_order: group.display_order || 0,
+            field_count: group.field_count || 0
           })),
           stages: pipelineResponse.data.stages || []
         }
         setPipeline(transformedPipeline)
+        
+        // Also update the drawer pipeline to maintain field groups
+        setDrawerPipeline(transformedPipeline)
       }
     } catch (error) {
       console.error('Failed to save record:', error)
@@ -215,6 +253,11 @@ export default function PipelineRecordsPage() {
       
       // Refresh the pipeline data to update record count and list
       const response = await pipelinesApi.get(pipelineId)
+      
+      // Also fetch field groups to maintain them
+      const fieldGroupsResponse = await pipelinesApi.getFieldGroups(pipelineId)
+      const fieldGroups = (fieldGroupsResponse.data as any)?.results || (fieldGroupsResponse as any).results || fieldGroupsResponse.data || fieldGroupsResponse || []
+      
       const transformedPipeline: Pipeline = {
         id: response.data.id?.toString() || pipelineId,
         name: response.data.name || 'Unknown Pipeline',
@@ -223,13 +266,32 @@ export default function PipelineRecordsPage() {
         fields: (response.data.fields || []).map((field: any) => ({
           id: field.id?.toString() || `field_${Date.now()}`,
           name: field.slug || field.name?.toLowerCase().replace(/\s+/g, '_'),
-          label: field.name || field.slug || 'Unknown Field',
+          display_name: field.name || field.display_name || field.slug || 'Unknown Field',
           field_type: field.field_type || 'text',
-          required: false, // Requirements handled by conditional rules
+          is_visible_in_list: field.is_visible_in_list !== false,
+          is_visible_in_detail: field.is_visible_in_detail !== false,
+          is_visible_in_public_forms: field.is_visible_in_public_forms || false,
+          display_order: field.display_order || 0,
+          field_config: field.field_config || {},
+          config: field.field_config || {}, // Legacy support
+          ai_config: field.ai_config || {}, // AI field configuration
+          original_slug: field.slug,
+          business_rules: field.business_rules || {},
+          field_group: field.field_group?.toString() || null,
+          // Legacy compatibility
+          label: field.name || field.slug || 'Unknown Field',
           visible: field.is_visible_in_list !== false,
           order: field.display_order || 0,
-          config: field.field_config || {},
-          ai_config: field.ai_config || {} // AI field configuration
+          required: false // Requirements handled by conditional rules
+        })),
+        field_groups: fieldGroups.map((group: any) => ({
+          id: group.id?.toString() || `group_${Date.now()}`,
+          name: group.name || 'Unknown Group',
+          description: group.description || '',
+          color: group.color || '#3B82F6',
+          icon: group.icon || 'folder',
+          display_order: group.display_order || 0,
+          field_count: group.field_count || 0
         })),
         stages: response.data.stages || []
       }

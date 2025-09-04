@@ -104,25 +104,144 @@ class StaffProfileViewSet(viewsets.ModelViewSet):
         """
         serializer.save(created_by=self.request.user)
     
+    def update(self, request, *args, **kwargs):
+        """
+        Override update to provide better error reporting
+        """
+        partial = kwargs.pop('partial', False)
+        instance = self.get_object()
+        
+        # Clean the data - convert empty strings to appropriate values
+        cleaned_data = {}
+        
+        for key, value in request.data.items():
+            if value == '' or value is None:
+                # These fields should be None when empty (nullable fields)
+                if key in ['linkedin_profile', 'personal_email', 'emergency_contact_name', 
+                          'emergency_contact_phone', 'emergency_contact_relationship', 
+                          'nationality', 'internal_notes', 'employee_id']:
+                    cleaned_data[key] = None
+                # These fields can be empty strings
+                elif key in ['job_title', 'department', 'office_location', 
+                            'work_phone_extension', 'bio']:
+                    cleaned_data[key] = ''
+                # Date fields should be None when empty
+                elif key in ['start_date', 'end_date', 'date_of_birth', 'reporting_manager']:
+                    cleaned_data[key] = None
+                # JSON fields
+                elif key in ['professional_links', 'education', 'home_address']:
+                    cleaned_data[key] = {}
+                else:
+                    cleaned_data[key] = value
+            elif key == 'education':
+                # Handle education field - can be array or dict
+                if isinstance(value, list):
+                    # Convert array to dict format if needed
+                    if value:
+                        # Store as dict with indexed keys for compatibility
+                        cleaned_data[key] = {str(i): edu for i, edu in enumerate(value)}
+                    else:
+                        cleaned_data[key] = {}
+                else:
+                    cleaned_data[key] = value
+            elif key == 'home_address':
+                # Ensure home_address is a proper dict
+                if isinstance(value, dict):
+                    # Check if all values are empty strings
+                    if all(v == '' for v in value.values()):
+                        cleaned_data[key] = {}
+                    else:
+                        cleaned_data[key] = value
+                else:
+                    cleaned_data[key] = {}
+            elif key == 'date_of_birth' and value == '':
+                cleaned_data[key] = None
+            elif key == 'end_date' and value == '':
+                cleaned_data[key] = None
+            else:
+                cleaned_data[key] = value
+        
+        serializer = self.get_serializer(instance, data=cleaned_data, partial=partial)
+        
+        # Validate and provide detailed error messages
+        if not serializer.is_valid():
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Staff profile validation errors: {serializer.errors}")
+            logger.error(f"Request data: {cleaned_data}")
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        self.perform_update(serializer)
+        
+        if getattr(instance, '_prefetched_objects_cache', None):
+            instance._prefetched_objects_cache = {}
+        
+        return Response(serializer.data)
+    
     def perform_update(self, serializer):
         """
-        Filter out fields user doesn't have permission to update.
+        Update the staff profile with appropriate permission checks.
         """
         instance = self.get_object()
-        allowed_fields = StaffProfilePermission.get_allowed_fields(
-            self.request.user, instance
-        )
+        user = self.request.user
+        permission_manager = SyncPermissionManager(user)
         
-        # Filter validated data to only include allowed fields
+        # Determine which fields the user can update based on their relationship
+        is_own_profile = instance.user == user
+        is_manager = instance.reporting_manager == user
+        
+        # Get the validated data from the serializer
+        validated_data = serializer.validated_data
+        
+        # Define which fields can be updated based on permissions
+        updatable_fields = set()
+        
+        if is_own_profile:
+            # Users can update most of their own fields except admin fields
+            updatable_fields = {
+                'job_title', 'department', 'work_location', 'office_location',
+                'work_phone_extension', 'education', 'bio',
+                'linkedin_profile', 'professional_links', 'emergency_contact_name',
+                'emergency_contact_phone', 'emergency_contact_relationship',
+                'personal_email', 'home_address', 'date_of_birth', 'nationality'
+            }
+        
+        # Check for broader update permissions
+        if permission_manager.has_permission('action', 'staff_profiles', 'update_all'):
+            # Admin/HR can update all fields
+            updatable_fields = set(validated_data.keys())
+            # Remove read-only fields that shouldn't be updated
+            updatable_fields.discard('user')  # Can't change the user association
+            updatable_fields.discard('created_by')
+            updatable_fields.discard('created_at')
+            updatable_fields.discard('updated_at')
+        elif is_manager and permission_manager.has_permission('action', 'staff_profiles', 'update'):
+            # Managers can update limited fields for their direct reports
+            updatable_fields.update({
+                'job_title', 'department', 'employment_type', 'employment_status',
+                'work_location', 'office_location', 'work_phone_extension'
+            })
+        
+        # Filter validated data to only include updatable fields
         filtered_data = {
-            k: v for k, v in serializer.validated_data.items()
-            if k in allowed_fields
+            field: value for field, value in validated_data.items() 
+            if field in updatable_fields
         }
         
-        # Update the instance with filtered data
-        for attr, value in filtered_data.items():
-            setattr(instance, attr, value)
-        instance.save()
+        # Log the update for debugging
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"User {user.email} updating StaffProfile {instance.id}")
+        logger.info(f"Allowed fields: {list(updatable_fields)}")
+        logger.info(f"Requested fields: {list(validated_data.keys())}")
+        logger.info(f"Updating fields: {list(filtered_data.keys())}")
+        
+        # Update instance fields with filtered data
+        for field, value in filtered_data.items():
+            setattr(instance, field, value)
+        
+        # Save the instance
+        instance.save(update_fields=list(filtered_data.keys()) if filtered_data else None)
     
     @action(detail=False, methods=['get'])
     def me(self, request):

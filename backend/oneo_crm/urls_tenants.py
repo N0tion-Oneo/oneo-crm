@@ -4,8 +4,11 @@ This handles requests within tenant schemas.
 """
 
 from django.contrib import admin
-from django.urls import path, include
+from django.urls import path, include, re_path
 from django.http import JsonResponse
+from django.conf import settings
+from django.conf.urls.static import static
+from core.media_views import serve_media
 
 
 def tenant_health_check(request):
@@ -37,3 +40,10 @@ urlpatterns = [
     # Note: Real-time SSE endpoints now available at /api/v1/realtime/
     # WebSocket routing handled separately in asgi.py
 ]
+
+# Serve media files in development for tenant schemas
+if settings.DEBUG:
+    urlpatterns += [
+        re_path(r'^media/(?P<path>.*)$', serve_media, name='tenant_media'),
+    ]
+    urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)

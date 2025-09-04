@@ -227,7 +227,7 @@ export interface RecordDetailDrawerProps {
   pipeline: Pipeline
   isOpen: boolean
   onClose: () => void
-  onSave: (recordId: string, data: { [key: string]: any }) => Promise<void>
+  onSave: (recordId: string, data: { [key: string]: any }, fullRecord?: any) => Promise<void>
   onDelete?: (recordId: string) => Promise<void>
   isReadOnly?: boolean // For public/shared access
   isShared?: boolean // For shared filter context (hides activity/communications)
@@ -593,10 +593,29 @@ export function RecordDetailDrawer({
   const { isConnected } = useDocumentSubscription(
     record?.id || '',
     (message: RealtimeMessage) => {
-      if (message.type === 'record_update' && message.payload.record_id === record?.id) {
-        // Update form data with real-time changes from other users
+      // Handle document_updated messages (from WebSocket broadcast)
+      if ((message.type === 'document_updated' || message.type === 'record_update') && message.data) {
+        const recordData = message.data
+        // Check if this update is for our current record
+        if (recordData.record_id === record?.id) {
+          // If we have created_by/updated_by info, we need to trigger a re-render
+          // by notifying the parent to update the record prop
+          if (recordData.created_by || recordData.updated_by) {
+            // The parent should handle updating the selectedRecord with full user info
+            console.log('Received WebSocket update with user info:', {
+              created_by: recordData.created_by,
+              updated_by: recordData.updated_by
+            })
+          }
+          
+          // Update form data if provided
+          if (recordData.data) {
+            setFormData(recordData.data)
+          }
+        }
+      } else if (message.type === 'record_update' && message.payload?.record_id === record?.id) {
+        // Legacy format: Update form data with real-time changes from other users
         if (message.payload.field_name && message.payload.value !== undefined) {
-
           setFormData(prev => ({
             ...prev,
             [message.payload.field_name]: message.payload.value
@@ -843,8 +862,14 @@ export function RecordDetailDrawer({
         const newRecord = response.data
         setLastSaved(new Date())
         
-        // Call parent onSave with new record ID
-        await onSave(newRecord.id || 'new', formData)
+        // Update form data with the new record data to show created_by immediately
+        setFormData(newRecord.data || transformedData)
+        
+        // Call parent onSave with new record ID and pass the full record
+        // The parent needs the full record to update selectedRecord properly
+        await onSave(newRecord.id, transformedData, newRecord)
+        
+        // Close the drawer after successful creation
         onClose()
       } else {
         setValidationErrors(errors)
@@ -989,10 +1014,22 @@ export function RecordDetailDrawer({
   if (!isOpen) return null
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-end z-50">
+    <div 
+      className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-end z-50"
+      onClick={(e) => {
+        // Close drawer if clicking on the backdrop (not the drawer content)
+        if (e.target === e.currentTarget) {
+          onClose()
+        }
+      }}
+    >
       <div 
         ref={drawerRef}
         className="bg-white dark:bg-gray-800 h-full w-full max-w-4xl shadow-xl flex flex-col animate-slide-in-right"
+        onClick={(e) => {
+          // Stop propagation to prevent closing when clicking inside the drawer
+          e.stopPropagation()
+        }}
       >
         {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-gray-200 dark:border-gray-700">

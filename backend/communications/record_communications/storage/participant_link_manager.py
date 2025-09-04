@@ -24,30 +24,47 @@ class ParticipantLinkManager:
         participant: Participant,
         record: Record,
         confidence: float = 0.9,
-        method: str = 'manual'
+        method: str = 'manual',
+        as_secondary: bool = False
     ) -> bool:
         """
-        Link a participant to a record
+        Link a participant to a record (as primary contact or secondary company)
         
         Args:
             participant: Participant instance
             record: Record instance
             confidence: Confidence score (0.0 to 1.0)
-            method: Method used for linking (manual, email_match, phone_match, etc.)
+            method: Method used for linking (manual, email_match, phone_match, domain_match, etc.)
+            as_secondary: If True, link as secondary_record (company), else as contact_record
         
         Returns:
             True if newly linked, False if already linked
         """
-        if participant.contact_record_id == record.id:
-            return False
+        if as_secondary:
+            # Link as secondary (company) record
+            if participant.secondary_record_id == record.id:
+                return False
+                
+            participant.secondary_record = record
+            participant.secondary_confidence = confidence
+            participant.secondary_resolution_method = method
+            participant.secondary_pipeline = record.pipeline.slug if record.pipeline else ''
+            participant.save()
             
-        participant.contact_record = record
-        participant.resolution_confidence = confidence
-        participant.resolution_method = method
-        participant.resolved_at = timezone.now()
-        participant.save()
+            logger.info(f"Linked participant {participant.id} to company record {record.id} via {method}")
+        else:
+            # Link as primary (contact) record
+            if participant.contact_record_id == record.id:
+                return False
+                
+            participant.contact_record = record
+            participant.resolution_confidence = confidence
+            participant.resolution_method = method
+            participant.resolved_at = timezone.now()
+            participant.save()
+            
+            logger.info(f"Linked participant {participant.id} to contact record {record.id} via {method}")
         
-        logger.info(f"Linked participant {participant.id} to record {record.id} via {method}")
         return True
     
     def unlink_participant(self, participant: Participant) -> bool:
@@ -73,22 +90,30 @@ class ParticipantLinkManager:
         logger.info(f"Unlinked participant {participant.id} from record {record_id}")
         return True
     
-    def get_record_participants(self, record: Record) -> QuerySet:
+    def get_record_participants(self, record: Record, include_secondary: bool = True) -> QuerySet:
         """
         Get all participants linked to a record
         
         Args:
             record: Record instance
+            include_secondary: If True, include participants linked via secondary_record
             
         Returns:
             QuerySet of Participant instances
         """
-        return Participant.objects.filter(contact_record=record)
+        if include_secondary:
+            from django.db.models import Q
+            return Participant.objects.filter(
+                Q(contact_record=record) | Q(secondary_record=record)
+            )
+        else:
+            return Participant.objects.filter(contact_record=record)
     
     def get_record_conversations(
         self,
         record: Record,
-        channel_type: Optional[str] = None
+        channel_type: Optional[str] = None,
+        include_secondary: bool = True
     ) -> List[Conversation]:
         """
         Get all conversations linked to a record through participants
@@ -96,12 +121,13 @@ class ParticipantLinkManager:
         Args:
             record: Record instance
             channel_type: Optional filter by channel type
+            include_secondary: If True, include participants linked via secondary_record
             
         Returns:
             List of Conversation instances
         """
-        # Get all participants linked to this record
-        participants = self.get_record_participants(record)
+        # Get all participants linked to this record (including secondary if specified)
+        participants = self.get_record_participants(record, include_secondary=include_secondary)
         
         # Get conversations through participants
         query = Conversation.objects.filter(

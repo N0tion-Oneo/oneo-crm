@@ -569,14 +569,16 @@ class BaseRealtimeConsumer(AsyncWebsocketConsumer):
                 'pipeline_id': data.get('pipeline_id'),
                 'title': data.get('title'),
                 'data': data.get('data'),
+                'created_at': data.get('created_at'),
                 'updated_at': data.get('updated_at'),
-                'updated_by': data.get('updated_by'),
+                'created_by': data.get('created_by'),  # Include full created_by object
+                'updated_by': data.get('updated_by'),  # Include full updated_by object
                 'new_count': data.get('new_count')  # Include the updated record count
             },
             'user': {
-                'id': data.get('updated_by', {}).get('id'),
-                'name': data.get('updated_by', {}).get('username'),
-                'email': None
+                'id': data.get('updated_by', {}).get('id') if data.get('updated_by') else None,
+                'name': data.get('updated_by', {}).get('username') if data.get('updated_by') else None,
+                'email': data.get('updated_by', {}).get('email') if data.get('updated_by') else None
             } if data.get('updated_by') else None,
             'timestamp': data.get('timestamp')
         }

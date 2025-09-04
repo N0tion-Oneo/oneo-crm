@@ -195,6 +195,8 @@ class TenantSerializer(serializers.ModelSerializer):
             'id', 'name', 'schema_name', 'created_on',
             'max_users', 'features_enabled', 'billing_settings',
             'ai_enabled', 'ai_usage_limit', 'ai_current_usage',
+            'organization_logo', 'organization_description', 'organization_website',
+            'support_email', 'support_phone', 'business_hours',
             'domain'
         ]
         read_only_fields = ['id', 'schema_name', 'created_on']
@@ -258,6 +260,25 @@ class BrandingSettingsSerializer(serializers.Serializer):
         allow_blank=True,
         required=False
     )
+    email_signature_template = serializers.CharField(
+        max_length=10000,
+        allow_blank=True,
+        required=False,
+        help_text="HTML template for email signatures with variables like {user_full_name}, {user_email}, etc."
+    )
+    email_signature_enabled = serializers.BooleanField(
+        default=False,
+        help_text="Enable standardized email signatures for all users"
+    )
+    email_signature_variables = serializers.SerializerMethodField(
+        read_only=True,
+        help_text="Available variables for use in email signature template"
+    )
+    
+    def get_email_signature_variables(self, obj):
+        """Get categorized email signature variables"""
+        from tenants.models import Tenant
+        return Tenant.get_email_signature_variables()
 
 
 class PasswordComplexitySerializer(serializers.Serializer):
@@ -338,7 +359,7 @@ class TenantSettingsSerializer(serializers.ModelSerializer):
             'id', 'name', 'created_on',
             
             # Organization profile
-            'organization_logo', 'organization_description',
+            'organization_logo', 'organization_description', 'organization_website',
             'support_email', 'support_phone', 'business_hours',
             
             # Settings

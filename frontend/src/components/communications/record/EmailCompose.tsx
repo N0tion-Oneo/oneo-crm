@@ -1,5 +1,5 @@
-import React, { useState, useRef, useEffect } from 'react'
-import { Send, Paperclip, X, ChevronDown, ChevronUp, Mail, File, Image, FileText } from 'lucide-react'
+import React, { useState, useRef, useEffect, useCallback } from 'react'
+import { Send, Paperclip, X, ChevronDown, ChevronUp, Mail, File, Image, FileText, PenTool } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -14,6 +14,8 @@ import { api } from '@/lib/api'
 import { toast } from '@/hooks/use-toast'
 import { emailService } from '@/services/emailService'
 import { EnhancedRichEditor } from '../enhanced-rich-editor'
+import { tenantSettingsAPI } from '@/lib/api/tenant-settings'
+import { EmailSignaturePreview } from '../EmailSignaturePreview'
 
 interface Attachment {
   id: string
@@ -52,6 +54,9 @@ export function EmailCompose({
   const [isExpanded, setIsExpanded] = useState(false)
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const [bodyContent, setBodyContent] = useState<string>('')
+  const [emailSignature, setEmailSignature] = useState<string>('')
+  const [includeSignature, setIncludeSignature] = useState(true)
+  const [signatureEnabled, setSignatureEnabled] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   // Fetch email accounts on mount
@@ -70,6 +75,26 @@ export function EmailCompose({
     }
     fetchAccounts()
   }, [])
+  
+  // Fetch email signature when component mounts or expands
+  useEffect(() => {
+    const fetchSignature = async () => {
+      try {
+        const result = await tenantSettingsAPI.renderEmailSignature()
+        if (result.enabled && result.signature_html) {
+          setEmailSignature(result.signature_html)
+          setSignatureEnabled(true)
+          // Don't add signature to the editor content - we'll display it separately
+        }
+      } catch (error) {
+        console.error('Failed to fetch email signature:', error)
+      }
+    }
+    
+    if (isExpanded) {
+      fetchSignature()
+    }
+  }, [isExpanded])
   
   // Add keyboard shortcut 'c' to open compose
   useEffect(() => {
@@ -184,6 +209,10 @@ export function EmailCompose({
     `
   }
 
+  const handleSignatureToggle = () => {
+    setIncludeSignature(!includeSignature)
+  }
+
   const handleSend = async () => {
     if (!selectedAccountId && emailAccounts.length > 0) {
       toast({
@@ -203,7 +232,12 @@ export function EmailCompose({
       return
     }
 
-    const body = bodyContent
+    // Combine body content with signature if enabled
+    let body = bodyContent
+    if (includeSignature && emailSignature) {
+      body = `${bodyContent}<br><br>${emailSignature}`
+    }
+    
     if (!body.trim()) {
       toast({
         title: 'Empty message',
@@ -557,6 +591,37 @@ export function EmailCompose({
                 className="min-h-[120px]"
               />
             </div>
+            
+            {/* Email Signature Section */}
+            {signatureEnabled && (
+              <div className="mt-3 border-t border-gray-200 dark:border-gray-700 pt-3">
+                <div className="flex items-center justify-between mb-2">
+                  <button
+                    type="button"
+                    onClick={handleSignatureToggle}
+                    className="flex items-center gap-1.5 px-2 py-1 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 transition-colors"
+                  >
+                    <PenTool className="w-3.5 h-3.5" />
+                    <span className="text-xs">
+                      Email Signature
+                    </span>
+                    <input
+                      type="checkbox"
+                      checked={includeSignature}
+                      onChange={() => {}}
+                      className="ml-2 h-3.5 w-3.5"
+                    />
+                  </button>
+                </div>
+                
+                {/* Signature Preview */}
+                {includeSignature && emailSignature && (
+                  <div className="mt-2 bg-white rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
+                    <EmailSignaturePreview html={emailSignature} />
+                  </div>
+                )}
+              </div>
+            )}
             
             {/* Attachments */}
             {attachments.length > 0 && (

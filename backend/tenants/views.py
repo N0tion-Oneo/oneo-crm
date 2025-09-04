@@ -242,7 +242,7 @@ class TenantSettingsViewSet(viewsets.ModelViewSet):
         POST /api/v1/tenant/settings/upload_logo/
         Upload tenant logo
         """
-        tenant = self.get_current_tenant()
+        tenant = self.get_object()
         if not tenant:
             return Response(
                 {"error": "Tenant not found"},
@@ -250,7 +250,9 @@ class TenantSettingsViewSet(viewsets.ModelViewSet):
             )
         
         # Check admin permissions
-        if not self.check_admin_permission(request):
+        permission_manager = SyncPermissionManager(request.user)
+        if not (permission_manager.has_permission('actions', 'system', 'full_access') or
+                permission_manager.has_permission('actions', 'settings', 'update')):
             return Response(
                 {"error": "Admin permission required"},
                 status=status.HTTP_403_FORBIDDEN
@@ -276,7 +278,7 @@ class TenantSettingsViewSet(viewsets.ModelViewSet):
         GET /api/v1/tenant/settings/usage/
         Get tenant usage statistics
         """
-        tenant = self.get_current_tenant()
+        tenant = self.get_object()
         if not tenant:
             return Response(
                 {"error": "Tenant not found"},
@@ -342,3 +344,71 @@ class TenantSettingsViewSet(viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
         
         return Response(serializer.data)
+    
+    @action(detail=True, methods=['get', 'post'])
+    def email_signature_preview(self, request, pk=None):
+        """
+        GET/POST /api/v1/tenant-settings/current/email_signature_preview/
+        Get a preview of the email signature with sample data
+        For POST, accepts a template parameter to preview unsaved templates
+        """
+        tenant = self.get_object()
+        if not tenant:
+            return Response(
+                {"error": "Tenant not found"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # If POST with template, preview that template
+        if request.method == 'POST':
+            template = request.data.get('template', '')
+            # Temporarily override the template for preview
+            original_template = tenant.branding_settings.get('email_signature_template', '') if tenant.branding_settings else ''
+            if not tenant.branding_settings:
+                tenant.branding_settings = {}
+            tenant.branding_settings['email_signature_template'] = template
+            preview_html = tenant.get_email_signature_preview()
+            # Restore original template (don't save)
+            tenant.branding_settings['email_signature_template'] = original_template
+        else:
+            preview_html = tenant.get_email_signature_preview()
+        
+        variables = Tenant.get_email_signature_variables()
+        
+        return Response({
+            'preview_html': preview_html,
+            'available_variables': variables
+        })
+    
+    @action(detail=True, methods=['post'])
+    def render_email_signature(self, request, pk=None):
+        """
+        POST /api/v1/tenant-settings/current/render_email_signature/
+        Render the email signature for a specific user
+        """
+        tenant = self.get_object()
+        if not tenant:
+            return Response(
+                {"error": "Tenant not found"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Get user_id from request (optional, defaults to current user)
+        user_id = request.data.get('user_id')
+        if user_id:
+            try:
+                user = User.objects.get(id=user_id)
+            except User.DoesNotExist:
+                return Response(
+                    {"error": "User not found"},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+        else:
+            user = request.user
+        
+        signature_html = tenant.render_email_signature(user)
+        
+        return Response({
+            'signature_html': signature_html,
+            'enabled': tenant.branding_settings.get('email_signature_enabled', False) if tenant.branding_settings else False
+        })

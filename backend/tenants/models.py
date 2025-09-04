@@ -22,6 +22,7 @@ class Tenant(TenantMixin):
     # Organization Profile
     organization_logo = models.ImageField(upload_to='tenant_logos/', null=True, blank=True)
     organization_description = models.TextField(blank=True)
+    organization_website = models.URLField(max_length=500, blank=True, help_text="Organization website URL (e.g., https://example.com)")
     support_email = models.EmailField(blank=True)
     support_phone = models.CharField(max_length=20, blank=True)
     business_hours = models.JSONField(default=dict, help_text="Business hours by day of week")
@@ -35,7 +36,7 @@ class Tenant(TenantMixin):
     # Branding Settings (stored in JSON)
     branding_settings = models.JSONField(
         default=dict,
-        help_text="Contains: primary_color, secondary_color, email_header_html, login_message"
+        help_text="Contains: primary_color, secondary_color, email_header_html, login_message, email_signature_template, email_signature_enabled"
     )
     
     # Security Policies (stored in JSON)
@@ -80,7 +81,9 @@ class Tenant(TenantMixin):
             'primary_color': '#3B82F6',  # Blue
             'secondary_color': '#10B981',  # Green
             'email_header_html': '',
-            'login_message': ''
+            'login_message': '',
+            'email_signature_template': '',
+            'email_signature_enabled': False
         }
     
     def get_default_security_policies(self):
@@ -204,6 +207,188 @@ class Tenant(TenantMixin):
         """Reset monthly AI usage (called by scheduled task)"""
         self.ai_current_usage = 0.00
         self.save(update_fields=['ai_current_usage'])
+    
+    def render_email_signature(self, user):
+        """
+        Render email signature template with user and organization variables
+        
+        Args:
+            user: CustomUser instance to populate signature variables
+            
+        Returns:
+            str: Rendered HTML email signature or empty string if disabled
+        """
+        branding = self.branding_settings or self.get_default_branding()
+        
+        if not branding.get('email_signature_enabled', False):
+            return ''
+        
+        template = branding.get('email_signature_template', '')
+        if not template:
+            return ''
+        
+        # Import here to avoid circular imports
+        from authentication.models import StaffProfile
+        
+        # Get staff profile if exists
+        staff_profile = None
+        try:
+            staff_profile = user.staff_profile
+        except (StaffProfile.DoesNotExist, AttributeError):
+            pass
+        
+        # Build the logo URL with the tenant domain
+        logo_url = ''
+        if self.organization_logo:
+            # Get the primary domain for this tenant
+            primary_domain = self.domains.filter(is_primary=True).first()
+            if primary_domain:
+                # Build full URL with tenant domain
+                logo_url = f"http://{primary_domain.domain}:8000{self.organization_logo.url}"
+            else:
+                logo_url = self.organization_logo.url
+        
+        # Prepare replacement variables from user profile
+        replacements = {
+            # User basic info
+            '{user_full_name}': user.get_full_name() or f"{user.first_name} {user.last_name}".strip() or user.email,
+            '{user_first_name}': user.first_name or '',
+            '{user_last_name}': user.last_name or '',
+            '{user_email}': user.email,
+            '{user_phone}': user.phone or '',
+            '{user_username}': user.username or '',
+            
+            # User preferences
+            '{user_timezone}': getattr(user, 'timezone', 'UTC'),
+            '{user_language}': getattr(user, 'language', 'en'),
+            
+            # Staff profile info
+            '{user_job_title}': staff_profile.job_title if staff_profile else '',
+            '{user_department}': staff_profile.department if staff_profile else '',
+            '{user_employee_id}': staff_profile.employee_id if staff_profile else '',
+            '{user_office_location}': staff_profile.office_location if staff_profile else '',
+            '{user_work_phone_extension}': staff_profile.work_phone_extension if staff_profile else '',
+            '{user_linkedin_profile}': staff_profile.linkedin_profile if staff_profile else '',
+            '{user_bio}': staff_profile.bio if staff_profile else '',
+            
+            # Organization info
+            '{organization_name}': self.name,
+            '{organization_description}': self.organization_description or '',
+            '{organization_support_email}': self.support_email or '',
+            '{organization_support_phone}': self.support_phone or '',
+            '{organization_website}': self.organization_website or (self.support_email.split('@')[1] if '@' in self.support_email else ''),
+            '{organization_logo_url}': logo_url
+        }
+        
+        # Replace variables in template
+        signature = template
+        for var, value in replacements.items():
+            signature = signature.replace(var, str(value))
+        
+        return signature
+    
+    def get_email_signature_preview(self):
+        """
+        Get a preview of the email signature with sample data
+        
+        Returns:
+            str: Preview HTML with sample values
+        """
+        branding = self.branding_settings or self.get_default_branding()
+        template = branding.get('email_signature_template', '')
+        
+        if not template:
+            return ''
+        
+        # Build the logo URL with the tenant domain for preview
+        logo_url = '/static/logo-placeholder.png'
+        if self.organization_logo:
+            # Get the primary domain for this tenant
+            primary_domain = self.domains.filter(is_primary=True).first()
+            if primary_domain:
+                # Build full URL with tenant domain
+                logo_url = f"http://{primary_domain.domain}:8000{self.organization_logo.url}"
+            else:
+                logo_url = self.organization_logo.url
+        
+        # Sample preview data with all available variables
+        preview_data = {
+            # User basic info - using realistic sample data
+            '{user_full_name}': 'Sarah Johnson',
+            '{user_first_name}': 'Sarah',
+            '{user_last_name}': 'Johnson',
+            '{user_email}': 'sarah.johnson@' + (self.support_email.split('@')[1] if '@' in self.support_email else 'example.com'),
+            '{user_phone}': '+1 (555) 123-4567',
+            '{user_username}': 'sarahj',
+            
+            # User preferences
+            '{user_timezone}': 'America/New_York',
+            '{user_language}': 'en',
+            
+            # Staff profile info - comprehensive professional details
+            '{user_job_title}': 'Senior Account Executive',
+            '{user_department}': 'Sales',
+            '{user_employee_id}': 'EMP-2024-0142',
+            '{user_office_location}': 'New York - 5th Avenue',
+            '{user_work_phone_extension}': 'ext. 4523',
+            '{user_linkedin_profile}': 'linkedin.com/in/sarahjohnson',
+            '{user_bio}': 'Experienced sales professional specializing in enterprise SaaS solutions',
+            
+            # Organization info - using actual tenant data where available
+            '{organization_name}': self.name,
+            '{organization_description}': self.organization_description or 'Leading enterprise CRM and engagement platform',
+            '{organization_support_email}': self.support_email or 'support@example.com',
+            '{organization_support_phone}': self.support_phone or '+1 (800) 555-0100',
+            '{organization_website}': self.organization_website or (self.support_email.split('@')[1] if '@' in self.support_email else 'www.example.com'),
+            '{organization_logo_url}': logo_url
+        }
+        
+        # Replace variables in template
+        preview = template
+        for var, value in preview_data.items():
+            preview = preview.replace(var, str(value))
+        
+        return preview
+    
+    @staticmethod
+    def get_email_signature_variables():
+        """
+        Get list of all available email signature variables
+        
+        Returns:
+            dict: Dictionary of variable categories and their variables
+        """
+        return {
+            'user_basic': [
+                '{user_full_name}',
+                '{user_first_name}',
+                '{user_last_name}',
+                '{user_email}',
+                '{user_phone}',
+                '{user_username}'
+            ],
+            'user_preferences': [
+                '{user_timezone}',
+                '{user_language}'
+            ],
+            'staff_profile': [
+                '{user_job_title}',
+                '{user_department}',
+                '{user_employee_id}',
+                '{user_office_location}',
+                '{user_work_phone_extension}',
+                '{user_linkedin_profile}',
+                '{user_bio}'
+            ],
+            'organization': [
+                '{organization_name}',
+                '{organization_description}',
+                '{organization_support_email}',
+                '{organization_support_phone}',
+                '{organization_website}',
+                '{organization_logo_url}'
+            ]
+        }
 
 
 

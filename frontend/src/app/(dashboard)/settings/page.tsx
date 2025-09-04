@@ -14,6 +14,7 @@ export default function OrganizationSettingsPage() {
 
   const [formData, setFormData] = useState({
     organization_description: "",
+    organization_website: "",
     support_email: "",
     support_phone: "",
   });
@@ -28,6 +29,7 @@ export default function OrganizationSettingsPage() {
       setSettings(data);
       setFormData({
         organization_description: data.organization_description || "",
+        organization_website: data.organization_website || "",
         support_email: data.support_email || "",
         support_phone: data.support_phone || "",
       });
@@ -155,7 +157,7 @@ export default function OrganizationSettingsPage() {
             <div className="flex items-center space-x-4">
               {settings?.organization_logo ? (
                 <img
-                  src={settings.organization_logo}
+                  src={settings.organization_logo.startsWith('http') ? settings.organization_logo : `${window.location.protocol}//${window.location.hostname}:8000${settings.organization_logo}`}
                   alt="Organization logo"
                   className="h-20 w-20 rounded-lg object-cover border border-gray-200 dark:border-gray-700"
                 />
@@ -210,6 +212,23 @@ export default function OrganizationSettingsPage() {
               className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
               placeholder="Describe your organization..."
             />
+          </div>
+
+          {/* Organization Website */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+              Organization Website
+            </label>
+            <input
+              type="url"
+              value={formData.organization_website}
+              onChange={(e) => setFormData({ ...formData, organization_website: e.target.value })}
+              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
+              placeholder="https://www.example.com"
+            />
+            <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              Your organization's main website URL
+            </p>
           </div>
 
           {/* Support Email */}

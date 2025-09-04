@@ -74,9 +74,12 @@ class MetricsUpdater:
         Returns:
             Dict with calculated metrics
         """
-        # Get all conversations linked through participants
+        # Get all conversations linked through participants (both primary and secondary)
         from communications.models import Participant, ConversationParticipant
-        participants = Participant.objects.filter(contact_record=record)
+        from django.db.models import Q
+        participants = Participant.objects.filter(
+            Q(contact_record=record) | Q(secondary_record=record)
+        )
         conversation_ids = ConversationParticipant.objects.filter(
             participant__in=participants
         ).values_list('conversation_id', flat=True).distinct()
@@ -193,9 +196,12 @@ class MetricsUpdater:
         Returns:
             Number of messages marked as read
         """
-        # Get linked conversations through participants
+        # Get linked conversations through participants (both primary and secondary)
         from communications.models import Participant, ConversationParticipant
-        participants = Participant.objects.filter(contact_record=record)
+        from django.db.models import Q
+        participants = Participant.objects.filter(
+            Q(contact_record=record) | Q(secondary_record=record)
+        )
         
         if conversation:
             conversation_ids = [conversation.id]
@@ -218,9 +224,12 @@ class MetricsUpdater:
             ).first()
             
             if profile:
-                # Recalculate unread count from conversations
+                # Recalculate unread count from conversations (both primary and secondary)
                 from communications.models import Participant, ConversationParticipant
-                participants = Participant.objects.filter(contact_record=record)
+                from django.db.models import Q
+                participants = Participant.objects.filter(
+                    Q(contact_record=record) | Q(secondary_record=record)
+                )
                 conv_ids = ConversationParticipant.objects.filter(
                     participant__in=participants
                 ).values_list('conversation_id', flat=True)
@@ -249,9 +258,12 @@ class MetricsUpdater:
         Returns:
             Dict with channel statistics
         """
-        # Get all conversations through participants grouped by channel type
+        # Get all conversations through participants grouped by channel type (both primary and secondary)
         from communications.models import Participant, ConversationParticipant
-        participants = Participant.objects.filter(contact_record=record)
+        from django.db.models import Q
+        participants = Participant.objects.filter(
+            Q(contact_record=record) | Q(secondary_record=record)
+        )
         
         # Get conversations with channel info
         conversations = Conversation.objects.filter(

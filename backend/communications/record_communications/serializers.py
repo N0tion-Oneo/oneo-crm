@@ -12,7 +12,7 @@ from communications.serializers import (
     ConversationListSerializer, MessageSerializer
 )
 from .models import (
-    RecordCommunicationProfile, RecordCommunicationLink, RecordSyncJob,
+    RecordCommunicationProfile, RecordSyncJob,
     RecordAttendeeMapping
 )
 
@@ -179,13 +179,15 @@ class RecordMessageSerializer(serializers.ModelSerializer):
                 # Format attachments for frontend
                 formatted_attachments = []
                 
-                # Try to get the record ID for the download URL
+                # Try to get the record ID for the download URL via participant
                 try:
-                    from communications.record_communications.models import RecordCommunicationLink
-                    link = RecordCommunicationLink.objects.filter(
-                        conversation_id=obj.conversation_id
+                    from communications.models import Participant
+                    # Get participant linked to this conversation
+                    participant = Participant.objects.filter(
+                        conversation_memberships__conversation_id=obj.conversation_id,
+                        contact_record__isnull=False
                     ).first()
-                    record_id = link.record_id if link else None
+                    record_id = participant.contact_record_id if participant else None
                 except:
                     record_id = None
                 
@@ -382,17 +384,18 @@ class RecordMessageSerializer(serializers.ModelSerializer):
         ]
 
 
-class RecordCommunicationLinkSerializer(serializers.ModelSerializer):
-    """Serializer for record-conversation links"""
-    conversation = RecordConversationSerializer(read_only=True)
-    
-    class Meta:
-        model = RecordCommunicationLink
-        fields = [
-            'id', 'conversation', 'participant', 'match_type',
-            'match_identifier', 'confidence_score', 'created_at',
-            'is_primary'
-        ]
+# RecordCommunicationLinkSerializer has been removed - using participant-based linking
+# class RecordCommunicationLinkSerializer(serializers.ModelSerializer):
+#     """Serializer for record-conversation links"""
+#     conversation = RecordConversationSerializer(read_only=True)
+#     
+#     class Meta:
+#         model = RecordCommunicationLink
+#         fields = [
+#             'id', 'conversation', 'participant', 'match_type',
+#             'match_identifier', 'confidence_score', 'created_at',
+#             'is_primary'
+#         ]
 
 
 class RecordSyncJobSerializer(serializers.ModelSerializer):

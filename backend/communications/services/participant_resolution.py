@@ -9,6 +9,7 @@ from django.db import models, transaction
 from asgiref.sync import sync_to_async, async_to_sync
 
 from communications.models import Participant, ConversationParticipant
+from communications.record_communications.storage.participant_link_manager import ParticipantLinkManager
 # Resolution gateway was removed - using stub for now
 def get_resolution_gateway(tenant):
     """Stub for removed resolution gateway"""
@@ -39,6 +40,7 @@ class ParticipantResolutionService:
         self.tenant = tenant
         self.confidence_threshold = confidence_threshold or DEFAULT_CONFIDENCE_THRESHOLD
         self.gateway = get_resolution_gateway(tenant)
+        self.link_manager = ParticipantLinkManager()
     
     async def resolve_or_create_participant(
         self,
@@ -185,7 +187,95 @@ class ParticipantResolutionService:
     async def resolve_to_contact(self, participant: Participant, identifier_data: Dict):
         """
         Try to match participant to CRM records (both primary contact and secondary via domain)
+        Enhanced to actively link participants to records based on identifier matching
         """
+        # Skip if already linked
+        if participant.contact_record_id:
+            return
+            
+        # Try direct identifier matching
+        from communications.record_communications.services import RecordIdentifierExtractor
+        from pipelines.models import Record
+        from django_tenants.utils import schema_context
+        
+        def find_matching_records():
+            with schema_context(self.tenant.schema_name if self.tenant else 'public'):
+                extractor = RecordIdentifierExtractor()
+                matching_records = []
+                
+                # Try email matching
+                if participant.email:
+                    email_records = extractor.find_records_by_email(participant.email)
+                    matching_records.extend(email_records)
+                
+                # Try phone matching
+                if participant.phone:
+                    phone_records = extractor.find_records_by_phone(participant.phone)
+                    matching_records.extend(phone_records)
+                
+                # Try LinkedIn matching
+                if participant.linkedin_member_urn:
+                    # Look for records with LinkedIn URLs containing this URN
+                    linkedin_records = extractor.find_records_by_identifier(
+                        participant.linkedin_member_urn,
+                        identifier_type='linkedin'
+                    )
+                    matching_records.extend(linkedin_records)
+                
+                # Deduplicate by record ID
+                seen = set()
+                unique_records = []
+                for record in matching_records:
+                    if record.id not in seen:
+                        seen.add(record.id)
+                        unique_records.append(record)
+                
+                return unique_records
+        
+        matching_records = await sync_to_async(find_matching_records)()
+        
+        # If we found exactly one matching record, link with high confidence
+        if matching_records and len(matching_records) == 1:
+            record = matching_records[0]
+            
+            # Determine resolution method based on which identifier matched
+            if participant.email:
+                method = 'email_match'
+            elif participant.phone:
+                method = 'phone_match'
+            elif participant.linkedin_member_urn:
+                method = 'linkedin_match'
+            else:
+                method = 'identifier_match'
+            
+            # Use ParticipantLinkManager to link the participant
+            def link_participant():
+                with schema_context(self.tenant.schema_name if self.tenant else 'public'):
+                    return self.link_manager.link_participant_to_record(
+                        participant=participant,
+                        record=record,
+                        confidence=0.95,
+                        method=method
+                    )
+                    
+            was_linked = await sync_to_async(link_participant)()
+            
+            if was_linked:
+                logger.info(
+                    f"Linked participant {participant.get_display_name()} to record {record.id} "
+                    f"via {method} with confidence 0.95"
+                )
+            return
+        
+        # If multiple matches, log but don't auto-link (needs manual resolution)
+        if matching_records and len(matching_records) > 1:
+            logger.warning(
+                f"Found {len(matching_records)} potential record matches for participant "
+                f"{participant.get_display_name()}, skipping auto-link"
+            )
+            return
+        
+        # Fall back to original resolution gateway logic (though it usually returns empty)
         # Build resolution identifiers
         identifiers = {}
         
@@ -517,6 +607,7 @@ class ConversationStorageDecider:
         self.tenant = tenant
         self.confidence_threshold = confidence_threshold or DEFAULT_CONFIDENCE_THRESHOLD
         self.resolution_service = ParticipantResolutionService(tenant, confidence_threshold)
+        self.link_manager = ParticipantLinkManager()
     
     async def should_store_conversation(
         self,

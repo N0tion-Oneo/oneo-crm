@@ -276,7 +276,7 @@ def setup_periodic_tasks(sender, **kwargs):
         detect_hot_conversations,
         cleanup_expired_tokens,
         process_scheduled_syncs,
-        verify_communication_links,
+        verify_participant_links,  # Renamed from verify_communication_links
         update_conversation_types
     )
     

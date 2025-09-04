@@ -15,9 +15,8 @@ django.setup()
 
 from django_tenants.utils import schema_context
 from tenants.models import Tenant
-from communications.models import UserChannelConnection, Conversation, Message, Channel
+from communications.models import UserChannelConnection, Conversation, Message, Channel, Participant
 from pipelines.models import Record, Pipeline
-from communications.record_communications.models import RecordCommunicationLink
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 import logging
@@ -89,12 +88,19 @@ def test_frontend_reply_flow():
         )
         print(f"✅ Created conversation: {conversation.id}")
         
-        # Link conversation to record
-        RecordCommunicationLink.objects.create(
-            record=record,
-            conversation=conversation
+        # Link conversation to record via participant
+        participant = Participant.objects.create(
+            email=user.email,
+            name=user.get_full_name() or user.email,
+            contact_record=record
         )
-        print(f"✅ Linked conversation to record")
+        from communications.models import ConversationMembership
+        ConversationMembership.objects.create(
+            conversation=conversation,
+            participant=participant,
+            role='primary'
+        )
+        print(f"✅ Linked conversation to record via participant")
         
         # Create an inbound message (simulating received email)
         timestamp = datetime.now().timestamp()

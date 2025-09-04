@@ -22,14 +22,13 @@ from communications.models import (
 from rest_framework.permissions import IsAuthenticated
 
 from .models import (
-    RecordCommunicationProfile, RecordCommunicationLink, RecordSyncJob,
+    RecordCommunicationProfile, RecordSyncJob,
     RecordAttendeeMapping
 )
 from .serializers import (
     RecordCommunicationProfileSerializer,
     RecordConversationSerializer,
     RecordMessageSerializer,
-    RecordCommunicationLinkSerializer,
     RecordSyncJobSerializer,
     RecordCommunicationStatsSerializer,
     SyncTriggerSerializer,
@@ -55,6 +54,18 @@ class RecordCommunicationsViewSet(viewsets.ViewSet):
         self.identifier_extractor = RecordIdentifierExtractor()
         # Note: RecordSyncOrchestrator is instantiated per request with UniPile client
         self.message_mapper = MessageMapper()
+    
+    def _get_record_conversation_ids(self, record):
+        """Helper method to get all conversation IDs for a record through participants"""
+        from communications.models import ConversationParticipant
+        
+        # Get all participants linked to this record
+        participants = Participant.objects.filter(contact_record=record)
+        
+        # Get conversations through participants
+        return ConversationParticipant.objects.filter(
+            participant__in=participants
+        ).values_list('conversation_id', flat=True).distinct()
     
     @extend_schema(
         summary="Get communication profile for a record",
@@ -120,13 +131,8 @@ class RecordCommunicationsViewSet(viewsets.ViewSet):
             limit = int(request.query_params.get('limit', 20))
             offset = int(request.query_params.get('offset', 0))
             
-            # Get all conversation links for this record
-            links = RecordCommunicationLink.objects.filter(
-                record=record
-            ).select_related('conversation', 'conversation__channel')
-            
-            # Get unique conversation IDs
-            conversation_ids = links.values_list('conversation_id', flat=True).distinct()
+            # Get conversation IDs for this record through participants
+            conversation_ids = self._get_record_conversation_ids(record)
             
             if mode == 'smart':
                 # Smart loading: All WhatsApp/LinkedIn + last 10 emails
@@ -216,13 +222,20 @@ class RecordCommunicationsViewSet(viewsets.ViewSet):
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
-            # Verify the conversation is linked to this record
-            link_exists = RecordCommunicationLink.objects.filter(
-                record=record,
-                conversation_id=conversation_id
-            ).exists()
+            # Verify the conversation is linked to this record through participants
+            conversation_ids = self._get_record_conversation_ids(record)
             
-            if not link_exists:
+            # Convert conversation_id to UUID if it's a string
+            import uuid
+            try:
+                conv_uuid = uuid.UUID(conversation_id)
+            except (ValueError, TypeError):
+                return Response(
+                    {'error': 'Invalid conversation_id format'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            if conv_uuid not in conversation_ids:
                 return Response(
                     {'error': 'Conversation not found for this record'},
                     status=status.HTTP_404_NOT_FOUND
@@ -237,7 +250,7 @@ class RecordCommunicationsViewSet(viewsets.ViewSet):
             from django.db.models.functions import Coalesce
             from django.db.models import F
             messages = Message.objects.filter(
-                conversation_id=conversation_id
+                conversation_id=conv_uuid
             ).select_related(
                 'sender_participant', 'conversation', 'channel'
             ).annotate(
@@ -246,7 +259,7 @@ class RecordCommunicationsViewSet(viewsets.ViewSet):
             
             # Get total count
             total_count = Message.objects.filter(
-                conversation_id=conversation_id
+                conversation_id=conv_uuid
             ).count()
             
             serializer = RecordMessageSerializer(messages, many=True)
@@ -284,11 +297,8 @@ class RecordCommunicationsViewSet(viewsets.ViewSet):
             offset = int(request.query_params.get('offset', 0))
             channel_type = request.query_params.get('channel_type')
             
-            # Get all conversations linked to this record through RecordCommunicationLink
-            from communications.record_communications.models import RecordCommunicationLink
-            conversation_ids = RecordCommunicationLink.objects.filter(
-                record=record
-            ).values_list('conversation_id', flat=True)
+            # Get all conversations linked to this record through participants
+            conversation_ids = self._get_record_conversation_ids(record)
             
             # Get all messages from these conversations
             messages = Message.objects.filter(
@@ -353,9 +363,8 @@ class RecordCommunicationsViewSet(viewsets.ViewSet):
                     'participants_count': 0
                 })
             
-            # Get all linked conversations
-            links = RecordCommunicationLink.objects.filter(record=record)
-            conversation_ids = links.values_list('conversation_id', flat=True).distinct()
+            # Get all linked conversations through participants
+            conversation_ids = self._get_record_conversation_ids(record)
             
             # Get channel breakdown
             channel_stats = Conversation.objects.filter(
@@ -720,12 +729,8 @@ class RecordCommunicationsViewSet(viewsets.ViewSet):
                     )
                     logger.info(f"📧 Created new conversation {conversation.id} for new email thread")
                     
-                    # Link conversation to record
-                    from communications.record_communications.models import RecordCommunicationLink
-                    RecordCommunicationLink.objects.get_or_create(
-                        record=record,
-                        conversation=conversation
-                    )
+                    # No need to create RecordCommunicationLink anymore
+                    # The conversation is linked through participants
                 else:
                     logger.warning(f"📧 No Gmail channel found for account {account_id}")
             
@@ -891,9 +896,7 @@ class RecordCommunicationsViewSet(viewsets.ViewSet):
             
             # Check if message belongs to this record's conversations
             record = Record.objects.get(pk=pk)
-            conversation_ids = RecordCommunicationLink.objects.filter(
-                record=record
-            ).values_list('conversation_id', flat=True)
+            conversation_ids = self._get_record_conversation_ids(record)
             
             if message.conversation_id not in conversation_ids:
                 return Response(
@@ -1146,13 +1149,10 @@ class RecordCommunicationsViewSet(viewsets.ViewSet):
                     status=status.HTTP_404_NOT_FOUND
                 )
             
-            # Verify message is linked to this record
-            link_exists = RecordCommunicationLink.objects.filter(
-                record=record,
-                conversation=message.conversation
-            ).exists()
+            # Verify message is linked to this record through participants
+            conversation_ids = self._get_record_conversation_ids(record)
             
-            if not link_exists:
+            if message.conversation_id not in conversation_ids:
                 return Response(
                     {'error': 'Message not associated with this record'},
                     status=status.HTTP_403_FORBIDDEN
@@ -1472,9 +1472,7 @@ class RecordCommunicationsViewSet(viewsets.ViewSet):
             record = Record.objects.get(pk=pk)
             
             # Get all unread messages for this record
-            conversations = RecordCommunicationLink.objects.filter(
-                record=record
-            ).values_list('conversation', flat=True)
+            conversations = self._get_record_conversation_ids(record)
             
             unread_messages = Message.objects.filter(
                 conversation__in=conversations,
@@ -1666,12 +1664,8 @@ class RecordCommunicationsViewSet(viewsets.ViewSet):
                     else:
                         logger.info(f"✅ Using existing conversation {conversation.id} for chat {chat_id}")
                     
-                    # Link conversation to record (if not already linked)
-                    from communications.record_communications.models import RecordCommunicationLink
-                    RecordCommunicationLink.objects.get_or_create(
-                        record=record,
-                        conversation=conversation
-                    )
+                    # No need to create RecordCommunicationLink anymore
+                    # The conversation is linked through participants
                     
                     if was_created:
                         logger.info(f"✅ Created new chat {chat_id} and conversation {conversation.id}")

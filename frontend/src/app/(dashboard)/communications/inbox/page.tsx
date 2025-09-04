@@ -1240,7 +1240,7 @@ export default function InboxPage() {
                                   <div className="text-sm">
                                     <MessageContent 
                                       content={message.content}
-                                      isEmail={message.type === 'email'}
+                                      isEmail={false}
                                       metadata={message.metadata}
                                     />
                                   </div>

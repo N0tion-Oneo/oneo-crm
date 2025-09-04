@@ -10,7 +10,7 @@ from django.utils import timezone
 
 from pipelines.models import Record
 from communications.models import Conversation, Message
-from ..models import RecordCommunicationProfile, RecordCommunicationLink
+from ..models import RecordCommunicationProfile
 
 logger = logging.getLogger(__name__)
 
@@ -74,9 +74,12 @@ class MetricsUpdater:
         Returns:
             Dict with calculated metrics
         """
-        # Get all linked conversations
-        links = RecordCommunicationLink.objects.filter(record=record)
-        conversation_ids = links.values_list('conversation_id', flat=True).distinct()
+        # Get all conversations linked through participants
+        from communications.models import Participant, ConversationParticipant
+        participants = Participant.objects.filter(contact_record=record)
+        conversation_ids = ConversationParticipant.objects.filter(
+            participant__in=participants
+        ).values_list('conversation_id', flat=True).distinct()
         
         # Calculate conversation count
         total_conversations = len(conversation_ids)
@@ -190,13 +193,16 @@ class MetricsUpdater:
         Returns:
             Number of messages marked as read
         """
-        # Get linked conversations
-        links = RecordCommunicationLink.objects.filter(record=record)
+        # Get linked conversations through participants
+        from communications.models import Participant, ConversationParticipant
+        participants = Participant.objects.filter(contact_record=record)
         
         if conversation:
-            links = links.filter(conversation=conversation)
-        
-        conversation_ids = links.values_list('conversation_id', flat=True)
+            conversation_ids = [conversation.id]
+        else:
+            conversation_ids = ConversationParticipant.objects.filter(
+                participant__in=participants
+            ).values_list('conversation_id', flat=True)
         
         # Mark conversations as read by setting unread_count to 0
         # Note: Neither Message nor Conversation models have is_read field
@@ -213,10 +219,14 @@ class MetricsUpdater:
             
             if profile:
                 # Recalculate unread count from conversations
+                from communications.models import Participant, ConversationParticipant
+                participants = Participant.objects.filter(contact_record=record)
+                conv_ids = ConversationParticipant.objects.filter(
+                    participant__in=participants
+                ).values_list('conversation_id', flat=True)
+                
                 new_unread = Conversation.objects.filter(
-                    id__in=RecordCommunicationLink.objects.filter(
-                        record=record
-                    ).values_list('conversation_id', flat=True)
+                    id__in=conv_ids
                 ).aggregate(
                     total=models.Sum('unread_count')
                 )['total'] or 0
@@ -239,27 +249,30 @@ class MetricsUpdater:
         Returns:
             Dict with channel statistics
         """
-        # Get all links for this record
-        links = RecordCommunicationLink.objects.filter(record=record)
+        # Get all conversations through participants grouped by channel type
+        from communications.models import Participant, ConversationParticipant
+        participants = Participant.objects.filter(contact_record=record)
+        
+        # Get conversations with channel info
+        conversations = Conversation.objects.filter(
+            conversation_participants__participant__in=participants
+        ).select_related('channel').distinct()
         
         breakdown = {}
         
-        # Group by match type
-        for match_type in links.values_list('match_type', flat=True).distinct():
-            type_links = links.filter(match_type=match_type)
-            conversation_ids = type_links.values_list('conversation_id', flat=True)
+        # Group by channel type
+        for conversation in conversations:
+            channel_type = conversation.channel.channel_type if conversation.channel else 'unknown'
             
-            # Calculate stats for this match type
-            breakdown[match_type] = {
-                'conversations': len(conversation_ids),
-                'messages': Message.objects.filter(
-                    conversation_id__in=conversation_ids
-                ).count(),
-                'unread': Conversation.objects.filter(
-                    id__in=conversation_ids
-                ).aggregate(
-                    total=models.Sum('unread_count')
-                )['total'] or 0
-            }
+            if channel_type not in breakdown:
+                breakdown[channel_type] = {
+                    'conversations': 0,
+                    'messages': 0,
+                    'unread': 0
+                }
+            
+            breakdown[channel_type]['conversations'] += 1
+            breakdown[channel_type]['messages'] += conversation.messages.count()
+            breakdown[channel_type]['unread'] += conversation.unread_count or 0
         
         return breakdown

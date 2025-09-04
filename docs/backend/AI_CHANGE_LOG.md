@@ -1,5 +1,21 @@
 # AI Change Log
 
+## 2024-12-19 15:30 - Git Push: Tenant Settings System
+**Description:** Successfully pushed latest code to GitHub, excluding communication app updates
+**Reason:** User requested to push code while keeping communication app changes local
+**Affected Files:** 
+- backend/tenants/models.py, serializers.py, views.py, migrations/
+- frontend/src/app/(dashboard)/settings/ (all new pages)
+- frontend/src/components/ui/skeleton.tsx, table.tsx
+- frontend/src/lib/api.ts, api/tenant-settings.ts
+- frontend/src/components/layout/app-shell.tsx
+**Excluded Files:**
+- backend/communications/serializers.py, views.py
+- frontend/src/app/(dashboard)/communications/settings/page.tsx
+- backend/communications/management/commands/merge_duplicate_participants.py
+- backend/communications/services/participant_management.py
+- frontend/src/components/communications/participants/
+
 ## 2025-01-27 16:15 - Analyzed Changes Since Last Push
 
 **Description**: Analyzed and documented the changes made since the last push to GitHub, identifying 9 modified files with significant enhancements to the email communications system.

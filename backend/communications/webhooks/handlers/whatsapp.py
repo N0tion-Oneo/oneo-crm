@@ -12,6 +12,7 @@ from communications.services.participant_resolution import (
     ParticipantResolutionService, ConversationStorageDecider
 )
 from communications.models import Participant
+from communications.record_communications.storage.participant_link_manager import ParticipantLinkManager
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +24,7 @@ class WhatsAppWebhookHandler(BaseWebhookHandler):
         super().__init__('whatsapp')
         self.resolution_service = ParticipantResolutionService()
         self.storage_decider = ConversationStorageDecider()
+        self.link_manager = ParticipantLinkManager()
     
     def get_supported_events(self) -> list[str]:
         """WhatsApp supported event types"""
@@ -426,6 +428,28 @@ class WhatsAppWebhookHandler(BaseWebhookHandler):
                             sender_participant.name = sender_name
                             sender_participant.save(update_fields=['name'])
                             logger.info(f"📝 Updated participant name: {old_name} → {sender_name}")
+                    
+                    # Link participant to record if not already linked
+                    if not sender_participant.contact_record and sender_phone:
+                        try:
+                            from communications.record_communications.services import RecordIdentifierExtractor
+                            identifier_extractor = RecordIdentifierExtractor()
+                            
+                            # Find records by phone number
+                            identifiers = {'phone': [sender_phone]}
+                            matching_records = identifier_extractor.find_records_by_identifiers(identifiers)
+                            
+                            if matching_records and len(matching_records) == 1:
+                                # Use ParticipantLinkManager for consistent linking
+                                if self.link_manager.link_participant_to_record(
+                                    participant=sender_participant,
+                                    record=matching_records[0],
+                                    confidence=0.90,
+                                    method='phone_webhook'
+                                ):
+                                    logger.info(f"✅ Linked participant {sender_participant.id} to record {matching_records[0].id} via phone {sender_phone}")
+                        except Exception as e:
+                            logger.warning(f"Failed to link participant to record: {e}")
                 else:
                     logger.warning(f"⚠️ No phone number found for sender: {sender_info}")
             

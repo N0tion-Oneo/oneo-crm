@@ -130,7 +130,16 @@ export function RecordCommunicationsPanel({
     )
   }
 
-  if (!conversations.length && !profile?.sync_in_progress && !loadingChannel) {
+  // Only show "No communications yet" if we have no stats at all (no channels have been synced)
+  // If we have stats but current channel is empty, we'll show the regular UI with empty conversation list
+  const hasAnyMessages = stats && (
+    (stats.channel_breakdown?.email?.messages || 0) +
+    (stats.channel_breakdown?.gmail?.messages || 0) +
+    (stats.channel_breakdown?.whatsapp?.messages || 0) +
+    (stats.channel_breakdown?.linkedin?.messages || 0) > 0
+  )
+  
+  if (!hasAnyMessages && !conversations.length && !profile?.sync_in_progress && !loadingChannel) {
     return (
       <div className="flex flex-col h-full max-h-[800px] min-h-[500px] bg-gray-50 dark:bg-gray-900">
         <div className="flex items-center justify-center h-full">
@@ -247,6 +256,8 @@ export function RecordCommunicationsPanel({
                     onLoadMore={() => loadMoreConversations(activeTab)}
                     hasMore={hasMoreConversations?.[activeTab] || false}
                     isLoadingMore={isLoadingMore}
+                    channelType={activeTab}
+                    onSync={handleSync}
                   />
                 )}
               </div>

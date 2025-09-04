@@ -55,7 +55,7 @@ class Command(BaseCommand):
         )
         from communications.record_communications.models import (
             RecordCommunicationProfile,
-            RecordCommunicationLink,
+            # RecordCommunicationLink,  # Removed - using participant linking
             RecordSyncJob,
             RecordAttendeeMapping
         )
@@ -86,27 +86,32 @@ class Command(BaseCommand):
         
         # Build filters based on scope
         if record_id:
-            # Get conversations linked to this record
-            conversation_ids = RecordCommunicationLink.objects.filter(
-                record_id=record_id
-            ).values_list('conversation_id', flat=True)
+            # Get conversations linked to this record through participants
+            from communications.models import ConversationParticipant
+            participants = Participant.objects.filter(contact_record_id=record_id)
+            conversation_ids = ConversationParticipant.objects.filter(
+                participant__in=participants
+            ).values_list('conversation_id', flat=True).distinct()
             
             conversations_count = len(conversation_ids)
             messages_count = Message.objects.filter(conversation_id__in=conversation_ids).count()
-            links_count = RecordCommunicationLink.objects.filter(record_id=record_id).count()
+            links_count = participants.count()  # Count linked participants instead
             profiles_count = RecordCommunicationProfile.objects.filter(record_id=record_id).count()
             sync_jobs_count = RecordSyncJob.objects.filter(record_id=record_id).count()
             attendee_mappings_count = RecordAttendeeMapping.objects.filter(record_id=record_id).count()
             
         elif pipeline_id:
             record_ids = Record.objects.filter(pipeline_id=pipeline_id).values_list('id', flat=True)
-            conversation_ids = RecordCommunicationLink.objects.filter(
-                record_id__in=record_ids
+            # Get conversations through participants linked to these records
+            from communications.models import ConversationParticipant
+            participants = Participant.objects.filter(contact_record_id__in=record_ids)
+            conversation_ids = ConversationParticipant.objects.filter(
+                participant__in=participants
             ).values_list('conversation_id', flat=True).distinct()
             
             conversations_count = len(conversation_ids)
             messages_count = Message.objects.filter(conversation_id__in=conversation_ids).count()
-            links_count = RecordCommunicationLink.objects.filter(record_id__in=record_ids).count()
+            links_count = participants.count()  # Count linked participants instead
             profiles_count = RecordCommunicationProfile.objects.filter(record_id__in=record_ids).count()
             sync_jobs_count = RecordSyncJob.objects.filter(record_id__in=record_ids).count()
             attendee_mappings_count = RecordAttendeeMapping.objects.filter(record_id__in=record_ids).count()
@@ -114,7 +119,7 @@ class Command(BaseCommand):
         else:
             conversations_count = Conversation.objects.count()
             messages_count = Message.objects.count()
-            links_count = RecordCommunicationLink.objects.count()
+            links_count = Participant.objects.filter(contact_record__isnull=False).count()  # Count linked participants
             profiles_count = RecordCommunicationProfile.objects.count()
             sync_jobs_count = RecordSyncJob.objects.count()
             attendee_mappings_count = RecordAttendeeMapping.objects.count()
@@ -175,22 +180,42 @@ class Command(BaseCommand):
                     deleted = ConversationParticipant.objects.all().delete()
                     self.stdout.write(f"✓ Deleted {deleted[0]} conversation participants")
                 
-                # Delete record communication links
+                # Clear participant links to records
                 if record_id:
-                    deleted = RecordCommunicationLink.objects.filter(record_id=record_id).delete()
+                    updated = Participant.objects.filter(contact_record_id=record_id).update(
+                        contact_record=None,
+                        resolution_confidence=0,
+                        resolution_method='',
+                        resolved_at=None
+                    )
                 elif pipeline_id:
-                    deleted = RecordCommunicationLink.objects.filter(record_id__in=record_ids).delete()
+                    updated = Participant.objects.filter(contact_record_id__in=record_ids).update(
+                        contact_record=None,
+                        resolution_confidence=0,
+                        resolution_method='',
+                        resolved_at=None
+                    )
                 else:
-                    deleted = RecordCommunicationLink.objects.all().delete()
-                self.stdout.write(f"✓ Deleted {deleted[0]} record communication links")
+                    updated = Participant.objects.filter(contact_record__isnull=False).update(
+                        contact_record=None,
+                        resolution_confidence=0,
+                        resolution_method='',
+                        resolved_at=None
+                    )
+                self.stdout.write(f"✓ Cleared {updated} participant-record links")
                 
                 # Delete conversations
                 if record_id or pipeline_id:
                     # Only delete conversations that are no longer linked to any records
+                    # Find orphaned conversations (no linked participants)
+                    from communications.models import ConversationParticipant as CP
+                    linked_conversation_ids = CP.objects.filter(
+                        participant__contact_record__isnull=False
+                    ).values_list('conversation_id', flat=True).distinct()
                     orphaned_conversations = Conversation.objects.filter(
                         id__in=conversation_ids
                     ).exclude(
-                        id__in=RecordCommunicationLink.objects.values_list('conversation_id', flat=True)
+                        id__in=linked_conversation_ids
                     )
                     deleted = orphaned_conversations.delete()
                     self.stdout.write(f"✓ Deleted {deleted[0]} orphaned conversations")

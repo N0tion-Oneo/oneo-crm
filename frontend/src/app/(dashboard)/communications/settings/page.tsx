@@ -12,6 +12,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useToast } from '@/hooks/use-toast'
 import { useAuth } from '@/features/auth/context'
 import { communicationsApi } from '@/lib/api'
+import { ParticipantList } from '@/components/communications/participants/ParticipantList'
 
 interface ProviderConfig {
   global: {
@@ -55,7 +56,7 @@ export default function CommunicationsSettingsPage() {
   const [configurations, setConfigurations] = useState<ProviderConfigurations | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
-  const [activeTab, setActiveTab] = useState('providers')
+  const [activeTab, setActiveTab] = useState('participants')
   
   const { toast } = useToast()
   const { tenant, user, isAuthenticated, isLoading: authLoading } = useAuth()
@@ -220,11 +221,16 @@ export default function CommunicationsSettingsPage() {
         </div>
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-          <TabsList className="grid w-full grid-cols-3">
+          <TabsList className="grid w-full grid-cols-4">
+            <TabsTrigger value="participants">Participants</TabsTrigger>
             <TabsTrigger value="providers">Provider Settings</TabsTrigger>
             <TabsTrigger value="general">General Settings</TabsTrigger>
             <TabsTrigger value="advanced">Advanced</TabsTrigger>
           </TabsList>
+
+          <TabsContent value="participants" className="space-y-6">
+            <ParticipantList />
+          </TabsContent>
 
           <TabsContent value="providers" className="space-y-6">
             <div className="grid gap-6">

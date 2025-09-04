@@ -25,7 +25,7 @@ from ..unipile_integration.message_enricher import MessageEnricher
 from ..unipile_integration.email_fetcher_v2 import EmailFetcherV2
 from ..unipile_integration.conversation_fetcher import ConversationFetcher
 from ..storage import (
-    ConversationStore, MessageStore, LinkManager, MetricsUpdater
+    ConversationStore, MessageStore, ParticipantLinkManager, MetricsUpdater
 )
 from ..utils import get_sync_config, ProviderIdBuilder
 from .identifier_extractor import RecordIdentifierExtractor
@@ -61,7 +61,7 @@ class RecordSyncOrchestrator:
         # Storage
         self.conversation_store = ConversationStore()
         self.message_store = MessageStore()
-        self.link_manager = LinkManager()
+        self.participant_link_manager = ParticipantLinkManager()
         self.metrics_updater = MetricsUpdater()
     
     def sync_record(
@@ -190,7 +190,8 @@ class RecordSyncOrchestrator:
                             record,
                             channel,
                             connection,
-                            sync_job
+                            sync_job,
+                            identifiers
                         )
                     else:
                         # Use messaging sync for WhatsApp/LinkedIn
@@ -207,7 +208,11 @@ class RecordSyncOrchestrator:
                     total_conversations += result.get('conversations', 0)
                     total_messages += result.get('messages', 0)
                 
-                # Step 4: Update metrics
+                # Step 4: Link any existing participants that match this record's identifiers
+                logger.info(f"Linking existing participants to record {record_id}")
+                self._link_existing_participants_to_record(record, identifiers)
+                
+                # Step 5: Update metrics
                 logger.info(f"Updating metrics for record {record_id}")
                 self.metrics_updater.update_profile_metrics(record)
                 
@@ -272,7 +277,8 @@ class RecordSyncOrchestrator:
         record: Record,
         channel: Channel,
         connection: UserChannelConnection,
-        sync_job: RecordSyncJob
+        sync_job: RecordSyncJob,
+        identifiers: Dict[str, List[str]] = None
     ) -> Dict[str, int]:
         """
         Sync email channel for a record
@@ -318,6 +324,7 @@ class RecordSyncOrchestrator:
             # Collect ALL email messages first to build shared participant cache
             all_email_messages = []
             threads_to_process = []
+            all_attendee_info = {}  # Initialize for email sync as well
             
             # Collect attendee names from email threads
             # PRIORITIZE FROM (sender) names as they're more reliable
@@ -326,9 +333,18 @@ class RecordSyncOrchestrator:
             
             # Process each email address
             for email_address, threads in email_data.items():
-                for thread_data in threads:
+                logger.info(f"Processing {len(threads)} threads for email {email_address}")
+                for thread_idx, thread_data in enumerate(threads):
+                    thread_messages = thread_data.get('messages', [])
+                    logger.info(f"  Thread {thread_idx + 1}: {thread_data.get('subject', 'No subject')[:50]}...")
+                    logger.info(f"    Thread ID: {thread_data.get('thread_id', 'None')}")
+                    logger.info(f"    Message count: {len(thread_messages)}")
+                    
+                    if not thread_messages:
+                        logger.warning(f"    ⚠️ EMPTY THREAD - no messages returned by UniPile!")
+                    
                     # First pass: Collect FROM names (most reliable)
-                    for msg_data in thread_data.get('messages', []):
+                    for msg_data in thread_messages:
                         from_attendee = msg_data.get('from_attendee', {})
                         if from_attendee:
                             email_id = from_attendee.get('identifier', '').lower()
@@ -418,7 +434,8 @@ class RecordSyncOrchestrator:
             logger.info(f"Building participant cache for {len(all_email_messages)} email messages")
             participant_cache = self.message_store.build_participant_cache_for_all_messages(
                 all_email_messages,
-                attendee_names=all_attendee_names
+                attendee_names=all_attendee_names,
+                attendee_info=all_attendee_info
             )
             
             # Now store all messages using the shared cache
@@ -431,14 +448,20 @@ class RecordSyncOrchestrator:
                         participant_cache  # Pass shared cache
                     )
                 
-                # Link conversation to record
-                self.link_manager.create_link(
-                    record=record,
-                    conversation=thread_info['conversation'],
-                    match_type='email',
-                    matched_identifier=thread_info['email_address'],
-                    confidence=1.0
-                )
+                # Link participants to record instead of creating RecordCommunicationLinks
+                # The participants are in the cache, link them to this record
+                if identifiers:
+                    for participant in participant_cache.values():
+                        if not participant.contact_record and participant.email:
+                            # Check if this participant's email matches any of the record's identifiers
+                            if participant.email in identifiers.get('email', []):
+                                self.participant_link_manager.link_participant_to_record(
+                                    participant=participant,
+                                    record=record,
+                                    confidence=0.95,
+                                    method='sync_email_match'
+                                )
+                                logger.info(f"Linked participant {participant.id} ({participant.email}) to record {record.id}")
             
             logger.info(f"Synced {total_conversations} email conversations for record {record.id}")
             return {'conversations': total_conversations, 'messages': total_messages}
@@ -529,6 +552,8 @@ class RecordSyncOrchestrator:
             from asgiref.sync import async_to_sync
             
             for attendee_id, attendee_data in message_data.items():
+                # Get the original resolved attendee info for this attendee
+                original_attendee_info = attendee_map.get(attendee_id, {}) if attendee_map else {}
                 for conv_data in attendee_data['conversations']:
                     chat_id = conv_data.get('chat_id')
                     
@@ -566,19 +591,39 @@ class RecordSyncOrchestrator:
                     
                     # Add account owner's name to attendees if available
                     if connection.account_name and account_provider_id:
+                        # For WhatsApp, extract phone from account name if needed
+                        account_phone = None
+                        if channel_type == 'whatsapp':
+                            # Try to extract phone from account name like "WhatsApp (27720720047)"
+                            import re
+                            phone_match = re.search(r'\((\+?\d+)\)', connection.account_name)
+                            if phone_match:
+                                account_phone = phone_match.group(1).replace('+', '')
+                                logger.debug(f"Extracted phone {account_phone} from account name")
+                        
                         # Store account owner's name by multiple keys
                         account_owner_info = {
                             'name': connection.account_name,
                             'provider_id': account_provider_id,
                             'is_account_owner': True
                         }
+                        
+                        # For WhatsApp, add phone info if available
+                        if account_phone:
+                            account_owner_info['phone'] = account_phone
+                            logger.info(f"Added phone {account_phone} to account owner info for {channel_type}")
+                        
                         chat_attendees[account_provider_id] = account_owner_info
                         
                         # For WhatsApp, also store by phone
-                        if channel_type == 'whatsapp' and '@s.whatsapp.net' in account_provider_id:
-                            phone = account_provider_id.replace('@s.whatsapp.net', '')
-                            if phone:
-                                chat_attendees[phone] = account_owner_info
+                        if channel_type == 'whatsapp':
+                            if '@s.whatsapp.net' in account_provider_id:
+                                phone = account_provider_id.replace('@s.whatsapp.net', '')
+                                if phone:
+                                    chat_attendees[phone] = account_owner_info
+                            elif account_phone:
+                                # If we extracted a phone from the name, store by that
+                                chat_attendees[account_phone] = account_owner_info
                         
                         logger.debug(f"Added account owner '{connection.account_name}' to attendees")
                     
@@ -619,7 +664,8 @@ class RecordSyncOrchestrator:
                         'conversation': conversation,
                         'messages': transformed_messages,
                         'attendees': chat_attendees,  # Store chat attendees for cache building
-                        'attendee_info': attendee_data.get('attendee_info', {})
+                        'attendee_info': attendee_data.get('attendee_info', {}),
+                        'original_attendee_info': original_attendee_info  # Store the resolved attendee info
                     })
                     
                     total_conversations += 1
@@ -628,26 +674,75 @@ class RecordSyncOrchestrator:
             # Step 4: Build participant cache from chat attendees
             logger.info(f"Building participant cache for {len(all_channel_messages)} {channel_type} messages")
             
-            # Collect all attendee names from all chats
+            # Collect all attendee names AND full info from all chats
             all_attendee_names = {}
+            all_attendee_info = {}  # Store full attendee info for metadata
+            
+            # First, add the original resolved attendee info (has linkedin_id for LinkedIn)
+            for conv_info in conversations_to_process:
+                if conv_info.get('original_attendee_info'):
+                    orig_info = conv_info['original_attendee_info']
+                    if orig_info.get('provider_id'):
+                        # IMPORTANT: Store by provider_id so participant creation can find it
+                        all_attendee_names[orig_info['provider_id']] = orig_info.get('name', '')
+                        all_attendee_info[orig_info['provider_id']] = orig_info
+                        
+                        # For LinkedIn, also store by linkedin_id
+                        if orig_info.get('linkedin_id'):
+                            all_attendee_names[orig_info['linkedin_id']] = orig_info.get('name', '')
+                            # Don't overwrite the provider_id entry, just add another entry by linkedin_id
+                            all_attendee_info[orig_info['linkedin_id']] = orig_info
+                            logger.info(f"Added resolved LinkedIn attendee: {orig_info['linkedin_id']} -> {orig_info.get('name')} with provider_id {orig_info['provider_id']}")
+            
             for conv_info in conversations_to_process:
                 for attendee_id, attendee_info in conv_info['attendees'].items():
                     if attendee_info.get('name'):
                         # Store by various identifiers
                         all_attendee_names[attendee_id] = attendee_info['name']
+                        # Only store attendee_info if we don't already have better info from resolved attendees
+                        if attendee_id not in all_attendee_info:
+                            all_attendee_info[attendee_id] = attendee_info
+                        
                         if attendee_info.get('provider_id'):
                             all_attendee_names[attendee_info['provider_id']] = attendee_info['name']
+                            # Only store if we don't already have better info from resolved attendees
+                            if attendee_info['provider_id'] not in all_attendee_info:
+                                all_attendee_info[attendee_info['provider_id']] = attendee_info
+                            
                         # For WhatsApp, also store by phone
                         if channel_type == 'whatsapp' and '@s.whatsapp.net' in str(attendee_info.get('provider_id', '')):
                             phone = attendee_info['provider_id'].replace('@s.whatsapp.net', '')
                             if phone:
                                 all_attendee_names[phone] = attendee_info['name']
+                                all_attendee_info[phone] = attendee_info
+                                
+                        # If attendee has explicit phone field (account owner), store by that
+                        elif attendee_info.get('phone'):
+                            all_attendee_names[attendee_info['phone']] = attendee_info['name']
+                            all_attendee_info[attendee_info['phone']] = attendee_info
+                            
+                        # For LinkedIn, also store by linkedin_id if present
+                        if attendee_info.get('linkedin_id'):
+                            all_attendee_names[attendee_info['linkedin_id']] = attendee_info['name']
+                            all_attendee_info[attendee_info['linkedin_id']] = attendee_info
             
             logger.info(f"Collected {len(all_attendee_names)} unique attendee names from chats")
             
+            # Debug log attendee_info contents
+            if all_attendee_info and channel_type == 'linkedin':
+                logger.info(f"LinkedIn attendee_info has {len(all_attendee_info)} entries")
+                for key, value in all_attendee_info.items():
+                    logger.info(f"  key='{key}': linkedin_id={value.get('linkedin_id')}, provider_id={value.get('provider_id')}, name={value.get('name')}")
+            # Debug log for WhatsApp to see if phone is being passed
+            if channel_type == 'whatsapp':
+                for key, value in all_attendee_names.items():
+                    if 'mp9G' in key or '27720720047' in key:
+                        logger.info(f"WhatsApp attendee mapping: {key} -> {value}")
+            
             participant_cache = self.message_store.build_participant_cache_for_all_messages(
                 all_channel_messages,
-                attendee_names=all_attendee_names
+                attendee_names=all_attendee_names,
+                attendee_info=all_attendee_info
             )
             
             # Step 5: Store messages using the shared cache
@@ -659,16 +754,30 @@ class RecordSyncOrchestrator:
                         channel,
                         participant_cache
                     )
-                
-                # Link conversation to record
-                provider_id = conv_info['attendee_info'].get('provider_id', '')
-                self.link_manager.create_link(
-                    record=record,
-                    conversation=conv_info['conversation'],
-                    match_type='provider_id',
-                    matched_identifier=provider_id,
-                    confidence=0.9
-                )
+            
+            # Link participants to record instead of creating RecordCommunicationLinks
+            # The participants are in the cache, link them to this record
+            for participant in participant_cache.values():
+                if not participant.contact_record:
+                    # Check if this participant matches any of the record's identifiers
+                    
+                    # Check phone matching for WhatsApp
+                    if participant.phone and participant.phone in identifiers.get('phone', []):
+                        self.participant_link_manager.link_participant_to_record(
+                            participant=participant,
+                            record=record,
+                            confidence=0.85,
+                            method='sync_phone_match'
+                        )
+                    
+                    # Check LinkedIn URN matching
+                    elif participant.linkedin_member_urn and participant.linkedin_member_urn in identifiers.get('linkedin', []):
+                        self.participant_link_manager.link_participant_to_record(
+                            participant=participant,
+                            record=record,
+                            confidence=0.85,
+                            method='sync_linkedin_match'
+                        )
             
             logger.info(
                 f"Synced {total_conversations} {channel_type} conversations for record {record.id}"
@@ -678,6 +787,97 @@ class RecordSyncOrchestrator:
         except Exception as e:
             logger.error(f"Error syncing {channel_type} for record {record.id}: {e}")
             return {'conversations': 0, 'messages': 0}
+    
+    def _link_existing_participants_to_record(
+        self,
+        record: Record,
+        identifiers: Dict[str, List[str]]
+    ):
+        """
+        Link any existing participants that match this record's identifiers.
+        This ensures participants from previous syncs or webhooks get linked.
+        
+        Args:
+            record: Record instance
+            identifiers: Dict of identifier types to lists of values
+        """
+        from communications.models import Participant
+        
+        linked_count = 0
+        
+        # Link by email
+        for email in identifiers.get('email', []):
+            participants = Participant.objects.filter(
+                email=email,
+                contact_record__isnull=True  # Only unlinked participants
+            )
+            for participant in participants:
+                self.participant_link_manager.link_participant_to_record(
+                    participant=participant,
+                    record=record,
+                    confidence=0.95,
+                    method='sync_email_match'
+                )
+                linked_count += 1
+                logger.info(f"Linked participant {participant.id} ({email}) to record {record.id}")
+        
+        # Link by phone
+        for phone in identifiers.get('phone', []):
+            participants = Participant.objects.filter(
+                phone=phone,
+                contact_record__isnull=True
+            )
+            for participant in participants:
+                self.participant_link_manager.link_participant_to_record(
+                    participant=participant,
+                    record=record,
+                    confidence=0.90,
+                    method='sync_phone_match'
+                )
+                linked_count += 1
+                logger.info(f"Linked participant {participant.id} ({phone}) to record {record.id}")
+        
+        # Link by LinkedIn URN (note: identifiers might have username, need to match URN or metadata)
+        for linkedin in identifiers.get('linkedin', []):
+            # Try exact match first
+            participants = Participant.objects.filter(
+                linkedin_member_urn=linkedin,
+                contact_record__isnull=True
+            )
+            
+            # If no exact match and it's not a URN, try contains match
+            if not participants.exists() and not linkedin.startswith('urn:'):
+                participants = Participant.objects.filter(
+                    linkedin_member_urn__icontains=linkedin,
+                    contact_record__isnull=True
+                )
+            
+            # If still no match, try matching on metadata linkedin_id
+            if not participants.exists():
+                # Use Q objects to check metadata JSON field
+                from django.db.models import Q
+                participants = Participant.objects.filter(
+                    Q(metadata__linkedin_id=linkedin) | 
+                    Q(metadata__linkedin_username=linkedin),
+                    contact_record__isnull=True
+                )
+                if participants.exists():
+                    logger.info(f"Found LinkedIn participant by metadata for username: {linkedin}")
+            
+            for participant in participants:
+                self.participant_link_manager.link_participant_to_record(
+                    participant=participant,
+                    record=record,
+                    confidence=0.85,
+                    method='sync_linkedin_match'
+                )
+                linked_count += 1
+                logger.info(f"Linked participant {participant.id} (LinkedIn: {linkedin}) to record {record.id}")
+        
+        if linked_count > 0:
+            logger.info(f"Linked {linked_count} existing participants to record {record.id}")
+        else:
+            logger.debug(f"No unlinked participants found matching record {record.id}")
     
     def _store_attendee_mappings(
         self,

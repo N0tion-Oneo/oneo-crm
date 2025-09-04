@@ -4,11 +4,11 @@ Focused purely on communication functionality - channels, messages, conversation
 """
 from rest_framework import serializers
 from .models import (
-    Channel, Conversation, Message, 
+    Channel, Conversation, Message, Participant,
     CommunicationAnalytics, ChannelType, AuthStatus, MessageDirection
 )
 from authentication.models import CustomUser
-from pipelines.models import Record
+from pipelines.models import Record, Pipeline
 
 
 class ChannelSerializer(serializers.ModelSerializer):
@@ -275,6 +275,186 @@ class BulkMessageSerializer(serializers.Serializer):
         if len(value) != len(set(value)):
             raise serializers.ValidationError("Duplicate recipients found")
         return value
+
+
+class ParticipantSerializer(serializers.ModelSerializer):
+    """Base participant serializer with linkage status"""
+    
+    contact_record_display = serializers.SerializerMethodField()
+    is_linked = serializers.SerializerMethodField()
+    conversation_count = serializers.SerializerMethodField()
+    last_activity = serializers.SerializerMethodField()
+    primary_identifier = serializers.SerializerMethodField()
+    channel_types = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = Participant
+        fields = [
+            'id', 'name', 'email', 'phone', 'linkedin_member_urn',
+            'instagram_username', 'facebook_id', 'telegram_id', 'twitter_handle',
+            'avatar_url', 'contact_record', 'contact_record_display',
+            'secondary_record', 'is_linked', 'conversation_count',
+            'last_activity', 'primary_identifier', 'channel_types',
+            'resolution_confidence', 'resolution_method', 'resolved_at',
+            'first_seen', 'last_seen'
+        ]
+        read_only_fields = ['id', 'first_seen', 'last_seen']
+    
+    def get_contact_record_display(self, obj):
+        """Get display info for linked record"""
+        if obj.contact_record:
+            record = obj.contact_record
+            data = record.data or {}
+            
+            # Try to get a display name from common fields
+            display_name = (
+                data.get('full_name') or 
+                data.get('name') or
+                f"{data.get('first_name', '')} {data.get('last_name', '')}".strip() or
+                data.get('company_name') or
+                data.get('email') or
+                'Unknown'
+            )
+            
+            return {
+                'id': str(record.id),
+                'display_name': display_name,
+                'pipeline_id': str(record.pipeline_id),
+                'pipeline_name': record.pipeline.name
+            }
+        return None
+    
+    def get_is_linked(self, obj):
+        """Check if participant is linked to a record"""
+        return obj.contact_record_id is not None or obj.secondary_record_id is not None
+    
+    def get_conversation_count(self, obj):
+        """Get count of conversations this participant is in"""
+        return obj.conversation_memberships.count()
+    
+    def get_last_activity(self, obj):
+        """Get timestamp of most recent activity"""
+        return obj.last_seen
+    
+    def get_primary_identifier(self, obj):
+        """Get primary identifier for display"""
+        return obj.get_primary_identifier()
+    
+    def get_channel_types(self, obj):
+        """Get unique channel types this participant uses"""
+        # Get unique channel types from conversations
+        from communications.models import ConversationParticipant
+        channel_types = set()
+        
+        participations = ConversationParticipant.objects.filter(
+            participant=obj
+        ).select_related('conversation__channel')
+        
+        for participation in participations:
+            if participation.conversation.channel:
+                channel_types.add(participation.conversation.channel.channel_type)
+        
+        return list(channel_types)
+
+
+class ParticipantDetailSerializer(ParticipantSerializer):
+    """Detailed participant view with conversations and available pipelines"""
+    
+    recent_conversations = serializers.SerializerMethodField()
+    available_pipelines = serializers.SerializerMethodField()
+    linked_record_count = serializers.SerializerMethodField()
+    
+    class Meta(ParticipantSerializer.Meta):
+        fields = ParticipantSerializer.Meta.fields + [
+            'recent_conversations', 'available_pipelines', 'linked_record_count',
+            'metadata'
+        ]
+    
+    def get_recent_conversations(self, obj):
+        """Get recent conversations for this participant"""
+        from communications.models import ConversationParticipant
+        
+        # Get last 10 conversations
+        participations = ConversationParticipant.objects.filter(
+            participant=obj
+        ).select_related('conversation').order_by('-joined_at')[:10]
+        
+        conversations = [p.conversation for p in participations]
+        return ConversationListSerializer(conversations, many=True).data
+    
+    def get_available_pipelines(self, obj):
+        """Get pipelines where records can be created"""
+        # Get pipelines user has access to create records in
+        pipelines = Pipeline.objects.filter(
+            is_active=True
+        ).order_by('name')
+        
+        return [
+            {
+                'id': str(p.id),
+                'name': p.name,
+                'slug': p.slug,
+                'description': p.description
+            }
+            for p in pipelines
+        ]
+    
+    def get_linked_record_count(self, obj):
+        """Get count of linked records - participant can only have one contact_record"""
+        # A participant can only be linked to one record via contact_record field
+        return 1 if obj.contact_record else 0
+
+
+class CreateRecordFromParticipantSerializer(serializers.Serializer):
+    """Serializer for creating a record from participant"""
+    
+    pipeline_id = serializers.UUIDField(required=True)
+    field_overrides = serializers.JSONField(required=False, default=dict)
+    link_to_conversations = serializers.BooleanField(default=True)
+    
+    def validate_pipeline_id(self, value):
+        """Validate pipeline exists and user has access"""
+        try:
+            pipeline = Pipeline.objects.get(id=value, is_active=True)
+        except Pipeline.DoesNotExist:
+            raise serializers.ValidationError("Pipeline not found or inactive")
+        return value
+
+
+class LinkParticipantSerializer(serializers.Serializer):
+    """Serializer for linking participant to existing record"""
+    
+    record_id = serializers.UUIDField(required=True)
+    confidence = serializers.FloatField(default=1.0, min_value=0.0, max_value=1.0)
+    link_conversations = serializers.BooleanField(default=True)
+    
+    def validate_record_id(self, value):
+        """Validate record exists"""
+        try:
+            Record.objects.get(id=value)
+        except Record.DoesNotExist:
+            raise serializers.ValidationError("Record not found")
+        return value
+
+
+class BulkParticipantActionSerializer(serializers.Serializer):
+    """Serializer for bulk participant actions"""
+    
+    participant_ids = serializers.ListField(
+        child=serializers.UUIDField(),
+        min_length=1,
+        max_length=100
+    )
+    pipeline_id = serializers.UUIDField(required=False)  # For bulk create
+    record_id = serializers.UUIDField(required=False)    # For bulk link
+    
+    def validate(self, attrs):
+        """Validate based on action type"""
+        if self.context.get('action') == 'create' and not attrs.get('pipeline_id'):
+            raise serializers.ValidationError("pipeline_id is required for bulk create")
+        if self.context.get('action') == 'link' and not attrs.get('record_id'):
+            raise serializers.ValidationError("record_id is required for bulk link")
+        return attrs
 
 
 class CommunicationAnalyticsSerializer(serializers.ModelSerializer):

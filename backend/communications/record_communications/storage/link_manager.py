@@ -10,11 +10,15 @@ from django.utils import timezone
 
 from pipelines.models import Record
 from communications.models import Conversation, Participant
-from ..models import RecordCommunicationLink, RecordCommunicationProfile
+from ..models import RecordCommunicationProfile
+# RecordCommunicationLink has been removed - using participant-based linking
 
 logger = logging.getLogger(__name__)
 
 
+# LinkManager has been deprecated - use ParticipantLinkManager instead
+# The entire class is commented out since RecordCommunicationLink has been removed
+"""
 class LinkManager:
     """Manages links between records and conversations"""
     
@@ -224,3 +228,4 @@ class LinkManager:
         ).delete()
         
         logger.info(f"Removed link between record {record.id} and conversation {conversation.id}")
+"""

@@ -1,6 +1,6 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 """
-Test Email sync
+Test email sync with participant linking
 """
 import os
 import sys
@@ -12,122 +12,126 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 django.setup()
 
 from django_tenants.utils import schema_context
-from pipelines.models import Record, Pipeline
-from communications.models import UserChannelConnection
+from pipelines.models import Record
+from communications.models import (
+    Participant, Conversation, ConversationParticipant, 
+    UserChannelConnection
+)
+from communications.record_communications.models import RecordCommunicationProfile
+from communications.record_communications.services.record_sync_orchestrator import RecordSyncOrchestrator
 from communications.unipile.core.client import UnipileClient
-from communications.record_communications.services.identifier_extractor import RecordIdentifierExtractor
-from django.conf import settings
-from asgiref.sync import async_to_sync
-import logging
+from communications.record_communications.storage.participant_link_manager import ParticipantLinkManager
 
-logging.basicConfig(level=logging.DEBUG)
-logger = logging.getLogger(__name__)
 
-def test_email_sync():
+def test_sync():
+    """Test email sync for a record"""
+    
     tenant_schema = 'oneotalent'
+    record_id = 93  # Robbie Cowan
     
     with schema_context(tenant_schema):
-        # Get Saul's record
-        contact_pipeline = Pipeline.objects.get(name='Contacts')
-        saul = Record.objects.filter(
-            pipeline=contact_pipeline,
-            data__first_name__icontains='saul'
-        ).first()
+        print(f"\n🔄 Testing Email Sync for Record {record_id}")
+        print("=" * 60)
         
-        if not saul:
-            print('❌ No record found for Saul')
-            return
-            
-        print(f'✓ Found Saul: Record #{saul.id}')
-        print(f'  Data: {saul.data}')
-        
-        # Extract email identifier
-        extractor = RecordIdentifierExtractor()
-        identifiers = extractor.extract_identifiers_from_record(saul)
-        emails = identifiers.get('email', [])
-        
-        print(f'\n📧 Email addresses: {emails}')
-        
-        if not emails:
-            print('❌ No email address found for Saul')
+        # Get the record
+        try:
+            record = Record.objects.get(id=record_id)
+            print(f"✅ Found record: {record.data.get('first_name')} {record.data.get('last_name')}")
+            print(f"   Email: {record.data.get('personal_email')}")
+        except Record.DoesNotExist:
+            print(f"❌ Record {record_id} not found")
             return
         
-        # Get Gmail connection
-        gmail_conn = UserChannelConnection.objects.filter(
-            channel_type='gmail',
+        # Check for active channel connections
+        connections = UserChannelConnection.objects.filter(
             is_active=True,
-            account_status='active'
-        ).first()
-        
-        if not gmail_conn:
-            print('❌ No Gmail connection found')
-            return
-            
-        print(f'✓ Gmail connection: {gmail_conn.account_name} ({gmail_conn.unipile_account_id})')
-        
-        # Initialize UniPile client
-        client = UnipileClient(
-            dsn=settings.UNIPILE_DSN,
-            access_token=settings.UNIPILE_API_KEY
+            account_status='active',
+            channel_type__in=['gmail', 'email']
         )
         
-        # Get emails for this address
-        email_address = emails[0]  # Use first email
-        print(f'\n📬 Getting emails for {email_address}...')
+        if not connections.exists():
+            print("\n⚠️ No active email connections found")
+            print("   Please connect an email account via UniPile")
+            return
         
-        try:
-            # Fetch all emails with pagination
-            all_emails = []
-            cursor = None
-            page = 1
+        print(f"\n📧 Found {connections.count()} email connection(s)")
+        for conn in connections:
+            print(f"   • {conn.channel_type}: {conn.account_name}")
+        
+        # Initialize UniPile client
+        unipile_client = UnipileClient()
+        
+        # Initialize sync orchestrator
+        orchestrator = RecordSyncOrchestrator(unipile_client)
+        
+        print("\n🚀 Starting sync...")
+        
+        # Run sync
+        result = orchestrator.sync_record(
+            record_id=record_id,
+            trigger_reason='Test participant linking'
+        )
+        
+        print("\n📊 Sync Results:")
+        print(f"   Conversations synced: {result.get('total_conversations', 0)}")
+        print(f"   Messages synced: {result.get('total_messages', 0)}")
+        
+        # Check participant linking
+        print("\n🔗 Checking Participant Links:")
+        
+        participants = Participant.objects.filter(
+            contact_record=record
+        )
+        
+        if participants.exists():
+            print(f"✅ {participants.count()} participants linked to this record:")
+            for p in participants:
+                print(f"   • {p.get_display_name()}")
+                print(f"     Email: {p.email}")
+                print(f"     Confidence: {p.resolution_confidence}")
+                print(f"     Method: {p.resolution_method}")
+        else:
+            print("⚠️ No participants linked to this record yet")
             
-            while True:
-                print(f'\n📄 Page {page}:')
-                
-                response = async_to_sync(client.email.get_emails)(
-                    account_id=gmail_conn.unipile_account_id,
-                    any_email=email_address,
-                    limit=100,
-                    cursor=cursor
-                )
-                
-                emails_batch = response.get('items', [])
-                print(f'  Emails in batch: {len(emails_batch)}')
-                
-                if emails_batch:
-                    all_emails.extend(emails_batch)
+            # Check if there are any participants with matching email
+            email = record.data.get('personal_email')
+            if email:
+                matching_participants = Participant.objects.filter(email__iexact=email)
+                if matching_participants.exists():
+                    print(f"\n🔍 Found {matching_participants.count()} participant(s) with matching email:")
                     
-                    # Show sample email
-                    email = emails_batch[0]
-                    print(f'  Sample: "{email.get("subject", "No subject")}"')
-                    print(f'  From: {email.get("from", {}).get("email", "Unknown")}')
-                    print(f'  Date: {email.get("timestamp", "")}')
-                
-                cursor = response.get('cursor')
-                print(f'  Cursor: {cursor if cursor else "None (no more pages)"}')
-                
-                if not cursor or not emails_batch:
-                    break
-                    
-                page += 1
-                
-                if page > 10:  # Safety limit
-                    print('\n⚠️ Stopping after 10 pages for safety')
-                    break
-            
-            print(f'\n✅ Total emails found: {len(all_emails)}')
-            
-            if all_emails:
-                # Sort by timestamp and show range
-                sorted_emails = sorted(all_emails, key=lambda x: x.get('timestamp', ''))
-                print(f'\n📅 Date range:')
-                print(f'  Oldest: {sorted_emails[0].get("timestamp", "unknown")}')
-                print(f'  Newest: {sorted_emails[-1].get("timestamp", "unknown")}')
-                
-        except Exception as e:
-            print(f'❌ Error: {e}')
-            import traceback
-            traceback.print_exc()
+                    # Try to link them
+                    link_manager = ParticipantLinkManager()
+                    for p in matching_participants:
+                        if not p.contact_record:
+                            was_linked = link_manager.link_participant_to_record(
+                                participant=p,
+                                record=record,
+                                confidence=0.95,
+                                method='email_sync_test'
+                            )
+                            if was_linked:
+                                print(f"   ✅ Linked participant {p.id} to record")
+                        else:
+                            print(f"   ℹ️ Participant {p.id} already linked to record {p.contact_record_id}")
+        
+        # Check conversations accessible through participants
+        print("\n💬 Checking Conversation Access:")
+        
+        link_manager = ParticipantLinkManager()
+        conversations = link_manager.get_record_conversations(record)
+        
+        if conversations:
+            print(f"✅ {len(conversations)} conversations accessible via participants:")
+            for conv in conversations[:5]:
+                print(f"   • {conv.subject or f'Conversation {conv.id}'}")
+                print(f"     Channel: {conv.channel.channel_type}")
+                print(f"     Messages: {conv.message_count}")
+        else:
+            print("⚠️ No conversations found via participants")
+        
+        print("\n✅ Test complete!")
+
 
 if __name__ == '__main__':
-    test_email_sync()
+    test_sync()

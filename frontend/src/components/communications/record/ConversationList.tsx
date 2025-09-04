@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { formatDistanceToNow } from 'date-fns'
-import { Mail, Phone, Users, MessageSquare, User, AtSign, Briefcase, Hash, Circle, MoreVertical, CheckCircle, CircleDot, Loader2 } from 'lucide-react'
+import { Mail, Phone, Users, MessageSquare, User, AtSign, Briefcase, Hash, Circle, MoreVertical, CheckCircle, CircleDot, Loader2, RefreshCw } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
@@ -50,6 +50,8 @@ interface ConversationListProps {
   onLoadMore?: () => void
   hasMore?: boolean
   isLoadingMore?: boolean
+  channelType?: string
+  onSync?: () => void
 }
 
 export function ConversationList({
@@ -59,7 +61,9 @@ export function ConversationList({
   onMarkAsRead,
   onLoadMore,
   hasMore = false,
-  isLoadingMore = false
+  isLoadingMore = false,
+  channelType,
+  onSync
 }: ConversationListProps) {
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null)
   const loadMoreTriggerRef = useRef<HTMLDivElement>(null)
@@ -196,10 +200,31 @@ export function ConversationList({
   }
 
   if (conversations.length === 0) {
+    // Get proper channel display name
+    const channelName = channelType === 'whatsapp' ? 'WhatsApp' : 
+                       channelType === 'linkedin' ? 'LinkedIn' : 
+                       channelType === 'email' ? 'email' : 'conversations'
+    
     return (
-      <div className="flex flex-col items-center justify-center h-64 text-gray-500">
-        <MessageSquare className="w-8 h-8 mb-2" />
-        <p className="text-sm">No conversations yet</p>
+      <div className="flex flex-col items-center justify-center h-64 text-gray-500 p-4">
+        <MessageSquare className="w-8 h-8 mb-3" />
+        <p className="text-sm font-medium">No {channelName} {channelName === 'email' ? 'messages' : 'conversations'} yet</p>
+        {onSync && (
+          <>
+            <p className="text-xs mt-2 text-gray-400">
+              Sync this channel to see {channelName === 'email' ? 'messages' : 'conversations'}
+            </p>
+            <Button 
+              onClick={onSync} 
+              size="sm" 
+              variant="outline" 
+              className="mt-3"
+            >
+              <RefreshCw className="w-3 h-3 mr-1.5" />
+              Sync {channelName}
+            </Button>
+          </>
+        )}
       </div>
     )
   }

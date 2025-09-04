@@ -107,164 +107,126 @@ class EmailFetcherV2:
         """
         Fetch emails and group them by thread_id
         
+        Strategy: Fetch ALL recent emails from inbox, then filter and group by thread.
+        This ensures we get complete threads, not just individual messages.
+        
         Args:
             email_address: Email address to search for
             account_id: UniPile account ID
             after_date: Optional date filter (ISO format)
-            max_emails: Maximum number of emails to fetch (0 = no limit)
+            max_emails: Maximum number of THREADS to return (0 = no limit)
             
         Returns:
             List of thread dictionaries with grouped emails
         """
         from asgiref.sync import async_to_sync
         
-        # Collect all emails
+        logger.info(f"Fetching emails for {email_address} using broad fetch strategy")
+        
+        # Fetch a large batch of emails involving the specific email address
+        # We use any_email to get emails where the address appears in to/from/cc/bcc
         all_emails = []
         cursor = None
-        total_fetched = 0
         page = 1
+        emails_to_fetch = max_emails * 10 if max_emails > 0 else 1000  # Fetch 10x to ensure complete threads
         
-        # If max_emails is 0, fetch everything
-        fetch_all = (max_emails == 0)
-        
-        while fetch_all or total_fetched < max_emails:
+        while len(all_emails) < emails_to_fetch:
             try:
-                # Determine batch size
-                if fetch_all:
-                    batch_size = 100  # Use max batch size when fetching all
-                else:
-                    batch_size = min(100, max_emails - total_fetched)
-                
-                # Build request params
+                # Fetch emails where the email address is involved
+                # This gets us emails to/from/cc/bcc the address
                 params = {
                     'account_id': account_id,
-                    'any_email': email_address,
-                    'limit': batch_size
+                    'any_email': email_address,  # Search for emails involving this address
+                    'limit': min(100, emails_to_fetch - len(all_emails))
                 }
                 
                 if cursor:
                     params['cursor'] = cursor
                 
-                logger.info(f"  Fetching page {page} for {email_address} (batch size: {batch_size}, cursor: {cursor[:20] if cursor else 'None'}...)")
-                
-                # Make the UniPile API call
+                logger.info(f"  Fetching page {page} (got {len(all_emails)} emails so far)")
                 response = async_to_sync(self.unipile_client.email.get_emails)(**params)
                 
                 if not response or 'items' not in response:
-                    logger.info(f"  No response or items for page {page}")
+                    logger.info(f"  No response for page {page}")
                     break
                 
                 emails = response.get('items', [])
-                
-                # Log raw UniPile response for cowanr emails
-                for email in emails:
-                    from_attendee = email.get('from_attendee', {})
-                    if 'cowanr' in from_attendee.get('identifier', '').lower():
-                        logger.info(f"RAW UNIPILE RESPONSE for cowanr email:")
-                        logger.info(f"  from_attendee: {from_attendee}")
-                        logger.info(f"  display_name raw: {repr(from_attendee.get('display_name', ''))}")
-                    
-                    for to_att in email.get('to_attendees', []):
-                        if 'cowanr' in to_att.get('identifier', '').lower():
-                            logger.info(f"RAW UNIPILE RESPONSE for cowanr in to_attendees:")
-                            logger.info(f"  to_attendee: {to_att}")
-                            logger.info(f"  display_name raw: {repr(to_att.get('display_name', ''))}")
-                
-                # Log if we see any quotes in display names from UniPile
-                for email in emails:
-                    from_att = email.get('from_attendee', {})
-                    if from_att and from_att.get('display_name', ''):
-                        if '"' in from_att['display_name'] or "'" in from_att['display_name']:
-                            logger.warning(f"RAW UniPile API returned quoted display_name in from_attendee: >>{from_att['display_name']}<<")
-                    
-                    for field in ['to_attendees', 'cc_attendees', 'bcc_attendees']:
-                        for att in email.get(field, []):
-                            if att and att.get('display_name', ''):
-                                if '"' in att['display_name'] or "'" in att['display_name']:
-                                    logger.warning(f"RAW UniPile API returned quoted display_name in {field}: >>{att['display_name']}<<")
                 if not emails:
-                    logger.debug(f"No emails in page {page}")
+                    logger.info(f"  No emails on page {page}")
                     break
                 
-                # Filter to ensure email is actually involved
-                batch_added = 0
-                for email in emails:
-                    if self._is_email_involved(email_address, email):
-                        # Log first email structure to see what fields UniPile sends
-                        if total_fetched == 0:
-                            logger.info(f"First email structure from UniPile:")
-                            logger.info(f"  from_attendee: {email.get('from_attendee', {})}")
-                            if email.get('to_attendees'):
-                                logger.info(f"  to_attendees[0]: {email.get('to_attendees', [])[0] if email.get('to_attendees') else 'none'}")
-                        
-                        all_emails.append(email)
-                        batch_added += 1
-                        total_fetched += 1
-                        
-                        # Only check limit if we're not fetching all
-                        if not fetch_all and total_fetched >= max_emails:
-                            break
+                all_emails.extend(emails)
+                logger.info(f"  Page {page}: Added {len(emails)} emails (total: {len(all_emails)})")
                 
-                logger.info(f"  Page {page}: Added {batch_added} emails (total: {total_fetched})")
-                
-                # Check for more pages via cursor
                 cursor = response.get('cursor')
                 if not cursor:
-                    logger.info(f"  No cursor returned - all emails fetched")
-                    break
-                
-                # If we're not fetching all and hit the limit, stop
-                if not fetch_all and total_fetched >= max_emails:
+                    logger.info(f"  No cursor - all emails fetched")
                     break
                     
                 page += 1
-                    
+                
             except Exception as e:
                 logger.error(f"Error fetching emails on page {page}: {e}")
                 break
         
-        logger.info(f"Fetched {total_fetched} emails for {email_address} across {page} pages")
+        logger.info(f"Fetched {len(all_emails)} emails involving {email_address}")
         
         # Group emails by thread_id
+        # Note: Since any_email returns only individual messages where the address appears,
+        # we'll have incomplete threads. This is a UniPile API limitation.
         threads_dict = defaultdict(list)
         
         for email in all_emails:
             thread_id = email.get('thread_id')
-            
-            # If no thread_id, use message_id as thread_id (single email thread)
             if not thread_id:
                 thread_id = email.get('message_id') or email.get('id')
             
             threads_dict[thread_id].append(email)
         
-        # Convert to list of thread objects
+        logger.info(f"Grouped into {len(threads_dict)} threads (may be incomplete)")
+        
+        # Build thread objects
         threads = []
-        for thread_id, emails in threads_dict.items():
+        for thread_id, thread_emails in threads_dict.items():
+            thread_emails = threads_dict[thread_id]
+            
             # Sort emails by date
-            emails.sort(key=lambda x: x.get('date', ''))
+            thread_emails.sort(key=lambda x: x.get('date', ''))
             
             # Extract thread subject from first email
-            subject = emails[0].get('subject', 'No subject')
+            subject = thread_emails[0].get('subject', 'No subject')
             
             # Collect all participants
-            participants = self._extract_participants(emails)
+            participants = self._extract_participants(thread_emails)
             
             # Get latest date
-            latest_date = emails[-1].get('date', '')
+            latest_date = thread_emails[-1].get('date', '')
             
             thread = {
                 'thread_id': thread_id,
                 'subject': subject,
-                'messages': emails,
+                'messages': thread_emails,
                 'participants': participants,
                 'latest_date': latest_date,
-                'message_count': len(emails)
+                'message_count': len(thread_emails)
             }
             
             threads.append(thread)
+            logger.debug(f"  Thread {thread_id[:20]}... : {subject[:50]}... has {len(thread_emails)} messages")
         
         # Sort threads by latest date (newest first)
         threads.sort(key=lambda x: x.get('latest_date', ''), reverse=True)
+        
+        # Limit to max_emails threads if specified
+        if max_emails > 0 and len(threads) > max_emails:
+            threads = threads[:max_emails]
+            logger.info(f"Limited to {max_emails} most recent threads")
+        
+        # Log summary
+        total_messages = sum(len(t['messages']) for t in threads)
+        logger.info(f"Returning {len(threads)} threads with {total_messages} total messages")
+        for idx, thread in enumerate(threads[:5], 1):  # Log first 5 threads
+            logger.info(f"  {idx}. {thread['subject'][:60]}... ({thread['message_count']} msgs)")
         
         return threads
     

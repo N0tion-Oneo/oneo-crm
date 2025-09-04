@@ -14,6 +14,7 @@ from .views.field_types import FieldTypeViewSet
 from .views.global_options import GlobalOptionsViewSet
 from .views.users import UserViewSet
 from .views.staff_profiles import StaffProfileViewSet
+from tenants.views import TenantSettingsViewSet
 
 from .views.duplicates import (
     DuplicateRuleViewSet, URLExtractionRuleViewSet, DuplicateRuleTestViewSet,
@@ -42,6 +43,7 @@ from .views.communications import (
     ChannelViewSet, ConversationViewSet, 
     MessageViewSet, CommunicationAnalyticsViewSet
 )
+from communications.views import ParticipantViewSet
 from communications.api.views import AccountConnectionViewSet
 from .views.tracking import (
     CommunicationTrackingViewSet, DeliveryTrackingViewSet,
@@ -72,6 +74,10 @@ router.register(r'field-types', FieldTypeViewSet, basename='field-types')
 router.register(r'global-options', GlobalOptionsViewSet, basename='global-options')
 router.register(r'users', UserViewSet, basename='users')
 router.register(r'staff-profiles', StaffProfileViewSet, basename='staff-profiles')
+
+# Tenant settings endpoints - singleton resource
+# We use 'current' as a fixed ID for the singleton settings
+router.register(r'tenant-settings', TenantSettingsViewSet, basename='tenant-settings')
 
 # Duplicates endpoints (simplified system)
 router.register(r'duplicate-rules', DuplicateRuleViewSet, basename='duplicate-rule')
@@ -111,6 +117,7 @@ router.register(r'channels', ChannelViewSet, basename='channel')
 router.register(r'conversations', ConversationViewSet, basename='conversation')
 router.register(r'messages', MessageViewSet, basename='message')
 router.register(r'communication-analytics', CommunicationAnalyticsViewSet, basename='communication-analytics')
+router.register(r'participants', ParticipantViewSet, basename='participant')
 
 # Account connection endpoints
 router.register(r'account-connections', AccountConnectionViewSet, basename='account-connection')

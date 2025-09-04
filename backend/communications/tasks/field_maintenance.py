@@ -204,25 +204,29 @@ def process_scheduled_syncs():
 
 
 @shared_task
-def verify_communication_links():
-    """Verify and update communication link timestamps"""
-    from communications.record_communications.models import RecordCommunicationLink
+def verify_participant_links():
+    """Verify and update participant link timestamps"""
+    from communications.models import Participant
     from communications.services.field_manager import field_manager
     
     try:
-        # Get links that haven't been verified in 7 days
+        # Get participants with contact records that haven't been verified in 7 days
         cutoff_date = timezone.now() - timedelta(days=7)
         
-        unverified_links = RecordCommunicationLink.objects.filter(
+        unverified_participants = Participant.objects.filter(
+            contact_record__isnull=False
+        ).filter(
             Q(last_verified__lt=cutoff_date) | Q(last_verified__isnull=True)
         )[:100]  # Process 100 at a time
         
         verified_count = 0
-        for link in unverified_links:
-            field_manager.verify_communication_link(link)
-            verified_count += 1
+        for participant in unverified_participants:
+            # Verify the participant's link to record
+            if participant.contact_record:
+                field_manager.update_participant_stats(participant)
+                verified_count += 1
         
-        logger.info(f"Verified {verified_count} communication links")
+        logger.info(f"Verified {verified_count} participant links")
         return {'status': 'success', 'verified': verified_count}
         
     except Exception as e:

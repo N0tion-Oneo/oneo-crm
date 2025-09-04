@@ -508,7 +508,8 @@ class MessageStore:
     def build_participant_cache_for_all_messages(
         self, 
         all_messages_data: List[Dict[str, Any]],
-        attendee_names: Optional[Dict[str, str]] = None
+        attendee_names: Optional[Dict[str, str]] = None,
+        attendee_info: Optional[Dict[str, Dict[str, Any]]] = None
     ) -> Dict[str, Participant]:
         """
         Build a participant cache for ALL messages across all conversations
@@ -517,6 +518,7 @@ class MessageStore:
         Args:
             all_messages_data: List of ALL message data dictionaries across all conversations
             attendee_names: Optional pre-fetched mapping of identifier to name from UniPile
+            attendee_info: Optional full attendee info including metadata (linkedin_id, etc)
             
         Returns:
             Dict mapping identifier keys to Participant instances
@@ -524,12 +526,15 @@ class MessageStore:
         logger.info(f"Building participant cache for {len(all_messages_data)} messages")
         if attendee_names:
             logger.info(f"Using pre-fetched names: {len(attendee_names)} names available")
-        return self._build_participant_cache(all_messages_data, attendee_names)
+        if attendee_info:
+            logger.info(f"Using pre-fetched attendee info: {len(attendee_info)} attendees")
+        return self._build_participant_cache(all_messages_data, attendee_names, attendee_info)
     
     def _build_participant_cache(
         self, 
         messages_data: List[Dict[str, Any]],
-        attendee_names: Optional[Dict[str, str]] = None
+        attendee_names: Optional[Dict[str, str]] = None,
+        attendee_info: Optional[Dict[str, Dict[str, Any]]] = None
     ) -> Dict[str, Participant]:
         """
         Build a cache of participants for all messages to avoid N queries
@@ -602,10 +607,18 @@ class MessageStore:
                     else:
                         # Could be LinkedIn provider_id
                         pre_fetched_name = attendee_names.get(from_data, '')
-                        provider_to_info[from_data] = {
+                        info_dict = {
                             'name': pre_fetched_name if pre_fetched_name else metadata.get('sender_name', ''),
                             'provider_id': from_data
                         }
+                        
+                        # Check if we have full attendee info with linkedin_id
+                        if attendee_info and from_data in attendee_info:
+                            full_info = attendee_info[from_data]
+                            if full_info.get('linkedin_id'):
+                                info_dict['linkedin_id'] = full_info['linkedin_id']
+                        
+                        provider_to_info[from_data] = info_dict
             
             # Extract enriched sender info (from message enricher)
             sender_info = msg_data.get('sender', {})
@@ -859,10 +872,16 @@ class MessageStore:
                 )
         
         for phone, name in phone_to_name.items():
-            if f"phone:{phone}" not in participant_cache:
+            cache_key = f"phone:{phone}"
+            if cache_key not in participant_cache:
+                # Skip if this looks like a UniPile account ID (not a real phone number)
+                # UniPile IDs contain letters and underscores
+                if '_' in phone or (len(phone) > 15 and not phone.replace('+', '').isdigit()):
+                    logger.info(f"Skipping invalid phone number (likely UniPile ID): {phone}")
+                    continue
+                    
                 # Log when creating WhatsApp participants with names
-                if name:
-                    logger.info(f"Creating WhatsApp participant with phone '{phone}' and name '{name}'")
+                logger.info(f"Creating WhatsApp participant with phone '{phone}' and name '{name or 'No name'}'")
                 participants_to_create.append(
                     Participant(
                         phone=phone, 
@@ -915,6 +934,21 @@ class MessageStore:
                 # Add LinkedIn URN
                 if info.get('linkedin'):
                     participant_data['linkedin_member_urn'] = info['linkedin']
+                    
+                    # If we have attendee_info, check for linkedin_id to store in metadata
+                    if attendee_info:
+                        logger.debug(f"Checking attendee_info for provider_id '{provider_id}'")
+                        if provider_id in attendee_info:
+                            full_info = attendee_info[provider_id]
+                            logger.debug(f"Found attendee_info for '{provider_id}': {full_info}")
+                            if full_info.get('linkedin_id'):
+                                participant_data['metadata']['linkedin_id'] = full_info['linkedin_id']
+                                participant_data['metadata']['linkedin_username'] = full_info['linkedin_id']
+                                logger.info(f"Adding LinkedIn username '{full_info['linkedin_id']}' to participant metadata for {provider_id}")
+                            else:
+                                logger.debug(f"No linkedin_id in attendee_info for {provider_id}")
+                        else:
+                            logger.debug(f"provider_id '{provider_id}' not in attendee_info keys: {list(attendee_info.keys())[:5]}")
                     
                 participants_to_create.append(Participant(**participant_data))
         

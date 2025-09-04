@@ -4,6 +4,7 @@ LinkedIn-specific webhook handler
 import logging
 from typing import Dict, Any, Optional
 from .base import BaseWebhookHandler
+from communications.record_communications.storage.participant_link_manager import ParticipantLinkManager
 
 logger = logging.getLogger(__name__)
 
@@ -13,6 +14,7 @@ class LinkedInWebhookHandler(BaseWebhookHandler):
     
     def __init__(self):
         super().__init__('linkedin')
+        self.link_manager = ParticipantLinkManager()
     
     def get_supported_events(self) -> list[str]:
         """LinkedIn supported event types"""
@@ -149,7 +151,7 @@ class LinkedInWebhookHandler(BaseWebhookHandler):
                 
                 if sender_provider_id:
                     # Use linkedin_member_urn field for LinkedIn IDs
-                    sender_participant, _ = Participant.objects.get_or_create(
+                    sender_participant, created = Participant.objects.get_or_create(
                         linkedin_member_urn=sender_provider_id,
                         defaults={'name': sender_name}
                     )
@@ -157,6 +159,29 @@ class LinkedInWebhookHandler(BaseWebhookHandler):
                     if sender_name and sender_participant.name != sender_name:
                         sender_participant.name = sender_name
                         sender_participant.save(update_fields=['name'])
+                    
+                    # Link participant to record if not already linked
+                    if not sender_participant.contact_record and sender_provider_id:
+                        try:
+                            from communications.record_communications.services import RecordIdentifierExtractor
+                            from django.utils import timezone
+                            identifier_extractor = RecordIdentifierExtractor()
+                            
+                            # Find records by LinkedIn URN
+                            identifiers = {'linkedin': [sender_provider_id]}
+                            matching_records = identifier_extractor.find_records_by_identifiers(identifiers)
+                            
+                            if matching_records and len(matching_records) == 1:
+                                # Use ParticipantLinkManager for consistent linking
+                                if self.link_manager.link_participant_to_record(
+                                    participant=sender_participant,
+                                    record=matching_records[0],
+                                    confidence=0.85,
+                                    method='linkedin_webhook'
+                                ):
+                                    logger.info(f"✅ Linked participant {sender_participant.id} to record {matching_records[0].id} via LinkedIn URN")
+                        except Exception as e:
+                            logger.warning(f"Failed to link participant to record: {e}")
             
             # Extract recipient information from attendees
             attendees = data.get('attendees', [])

@@ -21,13 +21,16 @@ from drf_spectacular.utils import extend_schema, OpenApiParameter
 from asgiref.sync import sync_to_async
 
 from .models import (
-    Channel, Conversation, Message, CommunicationAnalytics, MessageDirection, MessageStatus
+    Channel, Conversation, Message, Participant, CommunicationAnalytics, MessageDirection, MessageStatus
 )
 from .serializers import (
     ChannelSerializer, ConversationListSerializer, ConversationDetailSerializer,
     MessageSerializer, MessageCreateSerializer,
     CommunicationAnalyticsSerializer, ChannelConnectionSerializer,
-    MessageSendSerializer, BulkMessageSerializer
+    MessageSendSerializer, BulkMessageSerializer,
+    ParticipantSerializer, ParticipantDetailSerializer,
+    CreateRecordFromParticipantSerializer, LinkParticipantSerializer,
+    BulkParticipantActionSerializer
 )
 from .unipile_sdk import unipile_service
 from pipelines.models import Record
@@ -1272,3 +1275,367 @@ class CommunicationAnalyticsViewSet(viewsets.ViewSet):
             })
         
         return insights
+
+
+class ParticipantViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet for managing communication participants
+    Provides intelligent participant-to-record mapping using duplicate detection rules
+    """
+    
+    queryset = Participant.objects.all()
+    serializer_class = ParticipantSerializer
+    permission_classes = [permissions.IsAuthenticated]  # Update with proper permission class
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_fields = ['contact_record', 'secondary_record']
+    search_fields = ['name', 'email', 'phone', 'linkedin_member_urn']
+    ordering_fields = ['name', 'last_seen', 'first_seen']
+    ordering = ['-last_seen']
+    
+    def get_serializer_class(self):
+        """Use detail serializer for retrieve action"""
+        if self.action == 'retrieve':
+            return ParticipantDetailSerializer
+        return super().get_serializer_class()
+    
+    @extend_schema(
+        summary="Get field mapping preview for record creation",
+        parameters=[
+            OpenApiParameter(
+                name='pipeline_id',
+                type=str,
+                location=OpenApiParameter.QUERY,
+                required=True,
+                description='Pipeline ID to map fields to'
+            )
+        ],
+        responses={200: {'type': 'object', 'properties': {
+            'participant': {'type': 'object'},
+            'pipeline': {'type': 'string'},
+            'field_mappings': {'type': 'array'}
+        }}}
+    )
+    @action(detail=True, methods=['get'])
+    def get_field_mapping(self, request, pk=None):
+        """Preview how participant data will map to record fields"""
+        participant = self.get_object()
+        pipeline_id = request.query_params.get('pipeline_id')
+        
+        if not pipeline_id:
+            return Response(
+                {'error': 'pipeline_id parameter is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            from pipelines.models import Pipeline
+            from .services.participant_management import ParticipantManagementService
+            
+            pipeline = Pipeline.objects.get(id=pipeline_id, is_active=True)
+            
+            # Get tenant context
+            from django.db import connection as db_connection
+            tenant = getattr(db_connection, 'tenant', None)
+            
+            service = ParticipantManagementService(tenant=tenant)
+            mappings = service.preview_field_mapping(participant, pipeline)
+            
+            return Response({
+                'participant': ParticipantSerializer(participant).data,
+                'pipeline': {
+                    'id': str(pipeline.id),
+                    'name': pipeline.name,
+                    'slug': pipeline.slug
+                },
+                'field_mappings': mappings
+            })
+            
+        except Pipeline.DoesNotExist:
+            return Response(
+                {'error': 'Pipeline not found or inactive'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            logger.error(f"Error generating field mapping: {e}")
+            return Response(
+                {'error': f'Failed to generate field mapping: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @extend_schema(
+        summary="Create a new record from participant data",
+        request=CreateRecordFromParticipantSerializer,
+        responses={201: {'type': 'object', 'properties': {
+            'success': {'type': 'boolean'},
+            'record_id': {'type': 'string'}
+        }}}
+    )
+    @action(detail=True, methods=['post'])
+    def create_record(self, request, pk=None):
+        """Create a new CRM record from participant data"""
+        participant = self.get_object()
+        serializer = CreateRecordFromParticipantSerializer(data=request.data)
+        
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            from pipelines.models import Pipeline
+            from .services.participant_management import ParticipantManagementService
+            
+            pipeline = Pipeline.objects.get(id=serializer.validated_data['pipeline_id'])
+            
+            # Get tenant context
+            from django.db import connection as db_connection
+            tenant = getattr(db_connection, 'tenant', None)
+            
+            service = ParticipantManagementService(tenant=tenant)
+            record = service.create_record_from_participant(
+                participant=participant,
+                pipeline=pipeline,
+                user=request.user,
+                overrides=serializer.validated_data.get('field_overrides'),
+                link_conversations=serializer.validated_data.get('link_to_conversations', True)
+            )
+            
+            return Response({
+                'success': True,
+                'record': {
+                    'id': str(record.id),
+                    'pipeline': pipeline.name,
+                    'data': record.data
+                }
+            }, status=status.HTTP_201_CREATED)
+            
+        except Exception as e:
+            logger.error(f"Error creating record from participant: {e}")
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+    
+    @extend_schema(
+        summary="Link participant to existing record",
+        request=LinkParticipantSerializer,
+        responses={200: {'type': 'object', 'properties': {
+            'success': {'type': 'boolean'},
+            'message': {'type': 'string'}
+        }}}
+    )
+    @action(detail=True, methods=['post'])
+    def link_record(self, request, pk=None):
+        """Link participant to an existing CRM record"""
+        participant = self.get_object()
+        serializer = LinkParticipantSerializer(data=request.data)
+        
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            from .services.participant_management import ParticipantManagementService
+            
+            record = Record.objects.get(id=serializer.validated_data['record_id'])
+            
+            # Get tenant context
+            from django.db import connection as db_connection
+            tenant = getattr(db_connection, 'tenant', None)
+            
+            service = ParticipantManagementService(tenant=tenant)
+            service.link_participant_to_record(
+                participant=participant,
+                record=record,
+                user=request.user,
+                confidence=serializer.validated_data.get('confidence', 1.0),
+                link_conversations=serializer.validated_data.get('link_conversations', True)
+            )
+            
+            return Response({
+                'success': True,
+                'message': f'Participant linked to record {record.id}'
+            })
+            
+        except Record.DoesNotExist:
+            return Response(
+                {'error': 'Record not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            logger.error(f"Error linking participant to record: {e}")
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+    
+    @extend_schema(
+        summary="Unlink participant from record",
+        responses={200: {'type': 'object', 'properties': {
+            'success': {'type': 'boolean'},
+            'message': {'type': 'string'}
+        }}}
+    )
+    @action(detail=True, methods=['post'])
+    def unlink(self, request, pk=None):
+        """Remove participant's record link"""
+        participant = self.get_object()
+        
+        try:
+            from .services.participant_management import ParticipantManagementService
+            
+            # Get tenant context
+            from django.db import connection as db_connection
+            tenant = getattr(db_connection, 'tenant', None)
+            
+            service = ParticipantManagementService(tenant=tenant)
+            service.unlink_participant(participant, request.user)
+            
+            return Response({
+                'success': True,
+                'message': 'Participant unlinked from record'
+            })
+            
+        except Exception as e:
+            logger.error(f"Error unlinking participant: {e}")
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+    
+    @extend_schema(
+        summary="Get all unlinked participants",
+        responses={200: ParticipantSerializer(many=True)}
+    )
+    @action(detail=False, methods=['get'])
+    def unlinked(self, request):
+        """Get all participants that are not linked to any record"""
+        queryset = self.filter_queryset(
+            self.get_queryset().filter(
+                contact_record__isnull=True,
+                secondary_record__isnull=True
+            )
+        )
+        
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+        
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
+    
+    @extend_schema(
+        summary="Bulk link participants to records",
+        request=BulkParticipantActionSerializer,
+        responses={200: {'type': 'object', 'properties': {
+            'success_count': {'type': 'integer'},
+            'failure_count': {'type': 'integer'}
+        }}}
+    )
+    @action(detail=False, methods=['post'])
+    def bulk_link(self, request):
+        """Link multiple participants to a single record"""
+        serializer = BulkParticipantActionSerializer(
+            data=request.data,
+            context={'action': 'link'}
+        )
+        
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            from .services.participant_management import ParticipantManagementService
+            
+            record = Record.objects.get(id=serializer.validated_data['record_id'])
+            participant_ids = serializer.validated_data['participant_ids']
+            
+            # Get tenant context
+            from django.db import connection as db_connection
+            tenant = getattr(db_connection, 'tenant', None)
+            
+            service = ParticipantManagementService(tenant=tenant)
+            
+            success_count = 0
+            failure_count = 0
+            
+            participants = Participant.objects.filter(id__in=participant_ids)
+            for participant in participants:
+                try:
+                    service.link_participant_to_record(
+                        participant=participant,
+                        record=record,
+                        user=request.user
+                    )
+                    success_count += 1
+                except Exception as e:
+                    logger.error(f"Failed to link participant {participant.id}: {e}")
+                    failure_count += 1
+            
+            return Response({
+                'success_count': success_count,
+                'failure_count': failure_count,
+                'message': f'Linked {success_count} participants to record'
+            })
+            
+        except Record.DoesNotExist:
+            return Response(
+                {'error': 'Record not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            logger.error(f"Error in bulk link: {e}")
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+    
+    @extend_schema(
+        summary="Bulk create records for participants",
+        request=BulkParticipantActionSerializer,
+        responses={200: {'type': 'object', 'properties': {
+            'success_count': {'type': 'integer'},
+            'failure_count': {'type': 'integer'},
+            'created_records': {'type': 'array'},
+            'errors': {'type': 'array'}
+        }}}
+    )
+    @action(detail=False, methods=['post'])
+    def bulk_create_records(self, request):
+        """Create records for multiple participants"""
+        serializer = BulkParticipantActionSerializer(
+            data=request.data,
+            context={'action': 'create'}
+        )
+        
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            from pipelines.models import Pipeline
+            from .services.participant_management import ParticipantManagementService
+            
+            pipeline = Pipeline.objects.get(id=serializer.validated_data['pipeline_id'])
+            participant_ids = serializer.validated_data['participant_ids']
+            
+            # Get tenant context
+            from django.db import connection as db_connection
+            tenant = getattr(db_connection, 'tenant', None)
+            
+            service = ParticipantManagementService(tenant=tenant)
+            results = service.bulk_create_records(
+                participant_ids=participant_ids,
+                pipeline=pipeline,
+                user=request.user
+            )
+            
+            return Response(results)
+            
+        except Pipeline.DoesNotExist:
+            return Response(
+                {'error': 'Pipeline not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            logger.error(f"Error in bulk create: {e}")
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )

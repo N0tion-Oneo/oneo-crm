@@ -11,7 +11,7 @@ from pipelines.models import Record
 from communications.models import (
     Conversation, Message, Participant, MessageDirection
 )
-from ..models import RecordCommunicationProfile, RecordCommunicationLink
+from ..models import RecordCommunicationProfile
 from .identifier_extractor import RecordIdentifierExtractor
 # from communications.consumers import broadcast_to_channel  # TODO: Implement WebSocket broadcasting
 
@@ -86,22 +86,10 @@ class MessageMapper:
                     participant.resolved_at = timezone.now()
                     participant.save()
                 
-                # Create link between conversation and record
-                link, created = RecordCommunicationLink.objects.get_or_create(
-                    record=record,
-                    conversation=conversation,
-                    participant=participant,
-                    defaults={
-                        'match_type': 'webhook',
-                        'match_identifier': self._get_primary_identifier(sender_identifiers),
-                        'confidence_score': 0.95,
-                        'created_by_sync': True
-                    }
-                )
-                
-                if created:
-                    # Update record communication profile metrics
-                    self._update_record_profile(record, conversation, message)
+                # No need to create RecordCommunicationLink anymore
+                # The link is through the participant's contact_record
+                # Always update record communication profile metrics for new messages
+                self._update_record_profile(record, conversation, message)
                 
                 # Broadcast to record's WebSocket channel
                 self._broadcast_to_record(record.id, message, conversation)
@@ -293,12 +281,14 @@ class MessageMapper:
             profile.last_message_at = message.sent_at or message.created_at
             
             # Check if this is a new conversation for this record
-            existing_link_count = RecordCommunicationLink.objects.filter(
-                record=record,
-                conversation=conversation
+            # Look for participants in this conversation linked to this record
+            from communications.models import ConversationParticipant
+            existing_participant_count = ConversationParticipant.objects.filter(
+                conversation=conversation,
+                participant__contact_record=record
             ).count()
             
-            if existing_link_count == 1:  # Just created the first link
+            if existing_participant_count == 1:  # First participant linked to this record
                 profile.total_conversations += 1
             
             # Update unread count if inbound message

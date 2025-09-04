@@ -17,6 +17,7 @@ from communications.models import (
 from communications.services.participant_resolution import (
     ParticipantResolutionService, ConversationStorageDecider
 )
+from communications.record_communications.storage.participant_link_manager import ParticipantLinkManager
 from communications.utils.email_extractor import (
     extract_email_from_webhook,
     extract_email_subject_from_webhook,
@@ -40,6 +41,7 @@ class EmailWebhookHandler:
     def __init__(self):
         self.resolution_service = ParticipantResolutionService()
         self.storage_decider = ConversationStorageDecider()
+        self.link_manager = ParticipantLinkManager()
     
     def handle_email_received(self, account_id: str, webhook_data: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -209,144 +211,51 @@ class EmailWebhookHandler:
                     connection, conversation, normalized_email, webhook_data, participants
                 )
                 
-                # Create RecordCommunicationLink for ALL participants, finding records by email
-                # This ensures the email shows on all connected contacts' timelines
-                # Do this for ALL messages, not just newly created ones
+                # Link participants to records using ParticipantLinkManager
                 try:
-                    from communications.record_communications.models import RecordCommunicationLink
                     from communications.record_communications.services import RecordIdentifierExtractor
-                    
-                    # Use identifier extractor to find records like sync does
                     identifier_extractor = RecordIdentifierExtractor()
-                    links_created = 0
+                    participants_linked = 0
                     
                     for participant in participants:
-                        # First try using existing contact_record
-                        record_to_link = participant.contact_record
-                        
-                        # If no contact_record, try to find record by email
-                        if not record_to_link and participant.email:
+                        # If participant is not already linked to a record, try to find one by email
+                        if not participant.contact_record and participant.email:
                             # Find records that have this email as an identifier
                             identifiers = {'email': [participant.email]}
                             matching_records = identifier_extractor.find_records_by_identifiers(identifiers)
-                            if matching_records:
-                                record_to_link = matching_records[0]  # Use first match
-                                logger.info(f"Found record {record_to_link.id} for email {participant.email}")
-                                
-                                # Also update participant's contact_record for future use
-                                participant.contact_record = record_to_link
-                                participant.resolution_confidence = 0.9
-                                participant.resolution_method = 'email_identifier_match'
-                                participant.resolved_at = timezone.now()
-                                participant.save()
+                            if matching_records and len(matching_records) == 1:
+                                # Use ParticipantLinkManager for consistent linking
+                                if self.link_manager.link_participant_to_record(
+                                    participant=participant,
+                                    record=matching_records[0],
+                                    confidence=0.95,
+                                    method='email_webhook'
+                                ):
+                                    participants_linked += 1
+                                    logger.info(f"Linked participant {participant.id} (email: {participant.email}) to record {matching_records[0].id}")
                         
-                        if record_to_link:
-                            # Determine match type based on participant data
-                            if participant.email:
-                                match_type = 'email'
-                                match_identifier = participant.email
-                            else:
-                                match_type = 'other'
-                                match_identifier = ''
-                            
-                            # Create link between this participant's record and the conversation
-                            link, created = RecordCommunicationLink.objects.get_or_create(
-                                record=record_to_link,
-                                conversation=conversation,
-                                participant=participant,
-                                defaults={
-                                    'match_type': match_type,
-                                    'match_identifier': match_identifier,
-                                    'confidence_score': participant.resolution_confidence or 1.0,
-                                    'created_by_sync': False,  # Created by webhook
-                                    'is_primary': True
-                                }
-                            )
-                            if created:
-                                links_created += 1
-                                logger.info(
-                                    f"Created RecordCommunicationLink for participant {participant.email} "
-                                    f"-> record {record_to_link.id}"
-                                )
-                                
-                                # Update the primary record's communication profile
-                                from communications.record_communications.models import RecordCommunicationProfile
-                                primary_profile, _ = RecordCommunicationProfile.objects.get_or_create(
-                                    record=record_to_link,
-                                    defaults={
-                                        'pipeline': record_to_link.pipeline,
-                                        'created_by': connection.user
-                                    }
-                                )
-                                
-                                # Update metrics - increment conversation count if this is the first link for this conversation
-                                existing_links_for_conv = RecordCommunicationLink.objects.filter(
-                                    record=record_to_link,
-                                    conversation=conversation
-                                ).count()
-                                
-                                if existing_links_for_conv == 1:  # Just created the first link
-                                    primary_profile.total_conversations += 1
-                                
-                                # Always increment message count for a new message
-                                primary_profile.total_messages += 1
-                                primary_profile.last_message_at = timezone.now()
-                                primary_profile.save(update_fields=[
-                                    'total_conversations', 'total_messages', 'last_message_at'
-                                ])
-                        
-                        # Also create link for secondary record (company/organization)
-                        if participant.secondary_record:
-                            secondary_link, secondary_created = RecordCommunicationLink.objects.get_or_create(
-                                record=participant.secondary_record,
-                                conversation=conversation,
-                                participant=participant,
-                                defaults={
-                                    'match_type': 'domain',
-                                    'match_identifier': participant.email.split('@')[1] if participant.email and '@' in participant.email else '',
-                                    'confidence_score': participant.secondary_confidence or 0.8,
-                                    'created_by_sync': False,  # Created by webhook
-                                    'is_primary': False  # Secondary link
-                                }
-                            )
-                            if secondary_created:
-                                links_created += 1
-                                logger.info(
-                                    f"Created secondary RecordCommunicationLink for company "
-                                    f"{participant.secondary_record.id} via domain match"
-                                )
-                                
-                                # Update the secondary record's communication profile
-                                from communications.record_communications.models import RecordCommunicationProfile
-                                secondary_profile, _ = RecordCommunicationProfile.objects.get_or_create(
-                                    record=participant.secondary_record,
-                                    defaults={
-                                        'pipeline': participant.secondary_record.pipeline,
-                                        'created_by': connection.user
-                                    }
-                                )
-                                
-                                # Update metrics - increment conversation count if this is the first link for this conversation
-                                existing_links_for_conv = RecordCommunicationLink.objects.filter(
-                                    record=participant.secondary_record,
-                                    conversation=conversation
-                                ).count()
-                                
-                                if existing_links_for_conv == 1:  # Just created the first link
-                                    secondary_profile.total_conversations += 1
-                                
-                                # Always increment message count for a new message
-                                secondary_profile.total_messages += 1
-                                secondary_profile.last_message_at = timezone.now()
-                                secondary_profile.save(update_fields=[
-                                    'total_conversations', 'total_messages', 'last_message_at'
-                                ])
+                        # Also check for company records by domain (secondary record)
+                        if participant.email and '@' in participant.email and not participant.secondary_record:
+                            domain = participant.email.split('@')[1]
+                            # Skip personal email domains
+                            personal_domains = ['gmail.com', 'yahoo.com', 'hotmail.com', 'outlook.com', 'icloud.com']
+                            if domain.lower() not in personal_domains:
+                                company_records = identifier_extractor.find_company_records_by_domain(domain)
+                                if company_records and len(company_records) == 1:
+                                    # Found exactly one matching company
+                                    participant.secondary_record = company_records[0]
+                                    participant.secondary_pipeline = company_records[0].pipeline.slug
+                                    participant.secondary_resolution_method = 'domain'
+                                    participant.secondary_confidence = 0.8
+                                    participant.save()
+                                    participants_linked += 1
+                                    logger.info(f"Linked participant {participant.id} to company record {company_records[0].id} via domain {domain}")
                     
-                    if links_created > 0:
-                        logger.info(f"Email linked to {links_created} records (contacts + companies) for timeline visibility")
+                    if participants_linked > 0:
+                        logger.info(f"Linked {participants_linked} participants to records (contacts + companies)")
                         
                 except Exception as e:
-                    logger.warning(f"Failed to create RecordCommunicationLinks: {e}")
+                    logger.warning(f"Failed to link participants to records: {e}")
                 
                 if was_created:
                     logger.info(f"Created new email message {message.id} for account {account_id} with linked contact")

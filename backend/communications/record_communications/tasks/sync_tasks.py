@@ -15,7 +15,8 @@ from communications.models import (
     UserChannelConnection, Conversation, Message,
     Participant, ConversationParticipant
 )
-from ..models import RecordCommunicationProfile, RecordSyncJob, RecordCommunicationLink
+from ..models import RecordCommunicationProfile, RecordSyncJob
+# RecordCommunicationLink removed - using participant-based linking instead
 from ..services import MessageMapper
 from ..services.identifier_extractor import RecordIdentifierExtractor
 from ..services.record_sync_orchestrator import RecordSyncOrchestrator

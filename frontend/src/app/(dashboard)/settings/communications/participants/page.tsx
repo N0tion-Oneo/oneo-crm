@@ -75,9 +75,10 @@ export default function ParticipantSettingsPage() {
   const { hasPermission } = useAuth()
   const { toast } = useToast()
   
-  const canViewSettings = hasPermission('communications', 'read')
-  const canEditSettings = hasPermission('communications', 'update')
-  const canRunBatch = hasPermission('communications', 'create') // Batch operations require create permission
+  // Check participant-specific permissions
+  const canViewSettings = hasPermission('participants', 'settings') || hasPermission('participants', 'read')
+  const canEditSettings = hasPermission('participants', 'settings')
+  const canRunBatch = hasPermission('participants', 'batch')
   
   const [settings, setSettings] = useState<ParticipantSettings | null>(null)
   const [blacklist, setBlacklist] = useState<BlacklistEntry[]>([])
@@ -93,55 +94,69 @@ export default function ParticipantSettingsPage() {
   const [activeTab, setActiveTab] = useState('auto-creation')
 
   useEffect(() => {
-    // Only load data if user has permission to view settings
-    if (canViewSettings) {
-      loadData()
-    } else {
+    // Always set loading to false if no permissions
+    if (!canViewSettings) {
       setLoading(false)
+      return
     }
+    // Load data if user has permission
+    loadData()
   }, [canViewSettings])
 
   const loadData = async () => {
     try {
       setLoading(true)
       
-      // Try to load participant settings
-      try {
-        const settingsResponse = await api.get('/api/v1/participant-settings/')
-        const settingsData = settingsResponse.data
-        if (settingsData.channel_settings) {
-          Object.assign(settingsData, settingsData.channel_settings)
+      // Only try to load participant settings if user has permission
+      if (canEditSettings || canViewSettings) {
+        try {
+          const settingsResponse = await api.get('/api/v1/participant-settings/')
+          const settingsData = settingsResponse.data
+          if (settingsData.channel_settings) {
+            Object.assign(settingsData, settingsData.channel_settings)
+          }
+          setSettings(settingsData)
+        } catch (error: any) {
+          if (error.response?.status === 403) {
+            console.warn('Insufficient permissions for participant settings')
+            // User doesn't have permission - exit early
+            setSettings(null)
+            setLoading(false)
+            return
+          } else if (error.response?.status === 404) {
+            console.warn('Participant settings endpoint not found - using defaults')
+            // Set default settings if endpoint not found
+            setSettings({
+              id: 'default',
+              auto_create_enabled: false,
+              min_messages_before_create: 1,
+              check_duplicates_before_create: true,
+              duplicate_confidence_threshold: 0.8,
+              creation_delay_hours: 0,
+              default_contact_pipeline: null,
+              default_contact_pipeline_name: null,
+              auto_link_by_domain: false,
+              create_company_if_missing: false,
+              min_employees_for_company: 5,
+              default_company_pipeline: null,
+              default_company_pipeline_name: null,
+              batch_size: 100,
+              max_creates_per_hour: 100,
+              enable_real_time_creation: false,
+              channel_settings: {}
+            })
+          } else {
+            console.error('Error loading participant settings:', error)
+            setSettings(null)
+            setLoading(false)
+            return
+          }
         }
-        setSettings(settingsData)
-      } catch (error: any) {
-        if (error.response?.status === 403) {
-          console.warn('Insufficient permissions for participant settings - using defaults')
-          toast({
-            title: "Limited Access",
-            description: "You have limited permissions for participant settings. Some features may be restricted.",
-            variant: "default",
-          })
-        } else if (error.response?.status === 404) {
-          console.warn('Participant settings endpoint not found - using defaults')
-        } else {
-          console.error('Error loading participant settings:', error)
-        }
-        // Set default settings if loading fails
-        setSettings({
-          enabled: false,
-          auto_create_contacts: false,
-          require_email: false,
-          require_phone: false,
-          require_company: false,
-          match_existing_by_email: true,
-          match_existing_by_phone: false,
-          match_existing_by_name: false,
-          link_to_existing_company: false,
-          target_pipeline_id: null,
-          company_pipeline_id: null,
-          blacklist_domains: [],
-          channel_settings: {}
-        })
+      } else {
+        // No permission to view settings
+        setSettings(null)
+        setLoading(false)
+        return
       }
       
       // Load pipelines first as other endpoints may depend on them
@@ -389,20 +404,7 @@ export default function ParticipantSettingsPage() {
     )
   }
 
-  if (!settings) {
-    return (
-      <div className="p-6">
-        <div className="max-w-5xl mx-auto">
-          <div className="text-center py-12">
-            <AlertCircle className="h-12 w-12 mx-auto text-red-500 mb-4" />
-            <h3 className="text-lg font-medium">Settings Error</h3>
-            <p className="text-gray-600">Unable to load participant settings.</p>
-          </div>
-        </div>
-      </div>
-    )
-  }
-
+  // Check permissions first before checking settings
   if (!canViewSettings) {
     return (
       <div className="p-6">
@@ -411,6 +413,20 @@ export default function ParticipantSettingsPage() {
             <AlertCircle className="h-12 w-12 mx-auto text-amber-500 mb-4" />
             <h3 className="text-lg font-medium">Access Denied</h3>
             <p className="text-gray-600">You don't have permission to view participant settings.</p>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  if (!settings) {
+    return (
+      <div className="p-6">
+        <div className="max-w-5xl mx-auto">
+          <div className="text-center py-12">
+            <AlertCircle className="h-12 w-12 mx-auto text-red-500 mb-4" />
+            <h3 className="text-lg font-medium">Settings Error</h3>
+            <p className="text-gray-600">Unable to load participant settings. Please contact your administrator.</p>
           </div>
         </div>
       </div>

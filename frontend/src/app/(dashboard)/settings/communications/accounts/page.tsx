@@ -130,13 +130,19 @@ export default function AccountConnectionsPage() {
   const { toast } = useToast()
   const { user, hasPermission } = useAuth()
   
+  const canViewSettings = hasPermission('communications', 'read')
   const canViewAllAccounts = hasPermission('communications', 'admin') || hasPermission('system', 'admin')
   const canManageAccounts = hasPermission('communications', 'update')
   const canDeleteAccounts = hasPermission('communications', 'delete')
 
   useEffect(() => {
+    // Only load if user has permission
+    if (!canViewSettings) {
+      setLoading(false)
+      return
+    }
     loadConnections()
-  }, [viewMode])
+  }, [viewMode, canViewSettings])
 
   useEffect(() => {
     groupConnectionsByUser()
@@ -358,6 +364,21 @@ export default function AccountConnectionsPage() {
         <div className="max-w-6xl mx-auto">
           <div className="flex items-center justify-center py-12">
             <Loader2 className="h-8 w-8 animate-spin text-primary" />
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // Check permissions before showing any content
+  if (!canViewSettings) {
+    return (
+      <div className="p-6">
+        <div className="max-w-6xl mx-auto">
+          <div className="text-center py-12">
+            <AlertCircle className="h-12 w-12 mx-auto text-amber-500 mb-4" />
+            <h3 className="text-lg font-medium">Access Denied</h3>
+            <p className="text-gray-600">You don't have permission to view account connections.</p>
           </div>
         </div>
       </div>

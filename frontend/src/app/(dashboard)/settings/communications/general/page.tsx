@@ -33,8 +33,13 @@ export default function GeneralSettingsPage() {
   const canEditSettings = hasPermission('communications', 'update')
 
   useEffect(() => {
+    // Only load if user has permission
+    if (!canViewSettings) {
+      setLoading(false)
+      return
+    }
     loadConfig()
-  }, [])
+  }, [canViewSettings])
 
   const loadConfig = async () => {
     try {

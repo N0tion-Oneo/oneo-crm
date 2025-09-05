@@ -60,8 +60,13 @@ export default function AdvancedSettingsPage() {
   const canManageAdvanced = hasPermission('communications', 'update')
 
   useEffect(() => {
+    // Only load if user has permission
+    if (!canViewAdvanced) {
+      setLoading(false)
+      return
+    }
     loadSystemInfo()
-  }, [])
+  }, [canViewAdvanced])
 
   const loadSystemInfo = async () => {
     try {

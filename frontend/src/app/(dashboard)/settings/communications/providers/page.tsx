@@ -35,8 +35,13 @@ export default function ProviderSettingsPage() {
   const canManageCommunicationSettings = hasPermission('communications', 'update')
 
   useEffect(() => {
+    // Only load if user has permission
+    if (!canViewCommunicationSettings) {
+      setLoading(false)
+      return
+    }
     loadConfigurations()
-  }, [])
+  }, [canViewCommunicationSettings])
 
   const loadConfigurations = async () => {
     try {

@@ -70,7 +70,7 @@ const DurationInput: React.FC<{
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            {durationUnits.map((unit) => (
+            {durationUnits.map((unit: string) => (
               <SelectItem key={unit} value={unit}>
                 {unit.charAt(0).toUpperCase() + unit.slice(1)}
               </SelectItem>

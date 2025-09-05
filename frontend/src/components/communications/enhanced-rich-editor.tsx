@@ -149,14 +149,14 @@ export function EnhancedRichEditor({
   // Add TextStyle and Color only if they're properly loaded
   if (TextStyle && typeof TextStyle === 'object') {
     console.log('Adding TextStyle extension')
-    extensions.push(TextStyle)
+    extensions.push(TextStyle as any)
     
     // Only add Color if TextStyle was added
     if (Color && typeof Color === 'object') {
       console.log('Adding Color extension')
-      extensions.push(Color.configure ? Color.configure({
+      extensions.push((Color.configure ? Color.configure({
         types: ['textStyle'],
-      }) : Color)
+      }) : Color) as any)
     }
   } else {
     console.error('TextStyle or Color extensions not loaded properly')
@@ -225,23 +225,31 @@ export function EnhancedRichEditor({
       console.log('Available color commands:', {
         setColor: typeof editor.commands.setColor,
         unsetColor: typeof editor.commands.unsetColor,
-        addMark: typeof editor.commands.addMark,
-        removeMark: typeof editor.commands.removeMark,
+        addMark: typeof (editor.commands as any).addMark,
+        removeMark: typeof (editor.commands as any).removeMark,
       })
       
       if (color === '') {
-        // Try different approaches
-        if (editor.commands.unsetColor) {
+        // Try to unset color
+        try {
           editor.chain().focus().unsetColor().run()
-        } else if (editor.commands.removeMark) {
-          editor.chain().focus().removeMark('textStyle').run()
+        } catch {
+          try {
+            (editor.chain().focus() as any).removeMark('textStyle').run()
+          } catch {
+            console.warn('Unable to unset color')
+          }
         }
       } else {
-        // Try different approaches
-        if (editor.commands.setColor) {
+        // Try to set color
+        try {
           editor.chain().focus().setColor(color).run()
-        } else if (editor.commands.setMark) {
-          editor.chain().focus().setMark('textStyle', { color }).run()
+        } catch {
+          try {
+            (editor.chain().focus() as any).setMark('textStyle', { color }).run()
+          } catch {
+            console.warn('Unable to set color:', color)
+          }
         }
       }
     }
@@ -358,8 +366,8 @@ export function EnhancedRichEditor({
 
         <Separator orientation="vertical" className="h-6" />
 
-        {/* Text Color - only show if commands are available */}
-        {editor?.commands?.setColor && (
+        {/* Text Color - only show if editor is available */}
+        {editor && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" size="sm" title="Text Color">

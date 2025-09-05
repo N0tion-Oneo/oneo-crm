@@ -16,6 +16,7 @@ interface WhatsAppMessage {
   content: string;
   direction: 'inbound' | 'outbound';
   contact_email: string;
+  contact_phone?: string;
   metadata?: {
     contact_name?: string;
     sender_attendee_id?: string;
@@ -24,6 +25,7 @@ interface WhatsAppMessage {
     to?: string;
     is_sender?: number;
     profile_picture?: string;
+    raw_webhook_data?: any;
   };
   timestamp: string;
   channel?: {

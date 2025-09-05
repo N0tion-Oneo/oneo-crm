@@ -555,10 +555,10 @@ export function ContactResolutionDialog({
       
       if (value) {
         const fieldForResolver = {
+          ...field,
           name: field.name,
           field_type: field.field_type,
-          display_name: field.label || field.name,
-          ...field
+          display_name: field.label || field.name
         }
         
         try {
@@ -705,10 +705,10 @@ export function ContactResolutionDialog({
         // Test the FieldResolver specifically for this field
         try {
           const fieldForResolver = {
+            ...field,
             name: field.name,
             field_type: field.field_type,
-            display_name: field.label || field.name,
-            ...field
+            display_name: field.label || field.name
           }
           const testFormatted = FieldResolver.formatValue(fieldForResolver, value, 'table')
           console.log(`🔍 FieldResolver result for ${field.name}:`, testFormatted)
@@ -732,10 +732,10 @@ export function ContactResolutionDialog({
         
         // Convert field to the format expected by FieldResolver
         const fieldForResolver = {
+          ...field,
           name: field.name,
           field_type: field.field_type,
-          display_name: field.label || field.name,
-          ...field
+          display_name: field.label || field.name
         }
         
         // Format the value properly using the field system (using 'table' context for compact display)
@@ -860,10 +860,10 @@ export function ContactResolutionDialog({
       if (value) {
         // Convert field to the format expected by FieldResolver
         const fieldForResolver = {
+          ...field,
           name: field.name,
           field_type: field.field_type,
-          display_name: field.label || field.name,
-          ...field
+          display_name: field.label || field.name
         }
         
         // Format the value properly using the field system (using 'table' context for compact display)
@@ -920,20 +920,20 @@ export function ContactResolutionDialog({
       }
       
       if (contactValue && unmatchedData) {
+        // Format the contact value once for comparison
+        const fieldForResolver = {
+          ...field,
+          name: field.name,
+          field_type: field.field_type,
+          display_name: field.label || field.name
+        }
+        
+        const formattedContactValue = FieldResolver.formatValue(fieldForResolver, contactValue, 'table')
+        const contactValueStr = typeof formattedContactValue === 'string' ? formattedContactValue : contactValue.toString()
+        
         // Check for direct field matches
         Object.keys(unmatchedData).forEach(unmatchedKey => {
           const unmatchedValue = unmatchedData[unmatchedKey]
-          
-          // Format both values for comparison
-          const fieldForResolver = {
-            name: field.name,
-            field_type: field.field_type,
-            display_name: field.label || field.name,
-            ...field
-          }
-          
-          const formattedContactValue = FieldResolver.formatValue(fieldForResolver, contactValue, 'table')
-          const contactValueStr = typeof formattedContactValue === 'string' ? formattedContactValue : contactValue.toString()
           
           if (unmatchedValue && contactValueStr.toLowerCase() === unmatchedValue.toString().toLowerCase()) {
             matches.push(

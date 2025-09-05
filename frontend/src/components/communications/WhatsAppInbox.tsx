@@ -228,7 +228,7 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
   // Cleanup attachment previews on unmount
   useEffect(() => {
     return () => {
-      attachmentPreviews.forEach(preview => {
+      attachmentPreviews.forEach((preview: any) => {
         if (preview.preview) {
           URL.revokeObjectURL(preview.preview)
         }
@@ -267,14 +267,14 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
         const updateMessageData = message.message || message.payload || message.data
         console.log('🟡 Update data to process:', updateMessageData)
         console.log('🟡 Full WebSocket message:', message)
-        handleMessageUpdate(updateMessageData, message.conversation_id)
+        handleMessageUpdate(updateMessageData, message.conversation)
         break
       case 'message_status_update':
         console.log('🔵 Processing message_status_update')
         const statusMessageData = message.message || message.payload || message.data
         console.log('🔵 Status data to process:', statusMessageData)
         console.log('🔵 Full WebSocket message:', message)
-        handleMessageUpdate(statusMessageData, message.conversation_id)
+        handleMessageUpdate(statusMessageData, message.conversation)
         break
       case 'conversation_update':
         console.log('🟣 Processing conversation_update')
@@ -375,14 +375,14 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
           
           console.log(`🔄 Chat ${chat.name}: matches=${chatMatches}, latestMsgId=${chat.latest_message?.id}, isLatest=${isLatestMessage}`)
           
-          if (chatMatches && isLatestMessage) {
+          if (chatMatches && isLatestMessage && chat.latest_message) {
             console.log(`🔄 ✅ UPDATING chat list status: ${chat.latest_message.status} → ${messageData.status}`)
             return {
               ...chat,
               latest_message: {
                 ...chat.latest_message,
                 status: messageData.status || chat.latest_message.status
-              }
+              } as WhatsAppMessage
             }
           }
           return chat
@@ -671,7 +671,7 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
       
       // Update job status to failed
       setActiveSyncJobs(prev => 
-        prev.map(job => 
+        prev.map((job: any) => 
           job.celery_task_id === syncJobId 
             ? { ...job, status: 'failed', error_message: jobData.error_message }
             : job
@@ -710,7 +710,7 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
     
     // Cleanup subscriptions
     return () => {
-      subscriptions.forEach(id => unsubscribe(id))
+      subscriptions.forEach((id: any) => unsubscribe(id))
       console.log('📡 WhatsApp unsubscribed from all channels')
     }
   }, [wsConnected, accountConnections, selectedChat, subscribe, unsubscribe, handleWebSocketMessage])
@@ -768,7 +768,7 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
 
   // Clear all attachments
   const clearAttachments = () => {
-    attachmentPreviews.forEach(preview => {
+    attachmentPreviews.forEach((preview: any) => {
       if (preview.preview) {
         URL.revokeObjectURL(preview.preview)
       }
@@ -778,7 +778,7 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
   }
 
   // Handle attachment download/preview
-  const handleAttachmentClick = async (messageId: string, attachment: WhatsAppMessage['attachments'][0]) => {
+  const handleAttachmentClick = async (messageId: string, attachment: NonNullable<WhatsAppMessage['attachments']>[0]) => {
     if (!attachment) return
 
     try {
@@ -806,28 +806,8 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
         return
       }
 
-      // For locations, open in maps
-      if (attachment.type === 'location') {
-        const location = messages.find(m => m.id === messageId)?.location
-        if (location) {
-          const mapsUrl = `https://maps.google.com?q=${location.latitude},${location.longitude}`
-          window.open(mapsUrl, '_blank')
-          return
-        }
-      }
-
-      // For contacts, show contact info
-      if (attachment.type === 'contact') {
-        const contact = messages.find(m => m.id === messageId)?.contact
-        if (contact) {
-          toast({
-            title: "Contact Information",
-            description: `Name: ${contact.name}\nPhone: ${contact.phone}`,
-            duration: 5000,
-          })
-          return
-        }
-      }
+      // Note: Locations and contacts are separate fields in WhatsAppMessage, not attachments
+      // They should be handled separately in the message rendering logic
 
       // For other attachments, download via our API
       const response = await api.get(
@@ -1153,7 +1133,7 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
                   ...existing,
                   ...newChat,
                   // Preserve any real-time updates that might be newer
-                  latest_message: newChat.latest_message?.date > (existing.latest_message?.date || '') 
+                  latest_message: (newChat.latest_message?.date || '') > (existing.latest_message?.date || '') 
                     ? newChat.latest_message 
                     : existing.latest_message,
                   last_message_date: newChat.last_message_date > existing.last_message_date 
@@ -1232,7 +1212,7 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
         
         // Deduplicate by celery_task_id when setting
         const jobMap = new Map()
-        activeJobs.forEach(job => {
+        activeJobs.forEach((job: any) => {
           if (job.celery_task_id) {
             jobMap.set(job.celery_task_id, job)
           }
@@ -1242,7 +1222,7 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
         
         // Restore progress state from backend data
         const restoredProgress: {[key: string]: any} = {}
-        activeJobs.forEach(job => {
+        activeJobs.forEach((job: any) => {
           if (job.celery_task_id) {
             restoredProgress[job.celery_task_id] = {
               status: job.status,
@@ -1257,7 +1237,7 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
         setSyncProgress(restoredProgress)
         
         // Reconnect to WebSocket progress for each active job
-        activeJobs.forEach(job => {
+        activeJobs.forEach((job: any) => {
           if (job.celery_task_id && (job.status === 'pending' || job.status === 'running')) {
             console.log(`🔌 Reconnecting to progress WebSocket for job ${job.celery_task_id}`)
             connectToSyncProgress(job.celery_task_id)
@@ -1277,17 +1257,12 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
   // Handler functions for sync job management
   const handleRetrySync = async (taskId: string) => {
     try {
-      const response = await fetch('/api/v1/communications/sync/jobs/retry/', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${getToken()}`
-        },
-        body: JSON.stringify({ celery_task_id: taskId })
+      const response = await api.post('/api/v1/communications/sync/jobs/retry/', {
+        celery_task_id: taskId
       })
       
-      if (response.ok) {
-        const retryData = await response.json()
+      if (response.status === 200 || response.status === 201) {
+        const retryData = response.data
         toast({
           title: "Sync retry initiated",
           description: "Background sync has been restarted."
@@ -1295,7 +1270,7 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
         
         // Update job status
         setActiveSyncJobs(prev => 
-          prev.map(job => 
+          prev.map((job: any) => 
             job.celery_task_id === taskId 
               ? { ...job, ...retryData } 
               : job
@@ -1320,15 +1295,9 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
   const handleCancelSync = async (syncJobId: string) => {
     try {
       // Use the sync job ID to cancel, not the celery task ID
-      const response = await fetch(`/api/v1/communications/whatsapp/sync/jobs/${syncJobId}/cancel/`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${getToken()}`
-        }
-      })
+      const response = await api.post(`/api/v1/communications/whatsapp/sync/jobs/${syncJobId}/cancel/`)
       
-      if (response.ok) {
+      if (response.status === 200 || response.status === 201) {
         toast({
           title: "Sync cancelled",
           description: "Background sync has been cancelled."
@@ -1428,7 +1397,7 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
           setSyncing(false) // Allow user to continue using the app
           
           console.log('🔍 ACTIVE JOBS DEBUG:', {
-            startedJobsStructure: startedJobs.map(job => ({
+            startedJobsStructure: startedJobs.map((job: any) => ({
               celery_task_id: job.celery_task_id,
               channel_id: job.channel_id,
               sync_job_id: job.sync_job_id || 'not_present',
@@ -1442,14 +1411,14 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
             const jobMap = new Map()
             
             // Add existing jobs
-            prev.forEach(job => {
+            prev.forEach((job: any) => {
               if (job.celery_task_id) {
                 jobMap.set(job.celery_task_id, job)
               }
             })
             
             // Add new started jobs
-            startedJobs.forEach(job => {
+            startedJobs.forEach((job: any) => {
               if (job.celery_task_id) {
                 jobMap.set(job.celery_task_id, job)
               }
@@ -1474,14 +1443,14 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
                     const jobMap = new Map()
                     
                     // Add existing jobs
-                    prev.forEach(job => {
+                    prev.forEach((job: any) => {
                       if (job.celery_task_id) {
                         jobMap.set(job.celery_task_id, job)
                       }
                     })
                     
                     // Add/update with fetched jobs (these have more complete data)
-                    fetchedActiveJobs.forEach(job => {
+                    fetchedActiveJobs.forEach((job: any) => {
                       if (job.celery_task_id) {
                         jobMap.set(job.celery_task_id, job)
                       }
@@ -1628,27 +1597,26 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
       setChats([])
       setChatCursor(null) 
       setHasMoreChats(true)
-      setLoadingChats(true)
+      setLoadingMoreChats(true)
       
       const freshChatsResponse = await api.get(`/api/v1/communications/whatsapp/chats/`, {
         params: { 
-          account_id: selectedConnection?.unipile_account_id,
+          account_id: accountConnections[0]?.connection_id,
           limit: 20,
           force_sync: 'false' // Use fresh synced data
         }
       })
       
-      const processedChats = processChatData(freshChatsResponse.data?.chats || [])
-      setChats(processedChats)
+      setChats(freshChatsResponse.data?.chats || [])
       setChatCursor(freshChatsResponse.data?.cursor || null)
       setHasMoreChats(freshChatsResponse.data?.has_more || false)
       
-      console.log('✅ Conversations refreshed:', processedChats.length)
+      console.log('✅ Conversations refreshed:', freshChatsResponse.data?.chats?.length || 0)
       
     } catch (error) {
       console.error('Failed to refresh conversations:', error)
     } finally {
-      setLoadingChats(false)
+      setLoadingMoreChats(false)
     }
   }
 
@@ -1922,7 +1890,7 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
         
         // Find the correct account connection ID
         const accountConnection = accountConnections.find(conn => 
-          conn.unipile_account_id === selectedChat.account_id || conn.id === selectedChat.account_id
+          conn.connection_id === selectedChat.account_id || conn.id === selectedChat.account_id
         )
         
         if (!accountConnection) {
@@ -1939,7 +1907,7 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
           
           const formData = new FormData()
           formData.append('file', preview.file)
-          formData.append('account_id', accountConnection.connection_id) // Use database connection ID
+          formData.append('account_id', accountConnection.connection_id || accountConnection.id) // Use database connection ID
           formData.append('conversation_id', selectedChat.id)
           
           // Debug what's in the FormData
@@ -1961,7 +1929,7 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
             
             uploadedAttachments.push(uploadResponse.data.attachment)
             console.log(`✅ Successfully uploaded: ${preview.file.name}`)
-          } catch (uploadError) {
+          } catch (uploadError: any) {
             console.error(`❌ Failed to upload ${preview.file.name}:`, uploadError)
             console.error('❌ Upload error details:', uploadError.response?.data)
             console.error('❌ Upload error status:', uploadError.response?.status)
@@ -1989,7 +1957,7 @@ export default function WhatsAppInbox({ className }: WhatsAppInboxProps) {
           })
           
           console.log(`✅ Message with attachments sent successfully!`)
-        } catch (sendError) {
+        } catch (sendError: any) {
           console.error(`❌ Failed to send message with attachments:`, sendError)
           console.error(`❌ Send error details:`, sendError.response?.data)
           console.error(`❌ Send error status:`, sendError.response?.status)
@@ -2850,7 +2818,7 @@ Latest msg text: ${chat.latest_message?.text?.substring(0, 50)}`}
                           <div className="mt-2 space-y-2">
                             {message.attachments.map((attachment, index) => (
                               <div 
-                                key={attachment.id || attachment.attachment_id || `attachment-${index}`} 
+                                key={attachment.id || `attachment-${index}`} 
                                 className="bg-black bg-opacity-10 rounded p-2 cursor-pointer hover:bg-opacity-20 transition-all"
                                 onClick={() => handleAttachmentClick(message.id, attachment)}
                                 title={`Click to ${attachment.type === 'image' ? 'preview' : 'download'} ${attachment.filename || attachment.type}`}
@@ -2889,18 +2857,6 @@ Latest msg text: ${chat.latest_message?.text?.substring(0, 50)}`}
                                       </span>
                                     )}
                                     <span className="text-xs text-gray-400 ml-auto">Click to download</span>
-                                  </div>
-                                ) : attachment.type === 'location' ? (
-                                  <div className="flex items-center gap-2">
-                                    <MapPin className="w-4 h-4" />
-                                    <span className="text-xs">Shared Location</span>
-                                    <span className="text-xs text-gray-400 ml-auto">Click to view in maps</span>
-                                  </div>
-                                ) : attachment.type === 'contact' ? (
-                                  <div className="flex items-center gap-2">
-                                    <Contact className="w-4 h-4" />
-                                    <span className="text-xs">Contact Card</span>
-                                    <span className="text-xs text-gray-400 ml-auto">Click to view</span>
                                   </div>
                                 ) : (
                                   <div className="flex items-center gap-2">
@@ -2980,7 +2936,7 @@ Latest msg text: ${chat.latest_message?.text?.substring(0, 50)}`}
                   <div className="mb-3 flex flex-wrap gap-2">
                     {attachmentPreviews.map((preview, index) => (
                       <div 
-                        key={preview.id || `preview-${index}`}
+                        key={`preview-${index}`}
                         className="relative bg-gray-100 dark:bg-gray-700 rounded-lg p-2 flex items-center gap-2 max-w-xs"
                       >
                         {preview.type === 'image' && preview.preview ? (

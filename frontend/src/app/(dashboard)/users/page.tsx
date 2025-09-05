@@ -293,7 +293,9 @@ export default function UsersPage() {
                             {user.full_name}
                           </span>
                           {user.staff_profile && (
-                            <Briefcase className="w-3 h-3 text-blue-500" title="Has Staff Profile" />
+                            <span title="Has Staff Profile">
+                              <Briefcase className="w-3 h-3 text-blue-500" />
+                            </span>
                           )}
                         </div>
                         <div className="text-sm text-gray-500 dark:text-gray-400">

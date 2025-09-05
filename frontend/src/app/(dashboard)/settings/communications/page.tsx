@@ -1,138 +1,130 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { MessageCircle, Loader2, AlertCircle } from 'lucide-react'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { 
+  MessageCircle, 
+  Users, 
+  Link2, 
+  Settings, 
+  TrendingUp, 
+  Activity, 
+  AlertCircle, 
+  CheckCircle2, 
+  Clock, 
+  Loader2, 
+  ArrowRight,
+  Mail,
+  MessageSquare,
+  Building2,
+  Shield,
+  Zap
+} from 'lucide-react'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
+import { Progress } from '@/components/ui/progress'
 import { useToast } from '@/hooks/use-toast'
 import { useAuth } from '@/features/auth/context'
-import { api } from '@/lib/api'
+import { useRouter } from 'next/navigation'
+import { api, communicationsApi } from '@/lib/api'
 
-// Import all the extracted components
-import { AutoCreationSettings } from '@/components/settings/communications/AutoCreationSettings'
-import { ChannelSettings } from '@/components/settings/communications/ChannelSettings'
-import { CompanyLinkingSettings } from '@/components/settings/communications/CompanyLinkingSettings'
-import { BlacklistManagement } from '@/components/settings/communications/BlacklistManagement'
-import { ProcessingSettings } from '@/components/settings/communications/ProcessingSettings'
-
-interface ParticipantSettings {
-  id: string
-  auto_create_enabled: boolean
-  min_messages_before_create: number
-  check_duplicates_before_create: boolean
-  duplicate_confidence_threshold: number
-  creation_delay_hours: number
-  default_contact_pipeline: string | null
-  default_contact_pipeline_name: string | null
-  // Name field configuration
-  name_mapping_mode?: 'single' | 'split'
-  full_name_field: string
-  first_name_field: string
-  last_name_field: string
-  name_split_strategy: 'first_space' | 'last_space' | 'smart'
-  // Company settings
-  company_name_field?: string
-  auto_link_by_domain: boolean
-  create_company_if_missing: boolean
-  min_employees_for_company: number
-  default_company_pipeline: string | null
-  default_company_pipeline_name: string | null
-  batch_size: number
-  max_creates_per_hour: number
-  enable_real_time_creation: boolean
-  channel_settings?: Record<string, any>
-  // Channel-specific settings (flattened from channel_settings)
-  [key: string]: any
+interface DashboardStats {
+  participants: {
+    total: number
+    eligible: number
+    created_today: number
+    created_this_week: number
+  }
+  accounts: {
+    total: number
+    active: number
+    needs_reconnection: number
+    by_channel: Record<string, number>
+  }
+  processing: {
+    auto_create_enabled: boolean
+    last_batch_run: string | null
+    next_scheduled_run: string | null
+    batch_size: number
+  }
+  activity: Array<{
+    id: string
+    type: string
+    message: string
+    timestamp: string
+    status: 'success' | 'warning' | 'error'
+  }>
 }
 
-interface BlacklistEntry {
-  id: string
-  entry_type: 'domain' | 'email' | 'email_pattern' | 'phone' | 'name_pattern'
-  value: string
-  reason: string
-  is_active: boolean
-  expires_at: string | null
-  created_by_name: string
-  created_at: string
-}
-
-interface Pipeline {
-  id: string
-  name: string
-  slug: string
-  pipeline_type?: string
-  email_fields?: any[]
-  phone_fields?: any[]
-  domain_fields?: any[]
-  url_fields?: any[]
-}
-
-interface PipelineField {
-  id: string
-  slug: string
-  display_name: string
-  field_type: string
-  is_required: boolean
-}
-
-export default function CommunicationsSettingsPage() {
+export default function CommunicationsOverviewPage() {
   const { hasPermission } = useAuth()
   const { toast } = useToast()
+  const router = useRouter()
   
-  // Check permissions
-  const canViewSettings = hasPermission('participants', 'settings')
-  const canEditSettings = hasPermission('participants', 'settings')
-  const canRunBatch = hasPermission('participants', 'batch')
-  
-  const [settings, setSettings] = useState<ParticipantSettings | null>(null)
-  const [blacklist, setBlacklist] = useState<BlacklistEntry[]>([])
-  const [pipelines, setPipelines] = useState<Pipeline[]>([])
-  const [compatiblePipelines, setCompatiblePipelines] = useState<Pipeline[]>([])
-  const [companyPipelines, setCompanyPipelines] = useState<Pipeline[]>([])
-  const [pipelineFields, setPipelineFields] = useState<PipelineField[]>([])
-  const [companyPipelineFields, setCompanyPipelineFields] = useState<PipelineField[]>([])
-  const [loadingFields, setLoadingFields] = useState(false)
-  const [loadingCompanyFields, setLoadingCompanyFields] = useState(false)
   const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
-  const [activeTab, setActiveTab] = useState('auto-creation')
+  const [stats, setStats] = useState<DashboardStats | null>(null)
+  const [configurations, setConfigurations] = useState<any>(null)
+
+  const canViewSettings = hasPermission('participants', 'settings')
+  const canManageAccounts = hasPermission('communications', 'update')
+  const canRunBatch = hasPermission('participants', 'batch')
 
   useEffect(() => {
-    loadData()
+    loadDashboardData()
   }, [])
 
-  const loadData = async () => {
+  const loadDashboardData = async () => {
     try {
       setLoading(true)
       
-      // Load settings
-      const settingsResponse = await api.get('/api/v1/participant-settings/')
-      const settingsData = settingsResponse.data
-      if (settingsData.channel_settings) {
-        Object.assign(settingsData, settingsData.channel_settings)
+      // Load multiple data sources in parallel
+      const [settingsRes, connectionsRes, configRes] = await Promise.all([
+        api.get('/api/v1/participant-settings/').catch(() => null),
+        communicationsApi.getConnections().catch(() => null),
+        communicationsApi.getProviderConfigurations().catch(() => null)
+      ])
+
+      // Process the data for dashboard stats
+      const participantSettings = settingsRes?.data
+      const connections = connectionsRes?.data?.results || []
+      const providerConfig = configRes?.data
+
+      // Create dashboard stats
+      const dashboardStats: DashboardStats = {
+        participants: {
+          total: participantSettings?.stats?.total_participants || 0,
+          eligible: participantSettings?.stats?.eligible_participants || 0,
+          created_today: participantSettings?.stats?.created_today || 0,
+          created_this_week: participantSettings?.stats?.created_this_week || 0
+        },
+        accounts: {
+          total: connections.length,
+          active: connections.filter((c: any) => c.accountStatus === 'active').length,
+          needs_reconnection: connections.filter((c: any) => 
+            c.authStatus !== 'authenticated' || c.accountStatus !== 'active'
+          ).length,
+          by_channel: connections.reduce((acc: any, conn: any) => {
+            acc[conn.channelType] = (acc[conn.channelType] || 0) + 1
+            return acc
+          }, {})
+        },
+        processing: {
+          auto_create_enabled: participantSettings?.auto_create_enabled || false,
+          last_batch_run: participantSettings?.last_batch_run,
+          next_scheduled_run: participantSettings?.next_scheduled_run,
+          batch_size: participantSettings?.batch_size || 100
+        },
+        activity: participantSettings?.recent_activity || []
       }
-      setSettings(settingsData)
-      
-      // Load blacklist
-      const blacklistResponse = await api.get('/api/v1/participant-blacklist/')
-      setBlacklist(blacklistResponse.data.results || blacklistResponse.data)
-      
-      // Load all pipelines
-      const pipelinesResponse = await api.get('/api/v1/pipelines/')
-      setPipelines(pipelinesResponse.data.results || pipelinesResponse.data)
-      
-      // Load compatible pipelines (with email/phone fields)
-      const compatibleResponse = await api.get('/api/v1/participant-settings/compatible_pipelines/')
-      setCompatiblePipelines(compatibleResponse.data)
-      
-      // Load company pipelines (with domain/URL fields)
-      const companyResponse = await api.get('/api/v1/participant-settings/company_pipelines/')
-      setCompanyPipelines(companyResponse.data)
+
+      setStats(dashboardStats)
+      setConfigurations(providerConfig)
       
     } catch (error: any) {
-      console.error('Error loading data:', error)
+      console.error('Error loading dashboard data:', error)
       toast({
-        title: "Failed to load settings",
-        description: error.response?.data?.error || "An error occurred",
+        title: "Failed to load dashboard",
+        description: "Some statistics may be unavailable",
         variant: "destructive",
       })
     } finally {
@@ -140,131 +132,25 @@ export default function CommunicationsSettingsPage() {
     }
   }
 
-  const loadPipelineFields = async (pipelineId: string, type: 'contact' | 'company' = 'contact') => {
-    if (!pipelineId || pipelineId === 'none') {
-      if (type === 'contact') {
-        setPipelineFields([])
-      } else {
-        setCompanyPipelineFields([])
-      }
-      return
-    }
-    
+  const runBatchProcess = async () => {
     try {
-      if (type === 'contact') {
-        setLoadingFields(true)
-      } else {
-        setLoadingCompanyFields(true)
-      }
+      await api.post('/api/v1/participant-settings/process_batch/', {
+        batch_size: stats?.processing.batch_size,
+        dry_run: false
+      })
       
-      const response = await api.get(`/api/v1/pipelines/${pipelineId}/fields/`)
-      const fields = response.data.results || response.data || []
+      toast({
+        title: "Batch Processing Started",
+        description: "Processing participants in the background",
+      })
       
-      if (type === 'contact') {
-        setPipelineFields(fields)
-      } else {
-        setCompanyPipelineFields(fields)
-      }
+      // Reload stats
+      await loadDashboardData()
     } catch (error) {
-      console.error(`Error loading ${type} pipeline fields:`, error)
-      if (type === 'contact') {
-        setPipelineFields([])
-      } else {
-        setCompanyPipelineFields([])
-      }
-    } finally {
-      if (type === 'contact') {
-        setLoadingFields(false)
-      } else {
-        setLoadingCompanyFields(false)
-      }
-    }
-  }
-
-  // Load fields when pipeline changes
-  useEffect(() => {
-    if (settings?.default_contact_pipeline) {
-      loadPipelineFields(settings.default_contact_pipeline, 'contact')
-    }
-  }, [settings?.default_contact_pipeline])
-  
-  useEffect(() => {
-    if (settings?.default_company_pipeline) {
-      loadPipelineFields(settings.default_company_pipeline, 'company')
-    }
-  }, [settings?.default_company_pipeline])
-
-  const updateSettings = async (updates: Partial<ParticipantSettings>) => {
-    if (!settings) return
-    
-    // Merge updates with current settings for optimistic UI update
-    const updatedSettings = { ...settings, ...updates }
-    setSettings(updatedSettings)
-    
-    setSaving(true)
-    try {
-      const response = await api.patch(`/api/v1/participant-settings/${settings.id}/`, updates)
-      // Update with server response, but preserve channel settings if they exist
-      const responseData = response.data
-      if (responseData.channel_settings) {
-        Object.assign(responseData, responseData.channel_settings)
-      }
-      setSettings(responseData)
-      
       toast({
-        title: "Settings Updated",
-        description: "Communication settings have been saved.",
-      })
-    } catch (error: any) {
-      console.error('Error updating settings:', error)
-      // Revert on error
-      setSettings(settings)
-      toast({
-        title: "Update Failed",
-        description: error.response?.data?.error || "Failed to update settings",
+        title: "Processing Failed",
+        description: "Failed to start batch processing",
         variant: "destructive",
-      })
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  const addBlacklistEntry = async (newEntry: any) => {
-    const response = await api.post('/api/v1/participant-blacklist/', newEntry)
-    setBlacklist([response.data, ...blacklist])
-  }
-
-  const removeBlacklistEntry = async (id: string) => {
-    await api.delete(`/api/v1/participant-blacklist/${id}/`)
-    setBlacklist(blacklist.filter(entry => entry.id !== id))
-  }
-
-  const processBatch = async (dryRun: boolean = false) => {
-    const response = await api.post('/api/v1/participant-settings/process_batch/', {
-      batch_size: settings?.batch_size,
-      dry_run: dryRun
-    })
-    
-    if (dryRun) {
-      let description = `${response.data.eligible_count} eligible out of ${response.data.total_checked} checked`
-      if (response.data.total_unlinked) {
-        description += ` (${response.data.total_unlinked} total unlinked)`
-      }
-      
-      toast({
-        title: "Dry Run Complete",
-        description,
-      })
-    } else {
-      let description = `Created: ${response.data.created} total`
-      
-      if (response.data.skipped > 0) {
-        description += `\nSkipped: ${response.data.skipped}`
-      }
-      
-      toast({
-        title: "Batch Processed",
-        description,
       })
     }
   }
@@ -272,24 +158,8 @@ export default function CommunicationsSettingsPage() {
   if (loading) {
     return (
       <div className="p-6">
-        <div className="max-w-5xl mx-auto">
-          <div className="flex items-center justify-center py-12">
-            <Loader2 className="h-8 w-8 animate-spin text-primary" />
-          </div>
-        </div>
-      </div>
-    )
-  }
-
-  if (!settings) {
-    return (
-      <div className="p-6">
-        <div className="max-w-5xl mx-auto">
-          <div className="text-center py-12">
-            <AlertCircle className="h-12 w-12 mx-auto text-red-500 mb-4" />
-            <h3 className="text-lg font-medium">Settings Error</h3>
-            <p className="text-gray-600">Unable to load communication settings.</p>
-          </div>
+        <div className="flex items-center justify-center py-12">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
         </div>
       </div>
     )
@@ -298,93 +168,256 @@ export default function CommunicationsSettingsPage() {
   if (!canViewSettings) {
     return (
       <div className="p-6">
-        <div className="max-w-5xl mx-auto">
-          <div className="text-center py-12">
-            <AlertCircle className="h-12 w-12 mx-auto text-amber-500 mb-4" />
-            <h3 className="text-lg font-medium">Access Denied</h3>
-            <p className="text-gray-600">You don't have permission to view communication settings.</p>
-          </div>
+        <div className="text-center py-12">
+          <AlertCircle className="h-12 w-12 mx-auto text-amber-500 mb-4" />
+          <h3 className="text-lg font-medium">Access Denied</h3>
+          <p className="text-gray-600">You don't have permission to view communication settings.</p>
         </div>
       </div>
     )
   }
 
+  const channelIcons: Record<string, any> = {
+    email: Mail,
+    gmail: Mail,
+    outlook: Mail,
+    whatsapp: MessageCircle,
+    linkedin: MessageSquare
+  }
+
   return (
     <div className="p-6">
-      <div className="max-w-5xl mx-auto">
-        <div className="mb-6">
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white flex items-center">
-            <MessageCircle className="mr-2 h-6 w-6" />
-            Communication Settings
+      <div className="max-w-7xl mx-auto space-y-6">
+        {/* Header */}
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
+            Communications Overview
           </h1>
           <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-            Configure how participants are automatically converted to contacts
+            Monitor and manage your communication settings and integrations
           </p>
         </div>
 
-        <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-          <TabsList className="grid w-full grid-cols-5">
-            <TabsTrigger value="auto-creation">Auto-Creation</TabsTrigger>
-            <TabsTrigger value="channels">Channels</TabsTrigger>
-            <TabsTrigger value="company">Companies</TabsTrigger>
-            <TabsTrigger value="blacklist">Blacklist</TabsTrigger>
-            <TabsTrigger value="processing">Processing</TabsTrigger>
-          </TabsList>
+        {/* Quick Stats */}
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium flex items-center gap-2">
+                <Users className="h-4 w-4" />
+                Total Participants
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">{stats?.participants.total || 0}</div>
+              <p className="text-xs text-gray-500 mt-1">
+                {stats?.participants.eligible || 0} eligible for creation
+              </p>
+            </CardContent>
+          </Card>
 
-          <TabsContent value="auto-creation" className="space-y-6">
-            <AutoCreationSettings
-              settings={settings}
-              pipelines={compatiblePipelines}
-              pipelineFields={pipelineFields}
-              loadingFields={loadingFields}
-              onUpdateSettings={updateSettings}
-              saving={saving}
-              canEdit={canEditSettings}
-            />
-          </TabsContent>
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium flex items-center gap-2">
+                <Link2 className="h-4 w-4" />
+                Connected Accounts
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">{stats?.accounts.total || 0}</div>
+              <div className="flex gap-2 mt-1">
+                <Badge variant="default" className="text-xs">
+                  {stats?.accounts.active || 0} active
+                </Badge>
+                {(stats?.accounts.needs_reconnection || 0) > 0 && (
+                  <Badge variant="destructive" className="text-xs">
+                    {stats?.accounts.needs_reconnection} need attention
+                  </Badge>
+                )}
+              </div>
+            </CardContent>
+          </Card>
 
-          <TabsContent value="channels">
-            <ChannelSettings
-              settings={settings}
-              onUpdateSettings={updateSettings}
-              saving={saving}
-              canEdit={canEditSettings}
-            />
-          </TabsContent>
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium flex items-center gap-2">
+                <TrendingUp className="h-4 w-4" />
+                Created Today
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">{stats?.participants.created_today || 0}</div>
+              <p className="text-xs text-gray-500 mt-1">
+                {stats?.participants.created_this_week || 0} this week
+              </p>
+            </CardContent>
+          </Card>
 
-          <TabsContent value="company">
-            <CompanyLinkingSettings
-              settings={settings}
-              companyPipelines={companyPipelines}
-              companyPipelineFields={companyPipelineFields}
-              loadingCompanyFields={loadingCompanyFields}
-              onUpdateSettings={updateSettings}
-              onLoadPipelineFields={loadPipelineFields}
-              saving={saving}
-              canEdit={canEditSettings}
-            />
-          </TabsContent>
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium flex items-center gap-2">
+                <Zap className="h-4 w-4" />
+                Auto-Creation
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="flex items-center gap-2">
+                <Badge variant={stats?.processing.auto_create_enabled ? "default" : "secondary"}>
+                  {stats?.processing.auto_create_enabled ? "Enabled" : "Disabled"}
+                </Badge>
+                {stats?.processing.batch_size && (
+                  <span className="text-sm text-gray-500">
+                    Batch: {stats.processing.batch_size}
+                  </span>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        </div>
 
-          <TabsContent value="blacklist">
-            <BlacklistManagement
-              blacklist={blacklist}
-              onAddEntry={addBlacklistEntry}
-              onRemoveEntry={removeBlacklistEntry}
-              canEdit={canEditSettings}
-            />
-          </TabsContent>
+        {/* Main Content Grid */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Connected Accounts */}
+          <Card className="lg:col-span-2">
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <CardTitle>Connected Accounts</CardTitle>
+                <Button 
+                  size="sm" 
+                  variant="ghost"
+                  onClick={() => router.push('/settings/communications/accounts')}
+                >
+                  Manage
+                  <ArrowRight className="ml-2 h-4 w-4" />
+                </Button>
+              </div>
+              <CardDescription>
+                Your connected communication channels
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {stats?.accounts.total === 0 ? (
+                <div className="text-center py-8">
+                  <Link2 className="h-12 w-12 text-gray-300 mx-auto mb-3" />
+                  <p className="text-gray-500">No accounts connected yet</p>
+                  <Button 
+                    className="mt-4"
+                    onClick={() => router.push('/settings/communications/accounts')}
+                  >
+                    Connect Account
+                  </Button>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {Object.entries(stats?.accounts.by_channel || {}).map(([channel, count]) => {
+                    const Icon = channelIcons[channel] || MessageCircle
+                    return (
+                      <div key={channel} className="flex items-center justify-between p-3 border rounded-lg">
+                        <div className="flex items-center gap-3">
+                          <div className="p-2 bg-gray-100 dark:bg-gray-800 rounded-lg">
+                            <Icon className="h-5 w-5" />
+                          </div>
+                          <div>
+                            <div className="font-medium capitalize">{channel}</div>
+                            <div className="text-sm text-gray-500">
+                              {count} account{count !== 1 ? 's' : ''} connected
+                            </div>
+                          </div>
+                        </div>
+                        <CheckCircle2 className="h-5 w-5 text-green-500" />
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </CardContent>
+          </Card>
 
-          <TabsContent value="processing">
-            <ProcessingSettings
-              settings={settings}
-              onUpdateSettings={updateSettings}
-              onProcessBatch={processBatch}
-              saving={saving}
-              canEdit={canEditSettings}
-              canRunBatch={canRunBatch}
-            />
-          </TabsContent>
-        </Tabs>
+          {/* Quick Actions */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Quick Actions</CardTitle>
+              <CardDescription>
+                Common tasks and operations
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              <Button 
+                className="w-full justify-start" 
+                variant="outline"
+                onClick={() => router.push('/settings/communications/participants')}
+              >
+                <Users className="mr-2 h-4 w-4" />
+                Configure Participants
+              </Button>
+              <Button 
+                className="w-full justify-start" 
+                variant="outline"
+                onClick={() => router.push('/settings/communications/accounts')}
+              >
+                <Link2 className="mr-2 h-4 w-4" />
+                Connect New Account
+              </Button>
+              <Button 
+                className="w-full justify-start" 
+                variant="outline"
+                onClick={() => router.push('/settings/communications/providers')}
+              >
+                <Settings className="mr-2 h-4 w-4" />
+                Provider Settings
+              </Button>
+              {canRunBatch && stats?.processing.auto_create_enabled && (
+                <Button 
+                  className="w-full justify-start" 
+                  variant="outline"
+                  onClick={runBatchProcess}
+                >
+                  <Activity className="mr-2 h-4 w-4" />
+                  Run Batch Process
+                </Button>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* System Status */}
+        <Card>
+          <CardHeader>
+            <CardTitle>System Status</CardTitle>
+            <CardDescription>
+              Current configuration and health status
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div className="space-y-1">
+                <p className="text-sm text-gray-500">Auto-Creation</p>
+                <Badge variant={stats?.processing.auto_create_enabled ? "default" : "secondary"}>
+                  {stats?.processing.auto_create_enabled ? "Enabled" : "Disabled"}
+                </Badge>
+              </div>
+              <div className="space-y-1">
+                <p className="text-sm text-gray-500">Provider Config</p>
+                <Badge variant={configurations?.global_settings?.is_configured ? "default" : "destructive"}>
+                  {configurations?.global_settings?.is_configured ? "Configured" : "Not Configured"}
+                </Badge>
+              </div>
+              <div className="space-y-1">
+                <p className="text-sm text-gray-500">Real-time Sync</p>
+                <Badge variant={configurations?.tenant_config?.enable_real_time_sync ? "default" : "secondary"}>
+                  {configurations?.tenant_config?.enable_real_time_sync ? "Active" : "Inactive"}
+                </Badge>
+              </div>
+              <div className="space-y-1">
+                <p className="text-sm text-gray-500">Last Batch Run</p>
+                <p className="text-sm font-medium">
+                  {stats?.processing.last_batch_run 
+                    ? new Date(stats.processing.last_batch_run).toLocaleDateString()
+                    : 'Never'}
+                </p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
       </div>
     </div>
   )

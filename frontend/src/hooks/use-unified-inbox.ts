@@ -3,10 +3,10 @@ import { useWebSocket, RealtimeMessage } from '@/contexts/websocket-context'
 import { api } from '@/lib/api'
 
 // Transform conversations into Record-grouped format
-function transformConversationsToRecords(conversations: any[]): { records: Record[] } {
+function transformConversationsToRecords(conversations: any[]): { records: InboxRecord[] } {
   console.log('🔄 Transforming conversations to records:', conversations?.length || 0, 'conversations')
   
-  const recordMap = new Map<number, Record>()
+  const recordMap = new Map<number, InboxRecord>()
   let unmatched_conversations = 0
   
   conversations.forEach(conversation => {
@@ -102,7 +102,7 @@ function transformConversationsToRecords(conversations: any[]): { records: Recor
 }
 
 // Types
-interface Record {
+interface InboxRecord {
   id: number
   title: string
   pipeline_name: string
@@ -132,7 +132,7 @@ interface ChannelSummary {
 }
 
 interface UnifiedInboxData {
-  records: Record[]
+  records: InboxRecord[]
   conversations: any[] // Raw conversation data from API
   total_count: number
   has_next: boolean
@@ -161,7 +161,7 @@ interface ChannelAvailability {
 interface UseUnifiedInboxReturn {
   // Data
   inboxData: UnifiedInboxData | null
-  selectedRecord: Record | null
+  selectedRecord: InboxRecord | null
   channelAvailability: ChannelAvailability[]
   
   // Loading states
@@ -171,7 +171,7 @@ interface UseUnifiedInboxReturn {
   // Actions
   fetchInbox: (options?: { page?: number; limit?: number; forceRefresh?: boolean }) => Promise<void>
   refreshInbox: () => Promise<void>  // Explicit refresh with loading state
-  selectRecord: (record: Record) => void
+  selectRecord: (record: InboxRecord) => void
   refreshRecord: (recordId: number) => Promise<void>
   markAsRead: (recordId: number, channelType: string) => Promise<void>
   updateInboxData: (updater: (prev: UnifiedInboxData | null) => UnifiedInboxData | null) => void
@@ -185,7 +185,7 @@ interface UseUnifiedInboxReturn {
 
 export function useUnifiedInbox(): UseUnifiedInboxReturn {
   const [inboxData, setInboxData] = useState<UnifiedInboxData | null>(null)
-  const [selectedRecord, setSelectedRecord] = useState<Record | null>(null)
+  const [selectedRecord, setSelectedRecord] = useState<InboxRecord | null>(null)
   const [channelAvailability, setChannelAvailability] = useState<ChannelAvailability[]>([])
   const [loading, setLoading] = useState(false)  // Start as false - only show loading when actually needed
   const [loadingChannels, setLoadingChannels] = useState(false)
@@ -328,8 +328,8 @@ export function useUnifiedInbox(): UseUnifiedInboxReturn {
           const channel = updatedChannels[channelType]
           
           // Update conversation if it belongs to this channel/record
-          if (conversation_id && record.conversations) {
-            const conversationExists = record.conversations.some(conv => 
+          if (conversation_id && (record as any).conversations) {
+            const conversationExists = (record as any).conversations.some((conv: any) => 
               conv.database_id === conversation_id || conv.id === conversation_id
             )
             
@@ -398,8 +398,8 @@ export function useUnifiedInbox(): UseUnifiedInboxReturn {
           const channel = updatedChannels[channelType]
           
           // Update conversation stats if this channel contains the conversation
-          if (conversation_id && record.conversations) {
-            const conversationExists = record.conversations.some(conv => 
+          if (conversation_id && (record as any).conversations) {
+            const conversationExists = (record as any).conversations.some((conv: any) => 
               conv.database_id === conversation_id || conv.id === conversation_id
             )
             
@@ -500,7 +500,7 @@ export function useUnifiedInbox(): UseUnifiedInboxReturn {
   }, [])
 
   // Select a record
-  const selectRecord = useCallback((record: Record) => {
+  const selectRecord = useCallback((record: InboxRecord) => {
     setSelectedRecord(record)
     // Use available_channels from the record instead of separate API call
     setChannelAvailability(

@@ -594,7 +594,7 @@ export function RecordDetailDrawer({
     record?.id || '',
     (message: RealtimeMessage) => {
       // Handle document_updated messages (from WebSocket broadcast)
-      if ((message.type === 'document_updated' || message.type === 'record_update') && message.data) {
+      if (message.type === 'record_update' && message.data) {
         const recordData = message.data
         // Check if this update is for our current record
         if (recordData.record_id === record?.id) {
@@ -1137,9 +1137,9 @@ export function RecordDetailDrawer({
                 }`}
               >
                 Communications
-                {communicationStats?.total_unread > 0 && (
+                {(communicationStats?.total_unread ?? 0) > 0 && (
                   <span className="ml-2 inline-flex items-center justify-center px-2 py-0.5 text-xs font-medium rounded-full bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200">
-                    {communicationStats.total_unread}
+                    {communicationStats?.total_unread}
                   </span>
                 )}
               </Button>

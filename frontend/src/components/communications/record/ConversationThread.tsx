@@ -24,6 +24,7 @@ interface Sender {
   display_name: string
   email?: string
   phone?: string
+  avatar_url?: string
 }
 
 interface Message {
@@ -55,6 +56,11 @@ interface Message {
     sender_name?: string
     contact_name?: string
     [key: string]: any
+  }
+  recipients?: {
+    to?: Array<{ name?: string; email?: string }>
+    cc?: Array<{ name?: string; email?: string }>
+    bcc?: Array<{ name?: string; email?: string }>
   }
 }
 
@@ -377,12 +383,12 @@ export function ConversationThread({
       }
       
       // Fallback to searching from trigger
-      let parent = loadMoreTriggerRef.current
+      let parent: HTMLElement | null = loadMoreTriggerRef.current
       while (parent) {
         const style = window.getComputedStyle(parent)
         if (style.overflowY === 'auto' || style.overflowY === 'scroll') {
           console.log('Found scroll container:', parent.className)
-          return parent
+          return parent as HTMLDivElement
         }
         parent = parent.parentElement
       }
@@ -993,7 +999,7 @@ export function ConversationThread({
                           <Reply className="w-3 h-3 mr-1" />
                           Reply
                         </Button>
-                        {message.recipients && (message.recipients.to?.length > 1 || message.recipients.cc?.length > 0) && (
+                        {message.recipients && ((message.recipients.to?.length ?? 0) > 1 || (message.recipients.cc?.length ?? 0) > 0) && (
                           <Button 
                             size="sm" 
                             variant="ghost" 
@@ -1143,7 +1149,8 @@ export function ConversationThread({
                 {dateMessages.map((message, index) => {
                   const channelStyle = getChannelStyle(message.channel_type, message.direction)
                   const showTime = index === 0 || 
-                    new Date(dateMessages[index - 1].sent_at).getTime() + 60000 < new Date(message.sent_at).getTime()
+                    (dateMessages[index - 1].sent_at && message.sent_at && 
+                     new Date(dateMessages[index - 1].sent_at!).getTime() + 60000 < new Date(message.sent_at!).getTime())
                   
                   return (
                     <div

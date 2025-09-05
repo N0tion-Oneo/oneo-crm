@@ -38,7 +38,7 @@ import CommunicationAnalytics from './communication-analytics'
 import SmartCompose from './smart-compose'
 
 // Types
-interface Record {
+interface InboxRecord {
   id: number
   title: string
   pipeline_name: string
@@ -85,7 +85,7 @@ interface ChannelAvailability {
 }
 
 interface UnifiedInboxData {
-  records: Record[]
+  records: InboxRecord[]
   total_count: number
   has_next: boolean
   has_previous: boolean

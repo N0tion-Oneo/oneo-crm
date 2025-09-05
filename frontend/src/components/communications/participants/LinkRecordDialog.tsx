@@ -50,7 +50,7 @@ interface Pipeline {
   description?: string
 }
 
-interface Record {
+interface PipelineRecord {
   id: string
   display_name: string
   pipeline_id: string
@@ -75,7 +75,7 @@ export function LinkRecordDialog({
   const [pipelines, setPipelines] = useState<Pipeline[]>([])
   const [selectedPipeline, setSelectedPipeline] = useState<string>('')
   const [searchQuery, setSearchQuery] = useState('')
-  const [records, setRecords] = useState<Record[]>([])
+  const [records, setRecords] = useState<PipelineRecord[]>([])
   const [selectedRecord, setSelectedRecord] = useState<string>('')
   const [linkType, setLinkType] = useState<'primary' | 'secondary'>('primary')
   const [linkConversations, setLinkConversations] = useState(true)
@@ -175,7 +175,7 @@ export function LinkRecordDialog({
     }
   }
 
-  const getRecordDisplayValue = (record: Record) => {
+  const getRecordDisplayValue = (record: PipelineRecord) => {
     // Try to get a meaningful display value from the record data
     const possibleFields = ['name', 'title', 'email', 'company', 'full_name']
     for (const field of possibleFields) {
@@ -186,7 +186,7 @@ export function LinkRecordDialog({
     return record.display_name || `Record ${record.id}`
   }
 
-  const getRecordSubtitle = (record: Record) => {
+  const getRecordSubtitle = (record: PipelineRecord) => {
     // Try to get secondary information
     const fields = []
     

@@ -65,7 +65,7 @@ export const useEmailThreads = ({ selectedAccount }: UseEmailThreadsProps) => {
         console.error('📧 API returned error:', result)
         toast({
           title: 'Failed to load emails',
-          description: result.error || 'Unknown error occurred',
+          description: (result as any).error || 'Unknown error occurred',
           variant: 'destructive'
         })
       }

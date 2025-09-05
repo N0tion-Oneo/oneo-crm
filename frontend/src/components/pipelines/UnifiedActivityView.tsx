@@ -557,7 +557,7 @@ export function UnifiedActivityView({
                 <div className="flex items-center space-x-2 mt-2 ml-11">
                   <Paperclip className="w-3 h-3 text-gray-400" />
                   <span className="text-xs text-gray-500">
-                    {msg.attachments.length} attachment{msg.attachments.length > 1 ? 's' : ''}
+                    {msg.attachments?.length || 0} attachment{(msg.attachments?.length || 0) > 1 ? 's' : ''}
                   </span>
                 </div>
               )}
@@ -602,7 +602,7 @@ export function UnifiedActivityView({
                       <div className="flex items-center space-x-2">
                         <Paperclip className="w-4 h-4 text-gray-400" />
                         <span className="text-sm text-gray-600 dark:text-gray-400">
-                          {msg.attachments.length} attachment{msg.attachments.length > 1 ? 's' : ''}
+                          {msg.attachments?.length || 0} attachment{(msg.attachments?.length || 0) > 1 ? 's' : ''}
                         </span>
                       </div>
                     </div>

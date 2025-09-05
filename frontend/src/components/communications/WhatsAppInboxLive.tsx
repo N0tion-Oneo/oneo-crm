@@ -109,7 +109,7 @@ export function WhatsAppInboxLive({ className }: WhatsAppInboxLiveProps) {
         console.error('Failed to load conversations:', result)
         toast({
           title: 'Error',
-          description: result.error || 'Failed to load conversations',
+          description: 'Failed to load conversations',
           variant: 'destructive'
         })
       }
@@ -392,8 +392,7 @@ export function WhatsAppInboxLive({ className }: WhatsAppInboxLiveProps) {
                 >
                   <div className="flex items-start gap-3">
                     <SafeAvatar
-                      name={conversation.name}
-                      size="md"
+                      fallbackText={conversation.name}
                       className="flex-shrink-0"
                     />
                     <div className="flex-1 min-w-0">
@@ -481,8 +480,8 @@ export function WhatsAppInboxLive({ className }: WhatsAppInboxLiveProps) {
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
                     <SafeAvatar
-                      name={getConversationDisplay(selectedConversation)}
-                      size="sm"
+                      fallbackText={getConversationDisplay(selectedConversation)}
+                      className="w-8 h-8"
                     />
                     <div>
                       <h3 className="font-semibold">{getConversationDisplay(selectedConversation)}</h3>

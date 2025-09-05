@@ -108,9 +108,9 @@ export default function GmailInboxRefactored({ className }: GmailInboxRefactored
     subscriptionRef.current = subscribe(channel, (message) => {
       console.log('📨 Email storage update received:', message)
       
-      if (message.type === 'email_thread_stored' || message.type === 'sync_progress_update') {
-        const threadId = message.thread_id || message.payload?.thread_id
-        const stored = message.stored !== undefined ? message.stored : message.payload?.stored
+      if ((message as any).type === 'email_thread_stored' || (message as any).type === 'sync_progress_update') {
+        const threadId = (message as any).thread_id || message.payload?.thread_id
+        const stored = (message as any).stored !== undefined ? (message as any).stored : message.payload?.stored
         
         if (threadId) {
           setThreads(prevThreads => 

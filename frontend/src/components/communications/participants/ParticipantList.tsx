@@ -80,6 +80,8 @@ interface Participant {
   channel_types: string[]
   resolution_confidence?: number
   resolution_method?: string
+  first_seen?: string
+  last_seen?: string
 }
 
 interface ParticipantListProps {

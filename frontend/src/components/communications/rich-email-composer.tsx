@@ -1,6 +1,8 @@
 'use client'
 
-import { useEditor, EditorContent, BubbleMenu } from '@tiptap/react'
+import { useEditor, EditorContent } from '@tiptap/react'
+// BubbleMenu temporarily removed - needs separate installation
+// import { BubbleMenu } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import Link from '@tiptap/extension-link'
 import Image from '@tiptap/extension-image'
@@ -12,7 +14,7 @@ import Image from '@tiptap/extension-image'
 import TextAlign from '@tiptap/extension-text-align'
 import Underline from '@tiptap/extension-underline'
 import Color from '@tiptap/extension-color'
-import TextStyle from '@tiptap/extension-text-style'
+import { TextStyle } from '@tiptap/extension-text-style'
 import Highlight from '@tiptap/extension-highlight'
 import { 
   Bold, 
@@ -154,7 +156,8 @@ export function RichEmailComposer({
   }, [editor, imageUrl])
 
   const insertTable = useCallback(() => {
-    editor?.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()
+    // Table extension not installed - functionality disabled
+    // editor?.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()
   }, [editor])
 
   const setColor = useCallback((color: string) => {
@@ -520,8 +523,8 @@ export function RichEmailComposer({
         )}
       </div>
 
-      {/* Floating menu for quick formatting */}
-      {editor && !showSource && (
+      {/* Floating menu for quick formatting - BubbleMenu temporarily disabled */}
+      {/* {editor && !showSource && (
         <BubbleMenu editor={editor} tippyOptions={{ duration: 100 }}>
           <div className="bg-white dark:bg-gray-800 shadow-lg rounded-lg border p-1 flex items-center gap-1">
             <Button
@@ -550,7 +553,7 @@ export function RichEmailComposer({
             </Button>
           </div>
         </BubbleMenu>
-      )}
+      )} */}
     </div>
   )
 }

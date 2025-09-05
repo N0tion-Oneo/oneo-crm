@@ -65,8 +65,8 @@ interface Participant {
   resolution_confidence?: number
   resolution_method?: string
   resolved_at?: string
-  first_seen: string
-  last_seen: string
+  first_seen?: string
+  last_seen?: string
 }
 
 interface ConversationSummary {
@@ -403,10 +403,12 @@ export function ParticipantDetailDialog({
 
               {/* Metadata */}
               <div className="text-sm text-muted-foreground space-y-1">
-                <div className="flex items-center gap-2">
-                  <Calendar className="w-4 h-4" />
-                  <span>First seen: {format(new Date(participant.first_seen), 'MMM d, yyyy HH:mm')}</span>
-                </div>
+                {participant.first_seen && (
+                  <div className="flex items-center gap-2">
+                    <Calendar className="w-4 h-4" />
+                    <span>First seen: {format(new Date(participant.first_seen), 'MMM d, yyyy HH:mm')}</span>
+                  </div>
+                )}
                 {participant.resolved_at && (
                   <div className="flex items-center gap-2">
                     <Link2 className="w-4 h-4" />

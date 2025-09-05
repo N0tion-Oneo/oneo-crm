@@ -353,8 +353,7 @@ export function CreateRecordDialog({
                       name: mapping.field_slug,
                       display_name: mapping.field_name,
                       field_type: mapping.field_type,
-                      field_config: {},
-                      is_required: mapping.is_required
+                      field_config: {}
                     }
                     
                     return (

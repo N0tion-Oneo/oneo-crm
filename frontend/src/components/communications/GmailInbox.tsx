@@ -141,9 +141,9 @@ export default function GmailInbox({ className }: GmailInboxProps) {
       console.log('📨 Email storage update received:', message)
       
       // Handle email_thread_stored event
-      if (message.type === 'email_thread_stored' || message.type === 'sync_progress_update') {
-        const threadId = message.thread_id || message.payload?.thread_id
-        const stored = message.stored !== undefined ? message.stored : message.payload?.stored
+      if ((message as any).type === 'email_thread_stored' || (message as any).type === 'sync_progress_update') {
+        const threadId = (message as any).thread_id || message.payload?.thread_id
+        const stored = (message as any).stored !== undefined ? (message as any).stored : message.payload?.stored
         
         if (threadId) {
           console.log(`📨 Updating thread ${threadId} storage status to: ${stored ? 'stored' : 'syncing'}`)
@@ -164,12 +164,12 @@ export default function GmailInbox({ className }: GmailInboxProps) {
           
           // Also update selected thread if it matches
           setSelectedThread(prev => {
-            if (prev?.id === threadId) {
+            if (prev && prev.id === threadId) {
               return {
                 ...prev,
                 stored: stored,
                 should_store: stored ? false : prev.should_store
-              }
+              } as EmailThread
             }
             return prev
           })
@@ -281,7 +281,7 @@ export default function GmailInbox({ className }: GmailInboxProps) {
         console.error('📧 API returned error:', result)
         toast({
           title: 'Failed to load emails',
-          description: result.error || 'Unknown error occurred',
+          description: (result as any).error || 'Unknown error occurred',
           variant: 'destructive'
         })
       }
@@ -902,7 +902,7 @@ export default function GmailInbox({ className }: GmailInboxProps) {
                       className={`cursor-pointer transition-colors border-b relative ${
                         isSelected 
                           ? 'bg-white dark:bg-gray-800 border-l-2 border-l-red-500' 
-                          : thread.is_unread || thread.unread_count > 0
+                          : (thread as any).is_unread || thread.unread_count > 0
                             ? 'bg-blue-50/70 hover:bg-blue-50 dark:bg-blue-900/10 dark:hover:bg-blue-900/20 border-l-2 border-l-blue-500'
                             : 'hover:bg-white dark:hover:bg-gray-800'
                       } px-4 py-3`}
@@ -958,14 +958,14 @@ export default function GmailInbox({ className }: GmailInboxProps) {
                                 contactPipelines.add(p.contact_pipeline)
                               }
                             })
-                            return Array.from(contactPipelines).map((pipeline: string, idx) => (
+                            return Array.from(contactPipelines).map((pipeline, idx) => (
                               <div key={`contact-pipeline-${idx}`} className="flex items-center gap-1 bg-orange-50 px-2 py-0.5 rounded-full"
-                                   title={`Pipeline: ${pipeline}`}>
+                                   title={`Pipeline: ${String(pipeline)}`}>
                                 <svg className="w-3 h-3 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
                                 </svg>
                                 <span className="text-xs text-orange-600 font-medium">
-                                  {pipeline}
+                                  {String(pipeline)}
                                 </span>
                               </div>
                             ))
@@ -1011,14 +1011,14 @@ export default function GmailInbox({ className }: GmailInboxProps) {
                                 companyPipelines.add(p.secondary_pipeline)
                               }
                             })
-                            return Array.from(companyPipelines).map((pipeline: string, idx) => (
+                            return Array.from(companyPipelines).map((pipeline, idx) => (
                               <div key={`company-pipeline-${idx}`} className="flex items-center gap-1 bg-indigo-50 px-2 py-0.5 rounded-full"
-                                   title={`Pipeline: ${pipeline}`}>
+                                   title={`Pipeline: ${String(pipeline)}`}>
                                 <svg className="w-3 h-3 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
                                 </svg>
                                 <span className="text-xs text-indigo-600 font-medium">
-                                  {pipeline}
+                                  {String(pipeline)}
                                 </span>
                               </div>
                             ))
@@ -1054,16 +1054,16 @@ export default function GmailInbox({ className }: GmailInboxProps) {
                             {/* Mark as read/unread button */}
                             <button
                               onClick={(e) => {
-                                if (thread.is_unread || thread.unread_count > 0) {
+                                if ((thread as any).is_unread || thread.unread_count > 0) {
                                   handleMarkAsRead(thread, e)
                                 } else {
                                   handleMarkAsUnread(thread, e)
                                 }
                               }}
                               className="p-1 hover:bg-gray-100 rounded transition-colors"
-                              title={thread.is_unread || thread.unread_count > 0 ? "Mark as read" : "Mark as unread"}
+                              title={(thread as any).is_unread || thread.unread_count > 0 ? "Mark as read" : "Mark as unread"}
                             >
-                              {thread.is_unread || thread.unread_count > 0 ? (
+                              {(thread as any).is_unread || thread.unread_count > 0 ? (
                                 <Mail className="w-4 h-4 text-blue-600" />
                               ) : (
                                 <MailOpen className="w-4 h-4 text-gray-400" />
@@ -1095,7 +1095,7 @@ export default function GmailInbox({ className }: GmailInboxProps) {
                                 />
                               )}
                               {/* Unread indicator dot */}
-                              {(thread.is_unread || thread.unread_count > 0) && (
+                              {((thread as any).is_unread || thread.unread_count > 0) && (
                                 <div className="absolute -top-1 -right-1 w-3 h-3 bg-blue-600 rounded-full border-2 border-white" />
                               )}
                             </div>
@@ -1485,7 +1485,7 @@ export default function GmailInbox({ className }: GmailInboxProps) {
                                     content={message.content}
                                     isEmail={true}
                                     className="text-gray-900"
-                                    metadata={message.metadata}
+                                    metadata={(message as any).metadata}
                                   />
                                 ) : (
                                   <div className="text-gray-500 italic">No content</div>
@@ -1746,7 +1746,10 @@ export default function GmailInbox({ className }: GmailInboxProps) {
             setLinkDialogThread(null)
           }}
           threadId={linkDialogThread.id}
-          threadParticipants={linkDialogThread.participants || []}
+          threadParticipants={(linkDialogThread.participants || []).map(p => ({
+            email: p.email || '',
+            name: p.name
+          }))}
           onSuccess={() => {
             // Refresh the thread to show updated link status
             loadThreads()

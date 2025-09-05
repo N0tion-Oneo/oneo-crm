@@ -592,7 +592,16 @@ export default function PipelineFieldsPage() {
           ) : activeTab === 'settings' ? (
             <div className="h-full p-6">
               <PipelineTitleConfiguration
-                pipeline={pipeline}
+                pipeline={{
+                  ...pipeline,
+                  fields: pipeline.fields.map(field => ({
+                    id: field.id,
+                    name: field.name,
+                    display_name: field.display_name || field.name,
+                    slug: field.name, // Use name as slug since that's what we have
+                    field_type: field.field_type
+                  }))
+                }}
                 onTemplateChange={(template) => {
                   // Update local pipeline state
                   setPipeline(prev => prev ? {

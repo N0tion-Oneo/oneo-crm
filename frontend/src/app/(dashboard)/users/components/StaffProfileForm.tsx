@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { createStaffProfile, updateStaffProfile } from '@/lib/staff-profiles'
-import { StaffProfile, StaffProfileFormData, EmploymentType, EmploymentStatus, WorkLocation } from '@/types/staff-profile'
+import { StaffProfile, StaffProfileFormData, EmploymentType, EmploymentStatus, WorkLocation, Address } from '@/types/staff-profile'
 import { useAuth } from '@/features/auth/context'
 import { AlertTriangle, Award, BookOpen, Briefcase, Building, Calendar, Clock, FileText, Github, Globe, Link2, Linkedin, Mail, MapPin, Phone, Plus, Shield, Trash2, Twitter, User, UserCheck, Users } from 'lucide-react'
 import { Input } from '@/components/ui/input'
@@ -89,13 +89,20 @@ export default function StaffProfileForm({ userId, profile, onSave, onCancel }: 
         date_of_birth: profile.date_of_birth || '',
         nationality: profile.nationality || '',
         personal_email: profile.personal_email || '',
-        home_address: typeof profile.home_address === 'object' ? profile.home_address : {
-          street: '',
-          city: '',
-          state: '',
-          postal_code: '',
-          country: ''
-        },
+        home_address: (typeof profile.home_address === 'object' && profile.home_address !== null && 
+                       'street' in profile.home_address && 
+                       'city' in profile.home_address && 
+                       'state' in profile.home_address && 
+                       'postal_code' in profile.home_address && 
+                       'country' in profile.home_address) 
+                      ? profile.home_address as Address
+                      : {
+                          street: '',
+                          city: '',
+                          state: '',
+                          postal_code: '',
+                          country: ''
+                        },
         internal_notes: profile.internal_notes || ''
       })
     }
@@ -567,7 +574,7 @@ export default function StaffProfileForm({ userId, profile, onSave, onCancel }: 
                           type="text"
                           value={edu.degree || ''}
                           onChange={(e) => {
-                            const newEducation = [...formData.education]
+                            const newEducation = [...(formData.education || [])]
                             newEducation[index] = { ...edu, degree: e.target.value }
                             setFormData({ ...formData, education: newEducation })
                           }}
@@ -577,7 +584,7 @@ export default function StaffProfileForm({ userId, profile, onSave, onCancel }: 
                           type="text"
                           value={edu.field_of_study || ''}
                           onChange={(e) => {
-                            const newEducation = [...formData.education]
+                            const newEducation = [...(formData.education || [])]
                             newEducation[index] = { ...edu, field_of_study: e.target.value }
                             setFormData({ ...formData, education: newEducation })
                           }}
@@ -587,7 +594,7 @@ export default function StaffProfileForm({ userId, profile, onSave, onCancel }: 
                           type="text"
                           value={edu.institution || ''}
                           onChange={(e) => {
-                            const newEducation = [...formData.education]
+                            const newEducation = [...(formData.education || [])]
                             newEducation[index] = { ...edu, institution: e.target.value }
                             setFormData({ ...formData, education: newEducation })
                           }}
@@ -597,7 +604,7 @@ export default function StaffProfileForm({ userId, profile, onSave, onCancel }: 
                           type="text"
                           value={edu.year || ''}
                           onChange={(e) => {
-                            const newEducation = [...formData.education]
+                            const newEducation = [...(formData.education || [])]
                             newEducation[index] = { ...edu, year: e.target.value }
                             setFormData({ ...formData, education: newEducation })
                           }}
@@ -609,7 +616,7 @@ export default function StaffProfileForm({ userId, profile, onSave, onCancel }: 
                         variant="ghost"
                         size="icon"
                         onClick={() => {
-                          const newEducation = formData.education.filter((_, i) => i !== index)
+                          const newEducation = (formData.education || []).filter((_, i) => i !== index)
                           setFormData({ ...formData, education: newEducation })
                         }}
                         className="ml-2"
@@ -698,7 +705,16 @@ export default function StaffProfileForm({ userId, profile, onSave, onCancel }: 
                         id="street"
                         type="text"
                         value={formData.home_address?.street || ''}
-                        onChange={(e) => setFormData({ ...formData, home_address: { ...formData.home_address, street: e.target.value }})}
+                        onChange={(e) => setFormData({ 
+                          ...formData, 
+                          home_address: { 
+                            street: e.target.value,
+                            city: formData.home_address?.city || '',
+                            state: formData.home_address?.state || '',
+                            postal_code: formData.home_address?.postal_code || '',
+                            country: formData.home_address?.country || ''
+                          }
+                        })}
                         placeholder="123 Main St"
                       />
                     </div>
@@ -708,7 +724,16 @@ export default function StaffProfileForm({ userId, profile, onSave, onCancel }: 
                         id="city"
                         type="text"
                         value={formData.home_address?.city || ''}
-                        onChange={(e) => setFormData({ ...formData, home_address: { ...formData.home_address, city: e.target.value }})}
+                        onChange={(e) => setFormData({ 
+                          ...formData, 
+                          home_address: { 
+                            street: formData.home_address?.street || '',
+                            city: e.target.value,
+                            state: formData.home_address?.state || '',
+                            postal_code: formData.home_address?.postal_code || '',
+                            country: formData.home_address?.country || ''
+                          }
+                        })}
                         placeholder="New York"
                       />
                     </div>
@@ -718,7 +743,16 @@ export default function StaffProfileForm({ userId, profile, onSave, onCancel }: 
                         id="state"
                         type="text"
                         value={formData.home_address?.state || ''}
-                        onChange={(e) => setFormData({ ...formData, home_address: { ...formData.home_address, state: e.target.value }})}
+                        onChange={(e) => setFormData({ 
+                          ...formData, 
+                          home_address: { 
+                            street: formData.home_address?.street || '',
+                            city: formData.home_address?.city || '',
+                            state: e.target.value,
+                            postal_code: formData.home_address?.postal_code || '',
+                            country: formData.home_address?.country || ''
+                          }
+                        })}
                         placeholder="NY"
                       />
                     </div>
@@ -728,7 +762,16 @@ export default function StaffProfileForm({ userId, profile, onSave, onCancel }: 
                         id="postal_code"
                         type="text"
                         value={formData.home_address?.postal_code || ''}
-                        onChange={(e) => setFormData({ ...formData, home_address: { ...formData.home_address, postal_code: e.target.value }})}
+                        onChange={(e) => setFormData({ 
+                          ...formData, 
+                          home_address: { 
+                            street: formData.home_address?.street || '',
+                            city: formData.home_address?.city || '',
+                            state: formData.home_address?.state || '',
+                            postal_code: e.target.value,
+                            country: formData.home_address?.country || ''
+                          }
+                        })}
                         placeholder="10001"
                       />
                     </div>
@@ -738,7 +781,16 @@ export default function StaffProfileForm({ userId, profile, onSave, onCancel }: 
                         id="country"
                         type="text"
                         value={formData.home_address?.country || ''}
-                        onChange={(e) => setFormData({ ...formData, home_address: { ...formData.home_address, country: e.target.value }})}
+                        onChange={(e) => setFormData({ 
+                          ...formData, 
+                          home_address: { 
+                            street: formData.home_address?.street || '',
+                            city: formData.home_address?.city || '',
+                            state: formData.home_address?.state || '',
+                            postal_code: formData.home_address?.postal_code || '',
+                            country: e.target.value
+                          }
+                        })}
                         placeholder="United States"
                       />
                     </div>

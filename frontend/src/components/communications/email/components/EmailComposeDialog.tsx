@@ -65,7 +65,7 @@ export const EmailComposeDialog: React.FC<EmailComposeDialogProps> = ({
     // Only run when dialog transitions from closed to open
     if (open && !lastOpenState.current) {
       // Force editor to remount with new content
-      setEditorKey(prev => prev + 1)
+      setEditorKey(editorKey + 1)
       
       // Set initial content after remount
       setTimeout(() => {

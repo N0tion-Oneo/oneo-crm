@@ -984,14 +984,6 @@ class ParticipantSettings(models.Model):
         default=1,
         help_text="Minimum messages required before auto-creation"
     )
-    require_email = models.BooleanField(
-        default=False,
-        help_text="Require email address for auto-creation"
-    )
-    require_phone = models.BooleanField(
-        default=False,
-        help_text="Require phone number for auto-creation"
-    )
     
     # Pipeline configuration
     default_contact_pipeline = models.ForeignKey(
@@ -1258,6 +1250,10 @@ class ChannelParticipantSettings(models.Model):
     enabled = models.BooleanField(
         default=True,
         help_text="Enable auto-creation for this channel"
+    )
+    required = models.BooleanField(
+        default=False,
+        help_text="Require this channel to be present for auto-creation"
     )
     min_messages = models.IntegerField(
         default=1,

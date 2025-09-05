@@ -101,14 +101,7 @@ class AutoCreateContactService:
         if participant.total_messages < self.settings.min_messages_before_create:
             return False, f"Only {participant.total_messages} messages, need {self.settings.min_messages_before_create}"
         
-        # Check required fields
-        if self.settings.require_email and not participant.email:
-            return False, "Email required but not present"
-        
-        if self.settings.require_phone and not participant.phone:
-            return False, "Phone required but not present"
-        
-        # Check channel-specific settings
+        # Check channel-specific settings (including required channels)
         channel_eligible, channel_reason = self.check_channel_eligibility(participant)
         if not channel_eligible:
             return False, channel_reason
@@ -251,7 +244,26 @@ class AutoCreateContactService:
         return False
     
     def check_channel_eligibility(self, participant: Participant) -> Tuple[bool, str]:
-        """Check channel-specific eligibility rules"""
+        """Check channel-specific eligibility rules including required channels"""
+        
+        # First check if any required channels are missing
+        all_channel_settings = ChannelParticipantSettings.objects.filter(
+            settings=self.settings,
+            required=True
+        )
+        
+        for required_channel in all_channel_settings:
+            channel_present = False
+            
+            if required_channel.channel_type == 'email' and participant.email:
+                channel_present = True
+            elif required_channel.channel_type == 'whatsapp' and participant.phone:
+                channel_present = True
+            elif required_channel.channel_type == 'linkedin' and participant.linkedin_member_urn:
+                channel_present = True
+            
+            if not channel_present:
+                return False, f"{required_channel.channel_type.capitalize()} is required but not present"
         
         # Determine participant's primary channel
         channel_type = None

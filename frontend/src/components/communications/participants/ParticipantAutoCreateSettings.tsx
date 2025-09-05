@@ -36,8 +36,6 @@ interface ParticipantSettings {
   id: string
   auto_create_enabled: boolean
   min_messages_before_create: number
-  require_email: boolean
-  require_phone: boolean
   check_duplicates_before_create: boolean
   duplicate_confidence_threshold: number
   creation_delay_hours: number
@@ -505,25 +503,6 @@ export function ParticipantAutoCreateSettings() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-6">
-                <div className="flex items-center justify-between">
-                  <Label>Require Email</Label>
-                  <Switch
-                    checked={settings.require_email}
-                    disabled={saving}
-                    onCheckedChange={(checked) => updateSettings({ require_email: checked })}
-                  />
-                </div>
-
-                <div className="flex items-center justify-between">
-                  <Label>Require Phone</Label>
-                  <Switch
-                    checked={settings.require_phone}
-                    disabled={saving}
-                    onCheckedChange={(checked) => updateSettings({ require_phone: checked })}
-                  />
-                </div>
-              </div>
 
               <div className="space-y-2">
                 <Label>Default Contact Pipeline</Label>
@@ -875,6 +854,7 @@ export function ParticipantAutoCreateSettings() {
                 const isEnabled = settings[`${channel}_enabled`] ?? true
                 const minMessages = settings[`${channel}_min_messages`] ?? 1
                 const requireTwoWay = settings[`${channel}_require_two_way`] ?? false
+                const isRequired = settings[`${channel}_required`] ?? false
                 
                 return (
                 <div key={channel} className="border rounded-lg p-4 space-y-4">
@@ -920,6 +900,22 @@ export function ParticipantAutoCreateSettings() {
                           />
                           <Label>Require Two-Way Conversation</Label>
                         </div>
+                      </div>
+                      
+                      <div className="flex items-center justify-between pt-3 border-t">
+                        <div className="space-y-0.5">
+                          <Label>Required Channel</Label>
+                          <p className="text-xs text-gray-500">
+                            Participant must have this channel to be eligible for auto-creation
+                          </p>
+                        </div>
+                        <Switch
+                          checked={isRequired}
+                          disabled={saving}
+                          onCheckedChange={(checked) => updateSettings({ 
+                            [`${channel}_required`]: checked 
+                          })}
+                        />
                       </div>
                     </div>
                   )}

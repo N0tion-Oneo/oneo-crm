@@ -564,7 +564,7 @@ class ParticipantSettingsSerializer(serializers.ModelSerializer):
         model = ParticipantSettings
         fields = [
             'id', 'auto_create_enabled', 'min_messages_before_create',
-            'require_email', 'require_phone', 'check_duplicates_before_create',
+            'check_duplicates_before_create',
             'duplicate_confidence_threshold', 'creation_delay_hours',
             'default_contact_pipeline', 'default_contact_pipeline_name',
             # Name field configuration
@@ -591,11 +591,13 @@ class ParticipantSettingsSerializer(serializers.ModelSerializer):
                     channel_type=channel
                 )
                 settings[f'{channel}_enabled'] = channel_setting.enabled
+                settings[f'{channel}_required'] = channel_setting.required
                 settings[f'{channel}_min_messages'] = channel_setting.min_messages
                 settings[f'{channel}_require_two_way'] = channel_setting.require_two_way
             except ChannelParticipantSettings.DoesNotExist:
                 # Default values
                 settings[f'{channel}_enabled'] = True
+                settings[f'{channel}_required'] = False
                 settings[f'{channel}_min_messages'] = 1
                 settings[f'{channel}_require_two_way'] = False
         return settings
@@ -710,7 +712,7 @@ class ChannelParticipantSettingsSerializer(serializers.ModelSerializer):
     class Meta:
         model = ChannelParticipantSettings
         fields = [
-            'id', 'settings', 'channel_type', 'enabled', 'min_messages',
+            'id', 'settings', 'channel_type', 'enabled', 'required', 'min_messages',
             'require_two_way', 'config', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'settings', 'created_at', 'updated_at']

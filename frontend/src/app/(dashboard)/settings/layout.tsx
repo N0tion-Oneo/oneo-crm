@@ -9,11 +9,13 @@ import {
   Shield,
   Database,
   BarChart3,
+  MessageCircle,
 } from "lucide-react";
 
 const settingsTabs = [
   { name: "Organization", href: "/settings", icon: Building2 },
   { name: "Branding", href: "/settings/branding", icon: Palette },
+  { name: "Communications", href: "/settings/communications", icon: MessageCircle },
   { name: "Localization", href: "/settings/localization", icon: Globe },
   { name: "Security", href: "/settings/security", icon: Shield },
   { name: "Data Policies", href: "/settings/data-policies", icon: Database },

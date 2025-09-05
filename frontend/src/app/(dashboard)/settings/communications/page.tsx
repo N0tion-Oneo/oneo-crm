@@ -65,9 +65,9 @@ export default function CommunicationsOverviewPage() {
   const [stats, setStats] = useState<DashboardStats | null>(null)
   const [configurations, setConfigurations] = useState<any>(null)
 
-  const canViewSettings = hasPermission('participants', 'settings')
+  const canViewSettings = hasPermission('communications', 'read')
   const canManageAccounts = hasPermission('communications', 'update')
-  const canRunBatch = hasPermission('participants', 'batch')
+  const canRunBatch = hasPermission('communications', 'create') // Batch operations require create permission
 
   useEffect(() => {
     loadDashboardData()

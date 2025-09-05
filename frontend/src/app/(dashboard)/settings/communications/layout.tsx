@@ -12,49 +12,78 @@ import {
   ChevronRight
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/features/auth/context";
 
 const navigationItems = [
   { 
     name: 'Overview', 
     href: '/settings/communications', 
     icon: LayoutDashboard,
-    description: 'Communication settings overview and statistics'
+    description: 'Communication settings overview and statistics',
+    permission: { resource: 'communications', action: 'read' }
   },
   { 
     name: 'Participants', 
     href: '/settings/communications/participants', 
     icon: Users,
-    description: 'Auto-creation and participant management'
+    description: 'Auto-creation and participant management',
+    permission: { resource: 'communications', action: 'read' }
   },
   { 
     name: 'Account Connections', 
     href: '/settings/communications/accounts', 
     icon: Link2,
-    description: 'Manage connected communication accounts'
+    description: 'Manage connected communication accounts',
+    permission: { resource: 'communications', action: 'read' }
   },
   { 
     name: 'Provider Settings', 
     href: '/settings/communications/providers', 
     icon: Settings2,
-    description: 'Configure provider features and limits'
+    description: 'Configure provider features and limits',
+    permission: { resource: 'communications', action: 'read' }
   },
   { 
     name: 'General', 
     href: '/settings/communications/general', 
     icon: Settings,
-    description: 'Sync and API configurations'
+    description: 'Sync and API configurations',
+    permission: { resource: 'communications', action: 'read' }
   },
   { 
     name: 'Advanced', 
     href: '/settings/communications/advanced', 
     icon: Terminal,
-    description: 'System information and debugging'
+    description: 'System information and debugging',
+    permission: { resource: 'communications', action: 'read' }
   }
 ];
 
 export default function CommunicationsLayout({ children }: { children: ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
+  const { hasPermission } = useAuth();
+  
+  // Filter navigation items based on permissions
+  const visibleItems = navigationItems.filter(item => 
+    hasPermission(item.permission.resource, item.permission.action)
+  );
+
+  // If user has no permissions, show a message
+  if (visibleItems.length === 0) {
+    return (
+      <div className="flex items-center justify-center h-full">
+        <div className="text-center">
+          <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">
+            No Access
+          </h3>
+          <p className="text-gray-500 dark:text-gray-400">
+            You don't have permission to access communication settings.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-full">
@@ -77,7 +106,7 @@ export default function CommunicationsLayout({ children }: { children: ReactNode
         
         <nav className="px-3 pb-3">
           <div className="space-y-1">
-            {navigationItems.map((item) => {
+            {visibleItems.map((item) => {
               const isActive = pathname === item.href;
               const Icon = item.icon;
               

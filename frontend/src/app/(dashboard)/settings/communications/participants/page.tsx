@@ -75,9 +75,9 @@ export default function ParticipantSettingsPage() {
   const { hasPermission } = useAuth()
   const { toast } = useToast()
   
-  const canViewSettings = hasPermission('participants', 'settings')
-  const canEditSettings = hasPermission('participants', 'settings')
-  const canRunBatch = hasPermission('participants', 'batch')
+  const canViewSettings = hasPermission('communications', 'read')
+  const canEditSettings = hasPermission('communications', 'update')
+  const canRunBatch = hasPermission('communications', 'create') // Batch operations require create permission
   
   const [settings, setSettings] = useState<ParticipantSettings | null>(null)
   const [blacklist, setBlacklist] = useState<BlacklistEntry[]>([])
@@ -93,39 +93,133 @@ export default function ParticipantSettingsPage() {
   const [activeTab, setActiveTab] = useState('auto-creation')
 
   useEffect(() => {
-    loadData()
-  }, [])
+    // Only load data if user has permission to view settings
+    if (canViewSettings) {
+      loadData()
+    } else {
+      setLoading(false)
+    }
+  }, [canViewSettings])
 
   const loadData = async () => {
     try {
       setLoading(true)
       
-      const settingsResponse = await api.get('/api/v1/participant-settings/')
-      const settingsData = settingsResponse.data
-      if (settingsData.channel_settings) {
-        Object.assign(settingsData, settingsData.channel_settings)
+      // Try to load participant settings
+      try {
+        const settingsResponse = await api.get('/api/v1/participant-settings/')
+        const settingsData = settingsResponse.data
+        if (settingsData.channel_settings) {
+          Object.assign(settingsData, settingsData.channel_settings)
+        }
+        setSettings(settingsData)
+      } catch (error: any) {
+        if (error.response?.status === 403) {
+          console.warn('Insufficient permissions for participant settings - using defaults')
+          toast({
+            title: "Limited Access",
+            description: "You have limited permissions for participant settings. Some features may be restricted.",
+            variant: "default",
+          })
+        } else if (error.response?.status === 404) {
+          console.warn('Participant settings endpoint not found - using defaults')
+        } else {
+          console.error('Error loading participant settings:', error)
+        }
+        // Set default settings if loading fails
+        setSettings({
+          enabled: false,
+          auto_create_contacts: false,
+          require_email: false,
+          require_phone: false,
+          require_company: false,
+          match_existing_by_email: true,
+          match_existing_by_phone: false,
+          match_existing_by_name: false,
+          link_to_existing_company: false,
+          target_pipeline_id: null,
+          company_pipeline_id: null,
+          blacklist_domains: [],
+          channel_settings: {}
+        })
       }
-      setSettings(settingsData)
       
-      const blacklistResponse = await api.get('/api/v1/participant-blacklist/')
-      setBlacklist(blacklistResponse.data.results || blacklistResponse.data)
+      // Load pipelines first as other endpoints may depend on them
+      let loadedPipelines: any[] = []
+      try {
+        const pipelinesResponse = await api.get('/api/v1/pipelines/')
+        loadedPipelines = pipelinesResponse.data.results || pipelinesResponse.data || []
+        setPipelines(loadedPipelines)
+      } catch (error: any) {
+        if (error.response?.status === 403) {
+          console.warn('Insufficient permissions for pipelines')
+        } else {
+          console.warn('Could not load pipelines:', error)
+        }
+        setPipelines([])
+      }
       
-      const pipelinesResponse = await api.get('/api/v1/pipelines/')
-      setPipelines(pipelinesResponse.data.results || pipelinesResponse.data)
+      // Load blacklist
+      try {
+        const blacklistResponse = await api.get('/api/v1/participant-blacklist/')
+        setBlacklist(blacklistResponse.data.results || blacklistResponse.data || [])
+      } catch (error: any) {
+        if (error.response?.status === 403) {
+          console.warn('Insufficient permissions for blacklist')
+        } else {
+          console.warn('Could not load blacklist:', error)
+        }
+        setBlacklist([])
+      }
       
-      const compatibleResponse = await api.get('/api/v1/participant-settings/compatible_pipelines/')
-      setCompatiblePipelines(compatibleResponse.data)
+      // Load compatible pipelines with fallback
+      try {
+        const compatibleResponse = await api.get('/api/v1/participant-settings/compatible_pipelines/')
+        setCompatiblePipelines(compatibleResponse.data || [])
+      } catch (error: any) {
+        if (error.response?.status === 403) {
+          console.warn('Insufficient permissions for compatible pipelines - using all pipelines as fallback')
+          // For non-admin users, we can fallback to all pipelines
+          setCompatiblePipelines(loadedPipelines)
+        } else if (error.response?.status === 404) {
+          console.warn('Compatible pipelines endpoint not found - using all pipelines')
+          setCompatiblePipelines(loadedPipelines)
+        } else {
+          console.warn('Could not load compatible pipelines:', error)
+          setCompatiblePipelines(loadedPipelines)
+        }
+      }
       
-      const companyResponse = await api.get('/api/v1/participant-settings/company_pipelines/')
-      setCompanyPipelines(companyResponse.data)
+      // Load company pipelines with fallback
+      try {
+        const companyResponse = await api.get('/api/v1/participant-settings/company_pipelines/')
+        setCompanyPipelines(companyResponse.data || [])
+      } catch (error: any) {
+        if (error.response?.status === 403 || error.response?.status === 404) {
+          console.warn('Cannot access company pipelines endpoint - filtering from loaded pipelines')
+          // For non-admin users or missing endpoint, filter pipelines by name
+          const companyPipelines = loadedPipelines.filter(p => 
+            p.name?.toLowerCase().includes('company') || 
+            p.name?.toLowerCase().includes('organization') ||
+            p.name?.toLowerCase().includes('account')
+          )
+          setCompanyPipelines(companyPipelines.length > 0 ? companyPipelines : loadedPipelines)
+        } else {
+          console.warn('Could not load company pipelines:', error)
+          setCompanyPipelines([])
+        }
+      }
       
     } catch (error: any) {
-      console.error('Error loading data:', error)
-      toast({
-        title: "Failed to load settings",
-        description: error.response?.data?.error || "An error occurred",
-        variant: "destructive",
-      })
+      console.error('Unexpected error loading data:', error)
+      // Only show error toast for unexpected errors, not permission issues
+      if (!error.response || (error.response.status !== 403 && error.response.status !== 404)) {
+        toast({
+          title: "Error Loading Settings",
+          description: "Some settings could not be loaded. You may have limited functionality.",
+          variant: "destructive",
+        })
+      }
     } finally {
       setLoading(false)
     }
@@ -187,12 +281,39 @@ export default function ParticipantSettingsPage() {
   const updateSettings = async (updates: Partial<ParticipantSettings>) => {
     if (!settings) return
     
+    // Check if user has permission to edit
+    if (!canEditSettings) {
+      toast({
+        title: "Permission Denied",
+        description: "You don't have permission to update participant settings.",
+        variant: "destructive",
+      })
+      return
+    }
+    
     const updatedSettings = { ...settings, ...updates }
     setSettings(updatedSettings)
     
     setSaving(true)
     try {
-      const response = await api.patch(`/api/v1/participant-settings/${settings.id}/`, updates)
+      let response
+      // Try participant-settings endpoint first
+      try {
+        response = await api.patch(`/api/v1/participant-settings/${settings.id}/`, updates)
+      } catch (error: any) {
+        // If that fails with 403, user doesn't have permission
+        if (error.response?.status === 403) {
+          throw new Error("You don't have permission to update these settings")
+        }
+        // If 404, the endpoint doesn't exist
+        if (error.response?.status === 404) {
+          console.warn('Participant settings update endpoint not found')
+          // For now, just keep the local state updated
+          return
+        }
+        throw error
+      }
+      
       const responseData = response.data
       if (responseData.channel_settings) {
         Object.assign(responseData, responseData.channel_settings)
@@ -208,7 +329,7 @@ export default function ParticipantSettingsPage() {
       setSettings(settings)
       toast({
         title: "Update Failed",
-        description: error.response?.data?.error || "Failed to update settings",
+        description: error.response?.data?.detail || error.response?.data?.error || "Failed to update settings",
         variant: "destructive",
       })
     } finally {

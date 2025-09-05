@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Settings, Save, Loader2, CheckCircle, AlertCircle, Info } from 'lucide-react'
+import { Settings, Save, Loader2, CheckCircle, AlertCircle, Info, Shield } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -9,10 +9,13 @@ import { Switch } from '@/components/ui/switch'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 import { useToast } from '@/hooks/use-toast'
 import { useAuth } from '@/features/auth/context'
 import { communicationsApi } from '@/lib/api'
 import { ParticipantList } from '@/components/communications/participants/ParticipantList'
+import { ParticipantAutoCreateSettings } from '@/components/communications/participants/ParticipantAutoCreateSettings'
+import { PermissionGuard } from '@/components/permissions/PermissionGuard'
 
 interface ProviderConfig {
   global: {
@@ -59,7 +62,13 @@ export default function CommunicationsSettingsPage() {
   const [activeTab, setActiveTab] = useState('participants')
   
   const { toast } = useToast()
-  const { tenant, user, isAuthenticated, isLoading: authLoading } = useAuth()
+  const { tenant, user, isAuthenticated, isLoading: authLoading, hasPermission } = useAuth()
+  
+  // Permission checks
+  const canViewParticipants = hasPermission('participants', 'read')
+  const canManageParticipantSettings = hasPermission('participants', 'settings')
+  const canViewCommunicationSettings = hasPermission('communications', 'read')
+  const canManageCommunicationSettings = hasPermission('communications', 'update')
 
   // Load provider configurations
   useEffect(() => {
@@ -229,7 +238,38 @@ export default function CommunicationsSettingsPage() {
           </TabsList>
 
           <TabsContent value="participants" className="space-y-6">
-            <ParticipantList />
+            <PermissionGuard 
+              category="participants" 
+              action="settings"
+              fallback={
+                <Alert>
+                  <Shield className="h-4 w-4" />
+                  <AlertDescription>
+                    You don't have permission to manage participant settings. Please contact your administrator.
+                  </AlertDescription>
+                </Alert>
+              }
+            >
+              <ParticipantAutoCreateSettings />
+            </PermissionGuard>
+            
+            <PermissionGuard 
+              category="participants" 
+              action="read"
+              fallback={
+                <Alert>
+                  <Shield className="h-4 w-4" />
+                  <AlertDescription>
+                    You don't have permission to view participants. Please contact your administrator.
+                  </AlertDescription>
+                </Alert>
+              }
+            >
+              <div className="border-t pt-6">
+                <h3 className="text-lg font-semibold mb-4">All Participants</h3>
+                <ParticipantList />
+              </div>
+            </PermissionGuard>
           </TabsContent>
 
           <TabsContent value="providers" className="space-y-6">

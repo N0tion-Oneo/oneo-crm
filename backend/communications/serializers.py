@@ -5,7 +5,9 @@ Focused purely on communication functionality - channels, messages, conversation
 from rest_framework import serializers
 from .models import (
     Channel, Conversation, Message, Participant,
-    CommunicationAnalytics, ChannelType, AuthStatus, MessageDirection
+    CommunicationAnalytics, ChannelType, AuthStatus, MessageDirection,
+    ParticipantSettings, ParticipantBlacklist, ParticipantOverride, 
+    ChannelParticipantSettings
 )
 from authentication.models import CustomUser
 from pipelines.models import Record, Pipeline
@@ -281,6 +283,7 @@ class ParticipantSerializer(serializers.ModelSerializer):
     """Base participant serializer with linkage status"""
     
     contact_record_display = serializers.SerializerMethodField()
+    secondary_record_display = serializers.SerializerMethodField()
     is_linked = serializers.SerializerMethodField()
     conversation_count = serializers.SerializerMethodField()
     last_activity = serializers.SerializerMethodField()
@@ -293,7 +296,7 @@ class ParticipantSerializer(serializers.ModelSerializer):
             'id', 'name', 'email', 'phone', 'linkedin_member_urn',
             'instagram_username', 'facebook_id', 'telegram_id', 'twitter_handle',
             'avatar_url', 'contact_record', 'contact_record_display',
-            'secondary_record', 'is_linked', 'conversation_count',
+            'secondary_record', 'secondary_record_display', 'is_linked', 'conversation_count',
             'last_activity', 'primary_identifier', 'channel_types',
             'resolution_confidence', 'resolution_method', 'resolved_at',
             'first_seen', 'last_seen'
@@ -306,15 +309,106 @@ class ParticipantSerializer(serializers.ModelSerializer):
             record = obj.contact_record
             data = record.data or {}
             
-            # Try to get a display name from common fields
-            display_name = (
-                data.get('full_name') or 
-                data.get('name') or
-                f"{data.get('first_name', '')} {data.get('last_name', '')}".strip() or
-                data.get('company_name') or
-                data.get('email') or
-                'Unknown'
-            )
+            # Get fields from the pipeline to know what to look for
+            from pipelines.models import Field
+            pipeline_fields = Field.objects.filter(
+                pipeline=record.pipeline,
+                is_deleted=False
+            ).values_list('slug', flat=True)
+            
+            # Priority order for contact display fields
+            display_field_priority = [
+                'full_name', 'name', 'display_name',
+                'contact_name', 'person_name', 'candidate_name',
+                'first_name', 'last_name',  # Will combine these if both exist
+                'email', 'email_address', 'personal_email', 'work_email',
+                'company', 'company_name', 'organization'
+            ]
+            
+            # Special handling for first_name + last_name combination
+            display_name = None
+            if 'first_name' in pipeline_fields and 'last_name' in pipeline_fields:
+                first = data.get('first_name', '').strip()
+                last = data.get('last_name', '').strip()
+                if first or last:
+                    display_name = f"{first} {last}".strip()
+            
+            # If no combined name, find the first field that exists in both priority list and actual data
+            if not display_name:
+                for field_name in display_field_priority:
+                    if field_name in pipeline_fields and data.get(field_name):
+                        display_name = data.get(field_name)
+                        break
+            
+            # If no priority field found, try to use any field with 'name' in it
+            if not display_name:
+                for field_slug in pipeline_fields:
+                    if 'name' in field_slug.lower() and data.get(field_slug):
+                        display_name = data.get(field_slug)
+                        break
+            
+            # Try email fields as last resort
+            if not display_name:
+                for field_slug in pipeline_fields:
+                    if 'email' in field_slug.lower() and data.get(field_slug):
+                        display_name = data.get(field_slug)
+                        break
+            
+            if not display_name:
+                display_name = f"Contact #{record.id}"
+            
+            return {
+                'id': str(record.id),
+                'display_name': display_name,
+                'pipeline_id': str(record.pipeline_id),
+                'pipeline_name': record.pipeline.name
+            }
+        return None
+    
+    def get_secondary_record_display(self, obj):
+        """Get display info for secondary linked record"""
+        if obj.secondary_record:
+            record = obj.secondary_record
+            data = record.data or {}
+            
+            # Get fields from the pipeline to know what to look for
+            from pipelines.models import Field
+            pipeline_fields = Field.objects.filter(
+                pipeline=record.pipeline,
+                is_deleted=False
+            ).values_list('slug', flat=True)
+            
+            # Priority order for display fields
+            display_field_priority = [
+                'company_name', 'organization_name', 'org_name', 'account_name',
+                'name', 'title', 'company', 'organization', 'account',
+                'display_name', 'full_name'
+            ]
+            
+            # Find the first field that exists in both priority list and actual data
+            display_name = None
+            for field_name in display_field_priority:
+                if field_name in pipeline_fields and data.get(field_name):
+                    display_name = data.get(field_name)
+                    break
+            
+            # If no priority field found, try to use any field with 'name' in it
+            if not display_name:
+                for field_slug in pipeline_fields:
+                    if 'name' in field_slug.lower() and data.get(field_slug):
+                        display_name = data.get(field_slug)
+                        break
+            
+            # Last resort: use first non-empty text field
+            if not display_name:
+                for field_slug in pipeline_fields:
+                    value = data.get(field_slug)
+                    if value and isinstance(value, str) and len(value) < 100:
+                        display_name = value
+                        break
+            
+            if not display_name:
+                display_name = f"Record #{record.id}"
             
             return {
                 'id': str(record.id),
@@ -410,6 +504,11 @@ class CreateRecordFromParticipantSerializer(serializers.Serializer):
     
     pipeline_id = serializers.UUIDField(required=True)
     field_overrides = serializers.JSONField(required=False, default=dict)
+    link_type = serializers.ChoiceField(
+        choices=['primary', 'secondary'],
+        default='primary',
+        help_text='Whether to link as primary contact or secondary organization/company'
+    )
     link_to_conversations = serializers.BooleanField(default=True)
     
     def validate_pipeline_id(self, value):
@@ -425,6 +524,11 @@ class LinkParticipantSerializer(serializers.Serializer):
     """Serializer for linking participant to existing record"""
     
     record_id = serializers.UUIDField(required=True)
+    link_type = serializers.ChoiceField(
+        choices=['primary', 'secondary'],
+        default='primary',
+        help_text='Whether to link as primary contact or secondary organization/company'
+    )
     confidence = serializers.FloatField(default=1.0, min_value=0.0, max_value=1.0)
     link_conversations = serializers.BooleanField(default=True)
     
@@ -447,14 +551,190 @@ class BulkParticipantActionSerializer(serializers.Serializer):
     )
     pipeline_id = serializers.UUIDField(required=False)  # For bulk create
     record_id = serializers.UUIDField(required=False)    # For bulk link
+
+
+class ParticipantSettingsSerializer(serializers.ModelSerializer):
+    """Serializer for participant auto-creation settings"""
     
-    def validate(self, attrs):
-        """Validate based on action type"""
-        if self.context.get('action') == 'create' and not attrs.get('pipeline_id'):
-            raise serializers.ValidationError("pipeline_id is required for bulk create")
-        if self.context.get('action') == 'link' and not attrs.get('record_id'):
-            raise serializers.ValidationError("record_id is required for bulk link")
-        return attrs
+    default_contact_pipeline_name = serializers.CharField(source='default_contact_pipeline.name', read_only=True)
+    default_company_pipeline_name = serializers.CharField(source='default_company_pipeline.name', read_only=True)
+    channel_settings = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = ParticipantSettings
+        fields = [
+            'id', 'auto_create_enabled', 'min_messages_before_create',
+            'require_email', 'require_phone', 'check_duplicates_before_create',
+            'duplicate_confidence_threshold', 'creation_delay_hours',
+            'default_contact_pipeline', 'default_contact_pipeline_name',
+            # Name field configuration
+            'name_mapping_mode', 'full_name_field', 'first_name_field', 'last_name_field',
+            'name_split_strategy',
+            # Company settings
+            'company_name_field',
+            'auto_link_by_domain', 'create_company_if_missing',
+            'min_employees_for_company', 'default_company_pipeline',
+            'default_company_pipeline_name', 'batch_size', 
+            'max_creates_per_hour', 'enable_real_time_creation',
+            'channel_settings', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at']
+    
+    def get_channel_settings(self, obj):
+        """Get channel-specific settings"""
+        from .models import ChannelParticipantSettings
+        settings = {}
+        for channel in ['email', 'whatsapp', 'linkedin']:
+            try:
+                channel_setting = ChannelParticipantSettings.objects.get(
+                    settings=obj,
+                    channel_type=channel
+                )
+                settings[f'{channel}_enabled'] = channel_setting.enabled
+                settings[f'{channel}_min_messages'] = channel_setting.min_messages
+                settings[f'{channel}_require_two_way'] = channel_setting.require_two_way
+            except ChannelParticipantSettings.DoesNotExist:
+                # Default values
+                settings[f'{channel}_enabled'] = True
+                settings[f'{channel}_min_messages'] = 1
+                settings[f'{channel}_require_two_way'] = False
+        return settings
+    
+    def update(self, instance, validated_data):
+        """Handle channel settings in the update"""
+        # Extract channel settings from request data
+        request = self.context.get('request')
+        if request and request.data:
+            from .models import ChannelParticipantSettings
+            
+            for channel in ['email', 'whatsapp', 'linkedin']:
+                enabled_key = f'{channel}_enabled'
+                min_messages_key = f'{channel}_min_messages'
+                two_way_key = f'{channel}_require_two_way'
+                
+                if any(key in request.data for key in [enabled_key, min_messages_key, two_way_key]):
+                    channel_setting, created = ChannelParticipantSettings.objects.get_or_create(
+                        settings=instance,
+                        channel_type=channel,
+                        defaults={
+                            'enabled': request.data.get(enabled_key, True),
+                            'min_messages': request.data.get(min_messages_key, 1),
+                            'require_two_way': request.data.get(two_way_key, False)
+                        }
+                    )
+                    
+                    if not created:
+                        if enabled_key in request.data:
+                            channel_setting.enabled = request.data[enabled_key]
+                        if min_messages_key in request.data:
+                            channel_setting.min_messages = request.data[min_messages_key]
+                        if two_way_key in request.data:
+                            channel_setting.require_two_way = request.data[two_way_key]
+                        channel_setting.save()
+        
+        return super().update(instance, validated_data)
+
+
+class ParticipantBlacklistSerializer(serializers.ModelSerializer):
+    """Serializer for participant blacklist entries"""
+    
+    added_by_name = serializers.CharField(source='added_by.get_full_name', read_only=True)
+    
+    class Meta:
+        model = ParticipantBlacklist
+        fields = [
+            'id', 'entry_type', 'value', 'reason', 'is_active',
+            'added_at', 'added_by', 'added_by_name'
+        ]
+        read_only_fields = ['id', 'added_at', 'added_by']
+    
+    def validate(self, data):
+        """Validate blacklist entry"""
+        entry_type = data.get('entry_type')
+        value = data.get('value')
+        
+        if entry_type == 'email':
+            # Validate email format
+            from django.core.validators import validate_email
+            try:
+                validate_email(value)
+            except Exception:
+                raise serializers.ValidationError({'value': 'Invalid email address'})
+        elif entry_type == 'domain':
+            # Validate domain format
+            if '@' in value:
+                raise serializers.ValidationError({'value': 'Domain should not contain @'})
+        elif entry_type == 'phone':
+            # Basic phone validation
+            import re
+            if not re.match(r'^[+\d\s\-()]+$', value):
+                raise serializers.ValidationError({'value': 'Invalid phone number format'})
+        
+        return data
+
+
+class ParticipantOverrideSerializer(serializers.ModelSerializer):
+    """Serializer for per-participant override settings"""
+    
+    participant_name = serializers.CharField(source='participant.get_display_name', read_only=True)
+    locked_to_record_title = serializers.CharField(source='locked_to_record.title', read_only=True)
+    created_by_name = serializers.CharField(source='created_by.get_full_name', read_only=True)
+    
+    class Meta:
+        model = ParticipantOverride
+        fields = [
+            'id', 'participant', 'participant_name', 'never_auto_create',
+            'always_auto_create', 'locked_to_record', 'locked_to_record_title',
+            'prevent_auto_linking', 'override_reason', 'internal_notes', 
+            'requires_review', 'created_by', 'created_by_name', 
+            'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at', 'created_by']
+    
+    def validate(self, data):
+        """Validate override settings"""
+        never = data.get('never_auto_create', False)
+        always = data.get('always_auto_create', False)
+        
+        if never and always:
+            raise serializers.ValidationError(
+                "Cannot set both never_auto_create and always_auto_create"
+            )
+        
+        return data
+
+
+class ChannelParticipantSettingsSerializer(serializers.ModelSerializer):
+    """Serializer for channel-specific participant settings"""
+    
+    class Meta:
+        model = ChannelParticipantSettings
+        fields = [
+            'id', 'settings', 'channel_type', 'enabled', 'min_messages',
+            'require_two_way', 'config', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'settings', 'created_at', 'updated_at']
+
+
+class ParticipantAutoCreatePreviewSerializer(serializers.Serializer):
+    """Serializer for previewing auto-create eligibility"""
+    
+    participant_id = serializers.UUIDField(required=True)
+    
+    def validate_participant_id(self, value):
+        """Validate participant exists"""
+        try:
+            Participant.objects.get(id=value)
+        except Participant.DoesNotExist:
+            raise serializers.ValidationError("Participant not found")
+        return value
+
+
+class BatchAutoCreateSerializer(serializers.Serializer):
+    """Serializer for batch auto-create processing"""
+    
+    batch_size = serializers.IntegerField(min_value=1, max_value=500, required=False)
+    dry_run = serializers.BooleanField(default=False)
 
 
 class CommunicationAnalyticsSerializer(serializers.ModelSerializer):

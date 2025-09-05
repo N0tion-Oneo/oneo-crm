@@ -967,5 +967,323 @@ class ConversationParticipant(models.Model):
         return f"{self.participant.get_display_name()} in conversation {self.conversation.id} as {self.role}"
 
 
+class ParticipantSettings(models.Model):
+    """
+    Tenant-level participant management settings for auto-creation and linking
+    """
+    # Auto-creation rules
+    auto_create_enabled = models.BooleanField(
+        default=False,
+        help_text="Enable automatic contact creation from participants"
+    )
+    creation_delay_hours = models.IntegerField(
+        default=0,
+        help_text="Hours to wait before auto-creating (0 = immediate)"
+    )
+    min_messages_before_create = models.IntegerField(
+        default=1,
+        help_text="Minimum messages required before auto-creation"
+    )
+    require_email = models.BooleanField(
+        default=False,
+        help_text="Require email address for auto-creation"
+    )
+    require_phone = models.BooleanField(
+        default=False,
+        help_text="Require phone number for auto-creation"
+    )
+    
+    # Pipeline configuration
+    default_contact_pipeline = models.ForeignKey(
+        'pipelines.Pipeline', 
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='participant_contact_settings',
+        help_text="Default pipeline for auto-created contacts"
+    )
+    default_company_pipeline = models.ForeignKey(
+        'pipelines.Pipeline',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='participant_company_settings',
+        help_text="Default pipeline for auto-created companies"
+    )
+    
+    # Name field mapping
+    name_mapping_mode = models.CharField(
+        max_length=20,
+        choices=[
+            ('single', 'Single name field'),
+            ('split', 'Split name fields'),
+        ],
+        blank=True,
+        default='',
+        help_text='Whether to use single or split name fields'
+    )
+    full_name_field = models.CharField(
+        max_length=100,
+        blank=True,
+        default='',
+        help_text='Field slug for full name (e.g., "full_name", "contact_name")'
+    )
+    first_name_field = models.CharField(
+        max_length=100,
+        blank=True,
+        default='',
+        help_text='Field slug for first name (used if full_name_field is not set)'
+    )
+    last_name_field = models.CharField(
+        max_length=100,
+        blank=True,
+        default='',
+        help_text='Field slug for last name (used with first_name_field)'
+    )
+    name_split_strategy = models.CharField(
+        max_length=20,
+        choices=[
+            ('first_space', 'Split at first space'),
+            ('last_space', 'Split at last space'),
+            ('smart', 'Smart detection (handles middle names)'),
+        ],
+        default='smart',
+        help_text='How to split full names into first/last when needed'
+    )
+    
+    # Company name field mapping
+    company_name_field = models.CharField(
+        max_length=100,
+        blank=True,
+        default='',
+        help_text='Field slug for company/organization name'
+    )
+    
+    # Company linking
+    auto_link_by_domain = models.BooleanField(
+        default=True,
+        help_text="Automatically link participants to companies by email domain"
+    )
+    create_company_if_missing = models.BooleanField(
+        default=False,
+        help_text="Create company record if domain has enough participants"
+    )
+    min_employees_for_company = models.IntegerField(
+        default=2,
+        help_text="Minimum employees with same domain before creating company"
+    )
+    
+    # Performance settings
+    batch_size = models.IntegerField(
+        default=50,
+        help_text="Number of participants to process per batch"
+    )
+    max_creates_per_hour = models.IntegerField(
+        default=100,
+        help_text="Maximum auto-creations per hour"
+    )
+    enable_real_time_creation = models.BooleanField(
+        default=False,
+        help_text="Create contacts immediately vs batch processing"
+    )
+    
+    # Duplicate prevention
+    check_duplicates_before_create = models.BooleanField(
+        default=True,
+        help_text="Check for existing contacts before creating"
+    )
+    duplicate_confidence_threshold = models.FloatField(
+        default=0.8,
+        help_text="Confidence threshold for duplicate detection (0.0-1.0)"
+    )
+    
+    # Metadata
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    updated_by = models.ForeignKey(
+        User, 
+        on_delete=models.SET_NULL, 
+        null=True,
+        blank=True
+    )
+    
+    class Meta:
+        verbose_name_plural = "Participant settings"
+    
+    def __str__(self):
+        from django_tenants.utils import connection
+        tenant_name = connection.tenant.name if hasattr(connection, 'tenant') else 'Unknown'
+        return f"Participant Settings for {tenant_name}"
+    
+    @classmethod
+    def get_or_create_for_tenant(cls):
+        """Get or create participant settings for current tenant"""
+        settings, created = cls.objects.get_or_create()
+        return settings
+
+
+class ParticipantBlacklist(models.Model):
+    """
+    Blacklist entries to prevent auto-creation for specific participants
+    """
+    BLACKLIST_TYPES = [
+        ('domain', 'Domain'),
+        ('email', 'Email Address'),
+        ('email_pattern', 'Email Pattern'),
+        ('phone', 'Phone Number'),
+        ('name_pattern', 'Name Pattern'),
+    ]
+    
+    entry_type = models.CharField(
+        max_length=20, 
+        choices=BLACKLIST_TYPES,
+        help_text="Type of blacklist entry"
+    )
+    value = models.CharField(
+        max_length=255, 
+        db_index=True,
+        help_text="Value to match (domain, email, pattern, etc.)"
+    )
+    reason = models.TextField(
+        blank=True,
+        help_text="Reason for blacklisting"
+    )
+    is_active = models.BooleanField(
+        default=True,
+        help_text="Whether this blacklist entry is active"
+    )
+    
+    # Tracking
+    added_by = models.ForeignKey(
+        User, 
+        on_delete=models.SET_NULL, 
+        null=True,
+        blank=True
+    )
+    added_at = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        unique_together = ['entry_type', 'value']
+        indexes = [
+            models.Index(fields=['entry_type', 'is_active']),
+            models.Index(fields=['value']),
+        ]
+        verbose_name = "Participant blacklist entry"
+        verbose_name_plural = "Participant blacklist entries"
+    
+    def __str__(self):
+        return f"{self.get_entry_type_display()}: {self.value}"
+
+
+class ParticipantOverride(models.Model):
+    """
+    Per-participant settings overrides for fine-grained control
+    """
+    participant = models.OneToOneField(
+        'Participant',
+        on_delete=models.CASCADE,
+        related_name='override_settings'
+    )
+    
+    # Creation control
+    never_auto_create = models.BooleanField(
+        default=False,
+        help_text="Never auto-create contact for this participant"
+    )
+    always_auto_create = models.BooleanField(
+        default=False,
+        help_text="Always auto-create contact (bypass other rules)"
+    )
+    
+    # Linking control
+    locked_to_record = models.ForeignKey(
+        'pipelines.Record',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        help_text="Lock participant to specific record"
+    )
+    prevent_auto_linking = models.BooleanField(
+        default=False,
+        help_text="Prevent automatic linking to records"
+    )
+    
+    # Metadata
+    override_reason = models.TextField(
+        blank=True,
+        help_text="Reason for override settings"
+    )
+    internal_notes = models.TextField(
+        blank=True,
+        help_text="Internal notes about this participant"
+    )
+    requires_review = models.BooleanField(
+        default=False,
+        help_text="Flag for manual review"
+    )
+    
+    # Tracking
+    created_by = models.ForeignKey(
+        User, 
+        on_delete=models.SET_NULL, 
+        null=True,
+        blank=True
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        verbose_name = "Participant override"
+        verbose_name_plural = "Participant overrides"
+    
+    def __str__(self):
+        return f"Override for {self.participant.get_display_name()}"
+
+
+class ChannelParticipantSettings(models.Model):
+    """
+    Channel-specific participant settings
+    """
+    settings = models.ForeignKey(
+        ParticipantSettings, 
+        on_delete=models.CASCADE,
+        related_name='channel_settings'
+    )
+    channel_type = models.CharField(
+        max_length=50,
+        help_text="Channel type (email, whatsapp, linkedin, etc.)"
+    )
+    
+    # Channel-specific rules
+    enabled = models.BooleanField(
+        default=True,
+        help_text="Enable auto-creation for this channel"
+    )
+    min_messages = models.IntegerField(
+        default=1,
+        help_text="Minimum messages for this channel"
+    )
+    require_two_way = models.BooleanField(
+        default=False,
+        help_text="Require two-way conversation"
+    )
+    
+    # Channel-specific config
+    config = models.JSONField(
+        default=dict,
+        help_text="Channel-specific configuration"
+    )
+    
+    # Metadata
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        unique_together = ['settings', 'channel_type']
+        verbose_name = "Channel participant settings"
+        verbose_name_plural = "Channel participant settings"
+    
+    def __str__(self):
+        return f"{self.channel_type} settings"
 
 

@@ -892,22 +892,38 @@ export const communicationsApi = {
   getParticipantFieldMapping: (participantId: string, params?: any) =>
     api.get(`/api/v1/participants/${participantId}/get_field_mapping/`, { params }),
   
+  getCompatiblePipelines: () =>
+    api.get('/api/v1/participant-settings/compatible_pipelines/'),
+  
   getParticipantConversations: (participantId: string) =>
     api.get(`/api/v1/participants/${participantId}/conversations/`),
   
   createRecordFromParticipant: (participantId: string, data: {
     pipeline_id: string
     overrides?: Record<string, any>
+    link_type?: 'primary' | 'secondary'
     link_conversations?: boolean
-  }) => api.post(`/api/v1/participants/${participantId}/create_record/`, data),
+  }) => api.post(`/api/v1/participants/${participantId}/create_record/`, {
+    pipeline_id: data.pipeline_id,
+    field_overrides: data.overrides || {},
+    link_type: data.link_type || 'primary',
+    link_to_conversations: data.link_conversations !== false
+  }),
   
   linkParticipantToRecord: (participantId: string, data: {
     record_id: string
+    link_type?: 'primary' | 'secondary'
     link_conversations?: boolean
   }) => api.post(`/api/v1/participants/${participantId}/link_to_record/`, data),
   
   unlinkParticipant: (participantId: string) =>
     api.post(`/api/v1/participants/${participantId}/unlink/`),
+  
+  saveParticipantOverride: (participantId: string, overrideSettings: any) =>
+    api.post(`/api/v1/participant-overrides/`, {
+      participant: participantId,
+      ...overrideSettings
+    }),
   
   bulkLinkParticipants: (data: {
     participant_ids: string[]

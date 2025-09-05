@@ -19,3 +19,6 @@ class CommunicationsConfig(AppConfig):
         
         # Import record communication sync signals for automatic sync on identifier changes
         from .record_communications import signals as record_comm_signals
+        
+        # Import auto-creation signals for participant to contact conversion
+        from .signals import auto_creation

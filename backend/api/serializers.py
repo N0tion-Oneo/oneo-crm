@@ -265,11 +265,17 @@ class RecordSerializer(serializers.ModelSerializer):
         
         # For basic serializer, just use the raw data since we don't have dynamic fields
         # The formatting function should handle basic field types adequately
-        data['title'] = RecordUtils.generate_title(
+        generated_title = RecordUtils.generate_title(
             instance.data, 
             instance.pipeline.name,
             instance.pipeline
         )
+        data['title'] = generated_title
+        # Also add display_name for frontend compatibility
+        data['display_name'] = generated_title
+        
+        # Add pipeline_name for easier access
+        data['pipeline_name'] = instance.pipeline.name
         
         return data
     
@@ -417,11 +423,17 @@ class DynamicRecordSerializer(serializers.ModelSerializer):
                     processed_data[key] = value
         
         # Generate title dynamically using processed field values
-        data['title'] = RecordUtils.generate_title(
+        generated_title = RecordUtils.generate_title(
             processed_data, 
             instance.pipeline.name,
             instance.pipeline
         )
+        data['title'] = generated_title
+        # Also add display_name for frontend compatibility
+        data['display_name'] = generated_title
+        
+        # Add pipeline_name for easier access
+        data['pipeline_name'] = instance.pipeline.name
         
         return data
     

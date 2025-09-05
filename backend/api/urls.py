@@ -44,6 +44,10 @@ from .views.communications import (
     MessageViewSet, CommunicationAnalyticsViewSet
 )
 from communications.views import ParticipantViewSet
+from communications.views_settings import (
+    ParticipantSettingsViewSet, ParticipantBlacklistViewSet,
+    ParticipantOverrideViewSet, ChannelParticipantSettingsViewSet
+)
 from communications.api.views import AccountConnectionViewSet
 from .views.tracking import (
     CommunicationTrackingViewSet, DeliveryTrackingViewSet,
@@ -118,6 +122,12 @@ router.register(r'conversations', ConversationViewSet, basename='conversation')
 router.register(r'messages', MessageViewSet, basename='message')
 router.register(r'communication-analytics', CommunicationAnalyticsViewSet, basename='communication-analytics')
 router.register(r'participants', ParticipantViewSet, basename='participant')
+
+# Participant settings endpoints
+router.register(r'participant-settings', ParticipantSettingsViewSet, basename='participant-settings')
+router.register(r'participant-blacklist', ParticipantBlacklistViewSet, basename='participant-blacklist')
+router.register(r'participant-overrides', ParticipantOverrideViewSet, basename='participant-override')
+router.register(r'channel-participant-settings', ChannelParticipantSettingsViewSet, basename='channel-participant-settings')
 
 # Account connection endpoints
 router.register(r'account-connections', AccountConnectionViewSet, basename='account-connection')

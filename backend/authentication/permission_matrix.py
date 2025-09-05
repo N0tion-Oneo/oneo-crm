@@ -116,7 +116,10 @@ class PermissionMatrixManager:
                 'impersonate': 'user-check',
                 'assign_roles': 'user-plus',
                 'clone': 'copy',
-                'write': 'edit-3'
+                'write': 'edit-3',
+                'link': 'link',
+                'settings': 'settings-2',
+                'batch': 'layers'
             },
             'category_colors': {
                 'system': '#ef4444',
@@ -133,7 +136,8 @@ class PermissionMatrixManager:
                 'monitoring': '#78716c',
                 'ai_features': '#a855f7',
                 'reports': '#0ea5e9',
-                'api_access': '#22c55e'
+                'api_access': '#22c55e',
+                'participants': '#f97316'
             },
             'permission_levels': {
                 'none': {'label': 'No Access', 'color': '#ef4444'},
@@ -159,7 +163,10 @@ class PermissionMatrixManager:
             'workflows.execute': ['pipelines.access'],
             'user_types.create': ['users.read'],
             'user_types.update': ['users.read'],
-            'user_types.delete': ['users.read']
+            'user_types.delete': ['users.read'],
+            'participants.link': ['communications.read'],
+            'participants.settings': ['participants.read'],
+            'participants.batch': ['participants.settings']
         }
     
     def _get_user_type_recommendations(self) -> Dict[str, Dict[str, Any]]:

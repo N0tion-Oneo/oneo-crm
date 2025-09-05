@@ -48,6 +48,8 @@ from .communications import (
     MessagePermission,
     ChannelPermission,
     CommunicationTrackingPermission,
+    ParticipantPermission,
+    ParticipantSettingsPermission,
 )
 
 # Monitoring permissions
@@ -107,6 +109,8 @@ __all__ = [
     'MessagePermission',
     'ChannelPermission',
     'CommunicationTrackingPermission',
+    'ParticipantPermission',
+    'ParticipantSettingsPermission',
     
     # Monitoring permissions
     'MonitoringPermission',

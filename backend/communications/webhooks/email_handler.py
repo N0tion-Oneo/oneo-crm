@@ -267,6 +267,9 @@ class EmailWebhookHandler:
                     for participant in participants:
                         if participant.contact_record:
                             self._trigger_historical_sync_if_needed(participant.contact_record, normalized_email, connection)
+                    
+                    # Check if any participants need auto-creation
+                    self._check_auto_creation_for_participants(participants)
                 else:
                     logger.info(f"Email message {message.id} already existed")
                 
@@ -1032,6 +1035,51 @@ class EmailWebhookHandler:
         except Exception as e:
             logger.error(f"Error triggering historical sync: {e}")
             # Don't fail the main process if historical sync fails
+    
+    def _check_auto_creation_for_participants(self, participants: List[Participant]):
+        """
+        Check if any participants should trigger auto-creation after message processing
+        
+        Args:
+            participants: List of participants to check
+        """
+        try:
+            from communications.models import ParticipantSettings
+            from communications.services.auto_create_service import AutoCreateContactService
+            
+            # Get settings for current tenant
+            settings = ParticipantSettings.get_or_create_for_tenant()
+            
+            # Skip if auto-creation is disabled or not real-time
+            if not settings.auto_create_enabled or not settings.enable_real_time_creation:
+                return
+            
+            # Create service
+            service = AutoCreateContactService()
+            
+            # Check each participant
+            for participant in participants:
+                # Skip if already has contact
+                if participant.contact_record:
+                    continue
+                
+                # Check if eligible for auto-creation
+                should_create, reason = service.should_auto_create(participant)
+                
+                if should_create:
+                    logger.info(f"Webhook triggered auto-creation for participant {participant.id}: {reason}")
+                    try:
+                        record = service.create_contact_from_participant(
+                            participant=participant,
+                            user=None,  # System-created
+                            force=False
+                        )
+                        logger.info(f"Successfully created contact {record.id} for participant {participant.id} via webhook")
+                    except Exception as e:
+                        logger.error(f"Failed to auto-create contact in webhook handler: {e}")
+                        
+        except Exception as e:
+            logger.error(f"Error checking auto-creation in webhook handler: {e}")
 
 
 # Global email handler instance

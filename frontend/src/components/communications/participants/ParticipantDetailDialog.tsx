@@ -12,6 +12,16 @@ import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Label } from '@/components/ui/label'
+import { Switch } from '@/components/ui/switch'
+import { Textarea } from '@/components/ui/textarea'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import {
   Mail,
   Phone,
@@ -25,7 +35,8 @@ import {
   Link2,
   Unlink,
   UserPlus,
-  RefreshCw
+  RefreshCw,
+  Settings
 } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
 import { communicationsApi } from '@/lib/api'
@@ -87,14 +98,28 @@ export function ParticipantDetailDialog({
   const [conversationSummary, setConversationSummary] = useState<ConversationSummary | null>(null)
   const [fieldMapping, setFieldMapping] = useState<any[]>([])
   const [activeTab, setActiveTab] = useState('overview')
+  const [selectedPipelineId, setSelectedPipelineId] = useState<string>('')
+  const [pipelines, setPipelines] = useState<any[]>([])
+  const [mappingLoading, setMappingLoading] = useState(false)
+  const [showOverrideDialog, setShowOverrideDialog] = useState(false)
+  const [overrideSettings, setOverrideSettings] = useState<any>({})
   
   const { toast } = useToast()
 
   useEffect(() => {
     if (open && participant) {
       loadParticipantDetails()
+      if (!participant.is_linked) {
+        loadCompatiblePipelines()
+      }
     }
   }, [open, participant])
+
+  useEffect(() => {
+    if (selectedPipelineId && participant && !participant.is_linked) {
+      loadFieldMappingForPipeline(selectedPipelineId)
+    }
+  }, [selectedPipelineId, participant])
 
   const loadParticipantDetails = async () => {
     if (!participant) return
@@ -106,9 +131,10 @@ export function ParticipantDetailDialog({
       setConversationSummary(convResponse.data)
       
       // Load field mapping if not linked
+      // Note: Field mapping requires a pipeline_id to be selected
+      // We'll load this when user selects a pipeline in the mapping tab
       if (!participant.is_linked) {
-        const mappingResponse = await communicationsApi.getParticipantFieldMapping(participant.id)
-        setFieldMapping(mappingResponse.data.mappings || [])
+        setFieldMapping([])
       }
     } catch (error) {
       console.error('Error loading participant details:', error)
@@ -119,6 +145,37 @@ export function ParticipantDetailDialog({
       })
     } finally {
       setLoading(false)
+    }
+  }
+
+  const loadCompatiblePipelines = async () => {
+    try {
+      const response = await communicationsApi.getCompatiblePipelines()
+      setPipelines(response.data || [])
+    } catch (error) {
+      console.error('Error loading pipelines:', error)
+    }
+  }
+
+  const loadFieldMappingForPipeline = async (pipelineId: string) => {
+    if (!participant) return
+    
+    setMappingLoading(true)
+    try {
+      const response = await communicationsApi.getParticipantFieldMapping(
+        participant.id, 
+        { pipeline_id: pipelineId }
+      )
+      setFieldMapping(response.data.mappings || [])
+    } catch (error) {
+      console.error('Error loading field mapping:', error)
+      toast({
+        title: "Failed to load field mapping",
+        description: "Please try again",
+        variant: "destructive",
+      })
+    } finally {
+      setMappingLoading(false)
     }
   }
 
@@ -199,6 +256,7 @@ export function ParticipantDetailDialog({
   if (!participant) return null
 
   return (
+    <>
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
         <DialogHeader>
@@ -300,10 +358,20 @@ export function ParticipantDetailDialog({
                         This participant is not linked to any CRM record
                       </p>
                     </div>
-                    <Button size="sm">
-                      <UserPlus className="w-4 h-4 mr-2" />
-                      Create Record
-                    </Button>
+                    <div className="flex gap-2">
+                      <Button 
+                        size="sm" 
+                        variant="outline"
+                        onClick={() => setShowOverrideDialog(true)}
+                      >
+                        <Settings className="w-4 h-4 mr-2" />
+                        Override Settings
+                      </Button>
+                      <Button size="sm">
+                        <UserPlus className="w-4 h-4 mr-2" />
+                        Create Record
+                      </Button>
+                    </div>
                   </div>
                 </div>
               )}
@@ -397,12 +465,35 @@ export function ParticipantDetailDialog({
 
             {!participant.is_linked && (
               <TabsContent value="mapping" className="mt-4">
-                <div className="space-y-2">
-                  <p className="text-sm text-muted-foreground mb-4">
-                    Preview how this participant's data will map to record fields
-                  </p>
+                <div className="space-y-4">
+                  <div>
+                    <p className="text-sm text-muted-foreground mb-2">
+                      Select a pipeline to preview how this participant's data will map to record fields
+                    </p>
+                    <Select
+                      value={selectedPipelineId}
+                      onValueChange={setSelectedPipelineId}
+                    >
+                      <SelectTrigger className="w-full">
+                        <SelectValue placeholder="Select a pipeline" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {pipelines.map((pipeline) => (
+                          <SelectItem key={pipeline.id} value={pipeline.id}>
+                            {pipeline.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
                   
-                  {fieldMapping.length > 0 ? (
+                  {mappingLoading ? (
+                    <div className="space-y-2">
+                      {[...Array(3)].map((_, i) => (
+                        <Skeleton key={i} className="h-16 w-full" />
+                      ))}
+                    </div>
+                  ) : selectedPipelineId && fieldMapping.length > 0 ? (
                     fieldMapping.map((mapping, idx) => (
                       <div key={idx} className="border rounded-lg p-3">
                         <div className="flex items-center justify-between">
@@ -423,6 +514,10 @@ export function ParticipantDetailDialog({
                         </div>
                       </div>
                     ))
+                  ) : selectedPipelineId ? (
+                    <p className="text-center text-muted-foreground py-8">
+                      No field mappings available for this pipeline
+                    </p>
                   ) : (
                     <p className="text-center text-muted-foreground py-8">
                       Select a pipeline to see field mapping
@@ -435,5 +530,96 @@ export function ParticipantDetailDialog({
         </div>
       </DialogContent>
     </Dialog>
+
+    <Dialog open={showOverrideDialog} onOpenChange={setShowOverrideDialog}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Override Auto-Creation Settings</DialogTitle>
+          <DialogDescription>
+            Set specific rules for this participant that override global settings
+          </DialogDescription>
+        </DialogHeader>
+        
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="space-y-1">
+              <Label>Never Auto-Create</Label>
+              <p className="text-sm text-gray-500">
+                Prevent this participant from ever being auto-created
+              </p>
+            </div>
+            <Switch
+              checked={overrideSettings.never_auto_create || false}
+              onCheckedChange={(checked) => setOverrideSettings({
+                ...overrideSettings,
+                never_auto_create: checked,
+                always_auto_create: checked ? false : overrideSettings.always_auto_create
+              })}
+            />
+          </div>
+
+          <div className="flex items-center justify-between">
+            <div className="space-y-1">
+              <Label>Always Auto-Create</Label>
+              <p className="text-sm text-gray-500">
+                Auto-create immediately regardless of other settings
+              </p>
+            </div>
+            <Switch
+              checked={overrideSettings.always_auto_create || false}
+              onCheckedChange={(checked) => setOverrideSettings({
+                ...overrideSettings,
+                always_auto_create: checked,
+                never_auto_create: checked ? false : overrideSettings.never_auto_create
+              })}
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label>Override Reason</Label>
+            <Textarea
+              placeholder="Why are you overriding settings for this participant?"
+              value={overrideSettings.override_reason || ''}
+              onChange={(e) => setOverrideSettings({
+                ...overrideSettings,
+                override_reason: e.target.value
+              })}
+            />
+          </div>
+
+          <div className="flex justify-end space-x-2">
+            <Button
+              variant="outline"
+              onClick={() => setShowOverrideDialog(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={async () => {
+                try {
+                  // Save override settings
+                  await communicationsApi.saveParticipantOverride(participant!.id, overrideSettings)
+                  toast({
+                    title: "Override settings saved",
+                    description: "Settings have been applied to this participant",
+                  })
+                  setShowOverrideDialog(false)
+                  onRefresh()
+                } catch (error) {
+                  toast({
+                    title: "Failed to save override",
+                    description: "Please try again",
+                    variant: "destructive",
+                  })
+                }
+              }}
+            >
+              Save Override
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+    </>
   )
 }

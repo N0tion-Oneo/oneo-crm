@@ -12,7 +12,10 @@ from django.utils import timezone
 
 logger = logging.getLogger(__name__)
 from rest_framework import viewsets, status, permissions
-from api.permissions import CommunicationPermission, MessagePermission, ChannelPermission, CommunicationTrackingPermission
+from api.permissions import (
+    CommunicationPermission, MessagePermission, ChannelPermission, 
+    CommunicationTrackingPermission, ParticipantPermission
+)
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.filters import SearchFilter, OrderingFilter
@@ -30,7 +33,10 @@ from .serializers import (
     MessageSendSerializer, BulkMessageSerializer,
     ParticipantSerializer, ParticipantDetailSerializer,
     CreateRecordFromParticipantSerializer, LinkParticipantSerializer,
-    BulkParticipantActionSerializer
+    BulkParticipantActionSerializer,
+    ParticipantSettingsSerializer, ParticipantBlacklistSerializer,
+    ParticipantOverrideSerializer, ChannelParticipantSettingsSerializer,
+    BatchAutoCreateSerializer
 )
 from .unipile_sdk import unipile_service
 from pipelines.models import Record
@@ -1285,7 +1291,7 @@ class ParticipantViewSet(viewsets.ModelViewSet):
     
     queryset = Participant.objects.all()
     serializer_class = ParticipantSerializer
-    permission_classes = [permissions.IsAuthenticated]  # Update with proper permission class
+    permission_classes = [ParticipantPermission]
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ['contact_record', 'secondary_record']
     search_fields = ['name', 'email', 'phone', 'linkedin_member_urn']
@@ -1320,6 +1326,7 @@ class ParticipantViewSet(viewsets.ModelViewSet):
         """Preview how participant data will map to record fields"""
         participant = self.get_object()
         pipeline_id = request.query_params.get('pipeline_id')
+        link_type = request.query_params.get('link_type', 'primary')
         
         if not pipeline_id:
             return Response(
@@ -1338,7 +1345,7 @@ class ParticipantViewSet(viewsets.ModelViewSet):
             tenant = getattr(db_connection, 'tenant', None)
             
             service = ParticipantManagementService(tenant=tenant)
-            mappings = service.preview_field_mapping(participant, pipeline)
+            mappings = service.preview_field_mapping(participant, pipeline, link_type=link_type)
             
             return Response({
                 'participant': ParticipantSerializer(participant).data,
@@ -1359,6 +1366,209 @@ class ParticipantViewSet(viewsets.ModelViewSet):
             logger.error(f"Error generating field mapping: {e}")
             return Response(
                 {'error': f'Failed to generate field mapping: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @extend_schema(
+        summary="Get participant's conversations summary",
+        responses={200: {'type': 'object', 'properties': {
+            'total_count': {'type': 'integer'},
+            'by_channel': {'type': 'object'},
+            'recent_conversations': {'type': 'array'}
+        }}}
+    )
+    @action(detail=True, methods=['get'])
+    def conversations(self, request, pk=None):
+        """Get summary of participant's conversations"""
+        participant = self.get_object()
+        
+        try:
+            from .models import ConversationParticipant, Message
+            from django.db.models import Count, Max
+            
+            # Get all conversations this participant is in
+            conv_participants = ConversationParticipant.objects.filter(
+                participant=participant,
+                is_active=True
+            ).select_related('conversation')
+            
+            # Count by channel
+            by_channel = {}
+            recent_conversations = []
+            
+            for cp in conv_participants:
+                conv = cp.conversation
+                channel = conv.channel.channel_type if conv.channel else 'unknown'
+                
+                if channel not in by_channel:
+                    by_channel[channel] = 0
+                by_channel[channel] += 1
+                
+                # Get recent conversations (last 10)
+                if len(recent_conversations) < 10:
+                    message_count = Message.objects.filter(conversation=conv).count()
+                    last_message = Message.objects.filter(conversation=conv).order_by('-created_at').first()
+                    
+                    recent_conversations.append({
+                        'id': str(conv.id),
+                        'subject': conv.subject or 'No subject',
+                        'last_message_at': last_message.created_at.isoformat() if last_message else None,
+                        'channel': channel,
+                        'message_count': message_count
+                    })
+            
+            return Response({
+                'total_count': conv_participants.count(),
+                'by_channel': by_channel,
+                'recent_conversations': recent_conversations
+            })
+            
+        except Exception as e:
+            logger.error(f"Error getting participant conversations: {e}")
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @extend_schema(
+        summary="Unlink participant from record",
+        responses={200: {'type': 'object', 'properties': {
+            'success': {'type': 'boolean'},
+            'message': {'type': 'string'}
+        }}}
+    )
+    @action(detail=True, methods=['post'])
+    def unlink(self, request, pk=None):
+        """Remove the link between participant and record"""
+        participant = self.get_object()
+        
+        try:
+            # Store the record info before unlinking
+            record_info = None
+            if participant.contact_record:
+                record_info = f"{participant.contact_record.title} (ID: {participant.contact_record.id})"
+            
+            # Unlink from primary record
+            participant.contact_record = None
+            participant.resolution_method = None
+            participant.resolution_confidence = 0.0
+            participant.resolved_at = None
+            
+            # Optionally unlink from secondary record
+            if request.data.get('unlink_secondary', False):
+                participant.secondary_record = None
+                participant.secondary_pipeline = None
+                participant.secondary_resolution_method = None
+                participant.secondary_confidence = 0.0
+            
+            participant.save()
+            
+            return Response({
+                'success': True,
+                'message': f'Participant unlinked from {record_info or "record"}'
+            })
+            
+        except Exception as e:
+            logger.error(f"Error unlinking participant: {e}")
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @extend_schema(
+        summary="Link participant to existing record",
+        request=LinkParticipantSerializer,
+        responses={200: {'type': 'object', 'properties': {
+            'success': {'type': 'boolean'},
+            'message': {'type': 'string'}
+        }}}
+    )
+    @action(detail=True, methods=['post'])
+    def link_to_record(self, request, pk=None):
+        """Link participant to an existing CRM record"""
+        participant = self.get_object()
+        serializer = LinkParticipantSerializer(data=request.data)
+        
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            from pipelines.models import Record
+            from .services.participant_management import ParticipantManagementService
+            
+            record = Record.objects.get(id=serializer.validated_data['record_id'])
+            
+            # Get tenant context
+            from django.db import connection as db_connection
+            tenant = getattr(db_connection, 'tenant', None)
+            
+            service = ParticipantManagementService(tenant=tenant)
+            success = service.link_participant_to_record(
+                participant=participant,
+                record=record,
+                link_conversations=serializer.validated_data.get('link_conversations', False)
+            )
+            
+            if success:
+                # Generate a proper display value for the record
+                from pipelines.record_operations import RecordUtils
+                
+                # Get the record's identifying fields for display
+                record_display = RecordUtils.generate_title(
+                    record_data=record.data,
+                    pipeline_name=record.pipeline.name,
+                    pipeline=record.pipeline
+                )
+                
+                # If no proper title generated, fall back to a meaningful description
+                if not record_display or record_display == f"{record.pipeline.name} Record":
+                    # Try to get the most meaningful fields from the record data
+                    data = record.data or {}
+                    display_parts = []
+                    
+                    # Priority fields to show
+                    priority_fields = ['name', 'full_name', 'first_name', 'last_name', 
+                                     'email', 'company', 'title', 'phone']
+                    
+                    for field in priority_fields:
+                        if field in data and data[field]:
+                            if field == 'first_name' and 'last_name' in data and data.get('last_name'):
+                                display_parts.append(f"{data[field]} {data['last_name']}")
+                                break  # Don't add last_name separately
+                            elif field != 'last_name':  # Skip last_name if we already combined it
+                                display_parts.append(str(data[field]))
+                            if len(display_parts) >= 2:  # Show max 2 fields
+                                break
+                    
+                    if display_parts:
+                        record_display = ' - '.join(display_parts)
+                    else:
+                        record_display = f"{record.pipeline.name} #{record.id}"
+                
+                return Response({
+                    'success': True,
+                    'message': f'Participant linked to {record_display}',
+                    'record': {
+                        'id': record.id,
+                        'display': record_display,
+                        'pipeline_name': record.pipeline.name
+                    }
+                })
+            else:
+                return Response({
+                    'success': False,
+                    'message': 'Failed to link participant'
+                }, status=status.HTTP_400_BAD_REQUEST)
+                
+        except Record.DoesNotExist:
+            return Response(
+                {'error': 'Record not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            logger.error(f"Error linking participant: {e}")
+            return Response(
+                {'error': str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
@@ -1395,8 +1605,14 @@ class ParticipantViewSet(viewsets.ModelViewSet):
                 pipeline=pipeline,
                 user=request.user,
                 overrides=serializer.validated_data.get('field_overrides'),
-                link_conversations=serializer.validated_data.get('link_to_conversations', True)
+                link_conversations=serializer.validated_data.get('link_to_conversations', True),
+                link_type=serializer.validated_data.get('link_type', 'primary')
             )
+            
+            # Count conversations linked through this participant
+            conversations_count = Conversation.objects.filter(
+                conversation_participants__participant=participant
+            ).count()
             
             return Response({
                 'success': True,
@@ -1404,7 +1620,8 @@ class ParticipantViewSet(viewsets.ModelViewSet):
                     'id': str(record.id),
                     'pipeline': pipeline.name,
                     'data': record.data
-                }
+                },
+                'conversations_linked': conversations_count
             }, status=status.HTTP_201_CREATED)
             
         except Exception as e:
@@ -1441,17 +1658,26 @@ class ParticipantViewSet(viewsets.ModelViewSet):
             tenant = getattr(db_connection, 'tenant', None)
             
             service = ParticipantManagementService(tenant=tenant)
+            
+            # Use the service for linking (handles both primary and secondary)
             service.link_participant_to_record(
                 participant=participant,
                 record=record,
                 user=request.user,
                 confidence=serializer.validated_data.get('confidence', 1.0),
-                link_conversations=serializer.validated_data.get('link_conversations', True)
+                link_conversations=serializer.validated_data.get('link_conversations', True),
+                link_type=serializer.validated_data.get('link_type', 'primary')
             )
+            
+            # Count conversations linked through this participant
+            conversations_count = Conversation.objects.filter(
+                conversation_participants__participant=participant
+            ).count()
             
             return Response({
                 'success': True,
-                'message': f'Participant linked to record {record.id}'
+                'message': f'Participant linked to record {record.id}',
+                'conversations_linked': conversations_count
             })
             
         except Record.DoesNotExist:
@@ -1635,6 +1861,110 @@ class ParticipantViewSet(viewsets.ModelViewSet):
             )
         except Exception as e:
             logger.error(f"Error in bulk create: {e}")
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+    
+    @extend_schema(
+        summary="Check if participant is eligible for auto-creation",
+        responses={200: {'type': 'object', 'properties': {
+            'eligible': {'type': 'boolean'},
+            'reason': {'type': 'string'},
+            'blacklisted': {'type': 'boolean'},
+            'has_override': {'type': 'boolean'}
+        }}}
+    )
+    @action(detail=True, methods=['get'])
+    def auto_create_eligibility(self, request, pk=None):
+        """Check if participant is eligible for auto-creation"""
+        participant = self.get_object()
+        
+        try:
+            from .services.auto_create_service import AutoCreateContactService
+            
+            # Get tenant context
+            from django.db import connection as db_connection
+            tenant = getattr(db_connection, 'tenant', None)
+            
+            service = AutoCreateContactService(tenant=tenant)
+            eligible, reason = service.should_auto_create(participant)
+            
+            # Check for blacklist and override
+            is_blacklisted = service.is_blacklisted(participant)
+            has_override = hasattr(participant, 'override_settings')
+            
+            return Response({
+                'eligible': eligible,
+                'reason': reason,
+                'blacklisted': is_blacklisted,
+                'has_override': has_override,
+                'participant': {
+                    'id': str(participant.id),
+                    'name': participant.get_display_name(),
+                    'email': participant.email,
+                    'total_messages': participant.total_messages
+                }
+            })
+            
+        except Exception as e:
+            logger.error(f"Error checking auto-create eligibility: {e}")
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @extend_schema(
+        summary="Force auto-create contact from participant",
+        request=CreateRecordFromParticipantSerializer,
+        responses={201: {'type': 'object', 'properties': {
+            'success': {'type': 'boolean'},
+            'record': {'type': 'object'}
+        }}}
+    )
+    @action(detail=True, methods=['post'])
+    def force_auto_create(self, request, pk=None):
+        """Force auto-creation of contact from participant (bypasses eligibility checks)"""
+        participant = self.get_object()
+        serializer = CreateRecordFromParticipantSerializer(data=request.data)
+        
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            from .services.auto_create_service import AutoCreateContactService
+            from pipelines.models import Pipeline
+            
+            # Get tenant context
+            from django.db import connection as db_connection
+            tenant = getattr(db_connection, 'tenant', None)
+            
+            service = AutoCreateContactService(tenant=tenant)
+            
+            # Get pipeline from request or use default
+            pipeline_id = serializer.validated_data.get('pipeline_id')
+            if pipeline_id:
+                pipeline = Pipeline.objects.get(id=pipeline_id)
+            else:
+                pipeline = None  # Will use default from settings
+            
+            record = service.create_contact_from_participant(
+                participant=participant,
+                user=request.user,
+                force=True  # Bypass eligibility checks
+            )
+            
+            return Response({
+                'success': True,
+                'record': {
+                    'id': str(record.id),
+                    'title': record.title,
+                    'pipeline': record.pipeline.name
+                }
+            }, status=status.HTTP_201_CREATED)
+            
+        except Exception as e:
+            logger.error(f"Error in force auto-create: {e}")
             return Response(
                 {'error': str(e)},
                 status=status.HTTP_400_BAD_REQUEST

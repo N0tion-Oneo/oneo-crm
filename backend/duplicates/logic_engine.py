@@ -346,18 +346,22 @@ class DuplicateLogicEngine:
             
             try:
                 # Get field object - handle case where field doesn't exist
+                # Try by slug first (most duplicate rules use slug), then fall back to name
                 try:
-                    field = pipeline.fields.get(name=field_name)
-                except Exception as field_error:
-                    logger.error(f"Field '{field_name}' not found in pipeline '{pipeline.name}' (ID: {pipeline.id}): {field_error}")
-                    # Create a minimal field object for basic matching
-                    from pipelines.models import Field
-                    field = Field(
-                        name=field_name,
-                        field_type='text',
-                        field_config={},
-                        pipeline=pipeline
-                    )
+                    field = pipeline.fields.get(slug=field_name)
+                except Exception:
+                    try:
+                        field = pipeline.fields.get(name=field_name)
+                    except Exception as field_error:
+                        logger.error(f"Field '{field_name}' not found in pipeline '{pipeline.name}' (ID: {pipeline.id}): {field_error}")
+                        # Create a minimal field object for basic matching
+                        from pipelines.models import Field
+                        field = Field(
+                            name=field_name,
+                            field_type='text',
+                            field_config={},
+                            pipeline=pipeline
+                        )
                 
                 # Get field values
                 value1 = record1_data.get(field_name)

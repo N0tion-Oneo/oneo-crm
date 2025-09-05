@@ -50,6 +50,9 @@ class ParticipantManagementService:
     def __init__(self, tenant=None):
         self.tenant = tenant
         self.field_validator = FieldValidator()
+        # Load participant settings for name field configuration
+        from communications.models import ParticipantSettings
+        self.settings = ParticipantSettings.get_or_create_for_tenant()
         
     def get_identifying_fields_from_duplicate_rules(self, pipeline: Pipeline) -> Dict[str, List[str]]:
         """
@@ -128,7 +131,8 @@ class ParticipantManagementService:
         self, 
         participant: Participant, 
         pipeline: Pipeline,
-        overrides: Optional[Dict[str, Any]] = None
+        overrides: Optional[Dict[str, Any]] = None,
+        link_type: str = 'primary'
     ) -> List[Dict[str, Any]]:
         """
         Generate field mapping preview with validation
@@ -138,19 +142,20 @@ class ParticipantManagementService:
         """
         field_purposes = self.get_identifying_fields_from_duplicate_rules(pipeline)
         mappings = []
+        is_secondary = link_type == 'secondary'
         
         for field in pipeline.fields.filter(is_deleted=False).order_by('display_order'):
             # Get the value from participant
             raw_value = self._get_participant_value_for_field(
-                participant, field, field_purposes
+                participant, field, field_purposes, is_secondary=is_secondary
             )
             
             # Apply overrides if provided
             if overrides and field.slug in overrides:
                 raw_value = overrides[field.slug]
             
-            # Skip if no value
-            if raw_value is None:
+            # Skip if no value or empty string
+            if raw_value is None or (isinstance(raw_value, str) and not raw_value.strip()):
                 continue
             
             # Format the value according to field type
@@ -208,7 +213,8 @@ class ParticipantManagementService:
         pipeline: Pipeline,
         user,
         overrides: Optional[Dict[str, Any]] = None,
-        link_conversations: bool = True
+        link_conversations: bool = True,
+        link_type: str = 'primary'
     ) -> Record:
         """
         Create CRM record from participant data with field validation
@@ -219,6 +225,7 @@ class ParticipantManagementService:
             user: User creating the record
             overrides: Optional field value overrides
             link_conversations: Whether to link participant's conversations to the record
+            link_type: 'primary' for contact record or 'secondary' for organization/company
             
         Returns:
             Created Record instance
@@ -228,7 +235,7 @@ class ParticipantManagementService:
             FieldValidationError: If field validation fails
         """
         # Get field mappings
-        mappings = self.preview_field_mapping(participant, pipeline, overrides)
+        mappings = self.preview_field_mapping(participant, pipeline, overrides, link_type)
         
         # Check for validation errors
         field_errors = {}
@@ -251,11 +258,15 @@ class ParticipantManagementService:
                 record = Record.objects.create(
                     pipeline=pipeline,
                     data=record_data,
-                    created_by=user
+                    created_by=user,
+                    updated_by=user
                 )
                 
-                # Link participant to record
-                participant.contact_record = record
+                # Link participant to record based on link type
+                if link_type == 'secondary':
+                    participant.secondary_record = record
+                else:
+                    participant.contact_record = record
                 participant.resolution_confidence = 1.0
                 participant.resolution_method = 'manual_creation'
                 participant.resolved_at = timezone.now()
@@ -282,14 +293,19 @@ class ParticipantManagementService:
         record: Record,
         user,
         confidence: float = 1.0,
-        link_conversations: bool = True
+        link_conversations: bool = True,
+        link_type: str = 'primary'
     ):
         """
         Link participant to existing record
         """
         try:
             with transaction.atomic():
-                participant.contact_record = record
+                # Link based on link type
+                if link_type == 'secondary':
+                    participant.secondary_record = record
+                else:
+                    participant.contact_record = record
                 participant.resolution_confidence = confidence
                 participant.resolution_method = 'manual_link'
                 participant.resolved_at = timezone.now()
@@ -377,45 +393,165 @@ class ParticipantManagementService:
         
         return results
     
+    def _split_name(self, full_name: str) -> Dict[str, str]:
+        """
+        Split a full name into first and last name based on strategy
+        
+        Returns:
+            Dictionary with 'first_name' and 'last_name' keys
+        """
+        if not full_name:
+            return {'first_name': '', 'last_name': ''}
+        
+        name_parts = full_name.strip().split()
+        
+        if not name_parts:
+            return {'first_name': '', 'last_name': ''}
+        
+        if len(name_parts) == 1:
+            # Only one name part - use as first name
+            return {'first_name': name_parts[0], 'last_name': ''}
+        
+        strategy = self.settings.name_split_strategy
+        
+        if strategy == 'first_space':
+            # Everything before first space is first name, rest is last name
+            return {
+                'first_name': name_parts[0],
+                'last_name': ' '.join(name_parts[1:])
+            }
+        elif strategy == 'last_space':
+            # Everything before last space is first name, last part is last name
+            return {
+                'first_name': ' '.join(name_parts[:-1]),
+                'last_name': name_parts[-1]
+            }
+        else:  # smart strategy
+            # Handle common patterns
+            if len(name_parts) == 2:
+                return {'first_name': name_parts[0], 'last_name': name_parts[1]}
+            
+            # Check for common name prefixes (Mr., Dr., etc.)
+            prefixes = ['mr', 'mrs', 'ms', 'dr', 'prof']
+            if name_parts[0].lower().rstrip('.') in prefixes:
+                name_parts = name_parts[1:]
+            
+            if len(name_parts) >= 3:
+                # Check for common middle name patterns (single letter, Jr., Sr., etc.)
+                suffixes = ['jr', 'sr', 'ii', 'iii', 'iv']
+                if name_parts[-1].lower().rstrip('.') in suffixes:
+                    # Last part is suffix, use second-to-last as last name
+                    return {
+                        'first_name': ' '.join(name_parts[:-2]),
+                        'last_name': name_parts[-2]
+                    }
+                
+                # Default: first part is first name, last part is last name, middle ignored
+                return {
+                    'first_name': name_parts[0],
+                    'last_name': name_parts[-1]
+                }
+            
+            # Fallback
+            return {
+                'first_name': name_parts[0] if name_parts else '',
+                'last_name': name_parts[-1] if len(name_parts) > 1 else ''
+            }
+    
+    def _extract_domain_from_email(self, email: str) -> Optional[str]:
+        """
+        Extract domain from email address
+        """
+        if not email or '@' not in email:
+            return None
+        
+        domain = email.split('@')[1].lower()
+        
+        # Remove common free email domains
+        free_domains = [
+            'gmail.com', 'yahoo.com', 'hotmail.com', 'outlook.com', 
+            'icloud.com', 'me.com', 'mac.com', 'live.com', 'msn.com',
+            'aol.com', 'protonmail.com', 'zoho.com', 'yandex.com'
+        ]
+        
+        if domain in free_domains:
+            return None
+            
+        return domain
+    
     def _get_participant_value_for_field(
         self,
         participant: Participant,
         field: Field,
-        field_purposes: Dict[str, List[str]]
+        field_purposes: Dict[str, List[str]],
+        is_secondary: bool = False
     ) -> Optional[Any]:
         """
         Map participant data to appropriate field
+        
+        Note: Name fields are handled via settings configuration (not duplicate rules)
+        since duplicate detection typically only identifies email/phone fields.
+        
+        Args:
+            participant: The participant to map
+            field: The field to map to
+            field_purposes: Field categorization from duplicate rules (email, phone, url)
+            is_secondary: Whether this is for secondary (org/company) record creation
         """
         field_slug = field.slug
         
-        # Check if field is identified in duplicate rules
+        # For secondary records, handle company-specific fields
+        if is_secondary:
+            field_name_lower = field_slug.lower()
+            
+            # Check if this is the configured company name field
+            if self.settings.company_name_field and field_slug == self.settings.company_name_field:
+                domain = self._extract_domain_from_email(participant.email)
+                if domain:
+                    # Format domain as company name (e.g., "example.com" -> "Example")
+                    company_name = domain.split('.')[0].title()
+                    return company_name
+            
+            # Check for domain/website fields
+            if any(x in field_name_lower for x in ['domain', 'website', 'url', 'web']):
+                domain = self._extract_domain_from_email(participant.email)
+                if domain:
+                    # Format as URL if it's a URL field
+                    if field.field_type in ['url', FieldType.URL]:
+                        return f"https://{domain}"
+                    return domain
+        
+        # Check for configured name field mappings FIRST (these are NOT from duplicate rules)
+        if participant.name:
+            # Check if this is the configured full name field
+            if self.settings.full_name_field and field_slug == self.settings.full_name_field:
+                return participant.name
+            
+            # Check if this is a configured first/last name field
+            if self.settings.first_name_field and field_slug == self.settings.first_name_field:
+                name_parts = self._split_name(participant.name)
+                return name_parts['first_name']
+            
+            if self.settings.last_name_field and field_slug == self.settings.last_name_field:
+                name_parts = self._split_name(participant.name)
+                return name_parts['last_name']
+        
+        # Now check fields identified by duplicate rules
         if field_slug in field_purposes['email_fields']:
-            return participant.email
+            return participant.email if participant.email else None
         elif field_slug in field_purposes['phone_fields']:
-            return participant.phone
-        elif field_slug in field_purposes['name_fields']:
-            return participant.name
+            return participant.phone if participant.phone else None
         elif field_slug in field_purposes['url_fields']:
+            # Handle social URLs only if the field is identified for URLs
             if participant.linkedin_member_urn and 'linkedin' in field_slug.lower():
                 return f"linkedin.com/in/{participant.linkedin_member_urn}"
-            # Add other URL types as needed
+            elif participant.instagram_username and 'instagram' in field_slug.lower():
+                return participant.instagram_username
+            elif participant.twitter_handle and 'twitter' in field_slug.lower():
+                return participant.twitter_handle
+            return None
         
-        # Fallback to field name matching
-        field_name_lower = field_slug.lower()
-        
-        if 'email' in field_name_lower:
-            return participant.email
-        elif 'phone' in field_name_lower or 'mobile' in field_name_lower:
-            return participant.phone
-        elif any(name_part in field_name_lower for name_part in ['name', 'contact']):
-            return participant.name
-        elif 'linkedin' in field_name_lower and participant.linkedin_member_urn:
-            return f"linkedin.com/in/{participant.linkedin_member_urn}"
-        elif 'instagram' in field_name_lower and participant.instagram_username:
-            return participant.instagram_username
-        elif 'twitter' in field_name_lower and participant.twitter_handle:
-            return participant.twitter_handle
-        
+        # No fallback - field must be identified by duplicate rules
         return None
     
     def _format_value_for_field(self, value: Any, field: Field) -> Any:
@@ -437,8 +573,21 @@ class ParticipantManagementService:
             return value
             
         elif field_type == 'phone' or field_type == FieldType.PHONE:
+            # If value is already a properly formatted phone object, return it
+            if isinstance(value, dict) and 'number' in value:
+                # Ensure both country_code and number are strings
+                return {
+                    'country_code': str(value.get('country_code', '')),
+                    'number': str(value.get('number', ''))
+                }
+            
             # Format as phone field expects
-            phone_str = str(value)
+            phone_str = str(value).strip()
+            
+            # If empty, return None to avoid validation errors
+            if not phone_str:
+                return None
+                
             # Extract country code and number
             if phone_str.startswith('+'):
                 # Try to parse country code (simple approach)
@@ -454,11 +603,15 @@ class ParticipantManagementService:
                             'country_code': phone_str[:2],
                             'number': phone_str[2:]
                         }
-            # Default format
-            return {
-                'country_code': '',
-                'number': phone_str
-            }
+            
+            # If we have a phone number without country code, still format it properly
+            if phone_str:
+                return {
+                    'country_code': '',
+                    'number': phone_str
+                }
+            
+            return None
             
         elif field_type in ['text', 'single_line_text'] or field_type == FieldType.TEXT:
             # Respect text field config

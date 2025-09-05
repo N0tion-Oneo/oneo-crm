@@ -198,19 +198,25 @@ export function useRecordData(options: UseRecordDataOptions): UseRecordDataRetur
     setTotalRecords(prev => Math.max(0, prev - 1))
   }, [])
 
-  // Auto-fetch when dependencies change - FIXED: Remove fetchRecords from dependencies to prevent infinite loop
+  // Auto-fetch when dependencies change
   useEffect(() => {
     if (autoFetch && pipeline?.id) {
       fetchRecords()
     }
+    // Note: fetchRecords is intentionally omitted from dependencies to prevent loops
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoFetch, pipeline?.id, currentPage, recordsPerPage, stableSearchQuery, stableFilters, sort, fieldTypes])
 
-  // Reset page when search/filters change - but only if not on page 1 already to prevent unnecessary re-fetch
+  // Reset page when search/filters change
   useEffect(() => {
+    // Only reset to page 1 if we're not already on page 1
+    // This prevents unnecessary re-fetches
     if (currentPage !== 1) {
       setCurrentPage(1)
     }
-  }, [searchQuery, filters, sort, currentPage])
+    // Note: currentPage should NOT be in the dependency array to prevent infinite loop
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stableSearchQuery, stableFilters, sort])
 
   const pagination = {
     currentPage,

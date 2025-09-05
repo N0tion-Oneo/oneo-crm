@@ -14,11 +14,15 @@ import {
   Phone,
   CheckCircle,
   XCircle,
-  AlertCircle
+  AlertCircle,
+  Shield
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
+import { Alert, AlertDescription } from '@/components/ui/alert'
+import { useAuth } from '@/features/auth/context'
+import { PermissionGuard } from '@/components/permissions/PermissionGuard'
 import {
   Table,
   TableBody,
@@ -64,6 +68,12 @@ interface Participant {
     display_name: string
     pipeline_name: string
   }
+  secondary_record?: string
+  secondary_record_display?: {
+    id: string
+    display_name: string
+    pipeline_name: string
+  }
   is_linked: boolean
   conversation_count: number
   last_activity?: string
@@ -90,6 +100,15 @@ export function ParticipantList({ className }: ParticipantListProps) {
   const [linkRecordDialogOpen, setLinkRecordDialogOpen] = useState(false)
   
   const { toast } = useToast()
+  const { hasPermission } = useAuth()
+  
+  // Permission checks
+  const canViewParticipants = hasPermission('participants', 'read')
+  const canCreateParticipants = hasPermission('participants', 'create')
+  const canUpdateParticipants = hasPermission('participants', 'update')
+  const canDeleteParticipants = hasPermission('participants', 'delete')
+  const canLinkParticipants = hasPermission('participants', 'link')
+  const canBatchProcess = hasPermission('participants', 'batch')
 
   // Load participants
   useEffect(() => {
@@ -238,6 +257,20 @@ export function ParticipantList({ className }: ParticipantListProps) {
     ))
   }
 
+  // Check permissions first
+  if (!canViewParticipants) {
+    return (
+      <div className={className}>
+        <Alert>
+          <Shield className="h-4 w-4" />
+          <AlertDescription>
+            You don't have permission to view participants. Please contact your administrator.
+          </AlertDescription>
+        </Alert>
+      </div>
+    )
+  }
+
   if (loading) {
     return (
       <div className={className}>
@@ -300,8 +333,8 @@ export function ParticipantList({ className }: ParticipantListProps) {
         </Button>
       </div>
 
-      {/* Bulk Actions Bar */}
-      {selectedParticipants.length > 0 && (
+      {/* Bulk Actions Bar - only show if user has batch permissions */}
+      {selectedParticipants.length > 0 && canBatchProcess && (
         <BulkActionsBar
           selectedCount={selectedParticipants.length}
           onAction={handleBulkAction}
@@ -315,15 +348,18 @@ export function ParticipantList({ className }: ParticipantListProps) {
           <TableHeader>
             <TableRow>
               <TableHead className="w-12">
-                <Checkbox
-                  checked={selectedParticipants.length === participants.length && participants.length > 0}
-                  onCheckedChange={handleSelectAll}
-                />
+                {canBatchProcess && (
+                  <Checkbox
+                    checked={selectedParticipants.length === participants.length && participants.length > 0}
+                    onCheckedChange={handleSelectAll}
+                  />
+                )}
               </TableHead>
               <TableHead>Participant</TableHead>
               <TableHead>Channels</TableHead>
               <TableHead>Conversations</TableHead>
-              <TableHead>Linked Record</TableHead>
+              <TableHead>Primary Contact</TableHead>
+              <TableHead>Secondary Link</TableHead>
               <TableHead>Last Activity</TableHead>
               <TableHead className="w-12"></TableHead>
             </TableRow>
@@ -331,7 +367,7 @@ export function ParticipantList({ className }: ParticipantListProps) {
           <TableBody>
             {filteredParticipants.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
+                <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
                   No participants found
                 </TableCell>
               </TableRow>
@@ -339,10 +375,12 @@ export function ParticipantList({ className }: ParticipantListProps) {
               filteredParticipants.map((participant) => (
                 <TableRow key={participant.id}>
                   <TableCell>
-                    <Checkbox
-                      checked={selectedParticipants.includes(participant.id)}
-                      onCheckedChange={(checked) => handleSelectParticipant(participant.id, checked as boolean)}
-                    />
+                    {canBatchProcess && (
+                      <Checkbox
+                        checked={selectedParticipants.includes(participant.id)}
+                        onCheckedChange={(checked) => handleSelectParticipant(participant.id, checked as boolean)}
+                      />
+                    )}
                   </TableCell>
                   <TableCell>
                     <div className="flex items-center space-x-3">
@@ -387,7 +425,7 @@ export function ParticipantList({ className }: ParticipantListProps) {
                     </Badge>
                   </TableCell>
                   <TableCell>
-                    {participant.is_linked ? (
+                    {participant.contact_record ? (
                       <div className="flex items-center space-x-2">
                         <CheckCircle className="w-4 h-4 text-green-500" />
                         <div>
@@ -404,6 +442,23 @@ export function ParticipantList({ className }: ParticipantListProps) {
                         <XCircle className="w-4 h-4 text-gray-400" />
                         <span className="text-sm text-muted-foreground">Not linked</span>
                       </div>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    {participant.secondary_record ? (
+                      <div className="flex items-center space-x-2">
+                        <Link2 className="w-4 h-4 text-blue-500" />
+                        <div>
+                          <div className="text-sm font-medium">
+                            {participant.secondary_record_display?.display_name || 'Secondary Link'}
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            {participant.secondary_record_display?.pipeline_name || 'Organization'}
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <span className="text-sm text-muted-foreground">-</span>
                     )}
                   </TableCell>
                   <TableCell>
@@ -433,34 +488,40 @@ export function ParticipantList({ className }: ParticipantListProps) {
                           View Details
                         </DropdownMenuItem>
                         <DropdownMenuSeparator />
-                        {participant.is_linked ? (
-                          <DropdownMenuItem
-                            onClick={() => handleUnlinkParticipant(participant)}
-                            className="text-destructive"
-                          >
-                            <Unlink className="w-4 h-4 mr-2" />
-                            Unlink from Record
-                          </DropdownMenuItem>
+                        {participant.contact_record ? (
+                          canLinkParticipants && (
+                            <DropdownMenuItem
+                              onClick={() => handleUnlinkParticipant(participant)}
+                              className="text-destructive"
+                            >
+                              <Unlink className="w-4 h-4 mr-2" />
+                              Unlink Primary Contact
+                            </DropdownMenuItem>
+                          )
                         ) : (
                           <>
-                            <DropdownMenuItem
-                              onClick={() => {
-                                setSelectedParticipant(participant)
-                                setCreateRecordDialogOpen(true)
-                              }}
-                            >
-                              <UserPlus className="w-4 h-4 mr-2" />
-                              Create Record
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              onClick={() => {
-                                setSelectedParticipant(participant)
-                                setLinkRecordDialogOpen(true)
-                              }}
-                            >
-                              <LinkIcon className="w-4 h-4 mr-2" />
-                              Link to Record
-                            </DropdownMenuItem>
+                            {canLinkParticipants && (
+                              <DropdownMenuItem
+                                onClick={() => {
+                                  setSelectedParticipant(participant)
+                                  setCreateRecordDialogOpen(true)
+                                }}
+                              >
+                                <UserPlus className="w-4 h-4 mr-2" />
+                                Create Record
+                              </DropdownMenuItem>
+                            )}
+                            {canLinkParticipants && (
+                              <DropdownMenuItem
+                                onClick={() => {
+                                  setSelectedParticipant(participant)
+                                  setLinkRecordDialogOpen(true)
+                                }}
+                              >
+                                <LinkIcon className="w-4 h-4 mr-2" />
+                                Link to Record
+                              </DropdownMenuItem>
+                            )}
                           </>
                         )}
                       </DropdownMenuContent>

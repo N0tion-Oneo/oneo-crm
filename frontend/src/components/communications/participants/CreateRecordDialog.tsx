@@ -13,6 +13,10 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
+import { FieldRenderer } from '@/lib/field-system/field-renderer'
+import { Field } from '@/lib/field-system/types'
+// Import field system to ensure initialization
+import '@/lib/field-system'
 import {
   Select,
   SelectContent,
@@ -28,8 +32,11 @@ import {
   AlertCircle,
   ArrowRight,
   Loader2,
-  UserPlus
+  UserPlus,
+  Users,
+  Building2
 } from 'lucide-react'
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { useToast } from '@/hooks/use-toast'
 import { api, communicationsApi } from '@/lib/api'
 
@@ -77,6 +84,7 @@ export function CreateRecordDialog({
 }: CreateRecordDialogProps) {
   const [pipelines, setPipelines] = useState<Pipeline[]>([])
   const [selectedPipeline, setSelectedPipeline] = useState<string>('')
+  const [linkType, setLinkType] = useState<'primary' | 'secondary'>('primary')
   const [fieldMappings, setFieldMappings] = useState<FieldMapping[]>([])
   const [fieldOverrides, setFieldOverrides] = useState<Record<string, any>>({})
   const [loading, setLoading] = useState(false)
@@ -89,6 +97,7 @@ export function CreateRecordDialog({
     if (open) {
       loadPipelines()
       setSelectedPipeline('')
+      setLinkType('primary')
       setFieldMappings([])
       setFieldOverrides({})
       setValidationErrors({})
@@ -99,11 +108,11 @@ export function CreateRecordDialog({
     if (selectedPipeline && participant) {
       loadFieldMapping()
     }
-  }, [selectedPipeline, participant])
+  }, [selectedPipeline, participant, linkType])
 
   const loadPipelines = async () => {
     try {
-      const response = await api.get('/pipelines/')
+      const response = await api.get('/api/v1/pipelines/')
       setPipelines(response.data.results || response.data || [])
     } catch (error) {
       console.error('Error loading pipelines:', error)
@@ -122,17 +131,24 @@ export function CreateRecordDialog({
     try {
       const response = await communicationsApi.getParticipantFieldMapping(
         participant.id,
-        { pipeline_id: selectedPipeline }
+        { 
+          pipeline_id: selectedPipeline,
+          link_type: linkType 
+        }
       )
-      setFieldMappings(response.data.mappings || [])
+      
+      const mappings = response.data?.field_mappings || response.data?.mappings || []
+      setFieldMappings(mappings)
       
       // Check for validation errors
       const errors: Record<string, string[]> = {}
-      response.data.mappings.forEach((mapping: FieldMapping) => {
-        if (!mapping.is_valid && mapping.validation_errors.length > 0) {
-          errors[mapping.field_slug] = mapping.validation_errors
-        }
-      })
+      if (Array.isArray(mappings)) {
+        mappings.forEach((mapping: FieldMapping) => {
+          if (!mapping.is_valid && mapping.validation_errors?.length > 0) {
+            errors[mapping.field_slug] = mapping.validation_errors
+          }
+        })
+      }
       setValidationErrors(errors)
     } catch (error) {
       console.error('Error loading field mapping:', error)
@@ -147,6 +163,7 @@ export function CreateRecordDialog({
   }
 
   const handleFieldOverride = (fieldSlug: string, value: any) => {
+    // Value is already properly formatted by the field component
     setFieldOverrides(prev => ({
       ...prev,
       [fieldSlug]: value
@@ -168,6 +185,7 @@ export function CreateRecordDialog({
       const response = await communicationsApi.createRecordFromParticipant(participant.id, {
         pipeline_id: selectedPipeline,
         overrides: fieldOverrides,
+        link_type: linkType,
         link_conversations: true
       })
       
@@ -180,6 +198,7 @@ export function CreateRecordDialog({
       onOpenChange(false)
     } catch (error: any) {
       console.error('Error creating record:', error)
+      console.error('Error response:', error.response?.data)
       
       // Handle validation errors
       if (error.response?.data?.field_errors) {
@@ -192,7 +211,7 @@ export function CreateRecordDialog({
       } else {
         toast({
           title: "Failed to create record",
-          description: error.response?.data?.detail || "Please try again",
+          description: error.response?.data?.detail || error.response?.data?.error || "Please try again",
           variant: "destructive",
         })
       }
@@ -235,6 +254,31 @@ export function CreateRecordDialog({
         </DialogHeader>
 
         <div className="space-y-4">
+          {/* Link Type Selection */}
+          <div className="space-y-2">
+            <Label>Record Type</Label>
+            <RadioGroup value={linkType} onValueChange={(value) => setLinkType(value as 'primary' | 'secondary')}>
+              <div className="flex items-center space-x-4">
+                <div className="flex items-center space-x-2">
+                  <RadioGroupItem value="primary" id="primary-create" />
+                  <Label htmlFor="primary-create" className="flex items-center cursor-pointer">
+                    <Users className="w-4 h-4 mr-2" />
+                    Primary Contact
+                    <span className="text-xs text-muted-foreground ml-2">(Individual)</span>
+                  </Label>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <RadioGroupItem value="secondary" id="secondary-create" />
+                  <Label htmlFor="secondary-create" className="flex items-center cursor-pointer">
+                    <Building2 className="w-4 h-4 mr-2" />
+                    Secondary Link
+                    <span className="text-xs text-muted-foreground ml-2">(Organization/Company)</span>
+                  </Label>
+                </div>
+              </div>
+            </RadioGroup>
+          </div>
+
           {/* Pipeline Selection */}
           <div className="space-y-2">
             <Label>Select Pipeline</Label>
@@ -282,7 +326,36 @@ export function CreateRecordDialog({
                   {fieldMappings.map((mapping) => {
                     const hasError = validationErrors[mapping.field_slug]
                     const overrideValue = fieldOverrides[mapping.field_slug]
-                    const displayValue = overrideValue !== undefined ? overrideValue : mapping.formatted_value
+                    
+                    // Get the current value (override or formatted from mapping)
+                    const currentValue = overrideValue !== undefined ? overrideValue : mapping.formatted_value
+                    
+                    // Format participant value for display
+                    const formatDisplayValue = (value: any, fieldType: string) => {
+                      if (!value) return 'No value'
+                      
+                      if (fieldType === 'phone' && typeof value === 'object' && value !== null && 'number' in value) {
+                        return value.country_code ? `${value.country_code}${value.number}` : value.number
+                      }
+                      
+                      if (typeof value === 'object') {
+                        return JSON.stringify(value)
+                      }
+                      
+                      return String(value)
+                    }
+                    
+                    const participantDisplayValue = formatDisplayValue(mapping.participant_value, mapping.field_type)
+                    
+                    // Create a Field object for the FieldRenderer
+                    const field: Field = {
+                      id: mapping.field_slug,
+                      name: mapping.field_slug,
+                      display_name: mapping.field_name,
+                      field_type: mapping.field_type,
+                      field_config: {},
+                      is_required: mapping.is_required
+                    }
                     
                     return (
                       <div
@@ -312,14 +385,18 @@ export function CreateRecordDialog({
                           </div>
 
                           <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                            <span>{mapping.participant_value || 'No value'}</span>
+                            <span className="min-w-[100px]">{participantDisplayValue}</span>
                             <ArrowRight className="w-3 h-3" />
-                            <Input
-                              value={displayValue || ''}
-                              onChange={(e) => handleFieldOverride(mapping.field_slug, e.target.value)}
-                              placeholder={`Enter ${mapping.field_name.toLowerCase()}`}
-                              className="h-7 text-xs"
-                            />
+                            <div className="flex-1">
+                              <FieldRenderer
+                                field={field}
+                                value={currentValue}
+                                onChange={(value) => handleFieldOverride(mapping.field_slug, value)}
+                                disabled={false}
+                                error={hasError ? validationErrors[mapping.field_slug]?.[0] : undefined}
+                                context="form"
+                              />
+                            </div>
                           </div>
 
                           {hasError && (

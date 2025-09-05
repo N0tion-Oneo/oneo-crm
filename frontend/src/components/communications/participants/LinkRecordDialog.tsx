@@ -28,8 +28,11 @@ import {
   Search,
   Loader2,
   User,
-  AlertCircle
+  AlertCircle,
+  Building2,
+  Users
 } from 'lucide-react'
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { useToast } from '@/hooks/use-toast'
 import { api, communicationsApi } from '@/lib/api'
 
@@ -74,6 +77,7 @@ export function LinkRecordDialog({
   const [searchQuery, setSearchQuery] = useState('')
   const [records, setRecords] = useState<Record[]>([])
   const [selectedRecord, setSelectedRecord] = useState<string>('')
+  const [linkType, setLinkType] = useState<'primary' | 'secondary'>('primary')
   const [linkConversations, setLinkConversations] = useState(true)
   const [loading, setLoading] = useState(false)
   const [linking, setLinking] = useState(false)
@@ -87,6 +91,7 @@ export function LinkRecordDialog({
       setSearchQuery('')
       setRecords([])
       setSelectedRecord('')
+      setLinkType('primary')
       setLinkConversations(true)
     }
   }, [open])
@@ -99,7 +104,7 @@ export function LinkRecordDialog({
 
   const loadPipelines = async () => {
     try {
-      const response = await api.get('/pipelines/')
+      const response = await api.get('/api/v1/pipelines/')
       setPipelines(response.data.results || response.data || [])
     } catch (error) {
       console.error('Error loading pipelines:', error)
@@ -117,7 +122,6 @@ export function LinkRecordDialog({
     setLoading(true)
     try {
       const params: any = {
-        pipeline_id: selectedPipeline,
         page_size: 20
       }
       
@@ -125,7 +129,7 @@ export function LinkRecordDialog({
         params.search = searchQuery
       }
       
-      const response = await api.get('/records/', { params })
+      const response = await api.get(`/api/v1/pipelines/${selectedPipeline}/records/`, { params })
       setRecords(response.data.results || response.data || [])
     } catch (error) {
       console.error('Error searching records:', error)
@@ -146,6 +150,7 @@ export function LinkRecordDialog({
     try {
       const response = await communicationsApi.linkParticipantToRecord(participant.id, {
         record_id: selectedRecord,
+        link_type: linkType,
         link_conversations: linkConversations
       })
       
@@ -214,6 +219,31 @@ export function LinkRecordDialog({
         </DialogHeader>
 
         <div className="space-y-4">
+          {/* Link Type Selection */}
+          <div className="space-y-2">
+            <Label>Link Type</Label>
+            <RadioGroup value={linkType} onValueChange={(value) => setLinkType(value as 'primary' | 'secondary')}>
+              <div className="flex items-center space-x-4">
+                <div className="flex items-center space-x-2">
+                  <RadioGroupItem value="primary" id="primary" />
+                  <Label htmlFor="primary" className="flex items-center cursor-pointer">
+                    <Users className="w-4 h-4 mr-2" />
+                    Primary Contact
+                    <span className="text-xs text-muted-foreground ml-2">(Individual)</span>
+                  </Label>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <RadioGroupItem value="secondary" id="secondary" />
+                  <Label htmlFor="secondary" className="flex items-center cursor-pointer">
+                    <Building2 className="w-4 h-4 mr-2" />
+                    Secondary Link
+                    <span className="text-xs text-muted-foreground ml-2">(Organization/Company)</span>
+                  </Label>
+                </div>
+              </div>
+            </RadioGroup>
+          </div>
+
           {/* Pipeline Selection */}
           <div className="space-y-2">
             <Label>Select Pipeline</Label>

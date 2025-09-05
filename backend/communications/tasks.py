@@ -46,6 +46,17 @@ from communications.tasks.field_maintenance import (
     update_conversation_types
 )
 
+# Import participant auto-creation tasks for autodiscovery
+from communications.tasks.participant_auto_creation import (
+    process_participant_auto_creation,
+    sync_participant_company_links,
+    cleanup_expired_blacklist,
+    check_participant_duplicates,
+    retroactive_auto_creation,
+    update_participant_stats,
+    process_all_tenants_auto_creation
+)
+
 logger = logging.getLogger(__name__)
 User = get_user_model()
 

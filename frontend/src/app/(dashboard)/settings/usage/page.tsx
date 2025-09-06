@@ -2,17 +2,26 @@
 
 import { useState, useEffect } from "react";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/features/auth/context";
 import { tenantSettingsAPI, type TenantUsage } from "@/lib/api/tenant-settings";
-import { BarChart3, Loader2, Users, HardDrive, Cpu, Globe, CreditCard } from "lucide-react";
+import { BarChart3, Loader2, Users, HardDrive, Cpu, Globe, CreditCard, AlertCircle } from "lucide-react";
 
 export default function UsageBillingPage() {
   const { toast } = useToast();
+  const { hasPermission } = useAuth();
   const [loading, setLoading] = useState(true);
   const [usage, setUsage] = useState<TenantUsage | null>(null);
 
+  // Check page-based permission
+  const canViewSettings = hasPermission('settings', 'usage');
+
   useEffect(() => {
+    if (!canViewSettings) {
+      setLoading(false);
+      return;
+    }
     loadUsage();
-  }, []);
+  }, [canViewSettings]);
 
   const loadUsage = async () => {
     try {
@@ -53,6 +62,19 @@ export default function UsageBillingPage() {
     return (
       <div className="flex items-center justify-center h-full">
         <Loader2 className="h-8 w-8 animate-spin text-gray-500" />
+      </div>
+    );
+  }
+
+  // Check permissions before showing content
+  if (!canViewSettings) {
+    return (
+      <div className="p-6 max-w-4xl">
+        <div className="text-center py-12">
+          <AlertCircle className="h-12 w-12 mx-auto text-amber-500 mb-4" />
+          <h3 className="text-lg font-medium">Access Denied</h3>
+          <p className="text-gray-600">You don't have permission to view usage & billing information.</p>
+        </div>
       </div>
     );
   }

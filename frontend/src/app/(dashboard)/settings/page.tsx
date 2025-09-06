@@ -2,11 +2,13 @@
 
 import { useState, useEffect } from "react";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/features/auth/context";
 import { tenantSettingsAPI, type TenantSettings } from "@/lib/api/tenant-settings";
-import { Building2, Upload, Loader2 } from "lucide-react";
+import { Building2, Upload, Loader2, AlertCircle } from "lucide-react";
 
 export default function OrganizationSettingsPage() {
   const { toast } = useToast();
+  const { hasPermission } = useAuth();
   const [settings, setSettings] = useState<TenantSettings | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -19,9 +21,19 @@ export default function OrganizationSettingsPage() {
     support_phone: "",
   });
 
+  // Check page-based permission - having permission means both view and edit
+  const hasPageAccess = hasPermission('settings', 'organization');
+  const canViewSettings = hasPageAccess;
+  const canEditSettings = hasPageAccess;
+
   useEffect(() => {
+    // Only load if user has permission
+    if (!canViewSettings) {
+      setLoading(false);
+      return;
+    }
     loadSettings();
-  }, []);
+  }, [canViewSettings]);
 
   const loadSettings = async () => {
     try {
@@ -119,6 +131,19 @@ export default function OrganizationSettingsPage() {
     );
   }
 
+  // Check permissions before showing content
+  if (!canViewSettings) {
+    return (
+      <div className="p-6 max-w-4xl">
+        <div className="text-center py-12">
+          <AlertCircle className="h-12 w-12 mx-auto text-amber-500 mb-4" />
+          <h3 className="text-lg font-medium">Access Denied</h3>
+          <p className="text-gray-600">You don't have permission to view organization settings.</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="p-6 max-w-4xl">
       <div className="mb-6">
@@ -173,7 +198,7 @@ export default function OrganizationSettingsPage() {
                   className="hidden"
                   accept="image/*"
                   onChange={handleLogoUpload}
-                  disabled={uploadingLogo}
+                  disabled={uploadingLogo || !canEditSettings}
                 />
                 <label
                   htmlFor="logo-upload"
@@ -209,7 +234,8 @@ export default function OrganizationSettingsPage() {
               value={formData.organization_description}
               onChange={(e) => setFormData({ ...formData, organization_description: e.target.value })}
               rows={4}
-              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
+              disabled={!canEditSettings}
+              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 disabled:opacity-50 disabled:cursor-not-allowed"
               placeholder="Describe your organization..."
             />
           </div>
@@ -223,7 +249,8 @@ export default function OrganizationSettingsPage() {
               type="url"
               value={formData.organization_website}
               onChange={(e) => setFormData({ ...formData, organization_website: e.target.value })}
-              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
+              disabled={!canEditSettings}
+              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 disabled:opacity-50 disabled:cursor-not-allowed"
               placeholder="https://www.example.com"
             />
             <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
@@ -240,7 +267,8 @@ export default function OrganizationSettingsPage() {
               type="email"
               value={formData.support_email}
               onChange={(e) => setFormData({ ...formData, support_email: e.target.value })}
-              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
+              disabled={!canEditSettings}
+              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 disabled:opacity-50 disabled:cursor-not-allowed"
               placeholder="support@yourcompany.com"
             />
           </div>
@@ -254,7 +282,8 @@ export default function OrganizationSettingsPage() {
               type="tel"
               value={formData.support_phone}
               onChange={(e) => setFormData({ ...formData, support_phone: e.target.value })}
-              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
+              disabled={!canEditSettings}
+              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 disabled:opacity-50 disabled:cursor-not-allowed"
               placeholder="+1 (555) 123-4567"
             />
           </div>
@@ -264,8 +293,9 @@ export default function OrganizationSettingsPage() {
         <div className="px-6 py-4 bg-gray-50 dark:bg-gray-800/50 border-t border-gray-200 dark:border-gray-700 flex justify-end">
           <button
             onClick={handleSave}
-            disabled={saving}
+            disabled={saving || !canEditSettings}
             className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center"
+            title={!canEditSettings ? "You don't have permission to edit settings" : ""}
           >
             {saving ? (
               <>

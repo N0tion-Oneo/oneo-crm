@@ -31,8 +31,10 @@ export default function ProviderSettingsPage() {
   const { toast } = useToast()
   const { hasPermission } = useAuth()
   
-  const canViewCommunicationSettings = hasPermission('communications', 'read')
-  const canManageCommunicationSettings = hasPermission('communications', 'update')
+  // Check page-based permission - having permission means both view and edit
+  const hasPageAccess = hasPermission('communication_settings', 'providers')
+  const canViewCommunicationSettings = hasPageAccess
+  const canManageCommunicationSettings = hasPageAccess
 
   useEffect(() => {
     // Only load if user has permission

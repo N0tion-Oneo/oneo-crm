@@ -315,8 +315,16 @@ export function AuthProvider({ children }: AuthProviderProps) {
     }
     
     // Check category-specific permissions
-    const categoryPermissions = user.permissions[category] || []
-    const hasAccess = categoryPermissions.includes(action)
+    const categoryPermissions = user.permissions[category]
+    let hasAccess = false
+    
+    if (Array.isArray(categoryPermissions)) {
+      // Legacy format: permissions are directly in an array
+      hasAccess = categoryPermissions.includes(action)
+    } else if (categoryPermissions && typeof categoryPermissions === 'object' && Array.isArray(categoryPermissions.actions)) {
+      // New nested format: permissions are in an actions array
+      hasAccess = categoryPermissions.actions.includes(action)
+    }
     
     console.log('🔍 Permission check:', { 
       category, 

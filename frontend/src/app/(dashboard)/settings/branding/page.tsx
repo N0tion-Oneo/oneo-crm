@@ -2,17 +2,24 @@
 
 import { useState, useEffect } from "react";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/features/auth/context";
 import { tenantSettingsAPI, type BrandingSettings, type EmailSignatureVariables } from "@/lib/api/tenant-settings";
-import { Palette, Loader2, Mail, Copy, Eye, EyeOff, Info, User, Building, Briefcase, Globe } from "lucide-react";
+import { Palette, Loader2, Mail, Copy, Eye, EyeOff, Info, User, Building, Briefcase, Globe, AlertCircle } from "lucide-react";
 
 export default function BrandingSettingsPage() {
   const { toast } = useToast();
+  const { hasPermission } = useAuth();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [showSignaturePreview, setShowSignaturePreview] = useState(false);
   const [signaturePreviewHtml, setSignaturePreviewHtml] = useState("");
   const [availableVariables, setAvailableVariables] = useState<EmailSignatureVariables | null>(null);
   const [activeVariableCategory, setActiveVariableCategory] = useState<keyof EmailSignatureVariables>("user_basic");
+  
+  // Check page-based permission - having permission means both view and edit
+  const hasPageAccess = hasPermission('settings', 'branding');
+  const canViewSettings = hasPageAccess;
+  const canEditSettings = hasPageAccess;
   
   // Template definitions with professional icons
   const templates = [
@@ -603,8 +610,12 @@ export default function BrandingSettingsPage() {
   });
 
   useEffect(() => {
+    if (!canViewSettings) {
+      setLoading(false);
+      return;
+    }
     loadSettings();
-  }, []);
+  }, [canViewSettings]);
 
   const loadSettings = async () => {
     try {
@@ -774,6 +785,19 @@ export default function BrandingSettingsPage() {
     );
   }
 
+  // Check permissions before showing content
+  if (!canViewSettings) {
+    return (
+      <div className="p-6 max-w-4xl">
+        <div className="text-center py-12">
+          <AlertCircle className="h-12 w-12 mx-auto text-amber-500 mb-4" />
+          <h3 className="text-lg font-medium">Access Denied</h3>
+          <p className="text-gray-600">You don't have permission to view branding settings.</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="p-6 max-w-6xl">
       <div className="mb-6">
@@ -789,7 +813,7 @@ export default function BrandingSettingsPage() {
       <div className="space-y-6">
         {/* Colors Section */}
         <div className="bg-white dark:bg-gray-900 rounded-lg shadow">
-          <div className="p-6 space-y-6">
+          <fieldset disabled={!canEditSettings} className="p-6 space-y-6">
             <h2 className="text-lg font-medium text-gray-900 dark:text-white">Brand Colors</h2>
             
             {/* Color Settings */}
@@ -803,14 +827,16 @@ export default function BrandingSettingsPage() {
                     type="color"
                     value={branding.primary_color}
                     onChange={(e) => setBranding({ ...branding, primary_color: e.target.value })}
-                    className="h-10 w-20 border border-gray-300 dark:border-gray-600 rounded cursor-pointer"
+                    disabled={!canEditSettings}
+                    className="h-10 w-20 border border-gray-300 dark:border-gray-600 rounded cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                   />
                   <input
                     type="text"
                     value={branding.primary_color}
                     onChange={(e) => setBranding({ ...branding, primary_color: e.target.value })}
                     pattern="^#[0-9A-Fa-f]{6}$"
-                    className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
+                    disabled={!canEditSettings}
+                    className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 disabled:opacity-50 disabled:cursor-not-allowed"
                     placeholder="#3B82F6"
                   />
                 </div>
@@ -828,7 +854,8 @@ export default function BrandingSettingsPage() {
                     type="color"
                     value={branding.secondary_color}
                     onChange={(e) => setBranding({ ...branding, secondary_color: e.target.value })}
-                    className="h-10 w-20 border border-gray-300 dark:border-gray-600 rounded cursor-pointer"
+                    disabled={!canEditSettings}
+                    className="h-10 w-20 border border-gray-300 dark:border-gray-600 rounded cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                   />
                   <input
                     type="text"
@@ -877,12 +904,12 @@ export default function BrandingSettingsPage() {
                 </div>
               </div>
             </div>
-          </div>
+          </fieldset>
         </div>
 
         {/* Messaging Section */}
         <div className="bg-white dark:bg-gray-900 rounded-lg shadow">
-          <div className="p-6 space-y-6">
+          <fieldset disabled={!canEditSettings} className="p-6 space-y-6">
             <h2 className="text-lg font-medium text-gray-900 dark:text-white">Messaging & Content</h2>
             
             {/* Login Message */}
@@ -920,12 +947,12 @@ export default function BrandingSettingsPage() {
                 Custom HTML to include in email headers. {branding.email_header_html?.length || 0}/5000 characters
               </p>
             </div>
-          </div>
+          </fieldset>
         </div>
 
         {/* Email Signature Section */}
         <div className="bg-white dark:bg-gray-900 rounded-lg shadow">
-          <div className="p-6 space-y-6">
+          <fieldset disabled={!canEditSettings} className="p-6 space-y-6">
             <div className="flex items-center justify-between">
               <div className="flex items-center">
                 <Mail className="mr-2 h-5 w-5 text-gray-700 dark:text-gray-300" />
@@ -1069,17 +1096,15 @@ export default function BrandingSettingsPage() {
                 </div>
               </div>
             )}
-          </div>
-        </div>
 
-        {/* Template Selector */}
-        <div className="bg-blue-50 dark:bg-blue-900/20 rounded-lg p-4 border border-blue-200 dark:border-blue-800">
-          <div className="flex items-start">
-            <Info className="h-5 w-5 text-blue-600 dark:text-blue-400 mr-2 flex-shrink-0 mt-0.5" />
-            <div className="text-sm text-blue-800 dark:text-blue-300 w-full">
-              <p className="font-medium mb-3">Quick Start Templates</p>
+          {/* Template Selector */}
+          <div className="bg-blue-50 dark:bg-blue-900/20 rounded-lg p-4 border border-blue-200 dark:border-blue-800">
+            <div className="flex items-start">
+              <Info className="h-5 w-5 text-blue-600 dark:text-blue-400 mr-2 flex-shrink-0 mt-0.5" />
+              <div className="text-sm text-blue-800 dark:text-blue-300 w-full">
+                <p className="font-medium mb-3">Quick Start Templates</p>
               
-              <div className="bg-white dark:bg-gray-900 rounded-lg p-4 border border-blue-200 dark:border-blue-700">
+                <div className="bg-white dark:bg-gray-900 rounded-lg p-4 border border-blue-200 dark:border-blue-700">
                 <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-2">
                   Choose a professional template:
                 </label>
@@ -1122,9 +1147,9 @@ export default function BrandingSettingsPage() {
                     <span className="font-medium">📱 Social Rich</span> - With social links
                   </div>
                 </div>
-              </div>
+                </div>
               
-              <div className="mt-4 p-3 bg-blue-100 dark:bg-blue-900/50 rounded">
+                <div className="mt-4 p-3 bg-blue-100 dark:bg-blue-900/50 rounded">
                 <p className="text-xs font-medium">💡 Pro Tips:</p>
                 <ul className="text-xs mt-1 space-y-1">
                   <li>• Select a template to instantly apply it</li>
@@ -1132,17 +1157,20 @@ export default function BrandingSettingsPage() {
                   <li>• Preview shows how it looks with sample data</li>
                   <li>• All user variables will be automatically replaced</li>
                 </ul>
+                </div>
               </div>
             </div>
           </div>
+          </fieldset>
         </div>
 
         {/* Save Button */}
         <div className="flex justify-end">
           <button
             onClick={handleSave}
-            disabled={saving}
+            disabled={saving || !canEditSettings}
             className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center"
+            title={!canEditSettings ? "You don't have permission to edit settings" : ""}
           >
             {saving ? (
               <>

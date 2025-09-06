@@ -2,13 +2,20 @@
 
 import { useState, useEffect } from "react";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/features/auth/context";
 import { tenantSettingsAPI, type SecurityPolicies, type PasswordComplexity } from "@/lib/api/tenant-settings";
-import { Shield, Loader2, Info } from "lucide-react";
+import { Shield, Loader2, Info, AlertCircle } from "lucide-react";
 
 export default function SecuritySettingsPage() {
   const { toast } = useToast();
+  const { hasPermission } = useAuth();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  
+  // Check page-based permission - having permission means both view and edit
+  const hasPageAccess = hasPermission('settings', 'security');
+  const canViewSettings = hasPageAccess;
+  const canEditSettings = hasPageAccess;
   
   const [security, setSecurity] = useState<SecurityPolicies>({
     password_min_length: 8,
@@ -26,8 +33,12 @@ export default function SecuritySettingsPage() {
   const [ipInput, setIpInput] = useState("");
 
   useEffect(() => {
+    if (!canViewSettings) {
+      setLoading(false);
+      return;
+    }
     loadSettings();
-  }, []);
+  }, [canViewSettings]);
 
   const loadSettings = async () => {
     try {
@@ -129,6 +140,19 @@ export default function SecuritySettingsPage() {
     );
   }
 
+  // Check permissions before showing content
+  if (!canViewSettings) {
+    return (
+      <div className="p-6 max-w-4xl">
+        <div className="text-center py-12">
+          <AlertCircle className="h-12 w-12 mx-auto text-amber-500 mb-4" />
+          <h3 className="text-lg font-medium">Access Denied</h3>
+          <p className="text-gray-600">You don't have permission to view security settings.</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="p-6 max-w-4xl">
       <div className="mb-6">
@@ -142,7 +166,7 @@ export default function SecuritySettingsPage() {
       </div>
 
       <div className="bg-white dark:bg-gray-900 rounded-lg shadow">
-        <div className="p-6 space-y-6">
+        <fieldset disabled={!canEditSettings} className="p-6 space-y-6">
           {/* Password Policy */}
           <div>
             <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">
@@ -160,7 +184,7 @@ export default function SecuritySettingsPage() {
                   max={32}
                   value={security.password_min_length}
                   onChange={(e) => setSecurity({ ...security, password_min_length: parseInt(e.target.value) })}
-                  className="w-32 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
+                  className="w-32 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 disabled:opacity-50 disabled:cursor-not-allowed"
                 />
                 <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
                   Between 8 and 32 characters
@@ -183,7 +207,7 @@ export default function SecuritySettingsPage() {
                           require_uppercase: e.target.checked,
                         },
                       })}
-                      className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                          className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded disabled:opacity-50"
                     />
                     <span className="ml-2 text-sm text-gray-700 dark:text-gray-300">
                       Require uppercase letters (A-Z)
@@ -201,7 +225,7 @@ export default function SecuritySettingsPage() {
                           require_lowercase: e.target.checked,
                         },
                       })}
-                      className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                          className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded disabled:opacity-50"
                     />
                     <span className="ml-2 text-sm text-gray-700 dark:text-gray-300">
                       Require lowercase letters (a-z)
@@ -219,7 +243,7 @@ export default function SecuritySettingsPage() {
                           require_numbers: e.target.checked,
                         },
                       })}
-                      className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                          className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded disabled:opacity-50"
                     />
                     <span className="ml-2 text-sm text-gray-700 dark:text-gray-300">
                       Require numbers (0-9)
@@ -237,7 +261,7 @@ export default function SecuritySettingsPage() {
                           require_special: e.target.checked,
                         },
                       })}
-                      className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                          className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded disabled:opacity-50"
                     />
                     <span className="ml-2 text-sm text-gray-700 dark:text-gray-300">
                       Require special characters (!@#$%^&*)
@@ -263,7 +287,8 @@ export default function SecuritySettingsPage() {
                 max={480}
                 value={security.session_timeout_minutes}
                 onChange={(e) => setSecurity({ ...security, session_timeout_minutes: parseInt(e.target.value) })}
-                className="w-32 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
+                disabled={!canEditSettings}
+                className="w-32 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 disabled:opacity-50 disabled:cursor-not-allowed"
               />
               <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
                 Automatically log out users after this period of inactivity (15-480 minutes)
@@ -282,7 +307,7 @@ export default function SecuritySettingsPage() {
                   type="checkbox"
                   checked={security.require_2fa}
                   onChange={(e) => setSecurity({ ...security, require_2fa: e.target.checked })}
-                  className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                  className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded disabled:opacity-50"
                 />
                 <span className="ml-2 text-sm text-gray-700 dark:text-gray-300">
                   Require two-factor authentication for all users
@@ -299,11 +324,11 @@ export default function SecuritySettingsPage() {
                     value={ipInput}
                     onChange={(e) => setIpInput(e.target.value)}
                     placeholder="192.168.1.1"
-                    className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
+                      className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
                   />
                   <button
                     onClick={addIpAddress}
-                    className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium"
+                      className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium"
                   >
                     Add IP
                   </button>
@@ -332,14 +357,15 @@ export default function SecuritySettingsPage() {
               </div>
             </div>
           </div>
-        </div>
+        </fieldset>
 
         {/* Save Button */}
         <div className="px-6 py-4 bg-gray-50 dark:bg-gray-800/50 border-t border-gray-200 dark:border-gray-700 flex justify-end">
           <button
             onClick={handleSave}
-            disabled={saving}
-            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center"
+            disabled={saving || !canEditSettings}
+            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium flex items-center"
+            title={!canEditSettings ? "You don't have permission to edit settings" : ""}
           >
             {saving ? (
               <>

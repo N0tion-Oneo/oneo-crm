@@ -68,7 +68,20 @@ class UserType(models.Model):
                     'business_rules': ['create', 'read', 'update', 'delete'],
                     'communications': ['create', 'read', 'update', 'delete', 'send'],
                     'participants': ['create', 'read', 'update', 'delete', 'link', 'settings', 'batch'],
-                    'settings': ['read', 'update'],
+                    # Settings with nested permissions
+                    'settings': [
+                        'read', 'update',
+                        'read_organization', 'update_organization',
+                        'read_branding', 'update_branding',
+                        'read_localization', 'update_localization',
+                        'read_security', 'update_security',
+                        'read_data_policies', 'update_data_policies',
+                        'read_billing', 'update_billing',
+                        'read_communication_general', 'update_communication_general',
+                        'read_communication_provider', 'update_communication_provider',
+                        'read_communication_accounts', 'update_communication_accounts',
+                        'read_communication_advanced', 'update_communication_advanced'
+                    ],
                     'monitoring': ['read', 'update'],
                     'ai_features': ['create', 'read', 'update', 'delete', 'configure'],
                     'reports': ['create', 'read', 'update', 'delete', 'export'],
@@ -97,7 +110,20 @@ class UserType(models.Model):
                     'business_rules': ['create', 'read', 'update'],
                     'communications': ['create', 'read', 'update', 'send'],
                     'participants': ['create', 'read', 'update', 'link', 'settings', 'batch'],
-                    'settings': ['read'],
+                    # Settings - Managers have limited update permissions
+                    'settings': [
+                        'read',
+                        'read_organization', 'update_organization',
+                        'read_branding', 'update_branding',
+                        'read_localization',
+                        'read_security',
+                        'read_data_policies',
+                        'read_billing',
+                        'read_communication_general', 'update_communication_general',
+                        'read_communication_provider',
+                        'read_communication_accounts', 'update_communication_accounts',
+                        'read_communication_advanced'
+                    ],
                     'monitoring': ['read'],
                     'ai_features': ['create', 'read', 'update', 'configure'],
                     'reports': ['create', 'read', 'update', 'export'],
@@ -126,7 +152,14 @@ class UserType(models.Model):
                     'business_rules': ['read'],
                     'communications': ['create', 'read', 'update'],
                     'participants': ['read', 'link'],
-                    'settings': ['read'],
+                    # Settings - Regular users have limited read access
+                    'settings': [
+                        'read',
+                        'read_organization',
+                        'read_branding',
+                        'read_localization',
+                        'read_communication_general'
+                    ],
                     'ai_features': ['read', 'update'],
                     'reports': ['read', 'export'],
                     'api_access': ['read', 'write'],
@@ -154,7 +187,12 @@ class UserType(models.Model):
                     'business_rules': ['read'],
                     'communications': ['read'],
                     'participants': ['read'],
-                    'settings': ['read'],
+                    # Settings - Viewers have minimal access
+                    'settings': [
+                        'read',
+                        'read_organization',
+                        'read_branding'
+                    ],
                     'ai_features': ['read'],
                     'reports': ['read', 'export'],
                     'api_access': ['read'],

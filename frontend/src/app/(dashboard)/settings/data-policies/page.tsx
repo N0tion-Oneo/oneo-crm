@@ -2,13 +2,20 @@
 
 import { useState, useEffect } from "react";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/features/auth/context";
 import { tenantSettingsAPI, type DataPolicies } from "@/lib/api/tenant-settings";
-import { Database, Loader2, FileDown } from "lucide-react";
+import { Database, Loader2, FileDown, AlertCircle } from "lucide-react";
 
 export default function DataPoliciesPage() {
   const { toast } = useToast();
+  const { hasPermission } = useAuth();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  
+  // Check page-based permission - having permission means both view and edit
+  const hasPageAccess = hasPermission('settings', 'data_policies');
+  const canViewSettings = hasPageAccess;
+  const canEditSettings = hasPageAccess;
   
   const [dataPolicies, setDataPolicies] = useState<DataPolicies>({
     retention_days: 365,
@@ -25,8 +32,12 @@ export default function DataPoliciesPage() {
   ];
 
   useEffect(() => {
+    if (!canViewSettings) {
+      setLoading(false);
+      return;
+    }
     loadSettings();
-  }, []);
+  }, [canViewSettings]);
 
   const loadSettings = async () => {
     try {
@@ -114,6 +125,19 @@ export default function DataPoliciesPage() {
     );
   }
 
+  // Check permissions before showing content
+  if (!canViewSettings) {
+    return (
+      <div className="p-6 max-w-4xl">
+        <div className="text-center py-12">
+          <AlertCircle className="h-12 w-12 mx-auto text-amber-500 mb-4" />
+          <h3 className="text-lg font-medium">Access Denied</h3>
+          <p className="text-gray-600">You don't have permission to view data policies.</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="p-6 max-w-4xl">
       <div className="mb-6">
@@ -127,7 +151,7 @@ export default function DataPoliciesPage() {
       </div>
 
       <div className="bg-white dark:bg-gray-900 rounded-lg shadow">
-        <div className="p-6 space-y-6">
+        <fieldset disabled={!canEditSettings} className="p-6 space-y-6">
           {/* Data Retention */}
           <div>
             <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4">
@@ -258,14 +282,15 @@ export default function DataPoliciesPage() {
               </ul>
             </div>
           </div>
-        </div>
+        </fieldset>
 
         {/* Save Button */}
         <div className="px-6 py-4 bg-gray-50 dark:bg-gray-800/50 border-t border-gray-200 dark:border-gray-700 flex justify-end">
           <button
             onClick={handleSave}
-            disabled={saving}
+            disabled={saving || !canEditSettings}
             className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center"
+            title={!canEditSettings ? "You don't have permission to edit settings" : ""}
           >
             {saving ? (
               <>

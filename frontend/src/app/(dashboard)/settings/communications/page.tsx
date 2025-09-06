@@ -65,8 +65,13 @@ export default function CommunicationsOverviewPage() {
   const [stats, setStats] = useState<DashboardStats | null>(null)
   const [configurations, setConfigurations] = useState<any>(null)
 
-  const canViewSettings = hasPermission('communications', 'read')
-  const canManageAccounts = hasPermission('communications', 'update')
+  // Check if user has access to the communications settings page or any sub-pages
+  const canViewSettings = hasPermission('settings', 'communications') || 
+                          hasPermission('communication_settings', 'general') ||
+                          hasPermission('communication_settings', 'accounts') ||
+                          hasPermission('communication_settings', 'providers') ||
+                          hasPermission('communication_settings', 'advanced')
+  const canManageAccounts = hasPermission('communication_settings', 'accounts')
   const canRunBatch = hasPermission('communications', 'create') // Batch operations require create permission
 
   useEffect(() => {

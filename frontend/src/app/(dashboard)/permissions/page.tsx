@@ -398,7 +398,14 @@ export default function PermissionsPage() {
       // Convert userType.base_permissions object to permission matrix format
       Object.entries(userType.base_permissions || {}).forEach(([category, actions]) => {
         if (Array.isArray(actions)) {
+          // Legacy format: permissions are directly in an array
           actions.forEach(action => {
+            const permissionName = `${category}:${action}`
+            matrix[userType.name][permissionName] = true
+          })
+        } else if (actions && typeof actions === 'object' && Array.isArray(actions.actions)) {
+          // New nested format: permissions are in an actions array
+          actions.actions.forEach(action => {
             const permissionName = `${category}:${action}`
             matrix[userType.name][permissionName] = true
           })
@@ -456,8 +463,16 @@ export default function PermissionsPage() {
     }
 
     // Get current value from backend data, not UI state
-    const currentPermissions = userType.base_permissions?.[category] || []
-    const currentValue = currentPermissions.includes(action)
+    const categoryData = userType.base_permissions?.[category]
+    let currentValue = false
+    
+    if (Array.isArray(categoryData)) {
+      // Legacy format: permissions are directly in an array
+      currentValue = categoryData.includes(action)
+    } else if (categoryData && typeof categoryData === 'object' && Array.isArray(categoryData.actions)) {
+      // New nested format: permissions are in an actions array
+      currentValue = categoryData.actions.includes(action)
+    }
     const newValue = !currentValue
     
     console.log(`🔄 Permission toggle:`, {
@@ -466,7 +481,7 @@ export default function PermissionsPage() {
       action,
       currentValue,
       newValue,
-      currentPermissions
+      categoryData
     })
     
     // Check if this is a system default type and we're trying to remove critical permissions

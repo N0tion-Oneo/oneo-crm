@@ -653,13 +653,29 @@ class UserTypeViewSet(viewsets.ModelViewSet):
         
         # Add permission using normalized category
         permissions = user_type.base_permissions.copy()
-        if normalized_category not in permissions:
-            permissions[normalized_category] = []
         
-        if action not in permissions[normalized_category]:
-            permissions[normalized_category].append(action)
-            user_type.base_permissions = permissions
-            user_type.save()
+        # Handle both flat array and nested object formats
+        if normalized_category not in permissions:
+            # For settings, use nested format, for others use flat array
+            if normalized_category == 'settings':
+                permissions[normalized_category] = {'actions': []}
+            else:
+                permissions[normalized_category] = []
+        
+        # Check current format and add permission accordingly
+        category_perms = permissions[normalized_category]
+        if isinstance(category_perms, dict) and 'actions' in category_perms:
+            # Nested format (e.g., settings)
+            if action not in category_perms['actions']:
+                category_perms['actions'].append(action)
+                user_type.base_permissions = permissions
+                user_type.save()
+        elif isinstance(category_perms, list):
+            # Flat array format
+            if action not in category_perms:
+                category_perms.append(action)
+                user_type.base_permissions = permissions
+                user_type.save()
             
         
         serializer = self.get_serializer(user_type)
@@ -699,15 +715,30 @@ class UserTypeViewSet(viewsets.ModelViewSet):
         
         # Remove permission using normalized category
         permissions = user_type.base_permissions.copy()
-        if normalized_category in permissions and action in permissions[normalized_category]:
-            permissions[normalized_category].remove(action)
+        
+        if normalized_category in permissions:
+            category_perms = permissions[normalized_category]
             
-            # Remove empty categories
-            if not permissions[normalized_category]:
-                del permissions[normalized_category]
-            
-            user_type.base_permissions = permissions
-            user_type.save()
+            # Handle both flat array and nested object formats
+            if isinstance(category_perms, dict) and 'actions' in category_perms:
+                # Nested format (e.g., settings)
+                if action in category_perms['actions']:
+                    category_perms['actions'].remove(action)
+                    
+                    # Don't remove settings category even if empty, maintain structure
+                    user_type.base_permissions = permissions
+                    user_type.save()
+            elif isinstance(category_perms, list):
+                # Flat array format
+                if action in category_perms:
+                    category_perms.remove(action)
+                    
+                    # Remove empty categories for flat format
+                    if not category_perms:
+                        del permissions[normalized_category]
+                    
+                    user_type.base_permissions = permissions
+                    user_type.save()
             
         
         serializer = self.get_serializer(user_type)

@@ -1,5 +1,27 @@
 # AI Change Log
 
+## 2025-01-27 16:45 - Fixed Communications Settings API URL Mismatches
+
+**Description:** Fixed critical API URL mismatches between frontend and backend for communications settings pages that were causing fields to appear empty despite being visible.
+
+**Reason:** User reported that communications settings pages were showing empty fields even though the UI components were visible. Investigation revealed that frontend was calling `/api/v1/communications/...` endpoints while backend was serving `/api/communications/...` endpoints.
+
+**Root Cause:** URL path mismatch between frontend API calls and backend URL patterns:
+- Frontend: `/api/v1/communications/providers/configurations/`
+- Backend: `/api/communications/providers/configurations/`
+
+**Changes Made:**
+- Updated `getProviderConfigurations()` API call URL
+- Updated `updateProviderPreferences()` API call URL  
+- Updated `updateTenantConfig()` API call URL
+- Updated `getProviderRateLimits()` API call URL
+- Updated `getProviderFeatures()` API call URL
+
+**Affected Files:**
+- `frontend/src/lib/api.ts` (communicationsApi section)
+
+**Expected Result:** Communications settings pages (General, Providers, Accounts, etc.) should now properly load configuration data and display populated fields instead of empty ones.
+
 ## 2024-12-19 15:30 - Git Push: Tenant Settings System
 **Description:** Successfully pushed latest code to GitHub, excluding communication app updates
 **Reason:** User requested to push code while keeping communication app changes local

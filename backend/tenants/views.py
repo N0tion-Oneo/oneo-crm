@@ -31,6 +31,7 @@ from .serializers import (
 from authentication.session_utils import AsyncSessionManager
 from authentication.serializers import UserSerializer
 from authentication.permissions import SyncPermissionManager
+from api.permissions.settings import OrganizationSettingsPermission
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
@@ -159,7 +160,7 @@ class TenantSettingsViewSet(viewsets.ModelViewSet):
     This is a singleton resource - only one settings object per tenant
     We use 'current' as the pk for all operations
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [OrganizationSettingsPermission]
     serializer_class = TenantSettingsSerializer
     queryset = Tenant.objects.none()  # We override get_object anyway
     http_method_names = ['get', 'patch', 'post', 'head', 'options']  # No DELETE or PUT
@@ -192,7 +193,7 @@ class TenantSettingsViewSet(viewsets.ModelViewSet):
         return None
     
     def retrieve(self, request, *args, **kwargs):
-        """Override retrieve to check permissions"""
+        """Override retrieve - permissions handled by permission_classes"""
         instance = self.get_object()
         if not instance:
             return Response(
@@ -200,28 +201,11 @@ class TenantSettingsViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_404_NOT_FOUND
             )
         
-        # Check permissions - anyone can read basic settings
-        permission_manager = SyncPermissionManager(request.user)
-        if not permission_manager.has_permission('actions', 'settings', 'read'):
-            return Response(
-                {"error": "Permission denied"},
-                status=status.HTTP_403_FORBIDDEN
-            )
-        
         serializer = self.get_serializer(instance)
         return Response(serializer.data)
     
     def update(self, request, *args, **kwargs):
-        """Override update to check admin permissions"""
-        # Check admin permissions
-        permission_manager = SyncPermissionManager(request.user)
-        if not (permission_manager.has_permission('actions', 'system', 'full_access') or
-                permission_manager.has_permission('actions', 'settings', 'update')):
-            return Response(
-                {"error": "Admin permission required"},
-                status=status.HTTP_403_FORBIDDEN
-            )
-        
+        """Override update - permissions handled by permission_classes"""
         partial = kwargs.pop('partial', False)
         instance = self.get_object()
         if not instance:
@@ -240,22 +224,13 @@ class TenantSettingsViewSet(viewsets.ModelViewSet):
     def upload_logo(self, request, pk=None):
         """
         POST /api/v1/tenant/settings/upload_logo/
-        Upload tenant logo
+        Upload tenant logo - permissions handled by permission_classes
         """
         tenant = self.get_object()
         if not tenant:
             return Response(
                 {"error": "Tenant not found"},
                 status=status.HTTP_404_NOT_FOUND
-            )
-        
-        # Check admin permissions
-        permission_manager = SyncPermissionManager(request.user)
-        if not (permission_manager.has_permission('actions', 'system', 'full_access') or
-                permission_manager.has_permission('actions', 'settings', 'update')):
-            return Response(
-                {"error": "Admin permission required"},
-                status=status.HTTP_403_FORBIDDEN
             )
         
         serializer = TenantLogoUploadSerializer(

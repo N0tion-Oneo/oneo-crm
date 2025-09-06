@@ -67,9 +67,29 @@ PERMISSION_CATEGORIES = {
         'category_display': 'Communication Management'
     },
     'settings': {
-        'actions': ['read', 'update'],
-        'description': 'System and tenant settings management',
+        'actions': [
+            # Page-based permissions - if you have access, you can view and edit
+            'organization',      # /settings page
+            'branding',          # /settings/branding page
+            'localization',      # /settings/localization page
+            'security',          # /settings/security page
+            'data_policies',     # /settings/data-policies page
+            'usage',             # /settings/usage page
+            'communications'     # /settings/communications main page
+        ],
+        'description': 'Settings pages access - having permission grants both view and edit',
         'category_display': 'Settings'
+    },
+    'communication_settings': {
+        'actions': [
+            # Communication sub-settings pages
+            'general',           # /settings/communications/general page
+            'accounts',          # /settings/communications/accounts page
+            'providers',         # /settings/communications/providers page
+            'advanced'           # /settings/communications/advanced page
+        ],
+        'description': 'Communication settings sub-pages access',
+        'category_display': 'Communication Settings'
     },
     'monitoring': {
         'actions': ['read', 'update'],
@@ -179,6 +199,26 @@ ACTION_DESCRIPTIONS = {
     'link': 'Link participants to records',
     'settings': 'Manage participant auto-creation settings',
     'batch': 'Run batch participant processing',
+    
+    # Nested settings permissions
+    'read_organization': 'View organization settings',
+    'update_organization': 'Modify organization settings',
+    'read_branding': 'View branding settings',
+    'update_branding': 'Modify branding settings',
+    'read_localization': 'View localization settings',
+    'update_localization': 'Modify localization settings',
+    'read_security': 'View security settings',
+    'update_security': 'Modify security settings',
+    'read_data_policies': 'View data policy settings',
+    'update_data_policies': 'Modify data policy settings',
+    'read_billing': 'View billing and usage settings',
+    'update_billing': 'Modify billing and usage settings',
+    'read_communication_general': 'View general communication settings',
+    'update_communication_general': 'Modify general communication settings',
+    'read_communication_provider': 'View communication provider settings',
+    'update_communication_provider': 'Modify communication provider settings',
+    'read_communication_advanced': 'View advanced communication settings',
+    'update_communication_advanced': 'Modify advanced communication settings',
 }
 
 
@@ -285,6 +325,15 @@ def get_default_permissions_for_role(role_level: str) -> Dict[str, List[str]]:
             'business_rules': ['create', 'read', 'update'],
             'communications': ['create', 'read', 'update', 'send'],
             'settings': ['read'],
+            'organization_settings': ['read', 'update'],
+            'branding_settings': ['read', 'update'],
+            'localization_settings': ['read'],
+            'security_settings': ['read'],
+            'data_policies_settings': ['read'],
+            'billing_settings': ['read'],
+            'communication_general_settings': ['read', 'update'],
+            'communication_provider_settings': ['read'],
+            'communication_advanced_settings': ['read'],
             'monitoring': ['read'],
             'ai_features': ['create', 'read', 'update', 'configure', 'read_all'],
             'reports': ['create', 'read', 'update', 'export'],
@@ -311,6 +360,15 @@ def get_default_permissions_for_role(role_level: str) -> Dict[str, List[str]]:
             'business_rules': ['read'],
             'communications': ['create', 'read', 'update', 'send'],
             'settings': ['read'],
+            'organization_settings': ['read'],
+            'branding_settings': ['read'],
+            'localization_settings': ['read'],
+            'security_settings': [],
+            'data_policies_settings': [],
+            'billing_settings': [],
+            'communication_general_settings': ['read'],
+            'communication_provider_settings': [],
+            'communication_advanced_settings': [],
             'ai_features': ['read', 'update'],
             'reports': ['read', 'export'],
             'api_access': ['read', 'write'],
@@ -336,6 +394,15 @@ def get_default_permissions_for_role(role_level: str) -> Dict[str, List[str]]:
             'business_rules': ['read'],
             'communications': ['read'],
             'settings': ['read'],
+            'organization_settings': ['read'],
+            'branding_settings': ['read'],
+            'localization_settings': [],
+            'security_settings': [],
+            'data_policies_settings': [],
+            'billing_settings': [],
+            'communication_general_settings': [],
+            'communication_provider_settings': [],
+            'communication_advanced_settings': [],
             'ai_features': ['read'],
             'reports': ['read', 'export'],
             'api_access': ['read'],

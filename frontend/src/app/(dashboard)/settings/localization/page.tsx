@@ -2,8 +2,9 @@
 
 import { useState, useEffect } from "react";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/features/auth/context";
 import { tenantSettingsAPI, type LocalizationSettings } from "@/lib/api/tenant-settings";
-import { Globe, Loader2 } from "lucide-react";
+import { Globe, Loader2, AlertCircle } from "lucide-react";
 
 const timezones = [
   "UTC",
@@ -45,8 +46,15 @@ const languages = [
 
 export default function LocalizationSettingsPage() {
   const { toast } = useToast();
+  const { hasPermission } = useAuth();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  
+  // Check permissions
+  // Check page-based permission - having permission means both view and edit
+  const hasPageAccess = hasPermission('settings', 'localization');
+  const canViewSettings = hasPageAccess;
+  const canEditSettings = hasPageAccess;
   
   const [localization, setLocalization] = useState<LocalizationSettings>({
     timezone: "UTC",
@@ -58,8 +66,12 @@ export default function LocalizationSettingsPage() {
   });
 
   useEffect(() => {
+    if (!canViewSettings) {
+      setLoading(false);
+      return;
+    }
     loadSettings();
-  }, []);
+  }, [canViewSettings]);
 
   const loadSettings = async () => {
     try {
@@ -105,6 +117,19 @@ export default function LocalizationSettingsPage() {
     );
   }
 
+  // Check permissions before showing content
+  if (!canViewSettings) {
+    return (
+      <div className="p-6 max-w-4xl">
+        <div className="text-center py-12">
+          <AlertCircle className="h-12 w-12 mx-auto text-amber-500 mb-4" />
+          <h3 className="text-lg font-medium">Access Denied</h3>
+          <p className="text-gray-600">You don't have permission to view localization settings.</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="p-6 max-w-4xl">
       <div className="mb-6">
@@ -118,7 +143,7 @@ export default function LocalizationSettingsPage() {
       </div>
 
       <div className="bg-white dark:bg-gray-900 rounded-lg shadow">
-        <div className="p-6 space-y-6">
+        <fieldset disabled={!canEditSettings} className="p-6 space-y-6">
           {/* Timezone */}
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
@@ -127,7 +152,7 @@ export default function LocalizationSettingsPage() {
             <select
               value={localization.timezone}
               onChange={(e) => setLocalization({ ...localization, timezone: e.target.value })}
-              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
+              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {timezones.map((tz) => (
                 <option key={tz} value={tz}>
@@ -146,7 +171,7 @@ export default function LocalizationSettingsPage() {
               <select
                 value={localization.date_format}
                 onChange={(e) => setLocalization({ ...localization, date_format: e.target.value as any })}
-                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <option value="MM/DD/YYYY">MM/DD/YYYY (12/31/2024)</option>
                 <option value="DD/MM/YYYY">DD/MM/YYYY (31/12/2024)</option>
@@ -162,7 +187,7 @@ export default function LocalizationSettingsPage() {
               <select
                 value={localization.time_format}
                 onChange={(e) => setLocalization({ ...localization, time_format: e.target.value as any })}
-                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <option value="12h">12-hour (3:30 PM)</option>
                 <option value="24h">24-hour (15:30)</option>
@@ -179,7 +204,7 @@ export default function LocalizationSettingsPage() {
               <select
                 value={localization.currency}
                 onChange={(e) => setLocalization({ ...localization, currency: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {currencies.map((curr) => (
                   <option key={curr.code} value={curr.code}>
@@ -197,7 +222,7 @@ export default function LocalizationSettingsPage() {
               <select
                 value={localization.language}
                 onChange={(e) => setLocalization({ ...localization, language: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {languages.map((lang) => (
                   <option key={lang.code} value={lang.code}>
@@ -216,7 +241,7 @@ export default function LocalizationSettingsPage() {
             <select
               value={localization.week_start_day}
               onChange={(e) => setLocalization({ ...localization, week_start_day: e.target.value as any })}
-              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
+              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <option value="sunday">Sunday</option>
               <option value="monday">Monday</option>
@@ -259,14 +284,15 @@ export default function LocalizationSettingsPage() {
               </div>
             </div>
           </div>
-        </div>
+        </fieldset>
 
         {/* Save Button */}
         <div className="px-6 py-4 bg-gray-50 dark:bg-gray-800/50 border-t border-gray-200 dark:border-gray-700 flex justify-end">
           <button
             onClick={handleSave}
-            disabled={saving}
+            disabled={saving || !canEditSettings}
             className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center"
+            title={!canEditSettings ? "You don't have permission to edit settings" : ""}
           >
             {saving ? (
               <>

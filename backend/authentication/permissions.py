@@ -65,6 +65,12 @@ class AsyncPermissionManager:
         if isinstance(resource_permissions, list):
             return action in resource_permissions
         elif isinstance(resource_permissions, dict):
+            # Handle nested 'actions' structure (e.g., settings permissions)
+            if 'actions' in resource_permissions:
+                actions_list = resource_permissions.get('actions', [])
+                if isinstance(actions_list, list):
+                    return action in actions_list
+            
             # Check specific resource ID permissions
             if resource_id and resource_id in resource_permissions:
                 return action in resource_permissions[resource_id]

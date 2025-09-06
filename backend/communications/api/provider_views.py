@@ -4,17 +4,44 @@ Provider configuration API views for communications settings
 import logging
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, BasePermission
 from rest_framework.response import Response
 from django.conf import settings
 from communications.models import TenantUniPileConfig
 from authentication.jwt_authentication import TenantAwareJWTAuthentication
+from authentication.permissions import SyncPermissionManager
 
 logger = logging.getLogger(__name__)
 
 
+class CommunicationProviderPermission(BasePermission):
+    """Permission for communication provider settings"""
+    
+    def has_permission(self, request, view):
+        if not request.user.is_authenticated:
+            return False
+        
+        permission_manager = SyncPermissionManager(request.user)
+        
+        # Check communication_settings providers permission
+        return permission_manager.has_permission('action', 'communication_settings', 'providers', None)
+
+
+class CommunicationGeneralPermission(BasePermission):
+    """Permission for general communication settings"""
+    
+    def has_permission(self, request, view):
+        if not request.user.is_authenticated:
+            return False
+        
+        permission_manager = SyncPermissionManager(request.user)
+        
+        # Check communication_settings general permission
+        return permission_manager.has_permission('action', 'communication_settings', 'general', None)
+
+
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
+@permission_classes([CommunicationProviderPermission])
 def get_provider_configurations(request):
     """
     Get global provider configurations and tenant preferences
@@ -79,7 +106,7 @@ def get_provider_configurations(request):
 
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated])
+@permission_classes([CommunicationProviderPermission])
 def update_provider_preferences(request):
     """
     Update tenant provider preferences
@@ -122,7 +149,7 @@ def update_provider_preferences(request):
 
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated])
+@permission_classes([CommunicationGeneralPermission])
 def update_tenant_config(request):
     """
     Update general tenant UniPile configuration
@@ -167,7 +194,7 @@ def update_tenant_config(request):
 
 
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
+@permission_classes([CommunicationProviderPermission])
 def get_provider_rate_limits(request, provider_type):
     """
     Get effective rate limits for a specific provider
@@ -213,7 +240,7 @@ def get_provider_rate_limits(request, provider_type):
 
 
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
+@permission_classes([CommunicationProviderPermission])
 def get_provider_features(request, provider_type):
     """
     Get enabled features for a specific provider

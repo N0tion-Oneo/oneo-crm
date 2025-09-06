@@ -20,42 +20,36 @@ const navigationItems = [
     href: '/settings/communications', 
     icon: LayoutDashboard,
     description: 'Communication settings overview and statistics',
-    permission: { resource: 'communications', action: 'read' }
-  },
-  { 
-    name: 'Participants', 
-    href: '/settings/communications/participants', 
-    icon: Users,
-    description: 'Auto-creation and participant management',
-    permission: { resource: 'communications', action: 'read' }
-  },
-  { 
-    name: 'Account Connections', 
-    href: '/settings/communications/accounts', 
-    icon: Link2,
-    description: 'Manage connected communication accounts',
-    permission: { resource: 'communications', action: 'read' }
-  },
-  { 
-    name: 'Provider Settings', 
-    href: '/settings/communications/providers', 
-    icon: Settings2,
-    description: 'Configure provider features and limits',
-    permission: { resource: 'communications', action: 'read' }
+    // Overview page is visible if user has main communications permission OR any sub-permission
+    showAlways: true  // Special flag for overview page
   },
   { 
     name: 'General', 
     href: '/settings/communications/general', 
     icon: Settings,
     description: 'Sync and API configurations',
-    permission: { resource: 'communications', action: 'read' }
+    permission: 'general'
+  },
+  { 
+    name: 'Account Connections', 
+    href: '/settings/communications/accounts', 
+    icon: Link2,
+    description: 'Manage connected communication accounts',
+    permission: 'accounts'
+  },
+  { 
+    name: 'Provider Settings', 
+    href: '/settings/communications/providers', 
+    icon: Settings2,
+    description: 'Configure provider features and limits',
+    permission: 'providers'
   },
   { 
     name: 'Advanced', 
     href: '/settings/communications/advanced', 
     icon: Terminal,
     description: 'System information and debugging',
-    permission: { resource: 'communications', action: 'read' }
+    permission: 'advanced'
   }
 ];
 
@@ -64,13 +58,34 @@ export default function CommunicationsLayout({ children }: { children: ReactNode
   const pathname = usePathname();
   const { hasPermission } = useAuth();
   
+  // Check if user has any communication settings permissions
+  const hasMainPermission = hasPermission('settings', 'communications');
+  const hasGeneralPermission = hasPermission('communication_settings', 'general');
+  const hasAccountsPermission = hasPermission('communication_settings', 'accounts');
+  const hasProvidersPermission = hasPermission('communication_settings', 'providers');
+  const hasAdvancedPermission = hasPermission('communication_settings', 'advanced');
+  
+  const hasAnyPermission = hasMainPermission || hasGeneralPermission || 
+                          hasAccountsPermission || hasProvidersPermission || 
+                          hasAdvancedPermission;
+  
   // Filter navigation items based on permissions
-  const visibleItems = navigationItems.filter(item => 
-    hasPermission(item.permission.resource, item.permission.action)
-  );
+  const visibleItems = navigationItems.filter(item => {
+    // Overview page is shown if user has any communication permission
+    if (item.showAlways) {
+      return hasAnyPermission;
+    }
+    
+    // Check specific sub-permission for other pages
+    if (item.permission) {
+      return hasPermission('communication_settings', item.permission);
+    }
+    
+    return false;
+  });
 
   // If user has no permissions, show a message
-  if (visibleItems.length === 0) {
+  if (!hasAnyPermission || visibleItems.length === 0) {
     return (
       <div className="flex items-center justify-center h-full">
         <div className="text-center">

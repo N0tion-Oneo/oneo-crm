@@ -29,8 +29,10 @@ export default function GeneralSettingsPage() {
   const { toast } = useToast()
   const { hasPermission } = useAuth()
   
-  const canViewSettings = hasPermission('communications', 'read')
-  const canEditSettings = hasPermission('communications', 'update')
+  // Check page-based permission - having permission means both view and edit
+  const hasPageAccess = hasPermission('communication_settings', 'general')
+  const canViewSettings = hasPageAccess
+  const canEditSettings = hasPageAccess
 
   useEffect(() => {
     // Only load if user has permission

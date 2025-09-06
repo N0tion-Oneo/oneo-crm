@@ -130,10 +130,12 @@ export default function AccountConnectionsPage() {
   const { toast } = useToast()
   const { user, hasPermission } = useAuth()
   
-  const canViewSettings = hasPermission('communications', 'read')
+  // Check page-based permission - having permission means both view and edit
+  const hasPageAccess = hasPermission('communication_settings', 'accounts')
+  const canViewSettings = hasPageAccess
   const canViewAllAccounts = hasPermission('communications', 'admin') || hasPermission('system', 'admin')
-  const canManageAccounts = hasPermission('communications', 'update')
-  const canDeleteAccounts = hasPermission('communications', 'delete')
+  const canManageAccounts = hasPageAccess
+  const canDeleteAccounts = hasPageAccess
 
   useEffect(() => {
     // Only load if user has permission

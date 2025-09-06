@@ -2,6 +2,7 @@
 
 import { ReactNode } from "react";
 import { useRouter, usePathname } from "next/navigation";
+import { useAuth } from "@/features/auth/context";
 import {
   Building2,
   Palette,
@@ -13,18 +14,93 @@ import {
 } from "lucide-react";
 
 const settingsTabs = [
-  { name: "Organization", href: "/settings", icon: Building2 },
-  { name: "Branding", href: "/settings/branding", icon: Palette },
-  { name: "Communications", href: "/settings/communications", icon: MessageCircle },
-  { name: "Localization", href: "/settings/localization", icon: Globe },
-  { name: "Security", href: "/settings/security", icon: Shield },
-  { name: "Data Policies", href: "/settings/data-policies", icon: Database },
-  { name: "Usage & Billing", href: "/settings/usage", icon: BarChart3 },
+  { 
+    name: "Organization", 
+    href: "/settings", 
+    icon: Building2,
+    permission: 'organization'
+  },
+  { 
+    name: "Branding", 
+    href: "/settings/branding", 
+    icon: Palette,
+    permission: 'branding'
+  },
+  { 
+    name: "Communications", 
+    href: "/settings/communications", 
+    icon: MessageCircle,
+    // Show if user has the main communications permission OR any sub-page permission
+    permission: 'communications',
+    additionalPermissions: {
+      resource: 'communication_settings',
+      actions: ['general', 'accounts', 'providers', 'advanced']
+    }
+  },
+  { 
+    name: "Localization", 
+    href: "/settings/localization", 
+    icon: Globe,
+    permission: 'localization'
+  },
+  { 
+    name: "Security", 
+    href: "/settings/security", 
+    icon: Shield,
+    permission: 'security'
+  },
+  { 
+    name: "Data Policies", 
+    href: "/settings/data-policies", 
+    icon: Database,
+    permission: 'data_policies'
+  },
+  { 
+    name: "Usage & Billing", 
+    href: "/settings/usage", 
+    icon: BarChart3,
+    permission: 'usage'
+  },
 ];
 
 export default function SettingsLayout({ children }: { children: ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
+  const { hasPermission } = useAuth();
+
+  // Filter settings tabs based on simplified page permissions
+  const visibleTabs = settingsTabs.filter(tab => {
+    // Handle tabs with single permission
+    if (tab.permission) {
+      // Check main permission first
+      if (hasPermission('settings', tab.permission)) {
+        return true;
+      }
+      
+      // Check additional permissions for tabs like Communications
+      if (tab.additionalPermissions) {
+        const { resource, actions } = tab.additionalPermissions;
+        return actions.some(action => hasPermission(resource, action));
+      }
+    }
+    return false;
+  });
+
+  // If user has no access to any settings, show a message
+  if (visibleTabs.length === 0) {
+    return (
+      <div className="flex items-center justify-center h-full">
+        <div className="text-center">
+          <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">
+            No Access
+          </h3>
+          <p className="text-gray-500 dark:text-gray-400">
+            You don't have permission to access settings.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-full">
@@ -39,7 +115,7 @@ export default function SettingsLayout({ children }: { children: ReactNode }) {
           </p>
         </div>
         <nav className="space-y-1 px-3">
-          {settingsTabs.map((tab) => {
+          {visibleTabs.map((tab) => {
             const isActive = pathname === tab.href;
             const Icon = tab.icon;
             return (

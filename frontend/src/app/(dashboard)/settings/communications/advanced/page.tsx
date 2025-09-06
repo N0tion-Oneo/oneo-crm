@@ -56,8 +56,10 @@ export default function AdvancedSettingsPage() {
   const { toast } = useToast()
   const { hasPermission } = useAuth()
   
-  const canViewAdvanced = hasPermission('communications', 'read')
-  const canManageAdvanced = hasPermission('communications', 'update')
+  // Check page-based permission - having permission means both view and edit
+  const hasPageAccess = hasPermission('communication_settings', 'advanced')
+  const canViewAdvanced = hasPageAccess
+  const canManageAdvanced = hasPageAccess
 
   useEffect(() => {
     // Only load if user has permission

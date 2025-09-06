@@ -11,7 +11,7 @@ from django.utils.decorators import method_decorator
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, BasePermission
 from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
 from communications.models import UserChannelConnection, ChannelType
@@ -19,8 +19,22 @@ from communications.api.serializers import UserChannelConnectionSerializer
 from communications.unipile_sdk import unipile_service
 from oneo_crm.settings import unipile_settings
 from authentication.jwt_authentication import TenantAwareJWTAuthentication
+from authentication.permissions import SyncPermissionManager
 
 logger = logging.getLogger(__name__)
+
+
+class CommunicationAccountsPermission(BasePermission):
+    """Permission for communication accounts settings"""
+    
+    def has_permission(self, request, view):
+        if not request.user.is_authenticated:
+            return False
+        
+        permission_manager = SyncPermissionManager(request.user)
+        
+        # Check communication_settings accounts permission
+        return permission_manager.has_permission('action', 'communication_settings', 'accounts', None)
 
 
 class CommunicationConnectionViewSet(ModelViewSet):
@@ -28,7 +42,7 @@ class CommunicationConnectionViewSet(ModelViewSet):
     
     serializer_class = UserChannelConnectionSerializer
     authentication_classes = [TenantAwareJWTAuthentication]
-    permission_classes = [IsAuthenticated]
+    permission_classes = [CommunicationAccountsPermission]
     
     def get_queryset(self):
         """Filter connections to current user"""
@@ -40,7 +54,7 @@ class CommunicationConnectionViewSet(ModelViewSet):
 
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated])
+@permission_classes([CommunicationAccountsPermission])
 def request_hosted_auth(request):
     """
     Request a hosted authentication URL for connecting communication accounts
@@ -163,7 +177,7 @@ def request_hosted_auth(request):
 
 
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
+@permission_classes([CommunicationAccountsPermission])
 def list_connections(request):
     """
     List all communication connections for the current user
@@ -186,7 +200,7 @@ def list_connections(request):
 
 
 @api_view(['DELETE'])
-@permission_classes([IsAuthenticated])
+@permission_classes([CommunicationAccountsPermission])
 async def delete_connection(request, connection_id):
     """
     Delete a communication connection
@@ -223,7 +237,7 @@ async def delete_connection(request, connection_id):
 
 
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
+@permission_classes([CommunicationAccountsPermission])
 async def account_status(request, connection_id):
     """
     Get current status of a communication account
@@ -572,7 +586,7 @@ def hosted_auth_failure_callback(request):
 
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated])
+@permission_classes([CommunicationAccountsPermission])
 async def solve_checkpoint(request, connection_id):
     """
     Submit checkpoint/2FA code for account verification
@@ -659,7 +673,7 @@ async def solve_checkpoint(request, connection_id):
 
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated])
+@permission_classes([CommunicationAccountsPermission])
 async def resend_checkpoint(request, connection_id):
     """
     Request resend of checkpoint/2FA code
@@ -710,7 +724,7 @@ async def resend_checkpoint(request, connection_id):
 
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated])
+@permission_classes([CommunicationAccountsPermission])
 async def reconnect_account(request, connection_id):
     """
     Attempt to reconnect a failed or expired account

@@ -689,25 +689,25 @@ export const communicationsApi = {
   
   // Provider configuration management
   getProviderConfigurations: () => 
-    api.get('/api/v1/communications/providers/configurations/'),
+    api.get('/api/communications/providers/configurations/'),
   
   updateProviderPreferences: (data: {
     provider_type: string
     preferences: any
-  }) => api.post('/api/v1/communications/providers/preferences/', data),
+  }) => api.post('/api/communications/providers/preferences/', data),
   
   updateTenantConfig: (data: {
     auto_create_contacts?: boolean
     sync_historical_days?: number
     enable_real_time_sync?: boolean
     max_api_calls_per_hour?: number
-  }) => api.post('/api/v1/communications/tenant-config/', data),
+  }) => api.post('/api/communications/tenant-config/', data),
   
   getProviderRateLimits: (providerType: string) =>
-    api.get(`/api/v1/communications/providers/${providerType}/rate-limits/`),
+    api.get(`/api/communications/providers/${providerType}/rate-limits/`),
   
   getProviderFeatures: (providerType: string) =>
-    api.get(`/api/v1/communications/providers/${providerType}/features/`),
+    api.get(`/api/communications/providers/${providerType}/features/`),
   
   // Unified Inbox API
   getUnifiedInbox: (filters?: {

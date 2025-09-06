@@ -275,7 +275,9 @@ class RecordSyncOrchestrator:
                     profile.mark_sync_completed(sync_job.messages_found)
                     
                     # Schedule next auto-sync if enabled
-                    field_manager.schedule_auto_sync(profile)
+                    # DISABLED: This was causing a sync loop - tasks were continuously re-scheduling themselves
+                    # If periodic syncs are needed, use Celery Beat or the process_scheduled_syncs task instead
+                    # field_manager.schedule_auto_sync(profile)
                 else:
                     # Just clear the in_progress flag if sync failed
                     profile.sync_in_progress = False

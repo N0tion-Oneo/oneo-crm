@@ -13,6 +13,7 @@ import {
   Database,
   BarChart3,
   MessageCircle,
+  Brain,
 } from "lucide-react";
 
 const settingsTabs = [
@@ -74,6 +75,12 @@ const settingsTabs = [
     href: "/settings/usage", 
     icon: BarChart3,
     permission: 'usage'
+  },
+  { 
+    name: "AI Configuration", 
+    href: "/settings/ai", 
+    icon: Brain,
+    permission: 'ai'
   },
 ];
 

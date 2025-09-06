@@ -262,3 +262,22 @@ class PermissionsSettingsPermission(permissions.BasePermission):
             return False
         
         return False
+
+
+class AISettingsPermission(permissions.BasePermission):
+    """AI settings page permissions"""
+    
+    def has_permission(self, request, view):
+        """Check if user can access AI settings page"""
+        if not request.user.is_authenticated:
+            return False
+        
+        permission_manager = SyncPermissionManager(request.user)
+        
+        # Page access controlled by settings.ai permission
+        if view.action in ['list', 'retrieve', 'create', 'update', 'partial_update']:
+            return permission_manager.has_permission('action', 'settings', 'ai', None)
+        elif view.action == 'destroy':
+            return False
+        
+        return False

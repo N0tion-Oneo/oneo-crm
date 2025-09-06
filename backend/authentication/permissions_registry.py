@@ -159,7 +159,8 @@ PERMISSION_CATEGORIES = {
             'security',          # /settings/security page
             'data_policies',     # /settings/data-policies page
             'usage',             # /settings/usage page
-            'communications'     # /settings/communications main page
+            'communications',    # /settings/communications main page
+            'ai'                 # /settings/ai page
         ],
         'description': 'Settings pages access - having permission grants both view and edit',
         'category_display': 'Settings'

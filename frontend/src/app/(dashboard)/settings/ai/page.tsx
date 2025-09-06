@@ -484,12 +484,12 @@ export default function AIPage() {
   }
 
   return (
-    <PermissionGuard category="ai_features" action="read" fallback={
+    <PermissionGuard category="settings" action="ai" fallback={
       <div className="p-6">
         <div className="text-center py-12">
           <Brain className="mx-auto h-12 w-12 text-gray-400 mb-4" />
-          <h3 className="text-lg font-medium text-gray-900 mb-2">AI Features Not Available</h3>
-          <p className="text-gray-500">You don't have permission to access AI features.</p>
+          <h3 className="text-lg font-medium text-gray-900 mb-2">AI Settings Not Available</h3>
+          <p className="text-gray-500">You don't have permission to access AI settings.</p>
         </div>
       </div>
     }>
@@ -497,8 +497,8 @@ export default function AIPage() {
         {/* Header */}
         <div className="flex justify-between items-center mb-6">
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">AI Dashboard</h1>
-            <p className="text-gray-600">Manage AI features and view processing analytics</p>
+            <h1 className="text-2xl font-bold text-gray-900">AI Configuration</h1>
+            <p className="text-gray-600">Manage AI settings, features, and view processing analytics</p>
           </div>
           <div className="flex gap-2">
             <PermissionGuard category="ai_features" action="configure">

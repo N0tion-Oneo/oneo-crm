@@ -75,9 +75,12 @@ export default function ParticipantSettingsPage() {
   const { hasPermission } = useAuth()
   const { toast } = useToast()
   
-  // Check participant-specific permissions
-  const canViewSettings = hasPermission('participants', 'settings') || hasPermission('participants', 'read')
-  const canEditSettings = hasPermission('participants', 'settings')
+  // Check page access - need communication_settings.participants to view the page
+  const hasPageAccess = hasPermission('communication_settings', 'participants')
+  
+  // Check participant resource permissions for actions within the page
+  const canViewSettings = hasPageAccess || hasPermission('participants', 'read')
+  const canEditSettings = hasPageAccess  // Having page access means can edit settings
   const canRunBatch = hasPermission('participants', 'batch')
   
   const [settings, setSettings] = useState<ParticipantSettings | null>(null)
@@ -95,13 +98,13 @@ export default function ParticipantSettingsPage() {
 
   useEffect(() => {
     // Always set loading to false if no permissions
-    if (!canViewSettings) {
+    if (!hasPageAccess || !canViewSettings) {
       setLoading(false)
       return
     }
     // Load data if user has permission
     loadData()
-  }, [canViewSettings])
+  }, [hasPageAccess, canViewSettings])
 
   const loadData = async () => {
     try {
@@ -404,15 +407,36 @@ export default function ParticipantSettingsPage() {
     )
   }
 
-  // Check permissions first before checking settings
-  if (!canViewSettings) {
+  // Check page access first
+  if (!hasPageAccess) {
     return (
       <div className="p-6">
         <div className="max-w-5xl mx-auto">
           <div className="text-center py-12">
             <AlertCircle className="h-12 w-12 mx-auto text-amber-500 mb-4" />
             <h3 className="text-lg font-medium">Access Denied</h3>
-            <p className="text-gray-600">You don't have permission to view participant settings.</p>
+            <p className="text-gray-600">You don't have permission to access the communications settings page.</p>
+            <div className="mt-2 text-sm text-gray-500">
+              Required: <code className="bg-gray-100 dark:bg-gray-800 px-1 rounded">settings.communications</code>
+            </div>
+          </div>
+        </div>
+      </div>
+    )
+  }
+  
+  // Then check if user can view participant settings
+  if (!canViewSettings) {
+    return (
+      <div className="p-6">
+        <div className="max-w-5xl mx-auto">
+          <div className="text-center py-12">
+            <AlertCircle className="h-12 w-12 mx-auto text-amber-500 mb-4" />
+            <h3 className="text-lg font-medium">Limited Access</h3>
+            <p className="text-gray-600">You have access to this page but need permissions to view participant settings.</p>
+            <div className="mt-2 text-sm text-gray-500">
+              Required: <code className="bg-gray-100 dark:bg-gray-800 px-1 rounded">participants.settings</code> or <code className="bg-gray-100 dark:bg-gray-800 px-1 rounded">participants.read</code>
+            </div>
           </div>
         </div>
       </div>

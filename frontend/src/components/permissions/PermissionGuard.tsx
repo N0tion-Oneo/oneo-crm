@@ -91,7 +91,7 @@ export function ManagerPlusGuard({ children, fallback = null }: {
     <MultiPermissionGuard 
       permissions={[
         { category: 'system', action: 'full_access' },
-        { category: 'users', action: 'create' }
+        { category: 'users', action: 'create' }  // Check resource permission for manager-level actions
       ]}
       requireAll={false}
       fallback={fallback}

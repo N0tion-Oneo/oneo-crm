@@ -245,20 +245,20 @@ class ParticipantSettingsPermission(permissions.BasePermission):
         
         permission_manager = SyncPermissionManager(request.user)
         
-        # All settings actions require the settings permission
+        # Settings page access uses communication_settings.participants permission
         if view.action in ['list', 'retrieve']:
-            return permission_manager.has_permission('action', 'participants', 'settings', None)
+            return permission_manager.has_permission('action', 'communication_settings', 'participants', None)
         elif view.action in ['create', 'update', 'partial_update']:
-            return permission_manager.has_permission('action', 'participants', 'settings', None)
+            return permission_manager.has_permission('action', 'communication_settings', 'participants', None)
         elif view.action == 'destroy':
             # Settings typically shouldn't be deleted, only updated
-            return permission_manager.has_permission('action', 'participants', 'settings', None)
+            return permission_manager.has_permission('action', 'communication_settings', 'participants', None)
         elif view.action in ['process_batch', 'dry_run']:
-            # Batch processing requires both settings and batch permissions
-            has_settings = permission_manager.has_permission('action', 'participants', 'settings', None)
+            # Batch processing requires both settings page access and batch permission
+            has_settings = permission_manager.has_permission('action', 'communication_settings', 'participants', None)
             has_batch = permission_manager.has_permission('action', 'participants', 'batch', None)
             return has_settings and has_batch
         elif view.action in ['company_pipelines', 'get_creation_stats', 'compatible_pipelines']:
-            return permission_manager.has_permission('action', 'participants', 'settings', None)
+            return permission_manager.has_permission('action', 'communication_settings', 'participants', None)
         
         return False

@@ -45,6 +45,13 @@ const navigationItems = [
     permission: 'providers'
   },
   { 
+    name: 'Participants', 
+    href: '/settings/communications/participants', 
+    icon: Users,
+    description: 'Participant auto-creation and management',
+    permission: 'participants'
+  },
+  { 
     name: 'Advanced', 
     href: '/settings/communications/advanced', 
     icon: Terminal,
@@ -63,11 +70,12 @@ export default function CommunicationsLayout({ children }: { children: ReactNode
   const hasGeneralPermission = hasPermission('communication_settings', 'general');
   const hasAccountsPermission = hasPermission('communication_settings', 'accounts');
   const hasProvidersPermission = hasPermission('communication_settings', 'providers');
+  const hasParticipantsPermission = hasPermission('communication_settings', 'participants');
   const hasAdvancedPermission = hasPermission('communication_settings', 'advanced');
   
   const hasAnyPermission = hasMainPermission || hasGeneralPermission || 
                           hasAccountsPermission || hasProvidersPermission || 
-                          hasAdvancedPermission;
+                          hasParticipantsPermission || hasAdvancedPermission;
   
   // Filter navigation items based on permissions
   const visibleItems = navigationItems.filter(item => {

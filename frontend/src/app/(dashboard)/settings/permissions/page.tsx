@@ -52,6 +52,34 @@ interface Pipeline {
   color: string
 }
 
+const PermissionsAccessDenied = ({ needsPageAccess, needsReadAccess }: { needsPageAccess?: boolean, needsReadAccess?: boolean }) => (
+  <div className="flex items-center justify-center h-64">
+    <div className="text-center max-w-md">
+      <Shield className="w-12 h-12 text-red-500 mx-auto mb-4" />
+      <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-2">
+        Access Denied
+      </h2>
+      <p className="text-gray-600 dark:text-gray-400 mb-4">
+        {needsPageAccess 
+          ? "You don't have permission to access the permissions settings page."
+          : needsReadAccess
+          ? "You have access to this page but need read permissions to view user types."
+          : "You don't have permission to manage permissions."}
+      </p>
+      <div className="bg-red-50 dark:bg-red-950/30 rounded-lg p-3">
+        <p className="text-sm text-red-700 dark:text-red-300">
+          {needsPageAccess && (
+            <>Required: <code className="bg-red-100 dark:bg-red-900/50 px-1 rounded">settings.permissions</code></>
+          )}
+          {needsReadAccess && (
+            <>Required: <code className="bg-red-100 dark:bg-red-900/50 px-1 rounded">user_types.read</code></>
+          )}
+        </p>
+      </div>
+    </div>
+  </div>
+)
+
 // Helper function to get icon component for resource types
 const getResourceTypeIcon = (iconName: string) => {
   const iconMap: Record<string, any> = {
@@ -67,7 +95,7 @@ const getResourceTypeIcon = (iconName: string) => {
 }
 
 export default function PermissionsPage() {
-  const { user } = useAuth()
+  const { user, hasPermission } = useAuth()
   const { 
     frontendConfig, 
     loading: schemaLoading, 
@@ -80,7 +108,24 @@ export default function PermissionsPage() {
     refreshAll
   } = usePermissionSchema()
 
-
+  // Settings permission ONLY controls page access
+  const hasSettingsAccess = hasPermission('settings', 'permissions')
+  
+  // Resource permissions control what actions can be performed
+  const hasReadPermission = hasPermission('user_types', 'read')
+  const hasCreatePermission = hasPermission('user_types', 'create')
+  const hasUpdatePermission = hasPermission('user_types', 'update')
+  const hasDeletePermission = hasPermission('user_types', 'delete')
+  
+  // Page access: need settings permission to view the settings page
+  const canViewPage = hasSettingsAccess
+  
+  // Action permissions: require specific resource permissions
+  const canReadUserTypes = hasReadPermission
+  const canCreateUserType = hasCreatePermission
+  const canUpdateUserType = hasUpdatePermission
+  const canDeleteUserType = hasDeletePermission
+  const canModifyPermissions = hasUpdatePermission
   
   const [userTypes, setUserTypes] = useState<UserType[]>([])
   const [pipelines, setPipelines] = useState<Pipeline[]>([])
@@ -103,6 +148,12 @@ export default function PermissionsPage() {
   // Load local data that's not handled by usePermissionSchema hook
   useEffect(() => {
     const loadLocalData = async () => {
+      // Only load if user has page access AND can read user types
+      if (!canViewPage || !canReadUserTypes) {
+        setLoading(false)
+        return
+      }
+      
       try {
         setLoading(true)
         const [userTypesResponse, pipelinesResponse, pipelinePermissionsResponse] = await Promise.all([
@@ -132,7 +183,7 @@ export default function PermissionsPage() {
     }
 
     loadLocalData()
-  }, []) // Remove frontendConfig dependency to break the cascade
+  }, [canViewPage]) // Remove frontendConfig dependency to break the cascade
 
   // Helper functions
   const hasPipelineAccess = (userTypeId: number, pipelineId: number): boolean => {
@@ -154,6 +205,12 @@ export default function PermissionsPage() {
     const userType = userTypes.find(ut => ut.id === userTypeId)
     const pipeline = pipelines.find(p => p.id === pipelineId)
     if (!userType || !pipeline) return
+    
+    // Check if user can modify permissions
+    if (!canModifyPermissions) {
+      showNotification('You do not have permission to modify pipeline access', 'error')
+      return
+    }
 
     // Create unique key for this dynamic permission change
     const changeKey = `dynamic-pipelines-${userTypeId}-${pipelineId}`
@@ -272,6 +329,12 @@ export default function PermissionsPage() {
     const categoryPermissions = permissionsByCategory[category] || []
     const userType = userTypes.find(ut => ut.name === userTypeName)
     if (!userType) return
+    
+    // Check if user can modify permissions
+    if (!canModifyPermissions) {
+      showNotification('You do not have permission to modify user type permissions', 'error')
+      return
+    }
 
     // Check current state - use the same logic as individual toggles
     const allGranted = categoryPermissions.every(permission => 
@@ -340,7 +403,15 @@ export default function PermissionsPage() {
     
     const staticPermissions: Permission[] = []
     
-    Object.entries(frontendConfig.categories).forEach(([categoryKey, categoryData]) => {
+    // Use the category_order if provided, otherwise fall back to Object.entries
+    const categoriesToProcess = frontendConfig.category_order 
+      ? frontendConfig.category_order.filter((key: string) => frontendConfig.categories[key])
+      : Object.keys(frontendConfig.categories)
+    
+    categoriesToProcess.forEach((categoryKey: string) => {
+      const categoryData = frontendConfig.categories[categoryKey]
+      if (!categoryData) return
+      
       // Skip dynamic permissions - they are handled in resource access tabs
       if (categoryData.is_dynamic) {
         console.log(`⏩ Skipping dynamic permission category: ${categoryKey}`)
@@ -377,7 +448,7 @@ export default function PermissionsPage() {
     return matchesSearch && matchesCategory
   })
 
-  // Group permissions by category
+  // Group permissions by category AND section
   const permissionsByCategory = filteredPermissions.reduce((acc, permission) => {
     const category = permission.category || 'General'
     if (!acc[category]) {
@@ -386,6 +457,42 @@ export default function PermissionsPage() {
     acc[category].push(permission)
     return acc
   }, {} as { [category: string]: Permission[] })
+  
+  // Group categories by sections for better visual organization
+  const permissionsBySection = React.useMemo(() => {
+    if (!frontendConfig?.permission_sections) {
+      // Fallback to a single section if sections not defined
+      return [{
+        id: 'all',
+        name: 'All Permissions',
+        description: '',
+        categories: Object.keys(permissionsByCategory),
+        color: '#6b7280',
+        icon: 'shield'
+      }]
+    }
+    
+    // Map categories to their sections
+    return frontendConfig.permission_sections.map((section: any) => ({
+      ...section,
+      categoryData: section.categories
+        .filter((cat: string) => {
+          // Find the display name for this category
+          const categoryData = frontendConfig.categories[cat]
+          const displayName = categoryData?.category_display || cat
+          return permissionsByCategory[displayName]
+        })
+        .map((cat: string) => {
+          const categoryData = frontendConfig.categories[cat]
+          const displayName = categoryData?.category_display || cat
+          return {
+            key: cat,
+            displayName,
+            permissions: permissionsByCategory[displayName] || []
+          }
+        })
+    })).filter((section: any) => section.categoryData.length > 0)
+  }, [frontendConfig, permissionsByCategory])
   
   // Generate permission matrix from user types (eliminates local matrix state)
   // Memoized to prevent re-computation unless userTypes actually change
@@ -452,6 +559,12 @@ export default function PermissionsPage() {
   const togglePermission = async (userTypeName: string, category: string, action: string, permissionName: string) => {
     const userType = userTypes.find(ut => ut.name === userTypeName)
     if (!userType) return
+    
+    // Check if user can modify permissions
+    if (!canModifyPermissions) {
+      showNotification('You do not have permission to modify user type permissions', 'error')
+      return
+    }
 
     // Create unique key for this permission change
     const changeKey = `${userType.id}-${category}-${action}`
@@ -718,6 +831,15 @@ export default function PermissionsPage() {
     )
   }
 
+  // Check permissions before rendering
+  if (!canViewPage && !loading) {
+    return <PermissionsAccessDenied needsPageAccess={true} />
+  }
+  
+  if (canViewPage && !canReadUserTypes && !loading) {
+    return <PermissionsAccessDenied needsReadAccess={true} />
+  }
+
   if (loading || schemaLoading) {
     return (
       <div className="p-6">
@@ -731,24 +853,6 @@ export default function PermissionsPage() {
   }
 
   return (
-    <PermissionGuard 
-      category="permissions" 
-      action="read"
-      fallback={
-        <div className="p-6">
-          <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-6 text-center">
-            <Shield className="w-12 h-12 text-red-500 mx-auto mb-4" />
-            <h3 className="text-lg font-semibold text-red-900 dark:text-red-200 mb-2">
-              Access Denied
-            </h3>
-            <p className="text-red-700 dark:text-red-300">
-              You don't have permission to view the permissions management page. 
-              Contact your administrator to request access.
-            </p>
-          </div>
-        </div>
-      }
-    >
       <div className="p-6">
       {/* Header */}
       <div className="mb-8">
@@ -953,11 +1057,42 @@ export default function PermissionsPage() {
                 </thead>
 
                 {/* Table Body */}
-                <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
-                  {Object.entries(permissionsByCategory).map(([category, categoryPermissions]) => (
-                    <React.Fragment key={`category-group-${category}`}>
-                      {/* Category Header Row */}
-                      <tr className="bg-gray-50 dark:bg-gray-700/50 border-t border-gray-200 dark:border-gray-600">
+                <tbody className="bg-white dark:bg-gray-800">
+                  {permissionsBySection.map((section, sectionIndex) => (
+                    <React.Fragment key={`section-${section.id}`}>
+                      {/* Section Header Row */}
+                      {sectionIndex > 0 && (
+                        <tr className="border-t-4 border-gray-300 dark:border-gray-600">
+                          <td colSpan={userTypes.length + 1} className="h-2 bg-gray-100 dark:bg-gray-800"></td>
+                        </tr>
+                      )}
+                      <tr className="bg-gradient-to-r from-gray-100 to-gray-50 dark:from-gray-800 dark:to-gray-900 border-t-2 border-gray-200 dark:border-gray-700">
+                        <td 
+                          colSpan={userTypes.length + 1} 
+                          className="px-6 py-4"
+                        >
+                          <div className="flex items-center">
+                            <div 
+                              className="w-2 h-8 rounded-full mr-4"
+                              style={{ backgroundColor: section.color }}
+                            />
+                            <div>
+                              <h3 className="text-base font-bold text-gray-900 dark:text-white">
+                                {section.name}
+                              </h3>
+                              <p className="text-sm text-gray-600 dark:text-gray-400 mt-0.5">
+                                {section.description}
+                              </p>
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                      
+                      {/* Render categories within this section */}
+                      {section.categoryData.map(({ key: categoryKey, displayName: category, permissions: categoryPermissions }: any) => (
+                        <React.Fragment key={`category-group-${section.id}-${category}`}>
+                          {/* Category Header Row */}
+                          <tr className="bg-gray-50 dark:bg-gray-700/50 border-t border-gray-200 dark:border-gray-600">
                         <td className="px-6 py-3 border-r border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-700 sticky left-0 z-10 w-72">
                           <button
                             type="button"
@@ -1219,6 +1354,8 @@ export default function PermissionsPage() {
                             )
                           })}
                         </tr>
+                      ))}
+                        </React.Fragment>
                       ))}
                     </React.Fragment>
                   ))}
@@ -1484,14 +1621,16 @@ export default function PermissionsPage() {
             <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
               User Roles
             </h3>
-            <button 
-              type="button"
-              onClick={handleCreateUserType}
-              className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-primary hover:bg-primary/90"
-            >
-              <Plus className="w-4 h-4 mr-2" />
-              Add Role
-            </button>
+            {canCreateUserType && (
+              <button 
+                type="button"
+                onClick={handleCreateUserType}
+                className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-primary hover:bg-primary/90"
+              >
+                <Plus className="w-4 h-4 mr-2" />
+                Add Role
+              </button>
+            )}
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -1507,22 +1646,26 @@ export default function PermissionsPage() {
                     </span>
                   </div>
                   <div className="flex space-x-2">
-                    <button 
-                      type="button"
-                      onClick={() => handleEditUserType(userType)}
-                      className="text-gray-400 hover:text-gray-500 dark:hover:text-gray-300 p-1 rounded-md hover:bg-gray-100 dark:hover:bg-gray-700"
-                      title="Edit user type"
-                    >
-                      <Edit className="w-4 h-4" />
-                    </button>
-                    <button 
-                      type="button"
-                      onClick={() => handleDeleteUserType(userType)}
-                      className="text-gray-400 hover:text-red-500 p-1 rounded-md hover:bg-gray-100 dark:hover:bg-gray-700"
-                      title="Delete user type"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+                    {canUpdateUserType && (
+                      <button 
+                        type="button"
+                        onClick={() => handleEditUserType(userType)}
+                        className="text-gray-400 hover:text-gray-500 dark:hover:text-gray-300 p-1 rounded-md hover:bg-gray-100 dark:hover:bg-gray-700"
+                        title="Edit user type"
+                      >
+                        <Edit className="w-4 h-4" />
+                      </button>
+                    )}
+                    {canDeleteUserType && (
+                      <button 
+                        type="button"
+                        onClick={() => handleDeleteUserType(userType)}
+                        className="text-gray-400 hover:text-red-500 p-1 rounded-md hover:bg-gray-100 dark:hover:bg-gray-700"
+                        title="Delete user type"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
                   </div>
                 </div>
                 
@@ -1571,6 +1714,5 @@ export default function PermissionsPage() {
         userType={selectedUserType}
       />
       </div>
-    </PermissionGuard>
   )
 }

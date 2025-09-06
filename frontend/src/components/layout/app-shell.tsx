@@ -34,18 +34,6 @@ export function AppShell({ children }: AppShellProps) {
       description: 'Overview and analytics',
     },
     {
-      name: 'Users',
-      href: '/users',
-      icon: Users,
-      description: 'User management and roles',
-    },
-    {
-      name: 'Permissions',
-      href: '/permissions',
-      icon: Settings,
-      description: 'Access control and security',
-    },
-    {
       name: 'Pipelines',
       href: '/pipelines',
       icon: Workflow,
@@ -67,7 +55,7 @@ export function AppShell({ children }: AppShellProps) {
       name: 'Settings',
       href: '/settings',
       icon: Settings,
-      description: 'Organization settings',
+      description: 'Organization, users & permissions',
     },
   ]
 

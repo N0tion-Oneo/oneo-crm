@@ -5,6 +5,8 @@ import { useRouter, usePathname } from "next/navigation";
 import { useAuth } from "@/features/auth/context";
 import {
   Building2,
+  Users,
+  Shield as ShieldIcon,
   Palette,
   Globe,
   Shield,
@@ -19,6 +21,18 @@ const settingsTabs = [
     href: "/settings", 
     icon: Building2,
     permission: 'organization'
+  },
+  { 
+    name: "Users & Teams", 
+    href: "/settings/users", 
+    icon: Users,
+    permission: 'users'
+  },
+  { 
+    name: "Permissions", 
+    href: "/settings/permissions", 
+    icon: ShieldIcon,
+    permission: 'permissions'
   },
   { 
     name: "Branding", 

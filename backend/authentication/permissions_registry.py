@@ -16,11 +16,28 @@ from django_tenants.utils import schema_context
 
 # Global permission schema available to all tenants
 PERMISSION_CATEGORIES = {
+    # ==========================================
+    # SYSTEM & ADMINISTRATION
+    # ==========================================
     'system': {
         'actions': ['full_access'],
         'description': 'System-wide administrative access and platform management',
         'category_display': 'System Administration'
     },
+    'monitoring': {
+        'actions': ['read', 'update'],
+        'description': 'System monitoring and analytics',
+        'category_display': 'System Monitoring'
+    },
+    'api_access': {
+        'actions': ['read', 'write', 'full_access'],
+        'description': 'API access control and management',
+        'category_display': 'API Access'
+    },
+    
+    # ==========================================
+    # USER & ACCESS MANAGEMENT
+    # ==========================================
     'users': {
         'actions': ['create', 'read', 'update', 'delete', 'impersonate', 'assign_roles', 'read_all'],
         'description': 'User account management and role assignment',
@@ -31,6 +48,20 @@ PERMISSION_CATEGORIES = {
         'description': 'User type and role management',
         'category_display': 'User Type Management'
     },
+    'permissions': {
+        'actions': ['read', 'update', 'grant', 'revoke', 'assign', 'manage_roles'],
+        'description': 'Permission management and role assignment',
+        'category_display': 'Permission Management'
+    },
+    'staff_profiles': {
+        'actions': ['create', 'read', 'update', 'delete', 'read_all', 'update_all', 'read_sensitive', 'update_sensitive', 'read_admin', 'update_admin'],
+        'description': 'Staff profile management and HR information',
+        'category_display': 'Staff Profiles'
+    },
+    
+    # ==========================================
+    # CORE DATA MANAGEMENT
+    # ==========================================
     'pipelines': {
         'actions': ['access', 'create', 'read', 'update', 'delete', 'clone', 'export', 'import', 'read_all'],
         'description': 'Pipeline management and configuration',
@@ -51,25 +82,78 @@ PERMISSION_CATEGORIES = {
         'description': 'Relationship management and traversal',
         'category_display': 'Relationship Management'
     },
-    'workflows': {
-        'actions': ['create', 'read', 'update', 'delete', 'execute', 'clone', 'export'],
-        'description': 'Workflow automation and execution',
-        'category_display': 'Workflow Management'
-    },
     'business_rules': {
         'actions': ['create', 'read', 'update', 'delete'],
         'description': 'Business rules configuration and management',
         'category_display': 'Business Rules'
     },
+    'duplicates': {
+        'actions': ['create', 'read', 'update', 'delete', 'resolve', 'detect'],
+        'description': 'Duplicate detection and resolution',
+        'category_display': 'Duplicate Management'
+    },
+    
+    # ==========================================
+    # AUTOMATION & WORKFLOWS
+    # ==========================================
+    'workflows': {
+        'actions': ['create', 'read', 'update', 'delete', 'execute', 'clone', 'export'],
+        'description': 'Workflow automation and execution',
+        'category_display': 'Workflow Management'
+    },
+    'ai_features': {
+        'actions': ['create', 'read', 'update', 'delete', 'configure', 'read_all'],
+        'description': 'AI features and configuration management',
+        'category_display': 'AI Features'
+    },
+    
+    # ==========================================
+    # COMMUNICATION & COLLABORATION
+    # ==========================================
     'communications': {
         'actions': ['create', 'read', 'update', 'delete', 'send'],
         'description': 'Communication management and messaging',
         'category_display': 'Communication Management'
     },
+    'participants': {
+        'actions': ['create', 'read', 'update', 'delete', 'link', 'batch'],
+        'description': 'Communication participant management operations',
+        'category_display': 'Participant Management'
+    },
+    'sharing': {
+        'actions': ['create_shared_views', 'create_shared_forms', 'configure_shared_views_forms', 'revoke_shared_views_forms'],
+        'description': 'External sharing and collaboration features',
+        'category_display': 'Sharing & Collaboration'
+    },
+    
+    # ==========================================
+    # CONTENT & REPORTS
+    # ==========================================
+    'forms': {
+        'actions': ['create', 'read', 'update', 'delete', 'submit', 'configure'],
+        'description': 'Form creation and management system',
+        'category_display': 'Forms Management'
+    },
+    'reports': {
+        'actions': ['create', 'read', 'update', 'delete', 'export'],
+        'description': 'Report generation and management',
+        'category_display': 'Reports & Analytics'
+    },
+    'filters': {
+        'actions': ['create_filters', 'edit_filters', 'delete_filters'],
+        'description': 'Saved filter creation and management',
+        'category_display': 'Filter Management'
+    },
+    
+    # ==========================================
+    # SETTINGS PAGES (Page-level access)
+    # ==========================================
     'settings': {
         'actions': [
             # Page-based permissions - if you have access, you can view and edit
             'organization',      # /settings page
+            'users',             # /settings/users page
+            'permissions',       # /settings/permissions page
             'branding',          # /settings/branding page
             'localization',      # /settings/localization page
             'security',          # /settings/security page
@@ -86,66 +170,11 @@ PERMISSION_CATEGORIES = {
             'general',           # /settings/communications/general page
             'accounts',          # /settings/communications/accounts page
             'providers',         # /settings/communications/providers page
+            'participants',      # /settings/communications/participants page
             'advanced'           # /settings/communications/advanced page
         ],
         'description': 'Communication settings sub-pages access',
         'category_display': 'Communication Settings'
-    },
-    'monitoring': {
-        'actions': ['read', 'update'],
-        'description': 'System monitoring and analytics',
-        'category_display': 'System Monitoring'
-    },
-    'ai_features': {
-        'actions': ['create', 'read', 'update', 'delete', 'configure', 'read_all'],
-        'description': 'AI features and configuration management',
-        'category_display': 'AI Features'
-    },
-    'reports': {
-        'actions': ['create', 'read', 'update', 'delete', 'export'],
-        'description': 'Report generation and management',
-        'category_display': 'Reports & Analytics'
-    },
-    'api_access': {
-        'actions': ['read', 'write', 'full_access'],
-        'description': 'API access control and management',
-        'category_display': 'API Access'
-    },
-
-    'duplicates': {
-        'actions': ['create', 'read', 'update', 'delete', 'resolve', 'detect'],
-        'description': 'Duplicate detection and resolution',
-        'category_display': 'Duplicate Management'
-    },
-    'filters': {
-        'actions': ['create_filters', 'edit_filters', 'delete_filters'],
-        'description': 'Saved filter creation and management',
-        'category_display': 'Filter Management'
-    },
-    'sharing': {
-        'actions': ['create_shared_views', 'create_shared_forms', 'configure_shared_views_forms', 'revoke_shared_views_forms'],
-        'description': 'External sharing and collaboration features',
-        'category_display': 'Sharing & Collaboration'
-    },
-    'forms': {
-        'actions': ['create', 'read', 'update', 'delete', 'submit', 'configure'],
-        'description': 'Form creation and management system',
-        'category_display': 'Forms Management'
-    },
-    'permissions': {
-        'actions': ['read', 'update', 'grant', 'revoke', 'assign', 'manage_roles'],
-        'description': 'Permission management and role assignment',
-        'category_display': 'Permission Management'
-    },
-    'staff_profiles': {
-        'actions': ['create', 'read', 'update', 'delete', 'read_all', 'update_all', 'read_sensitive', 'update_sensitive', 'read_admin', 'update_admin'],
-        'description': 'Staff profile management and HR information',
-        'category_display': 'Staff Profiles'
-    },
-    'participants': {
-        'actions': ['create', 'read', 'update', 'delete', 'link', 'settings', 'batch'],
-        'description': 'Communication participant management and auto-creation',
-        'category_display': 'Participant Management'
     }
 }
 
@@ -197,7 +226,6 @@ ACTION_DESCRIPTIONS = {
     'manage_roles': 'Create, modify, and delete user roles',
     # Participant management actions
     'link': 'Link participants to records',
-    'settings': 'Manage participant auto-creation settings',
     'batch': 'Run batch participant processing',
     
     # Nested settings permissions
@@ -333,6 +361,7 @@ def get_default_permissions_for_role(role_level: str) -> Dict[str, List[str]]:
             'billing_settings': ['read'],
             'communication_general_settings': ['read', 'update'],
             'communication_provider_settings': ['read'],
+            'communication_participants_settings': ['read', 'update'],
             'communication_advanced_settings': ['read'],
             'monitoring': ['read'],
             'ai_features': ['create', 'read', 'update', 'configure', 'read_all'],
@@ -344,7 +373,7 @@ def get_default_permissions_for_role(role_level: str) -> Dict[str, List[str]]:
             'forms': ['create', 'read', 'update', 'delete', 'configure'],
             'permissions': ['read', 'update', 'grant', 'revoke', 'assign', 'manage_roles'],
             'staff_profiles': ['create', 'read', 'update', 'read_all', 'update_all', 'read_sensitive', 'update_sensitive'],
-            'participants': ['create', 'read', 'update', 'link', 'settings', 'batch']
+            'participants': ['create', 'read', 'update', 'link', 'batch']
         }
     
     elif role_level == 'user':
@@ -368,6 +397,7 @@ def get_default_permissions_for_role(role_level: str) -> Dict[str, List[str]]:
             'billing_settings': [],
             'communication_general_settings': ['read'],
             'communication_provider_settings': [],
+            'communication_participants_settings': ['read'],
             'communication_advanced_settings': [],
             'ai_features': ['read', 'update'],
             'reports': ['read', 'export'],

@@ -29,19 +29,27 @@ export default function GeneralSettingsPage() {
   const { toast } = useToast()
   const { hasPermission } = useAuth()
   
-  // Check page-based permission - having permission means both view and edit
-  const hasPageAccess = hasPermission('communication_settings', 'general')
-  const canViewSettings = hasPageAccess
-  const canEditSettings = hasPageAccess
+  // Settings permission ONLY controls page access
+  const hasSettingsAccess = hasPermission('settings', 'communications')
+  
+  // Resource permissions control what actions can be performed
+  const hasGeneralAccess = hasPermission('communication_settings', 'general')
+  
+  // Page access: need settings permission to view the settings page
+  const canViewPage = hasSettingsAccess
+  
+  // Action permissions: require specific resource permission
+  const canViewSettings = hasGeneralAccess
+  const canEditSettings = hasGeneralAccess // For communication settings, permission implies both view and edit
 
   useEffect(() => {
-    // Only load if user has permission
-    if (!canViewSettings) {
+    // Only load if user has page access AND can view settings
+    if (!canViewPage || !canViewSettings) {
       setLoading(false)
       return
     }
     loadConfig()
-  }, [canViewSettings])
+  }, [canViewPage, canViewSettings])
 
   const loadConfig = async () => {
     try {
@@ -118,6 +126,25 @@ export default function GeneralSettingsPage() {
     )
   }
 
+  // Check page access first
+  if (!canViewPage) {
+    return (
+      <div className="p-6">
+        <div className="max-w-5xl mx-auto">
+          <div className="text-center py-12">
+            <AlertCircle className="h-12 w-12 mx-auto text-amber-500 mb-4" />
+            <h3 className="text-lg font-medium">Access Denied</h3>
+            <p className="text-gray-600">You don't have permission to access the communications settings page.</p>
+            <div className="mt-2 text-sm text-gray-500">
+              Required: <code className="bg-gray-100 dark:bg-gray-800 px-1 rounded">settings.communications</code>
+            </div>
+          </div>
+        </div>
+      </div>
+    )
+  }
+  
+  // Then check specific permission
   if (!canViewSettings) {
     return (
       <div className="p-6">
@@ -125,7 +152,10 @@ export default function GeneralSettingsPage() {
           <div className="text-center py-12">
             <AlertCircle className="h-12 w-12 mx-auto text-amber-500 mb-4" />
             <h3 className="text-lg font-medium">Access Denied</h3>
-            <p className="text-gray-600">You don't have permission to view general settings.</p>
+            <p className="text-gray-600">You have access to this page but need permissions to view general settings.</p>
+            <div className="mt-2 text-sm text-gray-500">
+              Required: <code className="bg-gray-100 dark:bg-gray-800 px-1 rounded">communication_settings.general</code>
+            </div>
           </div>
         </div>
       </div>

@@ -20,32 +20,53 @@ export function usePermissions() {
     validatePermissionSet
   } = usePermissionSchema()
 
+  // Settings-based permissions
+  const hasUsersSettingsAccess = () => hasPermission('settings', 'users')
+  const hasPermissionsSettingsAccess = () => hasPermission('settings', 'permissions')
+  const hasCommunicationsSettingsAccess = () => hasPermission('settings', 'communications')
+  const hasOrganizationSettingsAccess = () => hasPermission('settings', 'organization')
+  const hasBrandingSettingsAccess = () => hasPermission('settings', 'branding')
+  const hasSecuritySettingsAccess = () => hasPermission('settings', 'security')
+  const hasLocalizationSettingsAccess = () => hasPermission('settings', 'localization')
+  const hasDataPoliciesSettingsAccess = () => hasPermission('settings', 'data_policies')
+  const hasUsageSettingsAccess = () => hasPermission('settings', 'usage')
+  
   // User management permissions
+  // Settings permissions control PAGE access, resource permissions control ACTIONS
   const canCreateUsers = () => hasPermission('users', 'create')
-  const canReadUsers = () => hasPermission('users', 'read')
+  const canReadUsers = () => hasPermission('users', 'read')  // Read own user
+  const canReadAllUsers = () => hasPermission('users', 'read_all')  // Read all users
   const canUpdateUsers = () => hasPermission('users', 'update')
   const canDeleteUsers = () => hasPermission('users', 'delete')
   const canAssignRoles = () => hasPermission('users', 'assign_roles')
   const canImpersonateUsers = () => hasPermission('users', 'impersonate')
 
-  // User type management permissions
+  // User type/permission management
+  // Settings permissions control PAGE access, resource permissions control ACTIONS
+  const canReadUserTypes = () => hasPermission('user_types', 'read')
   const canManageUserTypes = () => hasPermission('user_types', 'update')
   const canCreateUserTypes = () => hasPermission('user_types', 'create')
   const canDeleteUserTypes = () => hasPermission('user_types', 'delete')
 
   // Pipeline management permissions
+  const canAccessPipelines = () => hasPermission('pipelines', 'access')  // Access specific pipelines
   const canCreatePipelines = () => hasPermission('pipelines', 'create')
+  const canReadPipelines = () => hasPermission('pipelines', 'read')  // Read own/assigned pipelines
+  const canReadAllPipelines = () => hasPermission('pipelines', 'read_all')  // Read all pipelines
   const canUpdatePipelines = () => hasPermission('pipelines', 'update')
   const canDeletePipelines = () => hasPermission('pipelines', 'delete')
   const canClonePipelines = () => hasPermission('pipelines', 'clone')
   const canExportPipelines = () => hasPermission('pipelines', 'export')
+  const canImportPipelines = () => hasPermission('pipelines', 'import')
 
   // Record management permissions
   const canCreateRecords = () => hasPermission('records', 'create')
+  const canReadRecords = () => hasPermission('records', 'read')  // Read own/assigned records
+  const canReadAllRecords = () => hasPermission('records', 'read_all')  // Read all records
   const canUpdateRecords = () => hasPermission('records', 'update')
   const canDeleteRecords = () => hasPermission('records', 'delete')
-  const canBulkEditRecords = () => hasPermission('records', 'bulk_edit')
   const canExportRecords = () => hasPermission('records', 'export')
+  const canImportRecords = () => hasPermission('records', 'import')
 
   // Workflow permissions
   const canCreateWorkflows = () => hasPermission('workflows', 'create')
@@ -62,6 +83,27 @@ export function usePermissions() {
   // Communication permissions
   const canSendCommunications = () => hasPermission('communications', 'send')
   const canCreateCommunications = () => hasPermission('communications', 'create')
+  
+  // Participant permissions
+  const canCreateParticipants = () => hasPermission('participants', 'create')
+  const canReadParticipants = () => hasPermission('participants', 'read')
+  const canUpdateParticipants = () => hasPermission('participants', 'update')
+  const canDeleteParticipants = () => hasPermission('participants', 'delete')
+  const canLinkParticipants = () => hasPermission('participants', 'link')
+  const canRunParticipantBatch = () => hasPermission('participants', 'batch')
+  
+  // Participant settings page access
+  const hasParticipantsSettingsAccess = () => hasPermission('communication_settings', 'participants')
+  
+  // Staff profile permissions
+  const canReadStaffProfiles = () => hasPermission('staff_profiles', 'read')  // Read own profile
+  const canReadAllStaffProfiles = () => hasPermission('staff_profiles', 'read_all')  // Read all profiles
+  const canUpdateStaffProfiles = () => hasPermission('staff_profiles', 'update')  // Update own profile
+  const canUpdateAllStaffProfiles = () => hasPermission('staff_profiles', 'update_all')  // Update all profiles
+  const canReadSensitiveStaffData = () => hasPermission('staff_profiles', 'read_sensitive')  // Read sensitive HR data
+  const canUpdateSensitiveStaffData = () => hasPermission('staff_profiles', 'update_sensitive')  // Update sensitive HR data
+  const canReadAdminStaffData = () => hasPermission('staff_profiles', 'read_admin')  // Read admin-level data
+  const canUpdateAdminStaffData = () => hasPermission('staff_profiles', 'update_admin')  // Update admin-level data
 
   // System permissions
   const isSystemAdmin = () => hasPermission('system', 'full_access')
@@ -88,6 +130,7 @@ export function usePermissions() {
   const hasPipelineAccess = () => hasAnyPermission('pipelines', ['read', 'create', 'update'])
   const hasWorkflowAccess = () => hasAnyPermission('workflows', ['read', 'create', 'execute'])
   const hasBusinessRulesAccess = () => hasAnyPermission('business_rules', ['read', 'create', 'update'])
+  const hasPermissionManagementAccess = () => hasAnyPermission('user_types', ['read', 'create', 'update'])
 
   // Complex permission combinations
   const canManageSystem = () => isSystemAdmin() || canManageSettings()
@@ -255,29 +298,37 @@ export function usePermissions() {
     // User management
     canCreateUsers,
     canReadUsers,
+    canReadAllUsers,
     canUpdateUsers,
     canDeleteUsers,
     canAssignRoles,
     canImpersonateUsers,
 
     // User type management
+    canReadUserTypes,
     canManageUserTypes,
     canCreateUserTypes,
     canDeleteUserTypes,
 
     // Pipeline management
+    canAccessPipelines,
     canCreatePipelines,
+    canReadPipelines,
+    canReadAllPipelines,
     canUpdatePipelines,
     canDeletePipelines,
     canClonePipelines,
     canExportPipelines,
+    canImportPipelines,
 
     // Record management
     canCreateRecords,
+    canReadRecords,
+    canReadAllRecords,
     canUpdateRecords,
     canDeleteRecords,
-    canBulkEditRecords,
     canExportRecords,
+    canImportRecords,
 
     // Workflow management
     canCreateWorkflows,
@@ -294,6 +345,25 @@ export function usePermissions() {
     // Communication management
     canSendCommunications,
     canCreateCommunications,
+    
+    // Participant management
+    canCreateParticipants,
+    canReadParticipants,
+    canUpdateParticipants,
+    canDeleteParticipants,
+    canLinkParticipants,
+    canRunParticipantBatch,
+    hasParticipantsSettingsAccess,
+    
+    // Staff profile management
+    canReadStaffProfiles,
+    canReadAllStaffProfiles,
+    canUpdateStaffProfiles,
+    canUpdateAllStaffProfiles,
+    canReadSensitiveStaffData,
+    canUpdateSensitiveStaffData,
+    canReadAdminStaffData,
+    canUpdateAdminStaffData,
 
     // System management
     isSystemAdmin,
@@ -314,12 +384,24 @@ export function usePermissions() {
     isUser,
     isViewer,
 
+    // Settings-based permissions
+    hasUsersSettingsAccess,
+    hasPermissionsSettingsAccess,
+    hasCommunicationsSettingsAccess,
+    hasOrganizationSettingsAccess,
+    hasBrandingSettingsAccess,
+    hasSecuritySettingsAccess,
+    hasLocalizationSettingsAccess,
+    hasDataPoliciesSettingsAccess,
+    hasUsageSettingsAccess,
+    
     // Permission level checks
     hasUserManagementAccess,
     hasFullUserManagement,
     hasPipelineAccess,
     hasWorkflowAccess,
     hasBusinessRulesAccess,
+    hasPermissionManagementAccess,
 
     // Complex combinations
     canManageSystem,

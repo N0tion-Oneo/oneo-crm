@@ -41,7 +41,7 @@ interface UserType {
   level: number
 }
 
-const UsersAccessDenied = () => (
+const UsersAccessDenied = ({ needsPageAccess, needsReadAccess }: { needsPageAccess?: boolean, needsReadAccess?: boolean }) => (
   <div className="flex items-center justify-center h-64">
     <div className="text-center max-w-md">
       <Shield className="w-12 h-12 text-red-500 mx-auto mb-4" />
@@ -49,11 +49,20 @@ const UsersAccessDenied = () => (
         Access Denied
       </h2>
       <p className="text-gray-600 dark:text-gray-400 mb-4">
-        You don't have permission to view user management. Please contact your administrator to request access.
+        {needsPageAccess 
+          ? "You don't have permission to access the user settings page."
+          : needsReadAccess
+          ? "You have access to this page but need read permissions to view users."
+          : "You don't have permission to view user management."}
       </p>
       <div className="bg-red-50 dark:bg-red-950/30 rounded-lg p-3">
         <p className="text-sm text-red-700 dark:text-red-300">
-          Required permission: <code className="bg-red-100 dark:bg-red-900/50 px-1 rounded">users.read</code>
+          {needsPageAccess && (
+            <>Required: <code className="bg-red-100 dark:bg-red-900/50 px-1 rounded">settings.users</code></>
+          )}
+          {needsReadAccess && (
+            <>Required: <code className="bg-red-100 dark:bg-red-900/50 px-1 rounded">users.read</code></>
+          )}
         </p>
       </div>
     </div>
@@ -61,7 +70,7 @@ const UsersAccessDenied = () => (
 )
 
 export default function UsersPage() {
-  const { user: currentUser } = useAuth()
+  const { user: currentUser, hasPermission } = useAuth()
   const [users, setUsers] = useState<User[]>([])
   const [userTypes, setUserTypes] = useState<UserType[]>([])
   const [loading, setLoading] = useState(true)
@@ -73,17 +82,63 @@ export default function UsersPage() {
   const [showStaffProfileModal, setShowStaffProfileModal] = useState(false)
   const [staffProfileUser, setStaffProfileUser] = useState<User | null>(null)
 
+  // Settings permission ONLY controls page access
+  const hasSettingsAccess = hasPermission('settings', 'users')
+  
+  // Resource permissions control what actions can be performed
+  const hasReadOwnPermission = hasPermission('users', 'read')  // Can read own user data
+  const hasReadAllPermission = hasPermission('users', 'read_all')  // Can read all users
+  const hasCreatePermission = hasPermission('users', 'create')
+  const hasUpdatePermission = hasPermission('users', 'update')
+  const hasDeletePermission = hasPermission('users', 'delete')
+  const hasAssignRolesPermission = hasPermission('users', 'assign_roles')
+  const hasImpersonatePermission = hasPermission('users', 'impersonate')
+  
+  // Page access: need settings permission to view the settings page
+  const canViewPage = hasSettingsAccess
+  
+  // Action permissions: require specific resource permissions
+  const canViewOwnUser = hasReadOwnPermission  // Can see own data
+  const canViewAllUsers = hasReadAllPermission  // Can see all users
+  const canViewUsers = canViewOwnUser || canViewAllUsers  // Can view some users
+  const canCreateUser = hasCreatePermission
+  const canUpdateUser = hasUpdatePermission
+  const canDeleteUser = hasDeletePermission
+  const canAssignRoles = hasAssignRolesPermission
+  const canImpersonate = hasImpersonatePermission
+
   // Load users and user types
   const loadData = async () => {
+    // Only load if user has page access AND can view users
+    if (!canViewPage || !canViewUsers) {
+      setLoading(false)
+      return
+    }
     try {
       setLoading(true)
-      const [usersResponse, userTypesResponse] = await Promise.all([
-        api.get('/auth/users/'), // Get all users in tenant
-        api.get('/auth/user-types/') // Get all user types
-      ])
+      
+      // Always load user types
+      const userTypesResponse = await api.get('/auth/user-types/')
+      const userTypesData = userTypesResponse.data.results || userTypesResponse.data || []
+      setUserTypes(Array.isArray(userTypesData) ? userTypesData : [])
+      
+      // Load users based on permissions
+      let usersData: any[] = []
+      if (canViewAllUsers) {
+        // Can see all users
+        const usersResponse = await api.get('/auth/users/')
+        usersData = usersResponse.data.results || usersResponse.data || []
+      } else if (canViewOwnUser && currentUser) {
+        // Can only see own user - format current user data properly
+        usersData = [{
+          ...currentUser,
+          user_type: currentUser.userType?.id,
+          user_type_name: currentUser.userType?.name || 'User',
+          full_name: currentUser.full_name || `${currentUser.first_name || ''} ${currentUser.last_name || ''}`.trim() || currentUser.email
+        }]
+      }
       
       // Transform users data to match User interface
-      const usersData = usersResponse.data.results || usersResponse.data || []
       const transformedUsers = usersData.map((userData: any) => ({
         id: userData.id,
         username: userData.username || '',
@@ -104,9 +159,12 @@ export default function UsersPage() {
       }))
       
       setUsers(transformedUsers)
-      setUserTypes(userTypesResponse.data.results || userTypesResponse.data || [])
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to load data:', error)
+      console.error('Error details:', error.response?.data)
+      // Ensure arrays are set even on error
+      setUsers([])
+      setUserTypes([])
     } finally {
       setLoading(false)
     }
@@ -166,6 +224,15 @@ export default function UsersPage() {
     }
   }
 
+  // Check permissions before rendering
+  if (!canViewPage && !loading) {
+    return <UsersAccessDenied needsPageAccess={true} />
+  }
+  
+  if (canViewPage && !canViewUsers && !loading) {
+    return <UsersAccessDenied needsReadAccess={true} />
+  }
+
   if (loading) {
     return (
       <div className="p-6">
@@ -183,11 +250,6 @@ export default function UsersPage() {
   }
 
   return (
-    <PermissionGuard 
-      category="users" 
-      action="read"
-      fallback={<UsersAccessDenied />}
-    >
       <div className="p-6">
         {/* Header */}
         <div className="mb-8">
@@ -223,7 +285,7 @@ export default function UsersPage() {
             className="block w-full sm:w-auto px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent text-sm"
           >
             <option value="all">All User Types</option>
-            {userTypes.map((type) => (
+            {(userTypes || []).map((type) => (
               <option key={type.id} value={type.name}>
                 {type.name}
               </option>
@@ -231,16 +293,16 @@ export default function UsersPage() {
           </select>
         </div>
 
-        {/* Add User Button */}
-        <PermissionButton
-          category="users"
-          action="create"
-          onClick={() => setShowCreateModal(true)}
-          className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-primary hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary"
-        >
-          <Plus className="w-4 h-4 mr-2" />
-          Add User
-        </PermissionButton>
+        {/* Add User Button - requires create permission */}
+        {canCreateUser && (
+          <button
+            onClick={() => setShowCreateModal(true)}
+            className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-primary hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary"
+          >
+            <Plus className="w-4 h-4 mr-2" />
+            Add User
+          </button>
+        )}
       </div>
 
       {/* Users Table */}
@@ -336,6 +398,12 @@ export default function UsersPage() {
                       onUserUpdated={handleUserUpdated}
                       onEditUser={handleEditUser as any}
                       onViewStaffProfile={handleViewStaffProfile as any}
+                      canEdit={canUpdateUser || canDeleteUser}
+                      canUpdate={canUpdateUser || (user.id === currentUser?.id)}  // Can update own user
+                      canDelete={canDeleteUser && (user.id !== currentUser?.id)}  // Cannot delete own user
+                      canAssignRoles={canAssignRoles}
+                      canImpersonate={canImpersonate && (user.id !== currentUser?.id)}  // Cannot impersonate self
+                      isOwnUser={user.id === currentUser?.id}
                     />
                   </td>
                 </tr>
@@ -418,6 +486,5 @@ export default function UsersPage() {
         onProfileUpdated={handleUserUpdated}
       />
       </div>
-    </PermissionGuard>
   )
 }

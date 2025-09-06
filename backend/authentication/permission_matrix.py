@@ -48,6 +48,84 @@ class PermissionMatrixManager:
             dynamic_categories = {}
             resource_type_metadata = {}
             
+            # Define the display order for categories (matching our registry organization)
+            category_order = [
+                # System & Administration
+                'system', 'monitoring', 'api_access',
+                # User & Access Management
+                'users', 'user_types', 'permissions', 'staff_profiles',
+                # Core Data Management
+                'pipelines', 'records', 'fields', 'relationships', 'business_rules', 'duplicates',
+                # Automation & Workflows
+                'workflows', 'ai_features',
+                # Communication & Collaboration
+                'communications', 'participants', 'sharing',
+                # Content & Reports
+                'forms', 'reports', 'filters',
+                # Settings Pages
+                'settings', 'communication_settings'
+            ]
+            
+            # Define sections for visual grouping
+            permission_sections = [
+                {
+                    'id': 'system_admin',
+                    'name': 'System & Administration',
+                    'description': 'Core system controls and monitoring',
+                    'categories': ['system', 'monitoring', 'api_access'],
+                    'color': '#dc2626',  # red-600
+                    'icon': 'shield'
+                },
+                {
+                    'id': 'user_access',
+                    'name': 'User & Access Management',
+                    'description': 'User accounts, roles, and permissions',
+                    'categories': ['users', 'user_types', 'permissions', 'staff_profiles'],
+                    'color': '#2563eb',  # blue-600
+                    'icon': 'users'
+                },
+                {
+                    'id': 'core_data',
+                    'name': 'Core Data Management',
+                    'description': 'Pipelines, records, and data operations',
+                    'categories': ['pipelines', 'records', 'fields', 'relationships', 'business_rules', 'duplicates'],
+                    'color': '#059669',  # emerald-600
+                    'icon': 'database'
+                },
+                {
+                    'id': 'automation',
+                    'name': 'Automation & Workflows',
+                    'description': 'Workflow automation and AI features',
+                    'categories': ['workflows', 'ai_features'],
+                    'color': '#7c3aed',  # violet-600
+                    'icon': 'zap'
+                },
+                {
+                    'id': 'communication',
+                    'name': 'Communication & Collaboration',
+                    'description': 'Messaging, participants, and sharing',
+                    'categories': ['communications', 'participants', 'sharing'],
+                    'color': '#0891b2',  # cyan-600
+                    'icon': 'message-circle'
+                },
+                {
+                    'id': 'content_reports',
+                    'name': 'Content & Reports',
+                    'description': 'Forms, reports, and filters',
+                    'categories': ['forms', 'reports', 'filters'],
+                    'color': '#ea580c',  # orange-600
+                    'icon': 'file-text'
+                },
+                {
+                    'id': 'settings',
+                    'name': 'Settings Pages',
+                    'description': 'Configuration and settings page access',
+                    'categories': ['settings', 'communication_settings'],
+                    'color': '#6b7280',  # gray-500
+                    'icon': 'settings'
+                }
+            ]
+            
             # Generate resource type metadata from grouped_categories
             for group_key, group_data in base_config['grouped_categories'].items():
                 if group_data.get('is_expandable', False):
@@ -58,11 +136,22 @@ class PermissionMatrixManager:
                         'is_expandable': True
                     }
             
+            # Process categories in the defined order
+            for category_key in category_order:
+                if category_key in base_config['categories']:
+                    category_data = base_config['categories'][category_key]
+                    if category_data.get('is_dynamic', False):
+                        dynamic_categories[category_key] = category_data
+                    else:
+                        static_categories[category_key] = category_data
+            
+            # Add any remaining categories not in the order list (e.g., dynamic ones)
             for category_key, category_data in base_config['categories'].items():
-                if category_data.get('is_dynamic', False):
-                    dynamic_categories[category_key] = category_data
-                else:
-                    static_categories[category_key] = category_data
+                if category_key not in category_order:
+                    if category_data.get('is_dynamic', False):
+                        dynamic_categories[category_key] = category_data
+                    else:
+                        static_categories[category_key] = category_data
             
             # Add frontend-specific enhancements
             frontend_config = {
@@ -70,6 +159,8 @@ class PermissionMatrixManager:
                 'static_categories': static_categories,
                 'dynamic_categories': dynamic_categories,
                 'resource_type_metadata': resource_type_metadata,
+                'category_order': category_order,  # Include the order for frontend to use
+                'permission_sections': permission_sections,  # Include section groupings
                 'frontend_helpers': self._get_frontend_helpers(),
                 'permission_dependencies': self._get_permission_dependencies(),
                 'user_type_recommendations': self._get_user_type_recommendations(),

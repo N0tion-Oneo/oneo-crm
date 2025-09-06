@@ -56,10 +56,18 @@ export default function AdvancedSettingsPage() {
   const { toast } = useToast()
   const { hasPermission } = useAuth()
   
-  // Check page-based permission - having permission means both view and edit
-  const hasPageAccess = hasPermission('communication_settings', 'advanced')
-  const canViewAdvanced = hasPageAccess
-  const canManageAdvanced = hasPageAccess
+  // Settings permission ONLY controls page access
+  const hasSettingsAccess = hasPermission('settings', 'communications')
+  
+  // Resource permissions control what actions can be performed
+  const hasAdvancedAccess = hasPermission('communication_settings', 'advanced')
+  
+  // Page access: need settings permission to view the settings page
+  const canViewPage = hasSettingsAccess
+  
+  // Action permissions: require specific resource permission
+  const canViewAdvanced = hasAdvancedAccess
+  const canManageAdvanced = hasAdvancedAccess // For communication settings, permission implies both view and edit
 
   useEffect(() => {
     // Only load if user has permission

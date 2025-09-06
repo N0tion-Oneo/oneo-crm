@@ -187,6 +187,24 @@ class CommunicationProviderSettingsPermission(permissions.BasePermission):
         return False
 
 
+class CommunicationParticipantsSettingsPermission(permissions.BasePermission):
+    """Communication participants settings page permissions"""
+    
+    def has_permission(self, request, view):
+        """Check if user can access communication participants settings page"""
+        if not request.user.is_authenticated:
+            return False
+        
+        permission_manager = SyncPermissionManager(request.user)
+        
+        if view.action in ['list', 'retrieve', 'create', 'update', 'partial_update']:
+            return permission_manager.has_permission('action', 'communication_settings', 'participants', None)
+        elif view.action == 'destroy':
+            return False
+        
+        return False
+
+
 class CommunicationAdvancedSettingsPermission(permissions.BasePermission):
     """Communication advanced settings page permissions"""
     
@@ -199,6 +217,46 @@ class CommunicationAdvancedSettingsPermission(permissions.BasePermission):
         
         if view.action in ['list', 'retrieve', 'create', 'update', 'partial_update']:
             return (permission_manager.has_permission('action', 'communication_settings', 'advanced', None) or
+                    permission_manager.has_permission('action', 'system', 'full_access', None))
+        elif view.action == 'destroy':
+            return False
+        
+        return False
+
+
+class UsersSettingsPermission(permissions.BasePermission):
+    """Users settings page permissions"""
+    
+    def has_permission(self, request, view):
+        """Check if user can access users settings page"""
+        if not request.user.is_authenticated:
+            return False
+        
+        permission_manager = SyncPermissionManager(request.user)
+        
+        # Single permission per page
+        if view.action in ['list', 'retrieve', 'create', 'update', 'partial_update']:
+            return permission_manager.has_permission('action', 'settings', 'users', None)
+        elif view.action == 'destroy':
+            # May want to allow user deletion with proper permission
+            return permission_manager.has_permission('action', 'settings', 'users', None)
+        
+        return False
+
+
+class PermissionsSettingsPermission(permissions.BasePermission):
+    """Permissions settings page permissions"""
+    
+    def has_permission(self, request, view):
+        """Check if user can access permissions settings page"""
+        if not request.user.is_authenticated:
+            return False
+        
+        permission_manager = SyncPermissionManager(request.user)
+        
+        # Single permission per page (keep system full_access as override)
+        if view.action in ['list', 'retrieve', 'create', 'update', 'partial_update']:
+            return (permission_manager.has_permission('action', 'settings', 'permissions', None) or
                     permission_manager.has_permission('action', 'system', 'full_access', None))
         elif view.action == 'destroy':
             return False

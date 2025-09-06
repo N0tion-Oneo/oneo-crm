@@ -22,9 +22,26 @@ interface UserActionsDropdownProps {
   onUserUpdated: () => void
   onEditUser: (user: User) => void
   onViewStaffProfile: (user: User) => void
+  canEdit?: boolean  // Whether user has permission to edit/manage users
+  canUpdate?: boolean  // Specific update permission
+  canDelete?: boolean  // Specific delete permission
+  canAssignRoles?: boolean  // Can assign roles to users
+  canImpersonate?: boolean  // Can impersonate users
+  isOwnUser?: boolean  // Is this the current user's own account
 }
 
-export default function UserActionsDropdown({ user, onUserUpdated, onEditUser, onViewStaffProfile }: UserActionsDropdownProps) {
+export default function UserActionsDropdown({ 
+  user, 
+  onUserUpdated, 
+  onEditUser, 
+  onViewStaffProfile, 
+  canEdit = true, 
+  canUpdate = canEdit, 
+  canDelete = canEdit,
+  canAssignRoles = false,
+  canImpersonate = false,
+  isOwnUser = false
+}: UserActionsDropdownProps) {
   const [isOpen, setIsOpen] = useState(false)
   const [loading, setLoading] = useState(false)
   const [showPermissionModal, setShowPermissionModal] = useState(false)
@@ -200,17 +217,19 @@ export default function UserActionsDropdown({ user, onUserUpdated, onEditUser, o
       {isOpen && (
         <div className="absolute right-0 mt-2 w-48 bg-white dark:bg-gray-800 rounded-md shadow-lg border border-gray-200 dark:border-gray-700 z-10">
           <div className="py-1">
-            {/* Edit User */}
-            <button
-              onClick={() => {
-                onEditUser(user)
-                setIsOpen(false)
-              }}
-              className="flex items-center w-full px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700"
-            >
-              <Edit className="w-4 h-4 mr-3" />
-              Edit User
-            </button>
+            {/* Edit User - only show if user has update permission */}
+            {canUpdate && (
+              <button
+                onClick={() => {
+                  onEditUser(user)
+                  setIsOpen(false)
+                }}
+                className="flex items-center w-full px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700"
+              >
+                <Edit className="w-4 h-4 mr-3" />
+                Edit User
+              </button>
+            )}
 
             {/* Staff Profile */}
             <button
@@ -242,48 +261,54 @@ export default function UserActionsDropdown({ user, onUserUpdated, onEditUser, o
               Send Email
             </button>
 
-            {/* Reset Password */}
-            <button
-              onClick={handleResetPassword}
-              disabled={loading}
-              className="flex items-center w-full px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-50"
-            >
-              <Key className="w-4 h-4 mr-3" />
-              Reset Password
-            </button>
-
-            <div className="border-t border-gray-200 dark:border-gray-700 my-1" />
-
-            {/* Activate/Deactivate */}
-            {user.is_active ? (
+            {/* Reset Password - only show if user has update permission */}
+            {canUpdate && (
               <button
-                onClick={handleDeactivateUser}
+                onClick={handleResetPassword}
                 disabled={loading}
-                className="flex items-center w-full px-4 py-2 text-sm text-orange-600 dark:text-orange-400 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-50"
+                className="flex items-center w-full px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-50"
               >
-                <UserX className="w-4 h-4 mr-3" />
-                Deactivate User
-              </button>
-            ) : (
-              <button
-                onClick={handleActivateUser}
-                disabled={loading}
-                className="flex items-center w-full px-4 py-2 text-sm text-green-600 dark:text-green-400 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-50"
-              >
-                <UserCheck className="w-4 h-4 mr-3" />
-                Activate User
+                <Key className="w-4 h-4 mr-3" />
+                Reset Password
               </button>
             )}
 
-            {/* Delete User */}
-            <button
-              onClick={handleDeleteUser}
-              disabled={loading}
-              className="flex items-center w-full px-4 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-50"
-            >
-              <Trash2 className="w-4 h-4 mr-3" />
-              Delete User
-            </button>
+            {(canUpdate || canDelete) && <div className="border-t border-gray-200 dark:border-gray-700 my-1" />}
+
+            {/* Activate/Deactivate - only show if user has update permission */}
+            {canUpdate && (
+              user.is_active ? (
+                <button
+                  onClick={handleDeactivateUser}
+                  disabled={loading}
+                  className="flex items-center w-full px-4 py-2 text-sm text-orange-600 dark:text-orange-400 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-50"
+                >
+                  <UserX className="w-4 h-4 mr-3" />
+                  Deactivate User
+                </button>
+              ) : (
+                <button
+                  onClick={handleActivateUser}
+                  disabled={loading}
+                  className="flex items-center w-full px-4 py-2 text-sm text-green-600 dark:text-green-400 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-50"
+                >
+                  <UserCheck className="w-4 h-4 mr-3" />
+                  Activate User
+                </button>
+              )
+            )}
+
+            {/* Delete User - only show if user has delete permission */}
+            {canDelete && (
+              <button
+                onClick={handleDeleteUser}
+                disabled={loading}
+                className="flex items-center w-full px-4 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-50"
+              >
+                <Trash2 className="w-4 h-4 mr-3" />
+                Delete User
+              </button>
+            )}
           </div>
         </div>
       )}

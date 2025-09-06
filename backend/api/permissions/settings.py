@@ -111,6 +111,30 @@ class DataPoliciesPermission(permissions.BasePermission):
         return False
 
 
+class CeleryPermission(permissions.BasePermission):
+    """Celery task management permissions"""
+    
+    def has_permission(self, request, view):
+        """Check if user can access Celery management"""
+        if not request.user.is_authenticated:
+            return False
+        
+        permission_manager = SyncPermissionManager(request.user)
+        
+        # Check for Celery permission or system full_access
+        if view.action in ['overview', 'queue_details', 'active_tasks', 'scheduled_tasks', 
+                          'worker_details', 'beat_schedule', 'task_result']:
+            # Read-only actions
+            return (permission_manager.has_permission('action', 'settings', 'celery', None) or
+                    permission_manager.has_permission('action', 'system', 'full_access', None))
+        elif view.action in ['purge_queue', 'revoke_task', 'ping_workers']:
+            # Write actions - require explicit permission
+            return (permission_manager.has_permission('action', 'settings', 'celery', None) or
+                    permission_manager.has_permission('action', 'system', 'full_access', None))
+        
+        return False
+
+
 class UsageAndBillingPermission(permissions.BasePermission):
     """Usage page permissions"""
     

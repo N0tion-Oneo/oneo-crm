@@ -49,6 +49,7 @@ from communications.views_settings import (
     ParticipantOverrideViewSet, ChannelParticipantSettingsViewSet
 )
 from communications.api.views import AccountConnectionViewSet
+from .views.celery_management import CeleryManagementViewSet
 from .views.tracking import (
     CommunicationTrackingViewSet, DeliveryTrackingViewSet,
     ReadTrackingViewSet, ResponseTrackingViewSet,
@@ -151,6 +152,9 @@ router.register(r'ai-jobs', AIJobViewSet, basename='ai-job')
 router.register(r'ai-usage-analytics', AIUsageAnalyticsViewSet, basename='ai-usage-analytics')
 router.register(r'ai-prompt-templates', AIPromptTemplateViewSet, basename='ai-prompt-template')
 router.register(r'ai-embeddings', AIEmbeddingViewSet, basename='ai-embedding')
+
+# Celery management endpoints
+router.register(r'celery', CeleryManagementViewSet, basename='celery-management')
 
 # Saved filters endpoints
 from .views.saved_filters import SavedFilterViewSet, SharedFilterViewSet, PublicFilterAccessViewSet, PipelineFilterManagementViewSet

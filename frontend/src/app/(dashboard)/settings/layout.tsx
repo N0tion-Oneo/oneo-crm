@@ -14,6 +14,7 @@ import {
   BarChart3,
   MessageCircle,
   Brain,
+  Activity,
 } from "lucide-react";
 
 const settingsTabs = [
@@ -81,6 +82,12 @@ const settingsTabs = [
     href: "/settings/ai", 
     icon: Brain,
     permission: 'ai'
+  },
+  { 
+    name: "Celery Tasks", 
+    href: "/settings/celery", 
+    icon: Activity,
+    permission: 'celery'
   },
 ];
 

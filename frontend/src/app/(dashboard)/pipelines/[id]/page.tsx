@@ -2,402 +2,402 @@
 
 import { useState, useEffect } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { useAuth } from '@/features/auth/context'
-import { ArrowLeft, Edit, Settings, Target, Copy } from 'lucide-react'
-import { RecordListView, type Pipeline, type Record } from '@/components/pipelines/record-list-view'
-import { RecordDetailDrawer } from '@/components/pipelines/record-detail-drawer'
+import { 
+  Database, 
+  FileText, 
+  Users, 
+  Clock,
+  TrendingUp,
+  Settings,
+  Download,
+  Copy,
+  Archive,
+  Activity,
+  ChevronRight,
+  AlertCircle
+} from 'lucide-react'
 import { pipelinesApi } from '@/lib/api'
+import Link from 'next/link'
 
-export default function PipelineRecordsPage() {
+interface PipelineStats {
+  fieldCount: number
+  recordCount: number
+  businessRules: number
+  activeUsers: number
+  lastModified: string
+  createdAt: string
+  weeklyGrowth: number
+  totalViews: number
+}
+
+interface ActivityItem {
+  id: string
+  action: string
+  user: string
+  timestamp: string
+  details?: string
+}
+
+export default function PipelineOverviewPage() {
   const params = useParams()
   const router = useRouter()
-  const { isLoading: authLoading, isAuthenticated } = useAuth()
   const pipelineId = params.id as string
+  const [pipeline, setPipeline] = useState<any>(null)
+  const [stats, setStats] = useState<PipelineStats | null>(null)
+  const [recentActivity, setRecentActivity] = useState<ActivityItem[]>([])
+  const [loading, setLoading] = useState(true)
 
-  const [pipeline, setPipeline] = useState<Pipeline | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [selectedRecord, setSelectedRecord] = useState<Record | null>(null)
-  const [showRecordDrawer, setShowRecordDrawer] = useState(false)
-  const [creatingNewRecord, setCreatingNewRecord] = useState(false)
-  const [drawerPipeline, setDrawerPipeline] = useState<Pipeline | null>(null)
-
-  // Load pipeline data
   useEffect(() => {
-    const loadPipeline = async () => {
+    const loadPipelineData = async () => {
       try {
+        setLoading(true)
         
-        // Load pipeline basic data
+        // Load pipeline details
         const response = await pipelinesApi.get(pipelineId)
+        setPipeline(response.data)
         
-        // Load field groups data
-        const fieldGroupsResponse = await pipelinesApi.getFieldGroups(pipelineId)
-        const fieldGroups = (fieldGroupsResponse.data as any)?.results || (fieldGroupsResponse as any).results || fieldGroupsResponse.data || fieldGroupsResponse || []
+        // Load field count
+        const fieldsResponse = await pipelinesApi.getFields(pipelineId)
+        const fieldCount = fieldsResponse.data?.length || 0
         
-        // Debug: Log the original field data from backend
-        console.log('Original backend field data:', response.data.fields)
-        console.log('Field groups data:', fieldGroups)
-        
-        // Transform API response to match frontend interface
-        const transformedPipeline: Pipeline = {
-          id: response.data.id?.toString() || pipelineId,
-          name: response.data.name || 'Unknown Pipeline',
-          description: response.data.description || '',
-          record_count: response.data.record_count || 0,
-          fields: (response.data.fields || []).map((field: any) => ({
-            id: field.id?.toString() || `field_${Date.now()}`,
-            name: field.slug || field.name?.toLowerCase().replace(/\s+/g, '_'),
-            display_name: field.name || field.display_name || field.slug || 'Unknown Field',
-            field_type: field.field_type || 'text',
-            // is_required removed - use stage-specific business rules only
-            is_visible_in_list: field.is_visible_in_list !== false,
-            is_visible_in_detail: field.is_visible_in_detail !== false,
-            is_visible_in_public_forms: field.is_visible_in_public_forms || false,
-            display_order: field.display_order || 0,
-            field_config: field.field_config || {},
-            config: field.field_config || {}, // Legacy support
-            ai_config: field.ai_config || {}, // AI field configuration
-            // Preserve original slug for backend API calls
-            original_slug: field.slug,
-            business_rules: field.business_rules || {},
-            // Field group assignment
-            field_group: field.field_group?.toString() || null
-          })),
-          field_groups: fieldGroups.map((group: any) => ({
-            id: group.id?.toString() || `group_${Date.now()}`,
-            name: group.name || 'Unknown Group',
-            description: group.description || '',
-            color: group.color || '#3B82F6',
-            icon: group.icon || 'folder',
-            display_order: group.display_order || 0,
-            field_count: group.field_count || 0
-          })),
-          stages: response.data.stages || []
-        }
-        
-        setPipeline(transformedPipeline)
-      } catch (error: any) {
-        console.error('Failed to load pipeline:', error)
-        console.error('Error details:', {
-          message: error?.message,
-          response: error?.response?.data,
-          status: error?.response?.status,
-          url: error?.config?.url
+        // Set stats (mock data for now - will be replaced with real API calls)
+        setStats({
+          fieldCount,
+          recordCount: response.data.record_count || 0,
+          businessRules: 5, // Mock
+          activeUsers: 3, // Mock
+          lastModified: response.data.updated_at || new Date().toISOString(),
+          createdAt: response.data.created_at || new Date().toISOString(),
+          weeklyGrowth: 12.5, // Mock
+          totalViews: 1234 // Mock
         })
         
-        // Show error notification
-        const errorNotification = document.createElement('div')
-        errorNotification.className = 'fixed top-4 right-4 bg-red-500 text-white px-4 py-2 rounded-md shadow-lg z-50 max-w-md'
-        errorNotification.innerHTML = `
-          <div class="font-semibold">Failed to load pipeline</div>
-          <div class="text-sm mt-1">${error?.response?.data?.detail || error?.message || 'Network error'}</div>
-          <div class="text-xs mt-1">Using mock data. Status: ${error?.response?.status || 'Unknown'}</div>
-        `
-        document.body.appendChild(errorNotification)
-        
-        setTimeout(() => {
-          if (document.body.contains(errorNotification)) {
-            document.body.removeChild(errorNotification)
+        // Set mock recent activity
+        setRecentActivity([
+          {
+            id: '1',
+            action: 'Field Added',
+            user: 'John Doe',
+            timestamp: '2 hours ago',
+            details: 'Added field "Deal Value"'
+          },
+          {
+            id: '2',
+            action: 'Business Rule Updated',
+            user: 'Sarah Smith',
+            timestamp: '5 hours ago',
+            details: 'Modified stage requirements'
+          },
+          {
+            id: '3',
+            action: 'Records Imported',
+            user: 'Mike Johnson',
+            timestamp: '1 day ago',
+            details: '50 new records imported'
+          },
+          {
+            id: '4',
+            action: 'Field Deleted',
+            user: 'Emily Brown',
+            timestamp: '2 days ago',
+            details: 'Removed field "Legacy Code"'
           }
-        }, 8000)
-        
-        // No fallback - let the error state be handled properly
-        console.error('Failed to load pipeline after timeout')
-        setError('Failed to load pipeline data')
+        ])
+      } catch (error) {
+        console.error('Failed to load pipeline data:', error)
+      } finally {
+        setLoading(false)
       }
     }
 
-    // Only load data when we have auth and pipelineId
-    if (pipelineId && !authLoading && isAuthenticated) {
-      loadPipeline()
-    } else if (!authLoading && !isAuthenticated) {
-      // Auth complete but not authenticated - redirect to login
-      router.push('/login')
+    if (pipelineId) {
+      loadPipelineData()
     }
-  }, [pipelineId, authLoading, isAuthenticated, router])
+  }, [pipelineId])
 
-
-  // Handle record selection with optional related pipeline
-  const handleEditRecord = (record: Record, relatedPipeline?: Pipeline) => {
-    setSelectedRecord(record)
-    setCreatingNewRecord(false)
-    setShowRecordDrawer(true)
-    
-    // Set the pipeline to use in the drawer (related pipeline or main pipeline)
-    if (relatedPipeline) {
-      console.log('🔗 Parent: Using related pipeline for drawer:', relatedPipeline.name)
-      setDrawerPipeline(relatedPipeline)
-    } else {
-      console.log('🔗 Parent: Using original pipeline for drawer')
-      setDrawerPipeline(pipeline)
-    }
-  }
-
-  // Handle new record creation
-  const handleCreateRecord = () => {
-    setSelectedRecord(null)
-    setCreatingNewRecord(true)
-    setShowRecordDrawer(true)
-    setDrawerPipeline(pipeline) // Always use main pipeline for new records
-  }
-
-  // Handle record save
-  const handleRecordSave = async (recordId: string, data: { [key: string]: any }, fullRecord?: any) => {
-    console.log(`🚨 PARENT PAGE BULK SAVE TRIGGERED:`, {
-      recordId,
-      dataKeys: Object.keys(data),
-      dataSize: Object.keys(data).length,
-      isExistingRecord: !creatingNewRecord,
-      stackTrace: new Error().stack
+  const formatDate = (dateString: string) => {
+    return new Date(dateString).toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
     })
-    
-    try {
-      let savedRecord
-      
-      // If fullRecord is provided (from drawer creation), use it directly
-      if (fullRecord && creatingNewRecord) {
-        savedRecord = fullRecord
-        console.log('Using full record from drawer:', savedRecord)
-      } else if (creatingNewRecord && recordId === 'new') {
-        // Create new record (only if not already created)
-        const response = await pipelinesApi.createRecord(pipelineId, { data })
-        savedRecord = response.data
-        console.log('Created record:', savedRecord)
-      } else if (creatingNewRecord && recordId !== 'new') {
-        // Record was already created by the drawer, fetch the full record
-        console.log('Record already created with ID:', recordId, 'fetching full record')
-        const response = await pipelinesApi.getRecord(pipelineId, recordId)
-        savedRecord = response.data
-      } else {
-        // Update existing record
-        const response = await pipelinesApi.updateRecord(pipelineId, recordId, { data })
-        savedRecord = response.data
-        console.log('Updated record:', savedRecord)
-      }
-      
-      // Update local state with the full record from the server
-      if (savedRecord) {
-        setSelectedRecord(savedRecord)
-        // Mark that we're no longer creating a new record
-        if (creatingNewRecord) {
-          setCreatingNewRecord(false)
-        }
-      } else if (selectedRecord) {
-        setSelectedRecord({
-          ...selectedRecord,
-          data: data,
-          updated_at: new Date().toISOString()
-        })
-      }
-      
-      // Refresh the pipeline data to update record count (for new records)
-      if (creatingNewRecord) {
-        const pipelineResponse = await pipelinesApi.get(pipelineId)
-        
-        // Also fetch field groups to maintain them
-        const fieldGroupsResponse = await pipelinesApi.getFieldGroups(pipelineId)
-        const fieldGroups = (fieldGroupsResponse.data as any)?.results || (fieldGroupsResponse as any).results || fieldGroupsResponse.data || fieldGroupsResponse || []
-        
-        const transformedPipeline: Pipeline = {
-          id: pipelineResponse.data.id?.toString() || pipelineId,
-          name: pipelineResponse.data.name || 'Unknown Pipeline',
-          description: pipelineResponse.data.description || '',
-          record_count: pipelineResponse.data.record_count || 0,
-          fields: (pipelineResponse.data.fields || []).map((field: any) => ({
-            id: field.id?.toString() || `field_${Date.now()}`,
-            name: field.slug || field.name?.toLowerCase().replace(/\s+/g, '_'),
-            display_name: field.name || field.display_name || field.slug || 'Unknown Field',
-            field_type: field.field_type || 'text',
-            is_visible_in_list: field.is_visible_in_list !== false,
-            is_visible_in_detail: field.is_visible_in_detail !== false,
-            is_visible_in_public_forms: field.is_visible_in_public_forms || false,
-            display_order: field.display_order || 0,
-            field_config: field.field_config || {},
-            config: field.field_config || {}, // Legacy support
-            ai_config: field.ai_config || {}, // AI field configuration
-            original_slug: field.slug,
-            business_rules: field.business_rules || {},
-            field_group: field.field_group?.toString() || null,
-            // Legacy compatibility
-            label: field.name || field.slug || 'Unknown Field',
-            visible: field.is_visible_in_list !== false,
-            order: field.display_order || 0
-          })),
-          field_groups: fieldGroups.map((group: any) => ({
-            id: group.id?.toString() || `group_${Date.now()}`,
-            name: group.name || 'Unknown Group',
-            description: group.description || '',
-            color: group.color || '#3B82F6',
-            icon: group.icon || 'folder',
-            display_order: group.display_order || 0,
-            field_count: group.field_count || 0
-          })),
-          stages: pipelineResponse.data.stages || []
-        }
-        setPipeline(transformedPipeline)
-        
-        // Also update the drawer pipeline to maintain field groups
-        setDrawerPipeline(transformedPipeline)
-      }
-    } catch (error) {
-      console.error('Failed to save record:', error)
-      throw error
+  }
+
+  const handleQuickAction = (action: string) => {
+    switch (action) {
+      case 'export':
+        router.push(`/pipelines/${pipelineId}/import-export`)
+        break
+      case 'clone':
+        // TODO: Implement clone functionality
+        console.log('Clone pipeline')
+        break
+      case 'archive':
+        // TODO: Implement archive functionality
+        console.log('Archive pipeline')
+        break
     }
   }
 
-  // Handle record delete
-  const handleRecordDelete = async (recordId: string) => {
-    try {
-      await pipelinesApi.deleteRecord(pipelineId, recordId)
-      setShowRecordDrawer(false)
-      setSelectedRecord(null)
-      
-      // Refresh the pipeline data to update record count and list
-      const response = await pipelinesApi.get(pipelineId)
-      
-      // Also fetch field groups to maintain them
-      const fieldGroupsResponse = await pipelinesApi.getFieldGroups(pipelineId)
-      const fieldGroups = (fieldGroupsResponse.data as any)?.results || (fieldGroupsResponse as any).results || fieldGroupsResponse.data || fieldGroupsResponse || []
-      
-      const transformedPipeline: Pipeline = {
-        id: response.data.id?.toString() || pipelineId,
-        name: response.data.name || 'Unknown Pipeline',
-        description: response.data.description || '',
-        record_count: response.data.record_count || 0,
-        fields: (response.data.fields || []).map((field: any) => ({
-          id: field.id?.toString() || `field_${Date.now()}`,
-          name: field.slug || field.name?.toLowerCase().replace(/\s+/g, '_'),
-          display_name: field.name || field.display_name || field.slug || 'Unknown Field',
-          field_type: field.field_type || 'text',
-          is_visible_in_list: field.is_visible_in_list !== false,
-          is_visible_in_detail: field.is_visible_in_detail !== false,
-          is_visible_in_public_forms: field.is_visible_in_public_forms || false,
-          display_order: field.display_order || 0,
-          field_config: field.field_config || {},
-          config: field.field_config || {}, // Legacy support
-          ai_config: field.ai_config || {}, // AI field configuration
-          original_slug: field.slug,
-          business_rules: field.business_rules || {},
-          field_group: field.field_group?.toString() || null,
-          // Legacy compatibility
-          label: field.name || field.slug || 'Unknown Field',
-          visible: field.is_visible_in_list !== false,
-          order: field.display_order || 0,
-          required: false // Requirements handled by conditional rules
-        })),
-        field_groups: fieldGroups.map((group: any) => ({
-          id: group.id?.toString() || `group_${Date.now()}`,
-          name: group.name || 'Unknown Group',
-          description: group.description || '',
-          color: group.color || '#3B82F6',
-          icon: group.icon || 'folder',
-          display_order: group.display_order || 0,
-          field_count: group.field_count || 0
-        })),
-        stages: response.data.stages || []
-      }
-      setPipeline(transformedPipeline)
-    } catch (error) {
-      console.error('Failed to delete record:', error)
-      throw error
-    }
+  if (loading) {
+    return (
+      <div className="p-8">
+        <div className="animate-pulse">
+          <div className="h-8 bg-gray-300 dark:bg-gray-600 rounded w-1/3 mb-4"></div>
+          <div className="grid grid-cols-4 gap-4 mb-8">
+            {[1, 2, 3, 4].map(i => (
+              <div key={i} className="h-24 bg-gray-300 dark:bg-gray-600 rounded"></div>
+            ))}
+          </div>
+        </div>
+      </div>
+    )
   }
 
-  // Handle pipeline edit - redirect to dedicated fields page
-  const handleEditPipeline = () => {
-    router.push(`/pipelines/${pipelineId}/fields`)
-  }
-
-
-  // Don't show page-level loading - let RecordListView handle its own loading state
-
-  // Create minimal pipeline object to eliminate sequential loading
-  const minimalPipeline = pipeline || {
-    id: pipelineId,
-    name: 'Loading...',
-    description: '',
-    record_count: 0,
-    fields: [],
-    field_groups: [],
-    stages: []
+  if (!pipeline) {
+    return (
+      <div className="p-8">
+        <div className="text-center">
+          <AlertCircle className="w-12 h-12 text-red-500 mx-auto mb-4" />
+          <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-2">
+            Pipeline not found
+          </h2>
+          <p className="text-gray-600 dark:text-gray-400">
+            The pipeline you're looking for doesn't exist or you don't have access to it.
+          </p>
+        </div>
+      </div>
+    )
   }
 
   return (
-    <div className="h-screen flex flex-col">
+    <div className="p-8">
       {/* Header */}
-      <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
-        <div className="flex items-center space-x-4">
-          <button
-            onClick={() => router.push('/pipelines')}
-            className="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 rounded-md hover:bg-gray-100 dark:hover:bg-gray-700"
-          >
-            <ArrowLeft className="w-5 h-5" />
-          </button>
-          
+      <div className="mb-8">
+        <div className="flex items-start justify-between">
           <div>
-            <h1 className="text-xl font-semibold text-gray-900 dark:text-white">
-              {minimalPipeline.name}
+            <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">
+              {pipeline.name}
             </h1>
-            <p className="text-sm text-gray-500 dark:text-gray-400">
-              {minimalPipeline.record_count} records
+            <p className="text-gray-600 dark:text-gray-400">
+              {pipeline.description || 'No description provided'}
             </p>
+            <div className="flex items-center gap-4 mt-3 text-sm text-gray-500 dark:text-gray-400">
+              <span className="capitalize bg-gray-100 dark:bg-gray-700 px-2 py-1 rounded">
+                {pipeline.pipeline_type || 'Custom'}
+              </span>
+              <span>Created {formatDate(stats?.createdAt || '')}</span>
+              <span>Modified {formatDate(stats?.lastModified || '')}</span>
+            </div>
+          </div>
+          
+          {/* Quick Actions */}
+          <div className="flex gap-2">
+            <button
+              onClick={() => handleQuickAction('export')}
+              className="px-3 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center text-sm"
+            >
+              <Download className="w-4 h-4 mr-1" />
+              Export
+            </button>
+            <button
+              onClick={() => handleQuickAction('clone')}
+              className="px-3 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center text-sm"
+            >
+              <Copy className="w-4 h-4 mr-1" />
+              Clone
+            </button>
+            <button
+              onClick={() => handleQuickAction('archive')}
+              className="px-3 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center text-sm"
+            >
+              <Archive className="w-4 h-4 mr-1" />
+              Archive
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Stats Grid */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+        <StatCard
+          icon={<Database className="w-5 h-5" />}
+          label="Fields"
+          value={stats?.fieldCount || 0}
+          trend={null}
+          color="blue"
+        />
+        <StatCard
+          icon={<FileText className="w-5 h-5" />}
+          label="Records"
+          value={stats?.recordCount || 0}
+          trend={stats?.weeklyGrowth}
+          color="green"
+        />
+        <StatCard
+          icon={<Settings className="w-5 h-5" />}
+          label="Business Rules"
+          value={stats?.businessRules || 0}
+          trend={null}
+          color="purple"
+        />
+        <StatCard
+          icon={<Users className="w-5 h-5" />}
+          label="Active Users"
+          value={stats?.activeUsers || 0}
+          trend={null}
+          color="orange"
+        />
+      </div>
+
+      {/* Content Grid */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Recent Activity */}
+        <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
+          <div className="p-6 border-b border-gray-200 dark:border-gray-700">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+                Recent Activity
+              </h2>
+              <Link
+                href={`/pipelines/${pipelineId}/activity`}
+                className="text-sm text-blue-600 dark:text-blue-400 hover:underline flex items-center"
+              >
+                View all
+                <ChevronRight className="w-4 h-4 ml-1" />
+              </Link>
+            </div>
+          </div>
+          <div className="p-6">
+            <div className="space-y-4">
+              {recentActivity.map(item => (
+                <div key={item.id} className="flex items-start">
+                  <div className="w-2 h-2 bg-blue-600 rounded-full mt-2 mr-3 flex-shrink-0"></div>
+                  <div className="flex-1">
+                    <div className="text-sm font-medium text-gray-900 dark:text-white">
+                      {item.action}
+                    </div>
+                    <div className="text-sm text-gray-600 dark:text-gray-400">
+                      {item.details}
+                    </div>
+                    <div className="text-xs text-gray-500 dark:text-gray-500 mt-1">
+                      {item.user} • {item.timestamp}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
 
-        <div className="flex items-center space-x-2">
-          
-          
-          <button
-            onClick={() => router.push(`/pipelines/${pipelineId}/business-rules`)}
-            className="px-3 py-1.5 text-sm bg-purple-500 text-white rounded-md hover:bg-purple-600 flex items-center"
-          >
-            <Target className="w-4 h-4 mr-1" />
-            Business Rules
-          </button>
-          
-          <button
-            onClick={() => router.push(`/pipelines/${pipelineId}/duplicates`)}
-            className="px-3 py-1.5 text-sm bg-orange-500 text-white rounded-md hover:bg-orange-600 flex items-center"
-          >
-            <Copy className="w-4 h-4 mr-1" />
-            Duplicate Management
-          </button>
-          
-          <button
-            onClick={handleEditPipeline}
-            className="px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center"
-          >
-            <Settings className="w-4 h-4 mr-1" />
-            Configure Fields
-          </button>
+        {/* Quick Links */}
+        <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
+          <div className="p-6 border-b border-gray-200 dark:border-gray-700">
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+              Configuration Areas
+            </h2>
+          </div>
+          <div className="p-6">
+            <div className="space-y-3">
+              <QuickLink
+                href={`/pipelines/${pipelineId}/fields`}
+                icon={<Database className="w-5 h-5" />}
+                title="Field Configuration"
+                description="Manage pipeline fields and data structure"
+              />
+              <QuickLink
+                href={`/pipelines/${pipelineId}/business-rules`}
+                icon={<FileText className="w-5 h-5" />}
+                title="Business Rules"
+                description="Configure validation and automation"
+              />
+              <QuickLink
+                href={`/pipelines/${pipelineId}/duplicates`}
+                icon={<Copy className="w-5 h-5" />}
+                title="Duplicate Management"
+                description="Set up duplicate detection"
+              />
+              <QuickLink
+                href={`/pipelines/${pipelineId}/analytics`}
+                icon={<TrendingUp className="w-5 h-5" />}
+                title="Analytics"
+                description="View performance metrics"
+              />
+            </div>
+          </div>
         </div>
       </div>
-
-      {/* Record List */}
-      <div className="flex-1">
-        <RecordListView
-          pipeline={minimalPipeline}
-          onEditRecord={handleEditRecord}
-          onCreateRecord={handleCreateRecord}
-        />
-      </div>
-
-      {/* Record Detail Drawer */}
-      {showRecordDrawer && drawerPipeline && (
-        <RecordDetailDrawer
-          record={selectedRecord}
-          pipeline={drawerPipeline}
-          isOpen={showRecordDrawer}
-          onClose={() => {
-            setShowRecordDrawer(false)
-            setSelectedRecord(null)
-            setCreatingNewRecord(false)
-            setDrawerPipeline(null) // Clear drawer pipeline when closing
-          }}
-          onSave={handleRecordSave}
-          onDelete={handleRecordDelete}
-        />
-      )}
-
     </div>
+  )
+}
+
+interface StatCardProps {
+  icon: React.ReactNode
+  label: string
+  value: number | string
+  trend?: number | null
+  color: 'blue' | 'green' | 'purple' | 'orange'
+}
+
+function StatCard({ icon, label, value, trend, color }: StatCardProps) {
+  const colorClasses = {
+    blue: 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400',
+    green: 'bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-400',
+    purple: 'bg-purple-50 dark:bg-purple-900/20 text-purple-600 dark:text-purple-400',
+    orange: 'bg-orange-50 dark:bg-orange-900/20 text-orange-600 dark:text-orange-400'
+  }
+
+  return (
+    <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+      <div className="flex items-center justify-between mb-2">
+        <div className={`p-2 rounded-lg ${colorClasses[color]}`}>
+          {icon}
+        </div>
+        {trend !== null && trend !== undefined && (
+          <span className={`text-sm font-medium ${
+            trend > 0 ? 'text-green-600' : 'text-red-600'
+          }`}>
+            {trend > 0 ? '+' : ''}{trend}%
+          </span>
+        )}
+      </div>
+      <div className="text-2xl font-bold text-gray-900 dark:text-white">
+        {value}
+      </div>
+      <div className="text-sm text-gray-600 dark:text-gray-400">
+        {label}
+      </div>
+    </div>
+  )
+}
+
+interface QuickLinkProps {
+  href: string
+  icon: React.ReactNode
+  title: string
+  description: string
+}
+
+function QuickLink({ href, icon, title, description }: QuickLinkProps) {
+  return (
+    <Link
+      href={href}
+      className="flex items-start p-3 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+    >
+      <div className="text-gray-400 mr-3 mt-0.5">
+        {icon}
+      </div>
+      <div className="flex-1">
+        <div className="font-medium text-gray-900 dark:text-white">
+          {title}
+        </div>
+        <div className="text-sm text-gray-600 dark:text-gray-400">
+          {description}
+        </div>
+      </div>
+      <ChevronRight className="w-5 h-5 text-gray-400 mt-0.5" />
+    </Link>
   )
 }

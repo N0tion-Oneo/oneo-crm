@@ -5,26 +5,8 @@ import logging
 from typing import Dict, Any, Optional, List
 
 from celery import shared_task
-from django.contrib.auth import get_user_model
-from django.utils import timezone
-from django.db import models, connection
-from django_tenants.utils import schema_context
-
-from pipelines.models import Record
-from communications.models import (
-    UserChannelConnection, Conversation, Message,
-    Participant, ConversationParticipant
-)
-from ..models import RecordCommunicationProfile, RecordSyncJob
-# RecordCommunicationLink removed - using participant-based linking instead
-from ..services import MessageMapper
-from ..services.identifier_extractor import RecordIdentifierExtractor
-from ..services.record_sync_orchestrator import RecordSyncOrchestrator
-from ..utils import ProviderIdBuilder
-from communications.unipile.core.client import UnipileClient
 
 logger = logging.getLogger(__name__)
-User = get_user_model()
 
 
 @shared_task(bind=True, max_retries=3, acks_late=True, reject_on_worker_lost=True)
@@ -49,6 +31,26 @@ def sync_record_communications(
         trigger_reason: Reason for sync
         channels_to_sync: Optional list of specific channels to sync (e.g., ['gmail', 'whatsapp'])
     """
+    # Import Django-dependent modules inside the task to avoid import errors during autodiscovery
+    from django.contrib.auth import get_user_model
+    from django.utils import timezone
+    from django.db import connection
+    from django_tenants.utils import schema_context
+    
+    from pipelines.models import Record
+    from communications.models import (
+        UserChannelConnection, Conversation, Message,
+        Participant, ConversationParticipant
+    )
+    from ..models import RecordCommunicationProfile, RecordSyncJob
+    from ..services import MessageMapper
+    from ..services.identifier_extractor import RecordIdentifierExtractor
+    from ..services.record_sync_orchestrator import RecordSyncOrchestrator
+    from ..utils import ProviderIdBuilder
+    from communications.unipile.core.client import UnipileClient
+    
+    User = get_user_model()
+    
     try:
         # Get tenant schema - use current connection if not provided
         if not tenant_schema:
@@ -154,6 +156,9 @@ def process_webhook_message_task(
         channel_type: Type of channel (email, whatsapp, etc.)
         channel_id: ID of the CommunicationConnection
     """
+    # Import Django-dependent modules inside the task
+    from ..services import MessageMapper
+    
     try:
         logger.info(f"Processing webhook message for {channel_type}")
         
@@ -191,6 +196,11 @@ def sync_all_records_for_pipeline(pipeline_id: int, tenant_schema: Optional[str]
     Args:
         pipeline_id: ID of the pipeline
     """
+    # Import Django-dependent modules inside the task
+    from django.db import connection
+    from django_tenants.utils import schema_context
+    from pipelines.models import Record
+    
     try:
         # Get tenant schema - use current connection if not provided
         if not tenant_schema:
@@ -237,6 +247,8 @@ def cleanup_old_sync_jobs():
     Cleanup old sync job records.
     Runs daily to remove jobs older than 30 days.
     """
+    # Import Django-dependent modules inside the task
+    from django.utils import timezone
     from ..models import RecordSyncJob
     
     try:
@@ -267,6 +279,10 @@ def check_stale_profiles(tenant_schema: Optional[str] = None):
     Check for profiles that haven't been synced recently.
     Runs hourly to identify records that need sync.
     """
+    # Import Django-dependent modules inside the task to avoid import errors during autodiscovery
+    from django.db import models
+    from django.utils import timezone
+    from django_tenants.utils import schema_context
     from ..models import RecordCommunicationProfile
     
     try:

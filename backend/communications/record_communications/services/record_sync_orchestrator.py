@@ -217,7 +217,7 @@ class RecordSyncOrchestrator:
                 
                 # Step 4: Link any existing participants that match this record's identifiers
                 logger.info(f"Linking existing participants to record {record_id}")
-                self._link_existing_participants_to_record(record, identifiers)
+                new_links_count = self._link_existing_participants_to_record(record, identifiers)
                 
                 # Step 4b: Link participants by domain if this record has domain identifiers
                 logger.info(f"Checking for domain-based secondary linking for record {record_id}")
@@ -226,9 +226,16 @@ class RecordSyncOrchestrator:
                 logger.info(f"   🌐 Domains to link: {domains}")
                 if domains:
                     logger.info(f"   🔗 Calling _link_existing_participants_by_domain with domains: {domains}")
-                    self._link_existing_participants_by_domain(record, domains)
+                    domain_links_count = self._link_existing_participants_by_domain(record, domains)
+                    new_links_count += domain_links_count
                 else:
                     logger.info(f"   ⏭️  No domains found in identifiers, skipping domain linking")
+                
+                # Update sync job with new links created count
+                if new_links_count > 0:
+                    logger.info(f"Created {new_links_count} new participant-to-record links")
+                    sync_job.new_links_created = new_links_count
+                    sync_job.save(update_fields=['new_links_created'])
                 
                 # Step 5: Update metrics
                 logger.info(f"Updating metrics for record {record_id}")
@@ -1019,6 +1026,8 @@ class RecordSyncOrchestrator:
             logger.info(f"Linked {linked_count} participants to company record {record.id} via domain matching")
         else:
             logger.debug(f"No unlinked participants found with domains matching record {record.id}")
+        
+        return linked_count
     
     def _store_attendee_mappings(
         self,

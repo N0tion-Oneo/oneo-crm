@@ -469,12 +469,23 @@ class RecordCommunicationsViewSet(viewsets.ViewSet):
             from communications.record_communications.tasks import sync_record_communications
             from django.db import connection
             
-            result = sync_record_communications.delay(
-                record_id=record.id,
-                tenant_schema=connection.schema_name,
-                triggered_by_id=request.user.id,
-                trigger_reason='Manual API trigger'
+            # Log the task details
+            tenant_schema = connection.schema_name
+            logger.info(f"Queueing sync task for record {record.id} in tenant {tenant_schema}")
+            
+            # Let the TenantTaskRouter handle routing based on tenant_schema in kwargs
+            # The router will route to {tenant_schema}_sync queue
+            result = sync_record_communications.apply_async(
+                args=[record.id],
+                kwargs={
+                    'tenant_schema': tenant_schema,
+                    'triggered_by_id': request.user.id,
+                    'trigger_reason': 'Manual API trigger'
+                }
+                # No explicit queue - let router handle it
             )
+            
+            logger.info(f"Task queued with ID: {result.id}")
             
             # Create sync job record
             sync_job = RecordSyncJob.objects.create(

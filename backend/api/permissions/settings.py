@@ -123,7 +123,7 @@ class CeleryPermission(permissions.BasePermission):
         
         # Check for Celery permission or system full_access
         if view.action in ['overview', 'queue_details', 'active_tasks', 'scheduled_tasks', 
-                          'worker_details', 'beat_schedule', 'task_result']:
+                          'worker_details', 'beat_schedule', 'task_result', 'task_history', 'redis_stats']:
             # Read-only actions
             return (permission_manager.has_permission('action', 'settings', 'celery', None) or
                     permission_manager.has_permission('action', 'system', 'full_access', None))

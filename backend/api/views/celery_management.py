@@ -37,57 +37,107 @@ class CeleryManagementViewSet(viewsets.ViewSet):
     
     @action(detail=False, methods=['get'])
     def overview(self, request):
-        """Get comprehensive Celery system overview - filtered by current tenant"""
+        """Get Celery overview for current tenant only"""
         try:
             # Get current tenant schema
             current_schema = connection.schema_name
             
-            # Get all queue information
-            queue_names = [
-                'background_sync', 'communications_maintenance', 'analytics',
-                'workflows', 'ai_processing', 'communications', 'realtime',
-                'triggers', 'bulk_operations', 'contact_resolution', 'celery'
-            ]
+            if current_schema == 'public':
+                return Response({
+                    'error': 'Celery management not available for public schema'
+                }, status=status.HTTP_400_BAD_REQUEST)
             
-            # Count tasks that belong to current tenant
+            # Get tenant-specific queue names - now with all queue types
+            from celery_workers.worker_manager import TenantWorkerManager
+            
+            # Get all queue types from worker definitions
+            all_queues = []
+            for worker_type_config in TenantWorkerManager.WORKER_TYPES.values():
+                all_queues.extend(worker_type_config['queues'])
+            
+            # Remove duplicates and create tenant-specific queue names
+            unique_queues = list(set(all_queues))
+            tenant_queues = [f"{current_schema}_{qt}" for qt in unique_queues]
+            
+            # Get queue information for tenant queues only
             queues = {}
             total_tasks = 0
-            tenant_tasks = 0
             
-            for queue in queue_names:
+            for queue in tenant_queues:
                 queue_length = self.redis_client.llen(queue)
-                queues[queue] = queue_length
+                # Show friendly name without tenant prefix
+                queue_display = queue.replace(f"{current_schema}_", "")
+                queues[queue_display] = queue_length
                 total_tasks += queue_length
-                
-                # Count tenant-specific tasks in this queue
-                if queue_length > 0:
-                    tenant_count = self._count_tenant_tasks_in_queue(queue, current_schema)
-                    tenant_tasks += tenant_count
+            
+            # Get tenant-specific worker information
+            from celery_workers import worker_manager
             
             # Get worker information using Celery inspect
             inspect = current_app.control.inspect()
             active_tasks = inspect.active() or {}
             stats = inspect.stats() or {}
-            registered = inspect.registered() or {}
             
-            # Process worker information
-            workers = []
+            # Find all workers for this tenant (6 specialized workers)
+            tenant_workers = []
             total_active = 0
+            
             for worker_name, worker_stats in stats.items():
-                active_count = len(active_tasks.get(worker_name, []))
-                total_active += active_count
-                
-                workers.append({
-                    'name': worker_name.split('@')[0],  # Extract worker type
-                    'hostname': worker_name,
-                    'status': 'online',
-                    'active_tasks': active_count,
-                    'processed': worker_stats.get('total', {}).get('tasks.completed', 0),
-                    'failed': worker_stats.get('total', {}).get('tasks.failed', 0),
-                    'pool': worker_stats.get('pool', {}).get('implementation', 'N/A'),
-                    'concurrency': worker_stats.get('pool', {}).get('max-concurrency', 1),
-                    'uptime': self._format_uptime(worker_stats.get('clock', 0))
-                })
+                # Check if this is one of the tenant's workers
+                if current_schema in worker_name:
+                    active_count = len(active_tasks.get(worker_name, []))
+                    total_active += active_count
+                    
+                    # Extract worker type from name (e.g., "oneotalent_sync@hostname" -> "sync")
+                    worker_type = 'unknown'
+                    for wt in TenantWorkerManager.WORKER_TYPES.keys():
+                        if f"{current_schema}_{wt}" in worker_name:
+                            worker_type = wt
+                            break
+                    
+                    # Get worker config for this type
+                    worker_config = TenantWorkerManager.WORKER_TYPES.get(worker_type, {})
+                    
+                    tenant_workers.append({
+                        'name': f"{current_schema}_{worker_type}",
+                        'type': worker_type,
+                        'description': worker_config.get('description', 'Worker'),
+                        'hostname': worker_name,
+                        'status': 'online',
+                        'active_tasks': active_count,
+                        'processed': worker_stats.get('total', {}).get('tasks.completed', 0),
+                        'failed': worker_stats.get('total', {}).get('tasks.failed', 0),
+                        'pool': worker_stats.get('pool', {}).get('implementation', 'N/A'),
+                        'concurrency': worker_config.get('concurrency', 1),
+                        'uptime': self._format_uptime(worker_stats.get('clock', 0)),
+                        'queues': worker_config.get('queues', [])
+                    })
+            
+            # If no workers found, check if they're starting
+            if not tenant_workers:
+                # Get status for all worker types
+                for worker_type in TenantWorkerManager.WORKER_TYPES.keys():
+                    worker_key = f"{current_schema}_{worker_type}"
+                    worker_status = worker_manager.get_worker_status(worker_key)
+                    if worker_status.get('running'):
+                        worker_config = TenantWorkerManager.WORKER_TYPES[worker_type]
+                        tenant_workers.append({
+                            'name': worker_key,
+                            'type': worker_type,
+                            'description': worker_config.get('description', 'Worker'),
+                            'hostname': f"{worker_key}@localhost",
+                            'status': 'starting',
+                            'active_tasks': 0,
+                            'processed': 0,
+                            'failed': 0,
+                            'pool': 'prefork',
+                            'concurrency': worker_config.get('concurrency', 1),
+                            'uptime': 'N/A',
+                            'pid': worker_status.get('pid'),
+                            'queues': worker_config.get('queues', [])
+                        })
+            
+            workers = tenant_workers
             
             # Get recent task execution stats for current tenant only
             # RecordSyncJob is a tenant-specific model
@@ -96,20 +146,21 @@ class CeleryManagementViewSet(viewsets.ViewSet):
             )
             
             return Response({
-                'status': 'healthy' if workers else 'degraded',
+                'status': 'healthy' if workers else 'no_worker',
                 'timestamp': timezone.now().isoformat(),
                 'current_tenant': current_schema,
                 'summary': {
                     'workers_online': len(workers),
+                    'expected_workers': len(TenantWorkerManager.WORKER_TYPES),
                     'total_queued': total_tasks,
-                    'tenant_queued': tenant_tasks,  # Tasks for current tenant
                     'total_active': total_active,
-                    'tasks_24h': recent_jobs.count(),  # Already filtered by tenant
+                    'tasks_24h': recent_jobs.count(),
                     'failed_24h': recent_jobs.filter(status='failed').count()
                 },
-                'queues': queues,  # Shows all queues but we could filter
-                'workers': workers,  # Workers are global, not tenant-specific
-                'note': 'Queue counts show all tasks. RecordSyncJob stats are tenant-specific.'
+                'queues': queues,  # Tenant-specific queues only
+                'workers': workers,  # All tenant-specific workers
+                'worker_types': TenantWorkerManager.WORKER_TYPES,  # Worker type definitions
+                'note': f'Showing {len(workers)} specialized workers for tenant {current_schema}'
             })
             
         except Exception as e:
@@ -419,6 +470,177 @@ class CeleryManagementViewSet(viewsets.ViewSet):
             
         except Exception as e:
             logger.error(f"Error getting beat schedule: {e}")
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @action(detail=False, methods=['get'])
+    def task_history(self, request):
+        """Get task execution history from Redis and database"""
+        try:
+            limit = int(request.query_params.get('limit', 50))
+            status_filter = request.query_params.get('status', None)
+            
+            # Get current tenant schema
+            current_schema = connection.schema_name
+            
+            # Get recent sync jobs from database (tenant-specific)
+            from communications.record_communications.models import RecordSyncJob
+            
+            jobs_query = RecordSyncJob.objects.select_related(
+                'record', 'record__pipeline', 'triggered_by'
+            ).all()
+            if status_filter:
+                jobs_query = jobs_query.filter(status=status_filter)
+            
+            recent_jobs = jobs_query.order_by('-created_at')[:limit]
+            
+            history = []
+            for job in recent_jobs:
+                # Get record display name
+                record_name = 'Unknown Record'
+                record_pipeline = 'Unknown Pipeline'
+                if job.record:
+                    record_data = job.record.data or {}
+                    # Try common name fields
+                    record_name = (
+                        record_data.get('name') or 
+                        record_data.get('full_name') or 
+                        record_data.get('first_name', '') + ' ' + record_data.get('last_name', '') or
+                        record_data.get('company_name') or
+                        record_data.get('title') or
+                        f'Record #{job.record.id}'
+                    ).strip()
+                    if job.record.pipeline:
+                        record_pipeline = job.record.pipeline.name
+                
+                history.append({
+                    'id': str(job.id),
+                    'task_name': 'sync_record_communications',
+                    'status': job.status,
+                    'record_id': job.record_id,
+                    'record_name': record_name,
+                    'pipeline_name': record_pipeline,
+                    'job_type': job.job_type,
+                    'trigger_reason': job.trigger_reason or 'Manual sync',
+                    'triggered_by': job.triggered_by.email if job.triggered_by else 'System',
+                    'created_at': job.created_at.isoformat(),
+                    'started_at': job.started_at.isoformat() if job.started_at else None,
+                    'completed_at': job.completed_at.isoformat() if job.completed_at else None,
+                    'duration_ms': (job.completed_at - job.started_at).total_seconds() * 1000 if job.completed_at and job.started_at else None,
+                    'error_message': job.error_message,
+                    'error_details': job.error_details,
+                    # Progress tracking
+                    'progress_percentage': job.progress_percentage,
+                    'current_step': job.current_step,
+                    'accounts_synced': job.accounts_synced,
+                    'total_accounts_to_sync': job.total_accounts_to_sync,
+                    # Results
+                    'messages_found': job.messages_found,
+                    'conversations_found': job.conversations_found,
+                    'new_links_created': job.new_links_created,
+                    # Celery task info
+                    'celery_task_id': job.celery_task_id
+                })
+            
+            # Get task result keys from Redis (last N results)
+            result_keys = self.redis_client.keys('celery-task-meta-*')[-limit:]
+            
+            for key in result_keys:
+                try:
+                    result_data = self.redis_client.get(key)
+                    if result_data:
+                        task_result = json.loads(result_data)
+                        task_id = key.replace('celery-task-meta-', '')
+                        
+                        history.append({
+                            'id': task_id,
+                            'task_name': task_result.get('task', 'unknown'),
+                            'status': task_result.get('status', 'unknown'),
+                            'result': str(task_result.get('result', ''))[:200],  # Truncate result
+                            'traceback': task_result.get('traceback'),
+                            'date_done': task_result.get('date_done'),
+                            'children': task_result.get('children', [])
+                        })
+                except Exception as e:
+                    logger.warning(f"Error parsing task result {key}: {e}")
+                    continue
+            
+            # Sort by date
+            history.sort(key=lambda x: x.get('created_at') or x.get('date_done', ''), reverse=True)
+            
+            return Response({
+                'count': len(history),
+                'tasks': history[:limit],
+                'tenant': current_schema
+            })
+            
+        except Exception as e:
+            logger.error(f"Error getting task history: {e}")
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @action(detail=False, methods=['get'])
+    def redis_stats(self, request):
+        """Get Redis statistics and queue metrics"""
+        try:
+            # Get Redis info
+            info = self.redis_client.info()
+            
+            # Get memory stats
+            memory_info = self.redis_client.info('memory')
+            
+            # Get all queue keys for current tenant
+            current_schema = connection.schema_name
+            tenant_queues = self.redis_client.keys(f'{current_schema}_*')
+            
+            queue_stats = {}
+            total_messages = 0
+            
+            for queue_key in tenant_queues:
+                queue_type = self.redis_client.type(queue_key)
+                if queue_type == 'list':
+                    queue_length = self.redis_client.llen(queue_key)
+                    queue_stats[queue_key] = {
+                        'type': 'queue',
+                        'length': queue_length
+                    }
+                    total_messages += queue_length
+                elif queue_type == 'zset':
+                    # Scheduled tasks
+                    scheduled_count = self.redis_client.zcard(queue_key)
+                    queue_stats[queue_key] = {
+                        'type': 'scheduled',
+                        'count': scheduled_count
+                    }
+            
+            # Get Celery-specific keys
+            celery_keys = self.redis_client.keys('celery*')
+            celery_stats = {
+                'task_results': len([k for k in celery_keys if k.startswith('celery-task-meta-')]),
+                'unacked': len([k for k in celery_keys if 'unacked' in k]),
+            }
+            
+            return Response({
+                'redis': {
+                    'version': info.get('redis_version'),
+                    'uptime_days': info.get('uptime_in_days'),
+                    'connected_clients': info.get('connected_clients'),
+                    'used_memory_human': memory_info.get('used_memory_human'),
+                    'used_memory_peak_human': memory_info.get('used_memory_peak_human'),
+                    'total_commands_processed': info.get('total_commands_processed'),
+                },
+                'queues': queue_stats,
+                'celery': celery_stats,
+                'tenant': current_schema,
+                'total_messages': total_messages
+            })
+            
+        except Exception as e:
+            logger.error(f"Error getting Redis stats: {e}")
             return Response(
                 {'error': str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR

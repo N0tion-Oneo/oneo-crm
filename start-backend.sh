@@ -83,8 +83,11 @@ cleanup() {
     echo "🧹 Stopping Django server..."
     lsof -ti :8000 | xargs kill -9 2>/dev/null || true
     
-    # Kill Celery workers
-    echo "🧹 Stopping Celery workers..."
+    # Stop all tenant workers
+    echo "🧹 Stopping all tenant workers..."
+    python manage.py manage_tenant_workers stop-all 2>/dev/null || true
+    
+    # Also kill any remaining Celery processes (failsafe)
     pkill -f "celery.*worker" 2>/dev/null || true
     
     echo "✅ Backend services stopped."
@@ -94,69 +97,46 @@ cleanup() {
 # Set up signal handlers
 trap cleanup SIGINT SIGTERM
 
-# Start Celery workers in background
-echo "🤖 Starting Celery workers..."
+# Start tenant-specific Celery workers
+echo "🤖 Starting tenant-specific Celery workers..."
 
-# AI Processing worker
-echo "  • Starting AI processing worker..."
-celery -A oneo_crm worker -n ai_worker@%h --loglevel=info --queues=ai_processing --concurrency=1 --pool=solo &
-CELERY_AI_PID=$!
+# Get list of active tenants (excluding public schema)
+echo "  • Detecting active tenants..."
+TENANTS=$(python -c "
+import os, sys
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'oneo_crm.settings')
+import django
+django.setup()
+from django_tenants.utils import get_tenant_model
+Tenant = get_tenant_model()
+for tenant in Tenant.objects.exclude(schema_name='public'):
+    print(tenant.schema_name)
+" 2>/dev/null)
 
-# Workflows worker (handles workflow execution and management)
-echo "  • Starting workflows worker..."
-celery -A oneo_crm worker -n workflows_worker@%h --loglevel=info --queues=workflows --concurrency=1 --pool=solo &
-CELERY_WORKFLOWS_PID=$!
+if [ -z "$TENANTS" ]; then
+    echo "  ⚠️  No tenants found. Workers will be started when tenants are created."
+else
+    # Start all worker types for each tenant
+    for TENANT in $TENANTS; do
+        echo "  • Starting workers for tenant: $TENANT"
+        echo "    - sync worker (data synchronization)"
+        echo "    - workflows worker (workflow execution)"
+        echo "    - ai worker (AI processing)"
+        echo "    - communications worker (messaging)"
+        echo "    - analytics worker (reports & statistics)"
+        echo "    - operations worker (general tasks)"
+        python manage.py manage_tenant_workers start --tenant $TENANT
+        sleep 2
+    done
+fi
 
-# Communications Maintenance worker (handles communication cleanup and maintenance)
-echo "  • Starting communications maintenance worker..."
-celery -A oneo_crm worker -n comm_maint_worker@%h --loglevel=info --queues=communications_maintenance --concurrency=1 --pool=solo &
-CELERY_COMM_MAINT_PID=$!
-
-# Background sync worker (handles record-level communication sync)
-echo "  • Starting background sync worker (record communications)..."
-celery -A oneo_crm worker -n sync_worker@%h --loglevel=info --queues=background_sync --concurrency=1 --pool=solo &
-CELERY_SYNC_PID=$!
-
-# Analytics worker (handles statistics and analytics tasks)
-echo "  • Starting analytics worker (communication statistics)..."
-celery -A oneo_crm worker -n analytics_worker@%h --loglevel=info --queues=analytics --concurrency=1 --pool=solo &
-CELERY_ANALYTICS_PID=$!
-
-# Give Celery workers a moment to start
+# Give workers a moment to start
 echo "  • Waiting for workers to initialize..."
 sleep 3
 
 # Verify workers are running
-echo "🔍 Verifying Celery workers..."
-if ps -p $CELERY_AI_PID > /dev/null; then
-    echo "  ✅ AI processing worker started (PID: $CELERY_AI_PID)"
-else
-    echo "  ❌ AI processing worker failed to start"
-fi
-
-if ps -p $CELERY_WORKFLOWS_PID > /dev/null; then
-    echo "  ✅ Workflows worker started (PID: $CELERY_WORKFLOWS_PID) - handles workflow execution"
-else
-    echo "  ❌ Workflows worker failed to start"
-fi
-
-if ps -p $CELERY_COMM_MAINT_PID > /dev/null; then
-    echo "  ✅ Communications maintenance worker started (PID: $CELERY_COMM_MAINT_PID)"
-else
-    echo "  ❌ Communications maintenance worker failed to start"
-fi
-
-if ps -p $CELERY_SYNC_PID > /dev/null; then
-    echo "  ✅ Background sync worker started (PID: $CELERY_SYNC_PID) - handles record communications"
-else
-    echo "  ❌ Background sync worker failed to start"
-fi
-
-if ps -p $CELERY_ANALYTICS_PID > /dev/null; then
-    echo "  ✅ Analytics worker started (PID: $CELERY_ANALYTICS_PID) - handles communication analytics"
-else
-    echo "  ❌ Analytics worker failed to start"
-fi
+echo "🔍 Verifying tenant workers..."
+python manage.py manage_tenant_workers status
 
 # Start the Django development server with ASGI support
 echo "🌟 Starting Django ASGI server (daphne) with WebSocket support..."
@@ -173,15 +153,22 @@ echo "   • Workflows: ws://localhost:8000/ws/workflows/"
 echo ""
 echo "🤖 Background services:"
 echo "   ✅ Django ASGI server (WebSocket + HTTP)"
-echo "   ✅ Celery AI worker (AI processing)"
-echo "   ✅ Celery workflows worker (workflow execution and management)"
-echo "   ✅ Celery communications maintenance worker (cleanup and maintenance)"
-echo "   ✅ Celery sync worker (background sync + record-level communications)"
-echo "   ✅ Celery analytics worker (statistics + hot conversations)"
+echo "   ✅ Tenant-specific Celery workers (6 specialized workers per tenant):"
+echo "      • sync - Data synchronization tasks"
+echo "      • workflows - Workflow execution and triggers"
+echo "      • ai - AI processing and field computation"
+echo "      • communications - Messaging and notifications"
+echo "      • analytics - Reports and statistics"
+echo "      • operations - General tasks and maintenance"
+echo "   ✅ Complete isolation between tenants"
+echo "   ✅ Dynamic worker management based on active tenants"
 echo ""
 echo "📋 Useful commands:"
-echo "   • View Celery logs: celery -A oneo_crm events"
+echo "   • View tenant workers: python manage.py manage_tenant_workers status"
+echo "   • Start tenant worker: python manage.py manage_tenant_workers start --tenant <schema>"
+echo "   • Stop tenant worker: python manage.py manage_tenant_workers stop --tenant <schema>"
 echo "   • Monitor Celery: celery -A oneo_crm inspect active"
+echo "   • View Celery events: celery -A oneo_crm events"
 echo "   • Stop everything: Press Ctrl+C"
 echo ""
 echo "✨ Backend ready with real-time messaging and AI processing! Press Ctrl+C to stop."

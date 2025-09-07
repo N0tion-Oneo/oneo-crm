@@ -21,6 +21,13 @@ app.config_from_object('django.conf:settings', namespace='CELERY')
 # This will look for tasks.py in each installed app
 app.autodiscover_tasks()
 
+# Import tenant routing after app is created
+try:
+    from celery_workers.routing import TenantTaskRouter
+except ImportError:
+    # Fallback if module not available yet
+    TenantTaskRouter = None
+
 # Celery Beat schedule for periodic tasks
 app.conf.beat_schedule = {
     # Process scheduled workflows every minute
@@ -115,6 +122,9 @@ app.conf.beat_schedule = {
     },
 }
 
+# Import tenant routing
+from celery_workers.routing import TenantTaskRouter
+
 # Celery configuration
 app.conf.update(
     # Task result backend (Redis)
@@ -142,8 +152,12 @@ app.conf.update(
     task_reject_on_worker_lost=True,  # Reject unacked tasks if worker crashes
     worker_max_tasks_per_child=50,
     
-    # Task routing and limits
-    task_routes={
+    # Task routing - Use tenant-aware router that dynamically routes to tenant queues
+    # Old static routes are replaced by dynamic tenant routing
+    task_routes=(TenantTaskRouter.route_task,),
+    
+    # Legacy static routes (kept for reference but overridden by tenant router)
+    _legacy_task_routes={
         # Workflow tasks
         'workflows.tasks.execute_workflow_async': {'queue': 'workflows'},
         'workflows.tasks.process_scheduled_workflows': {'queue': 'workflows'},

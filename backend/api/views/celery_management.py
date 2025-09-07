@@ -481,68 +481,151 @@ class CeleryManagementViewSet(viewsets.ViewSet):
         try:
             limit = int(request.query_params.get('limit', 50))
             status_filter = request.query_params.get('status', None)
+            task_type_filter = request.query_params.get('task_type', None)
             
             # Get current tenant schema
             current_schema = connection.schema_name
             
-            # Get recent sync jobs from database (tenant-specific)
-            from communications.record_communications.models import RecordSyncJob
-            
-            jobs_query = RecordSyncJob.objects.select_related(
-                'record', 'record__pipeline', 'triggered_by'
-            ).all()
-            if status_filter:
-                jobs_query = jobs_query.filter(status=status_filter)
-            
-            recent_jobs = jobs_query.order_by('-created_at')[:limit]
-            
             history = []
-            for job in recent_jobs:
-                # Get record display name
-                record_name = 'Unknown Record'
-                record_pipeline = 'Unknown Pipeline'
-                if job.record:
-                    record_data = job.record.data or {}
-                    # Try common name fields
-                    record_name = (
-                        record_data.get('name') or 
-                        record_data.get('full_name') or 
-                        record_data.get('first_name', '') + ' ' + record_data.get('last_name', '') or
-                        record_data.get('company_name') or
-                        record_data.get('title') or
-                        f'Record #{job.record.id}'
-                    ).strip()
-                    if job.record.pipeline:
-                        record_pipeline = job.record.pipeline.name
+            
+            # 1. Get recent sync jobs from database (tenant-specific)
+            if not task_type_filter or task_type_filter == 'sync':
+                from communications.record_communications.models import RecordSyncJob
                 
-                history.append({
-                    'id': str(job.id),
-                    'task_name': 'sync_record_communications',
-                    'status': job.status,
-                    'record_id': job.record_id,
-                    'record_name': record_name,
-                    'pipeline_name': record_pipeline,
-                    'job_type': job.job_type,
-                    'trigger_reason': job.trigger_reason or 'Manual sync',
-                    'triggered_by': job.triggered_by.email if job.triggered_by else 'System',
-                    'created_at': job.created_at.isoformat(),
-                    'started_at': job.started_at.isoformat() if job.started_at else None,
-                    'completed_at': job.completed_at.isoformat() if job.completed_at else None,
-                    'duration_ms': (job.completed_at - job.started_at).total_seconds() * 1000 if job.completed_at and job.started_at else None,
-                    'error_message': job.error_message,
-                    'error_details': job.error_details,
-                    # Progress tracking
-                    'progress_percentage': job.progress_percentage,
-                    'current_step': job.current_step,
-                    'accounts_synced': job.accounts_synced,
-                    'total_accounts_to_sync': job.total_accounts_to_sync,
-                    # Results
-                    'messages_found': job.messages_found,
-                    'conversations_found': job.conversations_found,
-                    'new_links_created': job.new_links_created,
-                    # Celery task info
-                    'celery_task_id': job.celery_task_id
-                })
+                jobs_query = RecordSyncJob.objects.select_related(
+                    'record', 'record__pipeline', 'triggered_by'
+                ).all()
+                if status_filter:
+                    jobs_query = jobs_query.filter(status=status_filter)
+                
+                recent_jobs = jobs_query.order_by('-created_at')[:limit]
+                
+                for job in recent_jobs:
+                    # Get record display name
+                    record_name = 'Unknown Record'
+                    record_pipeline = 'Unknown Pipeline'
+                    if job.record:
+                        record_data = job.record.data or {}
+                        # Try common name fields
+                        record_name = (
+                            record_data.get('name') or 
+                            record_data.get('full_name') or 
+                            record_data.get('first_name', '') + ' ' + record_data.get('last_name', '') or
+                            record_data.get('company_name') or
+                            record_data.get('title') or
+                            f'Record #{job.record.id}'
+                        ).strip()
+                        if job.record.pipeline:
+                            record_pipeline = job.record.pipeline.name
+                    
+                    history.append({
+                        'task_type': 'sync',
+                        'id': str(job.id),
+                        'task_name': 'sync_record_communications',
+                        'status': job.status,
+                        'record_id': job.record_id,
+                        'record_name': record_name,
+                        'pipeline_name': record_pipeline,
+                        'job_type': job.job_type,
+                        'trigger_reason': job.trigger_reason or 'Manual sync',
+                        'triggered_by': job.triggered_by.email if job.triggered_by else 'System',
+                        'created_at': job.created_at.isoformat(),
+                        'started_at': job.started_at.isoformat() if job.started_at else None,
+                        'completed_at': job.completed_at.isoformat() if job.completed_at else None,
+                        'duration_ms': (job.completed_at - job.started_at).total_seconds() * 1000 if job.completed_at and job.started_at else None,
+                        'error_message': job.error_message,
+                        'error_details': job.error_details,
+                        # Progress tracking
+                        'progress_percentage': job.progress_percentage,
+                        'current_step': job.current_step,
+                        'accounts_synced': job.accounts_synced,
+                        'total_accounts_to_sync': job.total_accounts_to_sync,
+                        # Results
+                        'messages_found': job.messages_found,
+                        'conversations_found': job.conversations_found,
+                        'new_links_created': job.new_links_created,
+                        # Celery task info
+                        'celery_task_id': job.celery_task_id
+                    })
+            
+            # 2. Get AI job history (tenant-specific)
+            if not task_type_filter or task_type_filter == 'ai':
+                from ai.models import AIJob
+                
+                ai_query = AIJob.objects.select_related('created_by').all()
+                if status_filter:
+                    ai_query = ai_query.filter(status=status_filter)
+                
+                recent_ai_jobs = ai_query.order_by('-created_at')[:limit]
+                
+                for ai_job in recent_ai_jobs:
+                    # Calculate duration if we have completed_at
+                    duration_ms = None
+                    if ai_job.completed_at and ai_job.created_at:
+                        duration_ms = (ai_job.completed_at - ai_job.created_at).total_seconds() * 1000
+                    elif ai_job.processing_time_ms:
+                        duration_ms = ai_job.processing_time_ms
+                    
+                    # Get result from output_data
+                    result_text = ''
+                    if ai_job.output_data:
+                        result_text = str(ai_job.output_data)[:200] + '...' if len(str(ai_job.output_data)) > 200 else str(ai_job.output_data)
+                    
+                    history.append({
+                        'task_type': 'ai',
+                        'id': str(ai_job.id),
+                        'task_name': 'process_ai_job',
+                        'status': ai_job.status,
+                        'job_type': ai_job.job_type,
+                        'model': ai_job.model_name,
+                        'prompt': ai_job.prompt_template[:100] + '...' if ai_job.prompt_template and len(ai_job.prompt_template) > 100 else ai_job.prompt_template,
+                        'result': result_text,
+                        'triggered_by': ai_job.created_by.email if ai_job.created_by else 'System',
+                        'created_at': ai_job.created_at.isoformat(),
+                        'started_at': None,  # AIJob doesn't have started_at
+                        'completed_at': ai_job.completed_at.isoformat() if ai_job.completed_at else None,
+                        'duration_ms': duration_ms,
+                        'error_message': ai_job.error_message,
+                        'usage': {'tokens_used': ai_job.tokens_used},
+                        'cost': ai_job.cost_dollars,
+                        'celery_task_id': getattr(ai_job, 'celery_task_id', None)
+                    })
+            
+            # 3. Get workflow execution history (tenant-specific)
+            if not task_type_filter or task_type_filter == 'workflow':
+                from workflows.models import WorkflowExecution
+                
+                workflow_query = WorkflowExecution.objects.select_related(
+                    'workflow', 'triggered_by'
+                ).all()
+                if status_filter:
+                    workflow_query = workflow_query.filter(status=status_filter)
+                
+                recent_workflows = workflow_query.order_by('-started_at')[:limit]
+                
+                for wf_exec in recent_workflows:
+                    # Count executed nodes from logs if available
+                    nodes_executed = wf_exec.logs.filter(status='completed').count()
+                    
+                    history.append({
+                        'task_type': 'workflow',
+                        'id': str(wf_exec.id),
+                        'task_name': 'execute_workflow_async',
+                        'status': wf_exec.status,
+                        'workflow_name': wf_exec.workflow.name if wf_exec.workflow else 'Unknown Workflow',
+                        'workflow_id': str(wf_exec.workflow_id),
+                        'trigger_type': 'manual',  # WorkflowExecution doesn't have trigger_type field
+                        'trigger_data': str(wf_exec.trigger_data)[:100] + '...' if wf_exec.trigger_data else None,
+                        'triggered_by': wf_exec.triggered_by.email if wf_exec.triggered_by else 'System',
+                        'created_at': wf_exec.started_at.isoformat() if wf_exec.started_at else None,
+                        'started_at': wf_exec.started_at.isoformat() if wf_exec.started_at else None,
+                        'completed_at': wf_exec.completed_at.isoformat() if wf_exec.completed_at else None,
+                        'duration_ms': (wf_exec.completed_at - wf_exec.started_at).total_seconds() * 1000 if wf_exec.completed_at and wf_exec.started_at else None,
+                        'error': wf_exec.error_message,
+                        'nodes_executed': nodes_executed,
+                        'execution_data': wf_exec.final_output,
+                        'celery_task_id': getattr(wf_exec, 'celery_task_id', None)
+                    })
             
             # Get task result keys from Redis (last N results)
             result_keys = self.redis_client.keys('celery-task-meta-*')[-limit:]

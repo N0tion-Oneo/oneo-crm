@@ -121,18 +121,53 @@ interface ActiveTask {
 
 interface TaskHistoryItem {
   id: string
+  task_type?: 'sync' | 'ai' | 'workflow'
   task_name: string
   status: string
   created_at?: string
+  started_at?: string
   completed_at?: string
   duration_ms?: number
   error_message?: string
+  error_details?: any
+  triggered_by?: string
+  celery_task_id?: string
+  
+  // Sync-specific fields
+  record_id?: number
+  record_name?: string
+  pipeline_name?: string
+  job_type?: string
+  trigger_reason?: string
+  progress_percentage?: number
+  current_step?: string
+  accounts_synced?: number
+  total_accounts_to_sync?: number
+  messages_found?: number
+  conversations_found?: number
+  new_links_created?: number
+  
+  // AI-specific fields
+  model?: string
+  prompt?: string
+  result?: string
+  usage?: any
+  cost?: number
+  
+  // Workflow-specific fields
+  workflow_name?: string
+  workflow_id?: string
+  trigger_type?: string
+  trigger_data?: string
+  nodes_executed?: number
+  execution_data?: any
+  error?: string
+  
+  // Legacy fields
   messages_synced?: number
   retry_count?: number
-  result?: string
   traceback?: string
   date_done?: string
-  record_id?: number
   sync_type?: string
 }
 
@@ -174,6 +209,7 @@ export default function CelerySettingsPage() {
   const [error, setError] = useState<string | null>(null)
   const [searchTerm, setSearchTerm] = useState("")
   const [statusFilter, setStatusFilter] = useState<string>("all")
+  const [taskTypeFilter, setTaskTypeFilter] = useState<string>("all")
   const [autoRefresh, setAutoRefresh] = useState(true)
   const [taskDetailsDialog, setTaskDetailsDialog] = useState<TaskHistoryItem | null>(null)
   const { toast } = useToast()
@@ -215,6 +251,9 @@ export default function CelerySettingsPage() {
       const params: any = { limit: 100 }
       if (statusFilter !== 'all') {
         params.status = statusFilter
+      }
+      if (taskTypeFilter !== 'all') {
+        params.task_type = taskTypeFilter
       }
       const response = await api.get("/api/v1/celery/task_history/", { params })
       setTaskHistory(response.data.tasks || [])
@@ -260,7 +299,7 @@ export default function CelerySettingsPage() {
       title: "Refreshed",
       description: "Celery status updated",
     })
-  }, [selectedQueue, statusFilter])
+  }, [selectedQueue, statusFilter, taskTypeFilter])
 
   const handlePurgeQueue = async () => {
     try {
@@ -418,6 +457,9 @@ export default function CelerySettingsPage() {
       const search = searchTerm.toLowerCase()
       return task.task_name.toLowerCase().includes(search) ||
              task.id.toLowerCase().includes(search) ||
+             (task.record_name && task.record_name.toLowerCase().includes(search)) ||
+             (task.pipeline_name && task.pipeline_name.toLowerCase().includes(search)) ||
+             (task.workflow_name && task.workflow_name.toLowerCase().includes(search)) ||
              (task.error_message && task.error_message.toLowerCase().includes(search))
     }
     return true
@@ -912,6 +954,17 @@ export default function CelerySettingsPage() {
                       className="pl-8 w-[200px]"
                     />
                   </div>
+                  <Select value={taskTypeFilter} onValueChange={setTaskTypeFilter}>
+                    <SelectTrigger className="w-[150px]">
+                      <SelectValue placeholder="Filter by type" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Types</SelectItem>
+                      <SelectItem value="sync">Sync Tasks</SelectItem>
+                      <SelectItem value="ai">AI Tasks</SelectItem>
+                      <SelectItem value="workflow">Workflows</SelectItem>
+                    </SelectContent>
+                  </Select>
                   <Select value={statusFilter} onValueChange={setStatusFilter}>
                     <SelectTrigger className="w-[150px]">
                       <SelectValue placeholder="Filter by status" />
@@ -947,21 +1000,53 @@ export default function CelerySettingsPage() {
                     {filteredHistory.map((task) => (
                       <TableRow key={task.id}>
                         <TableCell>
-                          <div>
-                            <div className="font-medium">
-                              {task.record_name || `Record #${task.record_id}`}
+                          {task.task_type === 'sync' ? (
+                            <div>
+                              <div className="font-medium">
+                                {task.record_name || `Record #${task.record_id}`}
+                              </div>
+                              <div className="text-xs text-muted-foreground">
+                                ID: {task.record_id}
+                              </div>
                             </div>
-                            <div className="text-xs text-muted-foreground">
-                              ID: {task.record_id}
+                          ) : task.task_type === 'workflow' ? (
+                            <div>
+                              <div className="font-medium">
+                                {task.workflow_name || 'Workflow'}
+                              </div>
+                              <div className="text-xs text-muted-foreground">
+                                {task.trigger_type || 'Manual'}
+                              </div>
                             </div>
-                          </div>
+                          ) : task.task_type === 'ai' ? (
+                            <div>
+                              <div className="font-medium">
+                                {task.job_type || 'AI Processing'}
+                              </div>
+                              <div className="text-xs text-muted-foreground">
+                                {task.model || 'AI Model'}
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="text-muted-foreground">-</div>
+                          )}
                         </TableCell>
                         <TableCell className="text-sm">
                           {task.pipeline_name || '-'}
                         </TableCell>
                         <TableCell>
-                          <Badge variant="outline" className="text-xs">
-                            {task.job_type || task.task_name?.split('.').slice(-1)[0] || 'sync'}
+                          <Badge 
+                            variant={
+                              task.task_type === 'ai' ? 'secondary' :
+                              task.task_type === 'workflow' ? 'default' :
+                              'outline'
+                            } 
+                            className="text-xs"
+                          >
+                            {task.task_type === 'sync' ? '🔄 Sync' :
+                             task.task_type === 'ai' ? '🤖 AI' :
+                             task.task_type === 'workflow' ? '⚡ Workflow' :
+                             task.task_name?.split('.').slice(-1)[0] || 'Task'}
                           </Badge>
                         </TableCell>
                         <TableCell>
@@ -987,7 +1072,7 @@ export default function CelerySettingsPage() {
                           ) : '-'}
                         </TableCell>
                         <TableCell>
-                          {task.messages_found !== undefined || task.conversations_found !== undefined ? (
+                          {task.task_type === 'sync' && (task.messages_found !== undefined || task.conversations_found !== undefined) ? (
                             <div className="text-xs space-y-1">
                               {task.messages_found !== undefined && (
                                 <div>{task.messages_found} messages</div>
@@ -997,6 +1082,33 @@ export default function CelerySettingsPage() {
                               )}
                               {task.new_links_created !== undefined && task.new_links_created > 0 && (
                                 <div className="text-green-600">{task.new_links_created} new links</div>
+                              )}
+                            </div>
+                          ) : task.task_type === 'workflow' ? (
+                            <div className="text-xs space-y-1">
+                              {task.nodes_executed !== undefined && (
+                                <div>{task.nodes_executed} nodes executed</div>
+                              )}
+                              {task.execution_data && (
+                                <div className="text-muted-foreground truncate max-w-[150px]">
+                                  {typeof task.execution_data === 'string' 
+                                    ? task.execution_data.substring(0, 50) 
+                                    : JSON.stringify(task.execution_data).substring(0, 50)}...
+                                </div>
+                              )}
+                            </div>
+                          ) : task.task_type === 'ai' ? (
+                            <div className="text-xs space-y-1">
+                              {task.usage?.tokens_used !== undefined && (
+                                <div>{task.usage.tokens_used} tokens</div>
+                              )}
+                              {task.cost !== undefined && (
+                                <div>${task.cost.toFixed(4)}</div>
+                              )}
+                              {task.result && (
+                                <div className="text-muted-foreground truncate max-w-[150px]">
+                                  {task.result.substring(0, 50)}...
+                                </div>
                               )}
                             </div>
                           ) : '-'}
@@ -1204,7 +1316,26 @@ export default function CelerySettingsPage() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <p className="text-sm text-muted-foreground">Task Type</p>
-                  <p className="font-mono text-sm">{taskDetailsDialog.job_type || taskDetailsDialog.task_name}</p>
+                  <div className="flex items-center gap-1">
+                    {taskDetailsDialog.task_type === 'sync' && (
+                      <Badge variant="outline" className="text-xs">
+                        🔄 Sync
+                      </Badge>
+                    )}
+                    {taskDetailsDialog.task_type === 'ai' && (
+                      <Badge variant="outline" className="text-xs">
+                        🤖 AI
+                      </Badge>
+                    )}
+                    {taskDetailsDialog.task_type === 'workflow' && (
+                      <Badge variant="outline" className="text-xs">
+                        ⚡ Workflow
+                      </Badge>
+                    )}
+                    {!taskDetailsDialog.task_type && (
+                      <p className="font-mono text-sm">{taskDetailsDialog.job_type || taskDetailsDialog.task_name}</p>
+                    )}
+                  </div>
                 </div>
                 <div>
                   <p className="text-sm text-muted-foreground">Status</p>
@@ -1265,12 +1396,108 @@ export default function CelerySettingsPage() {
                 </div>
               )}
 
-              {/* Results */}
-              {(taskDetailsDialog.messages_found !== undefined || 
+              {/* Task-specific Results */}
+              {/* Sync Results */}
+              {taskDetailsDialog.task_type === 'sync' && (
+                taskDetailsDialog.messages_synced !== undefined || 
+                taskDetailsDialog.conversations_created !== undefined || 
+                taskDetailsDialog.new_links_created !== undefined ||
+                taskDetailsDialog.messages_found !== undefined ||
+                taskDetailsDialog.conversations_found !== undefined) && (
+                <div className="bg-green-50 dark:bg-green-900/20 p-4 rounded-lg space-y-2">
+                  <h4 className="font-semibold text-sm">Sync Results</h4>
+                  <div className="grid grid-cols-3 gap-4">
+                    <div>
+                      <p className="text-sm text-muted-foreground">Messages</p>
+                      <p className="font-semibold text-lg">{taskDetailsDialog.messages_synced ?? taskDetailsDialog.messages_found ?? 0}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-muted-foreground">Conversations</p>
+                      <p className="font-semibold text-lg">{taskDetailsDialog.conversations_created ?? taskDetailsDialog.conversations_found ?? 0}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-muted-foreground">New Links Created</p>
+                      <p className="font-semibold text-lg text-green-600">{taskDetailsDialog.new_links_created ?? 0}</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* AI Results */}
+              {taskDetailsDialog.task_type === 'ai' && (
+                <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-lg space-y-2">
+                  <h4 className="font-semibold text-sm">AI Processing Results</h4>
+                  {taskDetailsDialog.job_type && (
+                    <div className="mb-2">
+                      <p className="text-sm text-muted-foreground">Job Type</p>
+                      <p className="text-sm">{taskDetailsDialog.job_type}</p>
+                    </div>
+                  )}
+                  {taskDetailsDialog.model && (
+                    <div className="mb-2">
+                      <p className="text-sm text-muted-foreground">Model</p>
+                      <p className="text-sm">{taskDetailsDialog.model}</p>
+                    </div>
+                  )}
+                  {taskDetailsDialog.prompt && (
+                    <div className="mb-2">
+                      <p className="text-sm text-muted-foreground">Prompt</p>
+                      <p className="text-sm text-muted-foreground">{taskDetailsDialog.prompt}</p>
+                    </div>
+                  )}
+                  {(taskDetailsDialog.usage || taskDetailsDialog.cost !== undefined) && (
+                    <div className="grid grid-cols-2 gap-4">
+                      {taskDetailsDialog.usage?.tokens_used && (
+                        <div>
+                          <p className="text-sm text-muted-foreground">Tokens Used</p>
+                          <p className="font-semibold">{taskDetailsDialog.usage.tokens_used}</p>
+                        </div>
+                      )}
+                      {taskDetailsDialog.cost !== undefined && (
+                        <div>
+                          <p className="text-sm text-muted-foreground">Cost</p>
+                          <p className="font-semibold">${taskDetailsDialog.cost.toFixed(4)}</p>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Workflow Results */}
+              {taskDetailsDialog.task_type === 'workflow' && (
+                <div className="bg-purple-50 dark:bg-purple-900/20 p-4 rounded-lg space-y-2">
+                  <h4 className="font-semibold text-sm">Workflow Execution Results</h4>
+                  {taskDetailsDialog.workflow_name && (
+                    <div className="mb-2">
+                      <p className="text-sm text-muted-foreground">Workflow</p>
+                      <p className="text-sm font-medium">{taskDetailsDialog.workflow_name}</p>
+                    </div>
+                  )}
+                  {taskDetailsDialog.nodes_executed !== undefined && (
+                    <div className="mb-2">
+                      <p className="text-sm text-muted-foreground">Nodes Executed</p>
+                      <p className="font-semibold">{taskDetailsDialog.nodes_executed}</p>
+                    </div>
+                  )}
+                  {taskDetailsDialog.trigger_data && (
+                    <div>
+                      <p className="text-sm text-muted-foreground">Trigger Data</p>
+                      <pre className="text-xs bg-secondary p-2 rounded overflow-x-auto mt-1">
+                        {JSON.stringify(taskDetailsDialog.trigger_data, null, 2)}
+                      </pre>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Legacy Results (for backwards compatibility) */}
+              {!taskDetailsDialog.task_type && (
+                taskDetailsDialog.messages_found !== undefined || 
                 taskDetailsDialog.conversations_found !== undefined || 
                 taskDetailsDialog.new_links_created !== undefined) && (
                 <div className="bg-green-50 dark:bg-green-900/20 p-4 rounded-lg space-y-2">
-                  <h4 className="font-semibold text-sm">Sync Results</h4>
+                  <h4 className="font-semibold text-sm">Results</h4>
                   <div className="grid grid-cols-3 gap-4">
                     {taskDetailsDialog.messages_found !== undefined && (
                       <div>

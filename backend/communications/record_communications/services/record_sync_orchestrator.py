@@ -905,6 +905,8 @@ class RecordSyncOrchestrator:
             logger.info(f"Linked {linked_count} existing participants to record {record.id}")
         else:
             logger.debug(f"No unlinked participants found matching record {record.id}")
+        
+        return linked_count
     
     def _link_existing_participants_by_domain(self, record: Record, domains: List[str] = None):
         """

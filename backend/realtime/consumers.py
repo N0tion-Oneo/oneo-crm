@@ -139,6 +139,7 @@ class BaseRealtimeConsumer(AsyncWebsocketConsumer):
         try:
             message = json.loads(text_data)
             message_type = message.get('type')
+            logger.info(f"📨 WebSocket received message type: {message_type}, channel: {message.get('channel', 'N/A')}")
             
             # Handle authentication
             if message_type == 'authenticate':
@@ -245,11 +246,15 @@ class BaseRealtimeConsumer(AsyncWebsocketConsumer):
             await self.send_error('Channel required')
             return
         
+        # Log user state for debugging
+        logger.info(f"📡 Subscribe request for channel '{channel}' from user: {self.user.username if self.user else 'NO USER'}, authenticated: {self.authenticated}")
+        
         # Validate subscription permissions
         can_subscribe = await self.can_subscribe_to_channel(channel)
-        logger.debug(f"👤 User {self.user.username} requesting subscription to '{channel}': {'ALLOWED' if can_subscribe else 'DENIED'}")
+        logger.info(f"👤 User {self.user.username if self.user else 'NO USER'} requesting subscription to '{channel}': {'ALLOWED' if can_subscribe else 'DENIED'}")
         
         if not can_subscribe:
+            logger.warning(f"❌ Permission denied for channel '{channel}' - user: {self.user.username if self.user else 'NO USER'}")
             await self.send_error('Permission denied')
             return
         
@@ -614,8 +619,10 @@ class BaseRealtimeConsumer(AsyncWebsocketConsumer):
                 'pipeline_id': data.get('pipeline_id'),
                 'name': data.get('name'),
                 'description': data.get('description'),
+                'icon': data.get('icon'),  # Include the icon field
                 'pipeline_type': data.get('pipeline_type'),
-                'is_active': data.get('is_active')
+                'is_active': data.get('is_active'),
+                'record_count': data.get('record_count')  # Include record count
             },
             'timestamp': data.get('timestamp')
         }

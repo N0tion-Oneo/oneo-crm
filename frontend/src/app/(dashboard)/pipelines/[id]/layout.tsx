@@ -1,6 +1,6 @@
 "use client";
 
-import { ReactNode, useEffect, useState } from "react";
+import React, { ReactNode, useEffect, useState } from "react";
 import { useRouter, usePathname, useParams } from "next/navigation";
 import {
   BarChart3,
@@ -75,6 +75,14 @@ export default function PipelineDetailLayout({ children }: { children: ReactNode
   const pipelineId = params.id as string;
   const [pipeline, setPipeline] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  
+  // Check if we're on the records page - if so, don't show the sidebar
+  const isRecordsPage = pathname.endsWith('/records');
+  
+  if (isRecordsPage) {
+    // For records page, just render children without the configuration sidebar
+    return <>{children}</>;
+  }
 
   // Load pipeline details
   useEffect(() => {

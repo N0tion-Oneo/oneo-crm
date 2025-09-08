@@ -161,6 +161,14 @@ export function WebSocketProvider({ children, autoConnect = true }: WebSocketPro
 
   // Send message through WebSocket
   const sendMessage = useCallback((message: Partial<RealtimeMessage>) => {
+    console.log('📤 sendMessage called with:', message)
+    console.log('📤 WebSocket state:', {
+      exists: !!wsRef.current,
+      readyState: wsRef.current?.readyState,
+      OPEN: WebSocket.OPEN,
+      isOpen: wsRef.current?.readyState === WebSocket.OPEN
+    })
+    
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       const fullMessage = {
         timestamp: new Date().toISOString(),
@@ -172,15 +180,20 @@ export function WebSocketProvider({ children, autoConnect = true }: WebSocketPro
         ...message
       }
       
+      console.log('📤 Sending WebSocket message:', fullMessage)
       wsRef.current.send(JSON.stringify(fullMessage))
+      console.log('📤 Message sent successfully')
       return true
     }
+    console.log('📤 WebSocket not open, message not sent')
     return false
   }, [user])
 
   // Subscribe to a channel
   const subscribe = useCallback((channel: string, callback: (message: RealtimeMessage) => void) => {
     const subscriptionId = `${channel}_${Date.now()}_${Math.random()}`
+    
+    console.log(`📡 Subscribe called for channel: ${channel}, isConnected: ${isConnected}, wsState: ${wsRef.current?.readyState}`)
     
     // Store subscription
     subscriptionsRef.current.set(subscriptionId, {
@@ -189,14 +202,23 @@ export function WebSocketProvider({ children, autoConnect = true }: WebSocketPro
       callback
     })
     
-    // Send subscribe message if connected
-    if (isConnected && !activeChannelsRef.current.has(channel)) {
+    // Add channel to active channels (even if not connected yet)
+    if (!activeChannelsRef.current.has(channel)) {
       activeChannelsRef.current.add(channel)
-      sendMessage({
-        type: 'subscribe' as any,
+      console.log(`📡 Added ${channel} to active channels for later subscription`)
+    }
+    
+    // Send subscribe message if connected
+    if (isConnected && wsRef.current?.readyState === WebSocket.OPEN) {
+      const message = {
+        type: 'subscribe',
         channel
-      } as any)
-      console.log(`📡 Subscribed to channel: ${channel}`)
+      }
+      console.log(`📡 Sending subscribe message for channel: ${channel}`, message)
+      const sent = sendMessage(message as any)
+      console.log(`📡 Subscribe message sent: ${sent} for channel: ${channel}`)
+    } else {
+      console.log(`📡 Not connected yet, will subscribe to ${channel} when connection opens`)
     }
     
     return subscriptionId
@@ -257,23 +279,30 @@ export function WebSocketProvider({ children, autoConnect = true }: WebSocketPro
       }
       
       // Check if message is relevant to this subscription
+      // Messages from the backend include a 'channel' field indicating which channel they're for
+      const messageChannel = (message as any).channel
+      
+      // Match messages to subscriptions based on channel
       const isRelevant = 
-        message.type === 'record_create' && subscription.channel.startsWith('pipeline_records_') ||
-        message.type === 'record_update' && subscription.channel.startsWith('pipeline_records_') ||
-        message.type === 'record_delete' && subscription.channel.startsWith('pipeline_records_') ||
-        message.type === 'pipeline_update' && subscription.channel === 'pipeline_updates' ||
-        message.type === 'field_delete' && subscription.channel.startsWith('pipeline_fields_') ||
-        message.type === 'field_update' && subscription.channel.startsWith('pipeline_fields_') ||
-        message.type === 'user_presence' && subscription.channel === 'user_presence' ||
-        message.type === 'permission_update' && subscription.channel.startsWith('permission') ||
-        message.type === 'activity_update' && subscription.channel.startsWith('document_') ||
-        message.type === 'message_update' && subscription.channel.startsWith('conversation_') ||
-        message.type === 'new_message' && subscription.channel.startsWith('conversation_') ||
-        message.type === 'message_status_update' && subscription.channel.startsWith('conversation_') ||
-        message.type === 'new_conversation' && subscription.channel.startsWith('channel_') ||
-        message.type === 'sync_progress_update' && subscription.channel.startsWith('sync_progress_') ||
-        message.type === 'sync_job_update' && subscription.channel.startsWith('sync_job_') ||
-        subscription.channel === 'pipelines_overview' // Special case for overview page
+        // Direct channel match (if backend includes channel in message)
+        (messageChannel && subscription.channel === messageChannel) ||
+        // Legacy matching by message type and channel pattern
+        (message.type === 'record_create' && subscription.channel.startsWith('pipeline_records_')) ||
+        (message.type === 'record_update' && subscription.channel.startsWith('pipeline_records_')) ||
+        (message.type === 'record_delete' && subscription.channel.startsWith('pipeline_records_')) ||
+        (message.type === 'pipeline_update' && subscription.channel === 'pipeline_updates') ||
+        (message.type === 'field_delete' && subscription.channel.startsWith('pipeline_fields_')) ||
+        (message.type === 'field_update' && subscription.channel === 'pipeline_updates') || // Field updates also go to pipeline_updates
+        (message.type === 'user_presence' && subscription.channel === 'user_presence') ||
+        (message.type === 'permission_update' && subscription.channel.startsWith('permission')) ||
+        (message.type === 'activity_update' && subscription.channel.startsWith('document_')) ||
+        (message.type === 'message_update' && subscription.channel.startsWith('conversation_')) ||
+        (message.type === 'new_message' && subscription.channel.startsWith('conversation_')) ||
+        (message.type === 'message_status_update' && subscription.channel.startsWith('conversation_')) ||
+        (message.type === 'new_conversation' && subscription.channel.startsWith('channel_')) ||
+        (message.type === 'sync_progress_update' && subscription.channel.startsWith('sync_progress_')) ||
+        (message.type === 'sync_job_update' && subscription.channel.startsWith('sync_job_')) ||
+        (subscription.channel === 'pipelines_overview') // Special case for overview page
       
       if (isRelevant) {
         matchedSubscriptions++
@@ -305,21 +334,52 @@ export function WebSocketProvider({ children, autoConnect = true }: WebSocketPro
 
       wsRef.current.onopen = () => {
         console.log('✅ WebSocket connected successfully to:', wsUrl)
+        console.log('📡 Active channels to resubscribe:', Array.from(activeChannelsRef.current))
         setIsConnected(true)
         setConnectionStatus('connected')
         reconnectAttempts.current = 0
 
-        // Resubscribe to all active channels
-        for (const channel of activeChannelsRef.current) {
-          sendMessage({
-            type: 'subscribe' as any,
-            channel
-          } as any)
-        }
+        // Give a small delay to ensure state is updated
+        setTimeout(() => {
+          console.log('📡 Starting resubscription process...')
+          // Resubscribe to all active channels
+          for (const channel of activeChannelsRef.current) {
+            const message = {
+              type: 'subscribe',
+              channel
+            }
+            console.log(`📡 Resubscribing to channel: ${channel}`, message)
+            
+            // Send message directly using the websocket
+            if (wsRef.current?.readyState === WebSocket.OPEN) {
+              const fullMessage = {
+                timestamp: new Date().toISOString(),
+                user: user ? {
+                  id: user.id,
+                  name: `${user.firstName} ${user.lastName}`.trim(),
+                  email: user.email
+                } : undefined,
+                ...message
+              }
+              console.log('📡 Sending subscribe message directly:', fullMessage)
+              wsRef.current.send(JSON.stringify(fullMessage))
+              console.log(`📡 Subscribe message sent directly for channel: ${channel}`)
+            } else {
+              console.log(`📡 WebSocket not ready, state: ${wsRef.current?.readyState}`)
+            }
+          }
+        }, 100)
 
         // Start heartbeat
         heartbeatIntervalRef.current = setInterval(() => {
-          sendMessage({ type: 'ping' as any })
+          if (wsRef.current?.readyState === WebSocket.OPEN) {
+            const pingMessage = {
+              type: 'ping',
+              timestamp: new Date().toISOString()
+            }
+            console.log('💓 Sending heartbeat ping')
+            wsRef.current.send(JSON.stringify(pingMessage))
+          }
         }, 30000)
       }
 

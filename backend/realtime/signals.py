@@ -260,9 +260,13 @@ if MODELS_AVAILABLE:
     @receiver(post_save, sender=Pipeline)
     def handle_pipeline_saved(sender, instance, created, **kwargs):
         """Handle pipeline creation/update for real-time broadcasting"""
+        logger.info(f"🚀 PIPELINE SIGNAL FIRED: Pipeline {instance.id} ({instance.name}) {'created' if created else 'updated'}")
+        logger.info(f"   📦 Icon value: {instance.icon}")
+        
         try:
             channel_layer = get_channel_layer()
             if not channel_layer:
+                logger.warning("No channel layer available for pipeline signal")
                 return
             
             # Create event data
@@ -271,16 +275,21 @@ if MODELS_AVAILABLE:
                 'pipeline_id': str(instance.id),
                 'name': instance.name,
                 'description': instance.description,
+                'icon': instance.icon,  # Include the icon field
                 'pipeline_type': getattr(instance, 'pipeline_type', 'custom'),
                 'is_active': getattr(instance, 'is_active', True),
+                'record_count': instance.record_count,  # Include record count
                 'timestamp': time.time()
             }
             
             # Broadcast to general pipeline subscribers
+            logger.info(f"📡 Broadcasting pipeline update to 'pipeline_updates' channel")
+            logger.info(f"   📦 Event data: {event_data}")
             safe_group_send_sync(channel_layer, "pipeline_updates", {
                 'type': 'pipeline_update',
                 'data': event_data
             })
+            logger.info(f"✅ Pipeline update broadcast complete")
             
             # Broadcast to specific pipeline subscribers
             pipeline_group = f"pipeline_updates_{instance.id}"

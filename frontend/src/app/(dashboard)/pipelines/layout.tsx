@@ -12,17 +12,41 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { pipelinesApi } from '@/lib/api';
+import { useWebSocket } from '@/contexts/websocket-context';
 
 const PIPELINE_TYPE_ICONS: Record<string, string> = {
-  crm: '🎯',
-  ats: '👥',
-  cms: '📝',
   custom: '⚙️',
   contacts: '👤',
   companies: '🏢',
   deals: '💰',
-  support: '🎧',
-  inventory: '📦'
+  inventory: '📦',
+  support: '🎧'
+};
+
+// Map old text identifiers to emojis
+const iconMap: Record<string, string> = {
+  'database': '📊',
+  'folder': '📁',
+  'chart': '📈',
+  'users': '👥',
+  'settings': '⚙️',
+  'star': '⭐'
+};
+
+// Helper to get display icon (handles both emoji and text identifiers)
+const getDisplayIcon = (icon: string, pipelineType?: string) => {
+  if (!icon) {
+    // Fall back to pipeline type icon if no custom icon
+    return PIPELINE_TYPE_ICONS[pipelineType || 'custom'] || '📊';
+  }
+  
+  // Check if it's a text identifier that needs mapping
+  if (iconMap[icon]) {
+    return iconMap[icon];
+  }
+  
+  // For any other value (including emojis), return as-is
+  return icon;
 };
 
 export default function PipelinesLayout({ children }: { children: ReactNode }) {
@@ -32,24 +56,51 @@ export default function PipelinesLayout({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [collapsed, setCollapsed] = useState(false);
+  const { subscribe, unsubscribe, isConnected } = useWebSocket();
 
-  // Load pipelines
+  // Load pipelines function
+  const loadPipelines = async () => {
+    try {
+      setLoading(true);
+      const response = await pipelinesApi.list();
+      const pipelinesData = response.data.results || response.data || [];
+      setPipelines(pipelinesData);
+    } catch (error) {
+      console.error('Failed to load pipelines:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Load pipelines on mount
   useEffect(() => {
-    const loadPipelines = async () => {
-      try {
-        setLoading(true);
-        const response = await pipelinesApi.list();
-        const pipelinesData = response.data.results || response.data || [];
-        setPipelines(pipelinesData);
-      } catch (error) {
-        console.error('Failed to load pipelines:', error);
-      } finally {
-        setLoading(false);
-      }
-    };
-
     loadPipelines();
   }, []);
+
+  // Subscribe to pipeline updates via WebSocket
+  useEffect(() => {
+    if (!isConnected) return;
+
+    const subscriptionId = subscribe('pipeline_updates', (message) => {
+      console.log('Pipeline layout received WebSocket message:', message);
+      
+      // Check for pipeline or field updates
+      if (message.type === 'pipeline_update') {
+        console.log('Pipeline update payload:', message.payload);
+        // Always refresh when we get a pipeline update
+        console.log('Refreshing pipeline list due to pipeline update');
+        loadPipelines();
+      } else if (message.type === 'field_update' || message.type === 'field_delete') {
+        console.log('Field update received:', message);
+        // Also refresh for field updates
+        loadPipelines();
+      }
+    });
+
+    return () => {
+      unsubscribe(subscriptionId);
+    };
+  }, [isConnected, subscribe, unsubscribe]);
 
   // Filter pipelines based on search
   const filteredPipelines = pipelines.filter(p => 
@@ -73,6 +124,14 @@ export default function PipelinesLayout({ children }: { children: ReactNode }) {
   // Check if we're on the main pipelines page
   const isMainPage = pathname === '/pipelines';
   const currentPipelineId = pathname.split('/')[2];
+  
+  // Check if we're on a records page - if so, don't show the pipeline list sidebar
+  const isRecordsPage = pathname.includes('/records');
+  
+  if (isRecordsPage) {
+    // For records page, just render children without the pipeline list sidebar
+    return <>{children}</>;
+  }
 
   if (collapsed) {
     return (
@@ -100,7 +159,7 @@ export default function PipelinesLayout({ children }: { children: ReactNode }) {
                 title={pipeline.name}
               >
                 <span className="text-lg">
-                  {PIPELINE_TYPE_ICONS[pipeline.pipeline_type] || '📊'}
+                  {getDisplayIcon(pipeline.icon, pipeline.pipeline_type)}
                 </span>
               </button>
             ))}
@@ -182,7 +241,7 @@ export default function PipelinesLayout({ children }: { children: ReactNode }) {
                     >
                       <div className="flex items-start">
                         <span className="text-lg mr-2 flex-shrink-0">
-                          {PIPELINE_TYPE_ICONS[pipeline.pipeline_type] || '📊'}
+                          {getDisplayIcon(pipeline.icon, pipeline.pipeline_type)}
                         </span>
                         <div className="flex-1 min-w-0">
                           <div className="font-medium text-sm text-gray-900 dark:text-white truncate">
@@ -218,7 +277,7 @@ export default function PipelinesLayout({ children }: { children: ReactNode }) {
                     >
                       <div className="flex items-start">
                         <span className="text-lg mr-2 flex-shrink-0">
-                          {PIPELINE_TYPE_ICONS[pipeline.pipeline_type] || '📊'}
+                          {getDisplayIcon(pipeline.icon, pipeline.pipeline_type)}
                         </span>
                         <div className="flex-1 min-w-0">
                           <div className="font-medium text-sm text-gray-900 dark:text-white truncate">

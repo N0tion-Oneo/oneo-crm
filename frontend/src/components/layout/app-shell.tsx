@@ -2,10 +2,12 @@
 
 import { useState, useEffect } from 'react'
 import { usePathname } from 'next/navigation'
-import { Menu, X, Bell, Search, Settings, LogOut, User, Users, Database, Workflow, ChevronDown, MessageSquare } from 'lucide-react'
+import { Menu, X, Bell, Search, Settings, LogOut, User, Users, Database, Workflow, ChevronDown, ChevronRight, MessageSquare } from 'lucide-react'
 import Link from 'next/link'
 import { useAuth } from '@/features/auth/context'
+import { useWebSocket } from '@/contexts/websocket-context'
 import { cn } from '@/lib/utils'
+import { pipelinesApi } from '@/lib/api'
 
 interface AppShellProps {
   children: React.ReactNode
@@ -22,8 +24,46 @@ interface NavItem {
 export function AppShell({ children }: AppShellProps) {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [userMenuOpen, setUserMenuOpen] = useState(false)
+  const [pipelinesExpanded, setPipelinesExpanded] = useState(false)
+  const [pipelines, setPipelines] = useState<any[]>([])
+  const [pipelinesLoading, setPipelinesLoading] = useState(false)
   const pathname = usePathname()
   const { user, logout, tenant } = useAuth()
+  const { subscribe, unsubscribe, isConnected } = useWebSocket()
+
+  // Pipeline type icons mapping
+  const PIPELINE_TYPE_ICONS: Record<string, string> = {
+    custom: '⚙️',
+    contacts: '👤',
+    companies: '🏢',
+    deals: '💰',
+    inventory: '📦',
+    support: '🎧'
+  }
+
+  // Map old text identifiers to emojis
+  const iconMap: Record<string, string> = {
+    'database': '📊',
+    'folder': '📁',
+    'chart': '📈',
+    'users': '👥',
+    'settings': '⚙️',
+    'star': '⭐'
+  }
+
+  // Helper to get display icon (handles both emoji and text identifiers)
+  const getDisplayIcon = (icon: string) => {
+    if (!icon) return '📊'
+    
+    // Check if it's a text identifier that needs mapping
+    if (iconMap[icon]) {
+      return iconMap[icon]
+    }
+    
+    // For any other value (including emojis), return as-is
+    // This handles all emoji ranges without needing complex regex
+    return icon
+  }
 
   // Navigation items
   const navigation: NavItem[] = [
@@ -58,6 +98,73 @@ export function AppShell({ children }: AppShellProps) {
     ...item,
     current: pathname.startsWith(item.href)
   }))
+
+  // Function to fetch pipelines
+  const fetchPipelines = async () => {
+    try {
+      setPipelinesLoading(true)
+      const response = await pipelinesApi.list()
+      const pipelinesData = response.data.results || response.data || []
+      // Filter only active pipelines and limit to first 10
+      const activePipelines = pipelinesData
+        .filter((p: any) => !p.is_archived)
+        .slice(0, 10)
+      setPipelines(activePipelines)
+    } catch (error) {
+      console.error('Failed to fetch pipelines:', error)
+    } finally {
+      setPipelinesLoading(false)
+    }
+  }
+
+  // Fetch pipelines when component mounts or pathname changes
+  useEffect(() => {
+    if (user) {
+      fetchPipelines()
+    }
+  }, [user])
+
+  // Subscribe to pipeline updates via WebSocket
+  useEffect(() => {
+    if (!user || !isConnected) {
+      console.log('WebSocket not ready:', { user: !!user, isConnected })
+      return
+    }
+
+    console.log('Setting up WebSocket subscription for pipeline updates')
+    
+    // Subscribe to pipeline updates
+    const subscriptionId = subscribe('pipeline_updates', (message) => {
+      console.log('Received pipeline WebSocket message:', message)
+      
+      // The backend sends with type: 'pipeline_update' and payload contains the data
+      if (message.type === 'pipeline_update') {
+        console.log('Pipeline update payload:', message.payload)
+        // Always refresh pipelines when we receive a pipeline_update message
+        console.log('Refreshing pipelines due to pipeline update')
+        fetchPipelines()
+      } else if (message.type === 'field_update' || message.type === 'field_delete') {
+        console.log('Field update received:', message)
+        // Also refresh for field updates as they affect the pipeline
+        fetchPipelines()
+      }
+    })
+
+    console.log('WebSocket subscription created with ID:', subscriptionId)
+
+    // Cleanup subscription on unmount
+    return () => {
+      console.log('Cleaning up WebSocket subscription:', subscriptionId)
+      unsubscribe(subscriptionId)
+    }
+  }, [user, isConnected, subscribe, unsubscribe])
+
+  // Auto-expand pipelines if we're on a pipeline page
+  useEffect(() => {
+    if (pathname.startsWith('/pipelines/') && pathname !== '/pipelines/') {
+      setPipelinesExpanded(true)
+    }
+  }, [pathname])
 
   // Close mobile sidebar when route changes
   useEffect(() => {
@@ -135,37 +242,148 @@ export function AppShell({ children }: AppShellProps) {
             </button>
           </div>
 
+          {/* WebSocket Status (for debugging) */}
+          <div className="px-4 py-2 text-xs">
+            <div className={`flex items-center ${isConnected ? 'text-green-500' : 'text-red-500'}`}>
+              <div className={`w-2 h-2 rounded-full mr-2 ${isConnected ? 'bg-green-500' : 'bg-red-500'}`}></div>
+              WebSocket: {isConnected ? 'Connected' : 'Disconnected'}
+            </div>
+          </div>
+
           {/* Navigation */}
           <nav className="flex-1 px-2 py-4 space-y-1 overflow-y-auto">
-            {navigationWithCurrent.map((item) => (
-              <Link
-                key={item.name}
-                href={item.href}
-                className={cn(
-                  "group flex items-center px-2 py-2 text-sm font-medium rounded-md transition-colors",
-                  item.current
-                    ? "bg-primary text-primary-foreground"
-                    : "text-gray-600 hover:bg-gray-50 hover:text-gray-900 dark:text-gray-300 dark:hover:bg-gray-700 dark:hover:text-white"
-                )}
-              >
-                <item.icon
-                  className={cn(
-                    "mr-3 flex-shrink-0 h-5 w-5",
-                    item.current
-                      ? "text-primary-foreground"
-                      : "text-gray-400 group-hover:text-gray-500 dark:group-hover:text-gray-300"
-                  )}
-                />
-                <div>
-                  <div>{item.name}</div>
-                  {item.description && (
-                    <div className="text-xs opacity-75 mt-0.5">
-                      {item.description}
+            {navigationWithCurrent.map((item) => {
+              // Special handling for Pipelines item
+              if (item.name === 'Pipelines') {
+                const currentPipelineId = pathname.split('/')[2]
+                return (
+                  <div key={item.name}>
+                    {/* Main Pipelines button */}
+                    <div
+                      className={cn(
+                        "group flex items-center px-2 py-2 text-sm font-medium rounded-md transition-colors cursor-pointer",
+                        item.current && !currentPipelineId
+                          ? "bg-primary text-primary-foreground"
+                          : "text-gray-600 hover:bg-gray-50 hover:text-gray-900 dark:text-gray-300 dark:hover:bg-gray-700 dark:hover:text-white"
+                      )}
+                    >
+                      <button
+                        onClick={() => setPipelinesExpanded(!pipelinesExpanded)}
+                        className="p-1 -ml-1 mr-1"
+                      >
+                        {pipelinesExpanded ? (
+                          <ChevronDown className="h-4 w-4" />
+                        ) : (
+                          <ChevronRight className="h-4 w-4" />
+                        )}
+                      </button>
+                      <Link
+                        href={item.href}
+                        className="flex items-center flex-1"
+                      >
+                        <item.icon
+                          className={cn(
+                            "mr-3 flex-shrink-0 h-5 w-5",
+                            item.current && !currentPipelineId
+                              ? "text-primary-foreground"
+                              : "text-gray-400 group-hover:text-gray-500 dark:group-hover:text-gray-300"
+                          )}
+                        />
+                        <div>
+                          <div>{item.name}</div>
+                          {item.description && (
+                            <div className="text-xs opacity-75 mt-0.5">
+                              {item.description}
+                            </div>
+                          )}
+                        </div>
+                      </Link>
                     </div>
+
+                    {/* Expanded pipelines list */}
+                    {pipelinesExpanded && (
+                      <div className="ml-8 mt-1 space-y-1">
+                        {pipelinesLoading ? (
+                          <div className="px-3 py-2 text-xs text-gray-500 dark:text-gray-400">
+                            Loading pipelines...
+                          </div>
+                        ) : pipelines.length > 0 ? (
+                          <>
+                            {pipelines.map((pipeline) => {
+                              // Use the icon from the database, converting text identifiers to emojis if needed
+                              const pipelineIcon = pipeline.icon 
+                                ? getDisplayIcon(pipeline.icon)
+                                : PIPELINE_TYPE_ICONS[pipeline.pipeline_type] || '📊'
+                              const isCurrentPipeline = currentPipelineId === pipeline.id.toString()
+                              
+                              return (
+                                <Link
+                                  key={pipeline.id}
+                                  href={`/pipelines/${pipeline.id}/records`}
+                                  className={cn(
+                                    "flex items-center px-3 py-1.5 text-sm rounded-md transition-colors",
+                                    isCurrentPipeline
+                                      ? "bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300"
+                                      : "text-gray-600 hover:bg-gray-50 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-white"
+                                  )}
+                                >
+                                  <span className="mr-2 text-base">{pipelineIcon}</span>
+                                  <span className="truncate">{pipeline.name}</span>
+                                </Link>
+                              )
+                            })}
+                            {pipelines.length >= 10 && (
+                              <Link
+                                href="/pipelines"
+                                className="flex items-center px-3 py-1.5 text-sm text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300"
+                              >
+                                <span className="mr-2">→</span>
+                                View all pipelines
+                              </Link>
+                            )}
+                          </>
+                        ) : (
+                          <div className="px-3 py-2 text-xs text-gray-500 dark:text-gray-400">
+                            No pipelines available
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )
+              }
+
+              // Regular navigation items
+              return (
+                <Link
+                  key={item.name}
+                  href={item.href}
+                  className={cn(
+                    "group flex items-center px-2 py-2 text-sm font-medium rounded-md transition-colors",
+                    item.current
+                      ? "bg-primary text-primary-foreground"
+                      : "text-gray-600 hover:bg-gray-50 hover:text-gray-900 dark:text-gray-300 dark:hover:bg-gray-700 dark:hover:text-white"
                   )}
-                </div>
-              </Link>
-            ))}
+                >
+                  <item.icon
+                    className={cn(
+                      "mr-3 flex-shrink-0 h-5 w-5",
+                      item.current
+                        ? "text-primary-foreground"
+                        : "text-gray-400 group-hover:text-gray-500 dark:group-hover:text-gray-300"
+                    )}
+                  />
+                  <div>
+                    <div>{item.name}</div>
+                    {item.description && (
+                      <div className="text-xs opacity-75 mt-0.5">
+                        {item.description}
+                      </div>
+                    )}
+                  </div>
+                </Link>
+              )
+            })}
           </nav>
 
           {/* User info */}

@@ -44,10 +44,21 @@ export default function PipelineSettingsPage() {
         const iconValue = response.data.icon || 'database'
         const displayIcon = getDisplayIcon(iconValue)
         
+        // Map old pipeline types to valid ones
+        const typeMapping: Record<string, string> = {
+          'crm': 'deals',        // CRM → Deals
+          'ats': 'contacts',     // ATS → Contacts
+          'cms': 'custom',       // CMS → Custom
+          'projects': 'custom'   // Projects → Custom
+        }
+        
+        const pipelineType = response.data.pipeline_type || 'custom'
+        const validPipelineType = typeMapping[pipelineType] || pipelineType
+        
         setFormData({
           name: response.data.name || '',
           description: response.data.description || '',
-          pipeline_type: response.data.pipeline_type || 'custom',
+          pipeline_type: validPipelineType,
           icon: displayIcon,
           color: response.data.color || '#3B82F6',
           is_active: response.data.is_active !== false
@@ -70,15 +81,57 @@ export default function PipelineSettingsPage() {
     setSaving(true)
     setError(null)
     try {
-      await pipelinesApi.update(pipelineId, formData)
+      // Prepare data for submission
+      const submitData = {
+        name: formData.name,
+        description: formData.description,
+        pipeline_type: formData.pipeline_type,
+        icon: formData.icon,
+        color: formData.color,
+        is_active: formData.is_active
+      }
+      
+      console.log('Sending submitData:', submitData)
+      console.log('Icon being sent:', submitData.icon, 'Type:', typeof submitData.icon, 'Length:', submitData.icon?.length)
+      console.log('Icon bytes:', new TextEncoder().encode(submitData.icon || '').length)
+      console.log('Pipeline type being sent:', submitData.pipeline_type)
+      
+      const response = await pipelinesApi.update(pipelineId, submitData)
+      console.log('Update response:', response)
       setShowSuccess(true)
       setTimeout(() => setShowSuccess(false), 3000)
+      
+      // Trigger a manual refresh of pipelines in the sidebar
+      // Since WebSocket updates aren't working reliably, we'll use a custom event
+      window.dispatchEvent(new CustomEvent('pipeline-updated', { 
+        detail: { pipelineId, icon: formData.icon, name: formData.name } 
+      }))
       
       // Update the pipeline data
       setPipeline({ ...pipeline, ...formData })
     } catch (error: any) {
       console.error('Failed to update pipeline:', error)
-      setError(error?.response?.data?.error || 'Failed to update pipeline settings')
+      console.error('Full error response:', error?.response)
+      console.error('Error data:', error?.response?.data)
+      
+      // Extract detailed error message
+      let errorMessage = 'Failed to update pipeline settings'
+      if (error?.response?.data) {
+        const data = error.response.data
+        if (typeof data === 'string') {
+          errorMessage = data
+        } else if (data.error) {
+          errorMessage = data.error
+        } else if (data.detail) {
+          errorMessage = data.detail
+        } else if (data.pipeline_type) {
+          errorMessage = `Pipeline type error: ${JSON.stringify(data.pipeline_type)}`
+        } else {
+          errorMessage = JSON.stringify(data)
+        }
+      }
+      
+      setError(errorMessage)
     } finally {
       setSaving(false)
     }
@@ -106,12 +159,16 @@ export default function PipelineSettingsPage() {
   
   // Helper to get display icon (handles both emoji and text identifiers)
   const getDisplayIcon = (icon: string) => {
-    // If it's already an emoji (has emoji character), return it
-    if (icon && icon.match(/[\u{1F300}-\u{1F9FF}]|[\u{2600}-\u{26FF}]/u)) {
-      return icon
+    if (!icon) return '📊'
+    
+    // Check if it's a text identifier that needs mapping
+    if (iconMap[icon]) {
+      return iconMap[icon]
     }
-    // Otherwise try to map it
-    return iconMap[icon] || '📊'
+    
+    // For any other value (including emojis), return as-is
+    // This handles all emoji ranges without needing complex regex
+    return icon
   }
   
   const commonColors = [
@@ -222,14 +279,11 @@ export default function PipelineSettingsPage() {
                   className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                 >
                   <option value="custom">Custom</option>
-                  <option value="crm">CRM</option>
-                  <option value="ats">ATS (Applicant Tracking)</option>
-                  <option value="cms">CMS (Content Management)</option>
-                  <option value="contacts">Contacts</option>
-                  <option value="companies">Companies</option>
-                  <option value="deals">Deals</option>
-                  <option value="support">Support Tickets</option>
-                  <option value="projects">Projects</option>
+                  <option value="contacts">Contacts & People</option>
+                  <option value="companies">Companies & Organizations</option>
+                  <option value="deals">Deals & Opportunities</option>
+                  <option value="inventory">Inventory & Assets</option>
+                  <option value="support">Support & Tickets</option>
                 </select>
               </div>
 

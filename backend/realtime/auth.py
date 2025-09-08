@@ -334,13 +334,22 @@ async def check_channel_subscription_permission(user, channel: str):
     Enhanced channel subscription permission checking.
     Maps channel patterns to appropriate permission checks.
     """
+    logger.info(f"🔒 Checking channel permission for '{channel}' - user: {user.username if user else 'NO USER'}, authenticated: {user.is_authenticated if user else False}")
+    
     if not user or not user.is_authenticated:
+        logger.warning(f"❌ Channel permission denied - user not authenticated for channel '{channel}'")
         return False
     
     try:
+        # Check exact channel names first before pattern matching
+        if channel in ['user_presence', 'pipelines_overview', 'pipeline_updates', 'permission_updates', 'ai_jobs', 'ai_templates', 'ai_analytics']:
+            # General channels - all authenticated users can subscribe
+            logger.info(f"✅ General channel access granted for user {user.username}: {channel}")
+            return True
+        
         # Parse different channel patterns
-        if channel.startswith('pipeline:') or channel.startswith('pipeline_'):
-            # Extract pipeline ID from channel name
+        elif channel.startswith('pipeline:') or (channel.startswith('pipeline_') and channel != 'pipeline_updates'):
+            # Extract pipeline ID from channel name (but exclude pipeline_updates which is handled above)
             if ':' in channel:
                 pipeline_id = channel.split(':')[1]
             else:
@@ -387,10 +396,6 @@ async def check_channel_subscription_permission(user, channel: str):
                     return False
             
             return await check_user_permissions(user, 'forms', form_id, 'read')
-        
-        elif channel in ['user_presence', 'pipelines_overview', 'pipeline_updates', 'permission_updates', 'ai_jobs', 'ai_templates', 'ai_analytics']:
-            # General channels - all authenticated users can subscribe
-            return True
         
         elif channel.startswith('tenant_'):
             # Tenant-specific channels - users can subscribe to their own tenant channels

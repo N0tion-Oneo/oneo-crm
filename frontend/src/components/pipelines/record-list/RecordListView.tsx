@@ -2,8 +2,10 @@
 'use client'
 
 import React, { useState, useMemo, useEffect } from 'react'
-import { Plus } from 'lucide-react'
+import { Plus, Lock } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { useAuth } from '@/features/auth/context'
+import { PermissionGuard } from '@/components/permissions/PermissionGuard'
 
 // Import types
 import { 
@@ -52,6 +54,13 @@ import {
 } from '@/components/pipelines/saved-filters'
 
 export function RecordListView({ pipeline: initialPipeline, onEditRecord, onCreateRecord }: RecordListViewProps) {
+  const { hasPermission } = useAuth()
+  
+  // Check permissions
+  const canCreateRecords = hasPermission('records', 'create')
+  const canUpdateRecords = hasPermission('records', 'update')
+  const canDeleteRecords = hasPermission('records', 'delete')
+  
   // Internal pipeline state to handle minimal pipeline from parent
   const [pipeline, setPipeline] = useState(initialPipeline)
   
@@ -341,6 +350,9 @@ export function RecordListView({ pipeline: initialPipeline, onEditRecord, onCrea
   // Save/share filter handlers moved to FilterPanel
 
   const handleBulkUpdate = async () => {
+    // Check permission
+    if (!canUpdateRecords) return
+    
     const selectedIds = getSelectedRecordIds()
     if (selectedIds.length === 0) return
 
@@ -349,6 +361,9 @@ export function RecordListView({ pipeline: initialPipeline, onEditRecord, onCrea
   }
 
   const handleBulkDelete = async () => {
+    // Check permission
+    if (!canDeleteRecords) return
+    
     const selectedIds = getSelectedRecordIds()
     if (selectedIds.length === 0) return
 
@@ -494,10 +509,23 @@ export function RecordListView({ pipeline: initialPipeline, onEditRecord, onCrea
           </div>
           
           <div className="flex items-center space-x-3">
-            <Button onClick={onCreateRecord}>
-              <Plus className="w-4 h-4 mr-2" />
-              Add Record
-            </Button>
+            {onCreateRecord && (
+              <PermissionGuard 
+                category="records" 
+                action="create"
+                fallback={
+                  <Button disabled className="opacity-50 cursor-not-allowed">
+                    <Lock className="w-4 h-4 mr-2" />
+                    Add Record
+                  </Button>
+                }
+              >
+                <Button onClick={onCreateRecord}>
+                  <Plus className="w-4 h-4 mr-2" />
+                  Add Record
+                </Button>
+              </PermissionGuard>
+            )}
             
             <RealtimeStatus isConnected={isConnected} />
           </div>
@@ -541,8 +569,8 @@ export function RecordListView({ pipeline: initialPipeline, onEditRecord, onCrea
 
           <RecordActions
             selectedCount={selectedCount}
-            onBulkUpdate={handleBulkUpdate}
-            onBulkDelete={handleBulkDelete}
+            onBulkUpdate={canUpdateRecords ? handleBulkUpdate : undefined}
+            onBulkDelete={canDeleteRecords ? handleBulkDelete : undefined}
             onExport={handleExport}
             onRefresh={refreshRecords}
             onClearSelection={unselectAll}
@@ -628,7 +656,7 @@ export function RecordListView({ pipeline: initialPipeline, onEditRecord, onCrea
             selectedRecords={selectedRecords}
             onSelectRecord={toggleRecord}
             onSelectAll={() => toggleSelectAll(records)}
-            onEditRecord={onEditRecord}
+            onEditRecord={onEditRecord && canUpdateRecords ? onEditRecord : undefined}
             onOpenRelatedRecord={handleOpenRelatedRecord}
             pipelineId={pipeline.id}
           />

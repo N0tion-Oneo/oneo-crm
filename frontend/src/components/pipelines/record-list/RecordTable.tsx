@@ -13,7 +13,7 @@ export interface RecordTableProps {
   selectedRecords: Set<string>
   onSelectRecord: (recordId: string) => void
   onSelectAll: () => void
-  onEditRecord: (record: Record) => void
+  onEditRecord?: (record: Record) => void
   onDeleteRecord?: (recordId: string) => void
   onOpenRelatedRecord?: (targetPipelineId: string, recordId: string) => void
   pipelineId: string

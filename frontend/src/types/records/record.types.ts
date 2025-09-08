@@ -76,6 +76,6 @@ export const convertToFieldType = (recordField: RecordField) => ({
 
 export interface RecordListViewProps {
   pipeline: Pipeline
-  onEditRecord: (record: Record, relatedPipeline?: Pipeline) => void
-  onCreateRecord: () => void
+  onEditRecord?: (record: Record, relatedPipeline?: Pipeline) => void
+  onCreateRecord?: () => void
 }

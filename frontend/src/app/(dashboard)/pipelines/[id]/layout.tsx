@@ -1,3 +1,21 @@
+/**
+ * Pipeline Detail Layout
+ * 
+ * ✅ This is the ACTIVE pipeline configuration sidebar component
+ * 
+ * This layout renders the configuration navigation sidebar for individual pipeline pages
+ * (Overview, Field Configuration, Business Rules, etc.)
+ * 
+ * The navigation items are filtered based on user permissions:
+ * - Field Configuration: Only shown if user has field permissions
+ * - Business Rules: Only shown if user has business_rules permissions  
+ * - Duplicate Management: Only shown if user has duplicates permissions
+ * 
+ * NOTE: There are unused components (config-sections-sidebar.tsx and pipeline-config-wrapper.tsx)
+ * in /src/components/pipelines/layout/ that appear to be orphaned code from an incomplete
+ * refactoring. This layout.tsx file is the actual working implementation.
+ */
+
 "use client";
 
 import React, { ReactNode, useEffect, useState } from "react";
@@ -16,6 +34,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { pipelinesApi } from '@/lib/api';
+import { useAuth } from '@/features/auth/context';
 
 const navigationItems = [
   { 
@@ -72,19 +91,40 @@ export default function PipelineDetailLayout({ children }: { children: ReactNode
   const router = useRouter();
   const pathname = usePathname();
   const params = useParams();
+  const { hasPermission } = useAuth();
   const pipelineId = params.id as string;
   const [pipeline, setPipeline] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   
+  // Check permissions
+  const canUpdatePipelines = hasPermission('pipelines', 'update');
+  
+  // Check field permissions - only show config if user has manage or delete permissions
+  // Users with only 'read' permission should NOT see the Field Configuration section
+  const hasFieldPermissions = 
+    hasPermission('fields', 'manage') ||
+    hasPermission('fields', 'delete');
+    
+  // Check business rules permissions
+  const hasBusinessRulesPermissions = 
+    hasPermission('business_rules', 'read') ||
+    hasPermission('business_rules', 'create') ||
+    hasPermission('business_rules', 'update') ||
+    hasPermission('business_rules', 'delete');
+    
+  // Check duplicate permissions
+  const hasDuplicatePermissions = 
+    hasPermission('duplicates', 'read') ||
+    hasPermission('duplicates', 'create') ||
+    hasPermission('duplicates', 'update') ||
+    hasPermission('duplicates', 'delete') ||
+    hasPermission('duplicates', 'resolve') ||
+    hasPermission('duplicates', 'detect');
+  
   // Check if we're on the records page - if so, don't show the sidebar
   const isRecordsPage = pathname.endsWith('/records');
   
-  if (isRecordsPage) {
-    // For records page, just render children without the configuration sidebar
-    return <>{children}</>;
-  }
-
-  // Load pipeline details
+  // Load pipeline details - MUST be before any conditional returns
   useEffect(() => {
     const loadPipeline = async () => {
       if (!pipelineId) return;
@@ -111,6 +151,12 @@ export default function PipelineDetailLayout({ children }: { children: ReactNode
   };
 
   const activeSection = getActiveSection();
+  
+  // If user doesn't have update permission OR we're on records page, don't show configuration sidebar
+  if (!canUpdatePipelines || isRecordsPage) {
+    // Just render children without the configuration sidebar
+    return <>{children}</>;
+  }
 
   return (
     <div className="flex h-full">
@@ -143,7 +189,13 @@ export default function PipelineDetailLayout({ children }: { children: ReactNode
         <nav className="px-3 pb-3">
           <div className="space-y-1">
             {/* Configuration Section Navigation */}
-            {navigationItems.map((item) => {
+            {navigationItems.filter((item) => {
+              // Filter out items based on permissions
+              if (item.name === 'Field Configuration' && !hasFieldPermissions) return false;
+              if (item.name === 'Business Rules' && !hasBusinessRulesPermissions) return false;
+              if (item.name === 'Duplicate Management' && !hasDuplicatePermissions) return false;
+              return true;
+            }).map((item) => {
               const href = item.href(pipelineId);
               const isActive = 
                 (item.name === 'Overview' && pathname === `/pipelines/${pipelineId}`) ||

@@ -23,6 +23,7 @@ from .serializers import (
 )
 # Legacy AI processor removed - using new ai/integrations.py system
 from api.permissions import PipelinePermission, RecordPermission
+from api.permissions.fields import FieldPermission
 from authentication.permissions import SyncPermissionManager
 
 
@@ -50,28 +51,33 @@ class PipelineViewSet(viewsets.ModelViewSet):
         # Use comprehensive permission system
         permission_manager = SyncPermissionManager(user)
         
-        # Check if user has read_all permission for pipelines
-        if permission_manager.has_permission('action', 'pipelines', 'read_all'):
+        # Check if user has permission to see pipelines at all
+        can_read = permission_manager.has_permission('action', 'pipelines', 'read')
+        can_read_all = permission_manager.has_permission('action', 'pipelines', 'read_all')
+        
+        if not (can_read or can_read_all):
+            # User has no pipeline read permissions
+            return Pipeline.objects.none()
+        
+        # If user has read_all permission, show all pipelines
+        if can_read_all:
             return Pipeline.objects.all()
         
-        # Filter to only pipelines user has access to
+        # User has read permission - filter to only accessible pipelines via UserTypePipelinePermission
         accessible_pipeline_ids = self._get_accessible_pipeline_ids(user)
         return Pipeline.objects.filter(id__in=accessible_pipeline_ids)
     
     def _get_accessible_pipeline_ids(self, user):
-        """Get pipeline IDs that user has access to"""
-        permission_manager = SyncPermissionManager(user)
-        accessible_ids = []
+        """Get pipeline IDs that user has access to via UserTypePipelinePermission"""
+        from authentication.models import UserTypePipelinePermission
         
-        # Check each pipeline for read access
-        for pipeline in Pipeline.objects.all():
-            if (permission_manager.has_permission('action', 'pipelines', 'read', str(pipeline.id)) or
-                permission_manager.has_permission('action', 'pipelines', 'read') or
-                pipeline.created_by == user or
-                pipeline.access_level in ['public', 'internal']):
-                accessible_ids.append(pipeline.id)
+        if not user.user_type:
+            return []
         
-        return accessible_ids
+        # Get pipelines this user's user_type has access to
+        return list(UserTypePipelinePermission.objects.filter(
+            user_type=user.user_type
+        ).values_list('pipeline_id', flat=True))
     
     @action(detail=True, methods=['post'])
     def clone(self, request, pk=None):
@@ -286,7 +292,7 @@ class PipelineViewSet(viewsets.ModelViewSet):
 class FieldViewSet(viewsets.ModelViewSet):
     """Enhanced ViewSet for managing pipeline fields with lifecycle management"""
     serializer_class = FieldSerializer
-    permission_classes = [PipelinePermission]
+    permission_classes = [FieldPermission]
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
     filterset_fields = ['pipeline', 'field_type', 'is_ai_field', 'is_deleted']
     ordering_fields = ['display_order', 'name', 'created_at']

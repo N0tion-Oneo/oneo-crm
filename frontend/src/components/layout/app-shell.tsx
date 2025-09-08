@@ -1,8 +1,8 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { usePathname } from 'next/navigation'
-import { Menu, X, Bell, Search, Settings, LogOut, User, Users, Database, Workflow, ChevronDown, ChevronRight, MessageSquare } from 'lucide-react'
+import { usePathname, useRouter } from 'next/navigation'
+import { Menu, X, Bell, Search, Settings, LogOut, User, Users, Database, Workflow, ChevronDown, ChevronRight, MessageSquare, Settings2 } from 'lucide-react'
 import Link from 'next/link'
 import { useAuth } from '@/features/auth/context'
 import { useWebSocket } from '@/contexts/websocket-context'
@@ -28,8 +28,12 @@ export function AppShell({ children }: AppShellProps) {
   const [pipelines, setPipelines] = useState<any[]>([])
   const [pipelinesLoading, setPipelinesLoading] = useState(false)
   const pathname = usePathname()
-  const { user, logout, tenant } = useAuth()
+  const router = useRouter()
+  const { user, logout, tenant, hasPermission } = useAuth()
   const { subscribe, unsubscribe, isConnected } = useWebSocket()
+  
+  // Check if user can update pipelines (for showing settings button)
+  const canUpdatePipelines = hasPermission('pipelines', 'update')
 
   // Pipeline type icons mapping
   const PIPELINE_TYPE_ICONS: Record<string, string> = {
@@ -105,10 +109,12 @@ export function AppShell({ children }: AppShellProps) {
       setPipelinesLoading(true)
       const response = await pipelinesApi.list()
       const pipelinesData = response.data.results || response.data || []
+      console.log('Fetched pipelines:', pipelinesData.length, 'pipelines')
       // Filter only active pipelines and limit to first 10
       const activePipelines = pipelinesData
         .filter((p: any) => !p.is_archived)
         .slice(0, 10)
+      console.log('Active pipelines after filtering:', activePipelines.length)
       setPipelines(activePipelines)
     } catch (error) {
       console.error('Failed to fetch pipelines:', error)
@@ -317,19 +323,41 @@ export function AppShell({ children }: AppShellProps) {
                               const isCurrentPipeline = currentPipelineId === pipeline.id.toString()
                               
                               return (
-                                <Link
+                                <div
                                   key={pipeline.id}
-                                  href={`/pipelines/${pipeline.id}/records`}
                                   className={cn(
-                                    "flex items-center px-3 py-1.5 text-sm rounded-md transition-colors",
+                                    "flex items-center px-3 py-1.5 text-sm rounded-md transition-colors group",
                                     isCurrentPipeline
                                       ? "bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300"
                                       : "text-gray-600 hover:bg-gray-50 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-white"
                                   )}
                                 >
-                                  <span className="mr-2 text-base">{pipelineIcon}</span>
-                                  <span className="truncate">{pipeline.name}</span>
-                                </Link>
+                                  <Link
+                                    href={`/pipelines/${pipeline.id}/records`}
+                                    className="flex items-center flex-1 min-w-0"
+                                  >
+                                    <span className="mr-2 text-base flex-shrink-0">{pipelineIcon}</span>
+                                    <span className="truncate">{pipeline.name}</span>
+                                  </Link>
+                                  {canUpdatePipelines && (
+                                    <button
+                                      onClick={(e) => {
+                                        e.preventDefault()
+                                        e.stopPropagation()
+                                        router.push(`/pipelines/${pipeline.id}`)
+                                      }}
+                                      className={cn(
+                                        "ml-2 p-1 rounded opacity-0 group-hover:opacity-100 transition-opacity",
+                                        isCurrentPipeline
+                                          ? "hover:bg-blue-100 dark:hover:bg-blue-800/30"
+                                          : "hover:bg-gray-100 dark:hover:bg-gray-600"
+                                      )}
+                                      title="Pipeline Settings"
+                                    >
+                                      <Settings2 className="w-4 h-4" />
+                                    </button>
+                                  )}
+                                </div>
                               )
                             })}
                             {pipelines.length >= 10 && (

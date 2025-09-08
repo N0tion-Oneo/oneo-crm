@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { useAuth } from '@/features/auth/context'
-import { ArrowLeft, Edit, Settings, Target, Copy } from 'lucide-react'
+import { ArrowLeft, Edit, Settings, Target, Copy, Lock } from 'lucide-react'
 import { RecordListView, type Pipeline, type Record } from '@/components/pipelines/record-list-view'
 import { RecordDetailDrawer } from '@/components/pipelines/record-detail-drawer'
 import { pipelinesApi } from '@/lib/api'
@@ -11,8 +11,14 @@ import { pipelinesApi } from '@/lib/api'
 export default function PipelineRecordsPage() {
   const params = useParams()
   const router = useRouter()
-  const { isLoading: authLoading, isAuthenticated } = useAuth()
+  const { isLoading: authLoading, isAuthenticated, hasPermission } = useAuth()
   const pipelineId = params.id as string
+  
+  // Check permissions
+  const canReadRecords = hasPermission('records', 'read')
+  const canCreateRecords = hasPermission('records', 'create')
+  const canUpdateRecords = hasPermission('records', 'update')
+  const canDeleteRecords = hasPermission('records', 'delete')
 
   const [pipeline, setPipeline] = useState<Pipeline | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -82,6 +88,9 @@ export default function PipelineRecordsPage() {
   }, [pipelineId])
 
   const handleEditRecord = (record: Record, relatedPipeline?: Pipeline) => {
+    // Only allow edit if user has update permission
+    if (!canUpdateRecords) return
+    
     setSelectedRecord(record)
     setDrawerPipeline(relatedPipeline || pipeline)
     setCreatingNewRecord(false)
@@ -89,6 +98,9 @@ export default function PipelineRecordsPage() {
   }
 
   const handleCreateRecord = () => {
+    // Only allow create if user has create permission
+    if (!canCreateRecords) return
+    
     setSelectedRecord(null)
     setDrawerPipeline(pipeline)
     setCreatingNewRecord(true)
@@ -103,6 +115,23 @@ export default function PipelineRecordsPage() {
   }
 
   // Don't show page-level loading - let RecordListView handle its own loading state
+  
+  // Check if user has no access to records at all
+  if (!canReadRecords) {
+    return (
+      <div className="flex items-center justify-center h-full">
+        <div className="text-center">
+          <Lock className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+          <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-2">
+            Access Denied
+          </h2>
+          <p className="text-gray-600 dark:text-gray-400">
+            You don't have permission to view records.
+          </p>
+        </div>
+      </div>
+    )
+  }
 
   // Create minimal pipeline object to eliminate sequential loading
   const minimalPipeline = pipeline || {
@@ -121,8 +150,8 @@ export default function PipelineRecordsPage() {
       <div className="flex-1 overflow-hidden">
         <RecordListView
           pipeline={minimalPipeline}
-          onEditRecord={handleEditRecord}
-          onCreateRecord={handleCreateRecord}
+          onEditRecord={canUpdateRecords ? handleEditRecord : undefined}
+          onCreateRecord={canCreateRecords ? handleCreateRecord : undefined}
         />
       </div>
 

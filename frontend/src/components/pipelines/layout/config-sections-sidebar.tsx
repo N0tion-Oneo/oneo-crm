@@ -1,3 +1,15 @@
+/**
+ * ⚠️ WARNING: This component is NOT CURRENTLY USED
+ * 
+ * This component is orphaned code - it's only imported by pipeline-config-wrapper.tsx
+ * which is also unused. The actual pipeline configuration sidebar is implemented
+ * directly in /app/(dashboard)/pipelines/[id]/layout.tsx
+ * 
+ * See README.md in this directory for more details.
+ * 
+ * TODO: Consider removing this file to avoid confusion
+ */
+
 'use client'
 
 import { useRouter, usePathname } from 'next/navigation'
@@ -13,6 +25,7 @@ import {
   History,
   CheckCircle
 } from 'lucide-react'
+import { useAuth } from '@/features/auth/context'
 
 interface Pipeline {
   id: number
@@ -39,6 +52,51 @@ interface ConfigSection {
 export function ConfigSectionsSidebar({ pipeline, activeSection }: ConfigSectionsSidebarProps) {
   const router = useRouter()
   const pathname = usePathname()
+  const { hasPermission } = useAuth()
+
+  // Check if user has any field permissions
+  const fieldRead = hasPermission('fields', 'read')
+  const fieldCreate = hasPermission('fields', 'create')
+  const fieldUpdate = hasPermission('fields', 'update')
+  const fieldDelete = hasPermission('fields', 'delete')
+  const fieldRecover = hasPermission('fields', 'recover')
+  const fieldMigrate = hasPermission('fields', 'migrate')
+  
+  const hasFieldPermissions = fieldRead || fieldCreate || fieldUpdate || fieldDelete || fieldRecover || fieldMigrate
+  
+  // Debug logging for field permissions
+  console.log('🔍 ConfigSidebar - Field permissions check:', {
+    fieldRead,
+    fieldCreate,
+    fieldUpdate,
+    fieldDelete,
+    fieldRecover,
+    fieldMigrate,
+    hasFieldPermissions,
+    calculation: `${fieldRead} || ${fieldCreate} || ${fieldUpdate} || ${fieldDelete} || ${fieldRecover} || ${fieldMigrate} = ${hasFieldPermissions}`
+  })
+
+  // Check for business rules permissions
+  const hasBusinessRulesPermissions = 
+    hasPermission('business_rules', 'read') ||
+    hasPermission('business_rules', 'create') ||
+    hasPermission('business_rules', 'update') ||
+    hasPermission('business_rules', 'delete') ||
+    hasPermission('business_rules', 'execute')
+
+  // Check for duplicate management permissions
+  const hasDuplicatePermissions = 
+    hasPermission('duplicates', 'read') ||
+    hasPermission('duplicates', 'create') ||
+    hasPermission('duplicates', 'update') ||
+    hasPermission('duplicates', 'delete') ||
+    hasPermission('duplicates', 'resolve') ||
+    hasPermission('duplicates', 'detect')
+
+  // CRITICAL DEBUG: Log right before sections array creation
+  console.log('🚨 ABOUT TO CREATE SECTIONS ARRAY:')
+  console.log('  hasFieldPermissions =', hasFieldPermissions)
+  console.log('  Should Field Configuration be included?', hasFieldPermissions ? 'YES' : 'NO')
 
   const sections: ConfigSection[] = [
     {
@@ -57,30 +115,30 @@ export function ConfigSectionsSidebar({ pipeline, activeSection }: ConfigSection
       description: 'Basic configuration and display options',
       implemented: true
     },
-    {
+    ...(hasFieldPermissions ? [{
       id: 'fields',
       label: 'Field Configuration',
       icon: <Database className="w-4 h-4" />,
       path: `/pipelines/${pipeline.id}/fields`,
       description: 'Manage pipeline fields and data structure',
       implemented: true
-    },
-    {
+    }] : []),
+    ...(hasBusinessRulesPermissions ? [{
       id: 'business-rules',
       label: 'Business Rules',
       icon: <FileText className="w-4 h-4" />,
       path: `/pipelines/${pipeline.id}/business-rules`,
       description: 'Configure validation and automation rules',
       implemented: true
-    },
-    {
+    }] : []),
+    ...(hasDuplicatePermissions ? [{
       id: 'duplicates',
       label: 'Duplicate Management',
       icon: <Copy className="w-4 h-4" />,
       path: `/pipelines/${pipeline.id}/duplicates`,
       description: 'Set up duplicate detection and merging',
       implemented: true
-    },
+    }] : []),
     {
       id: 'analytics',
       label: 'Analytics',
@@ -106,6 +164,10 @@ export function ConfigSectionsSidebar({ pipeline, activeSection }: ConfigSection
       implemented: true
     }
   ]
+
+  // DEBUG: Log the final sections array
+  console.log('📋 FINAL SECTIONS ARRAY:', sections.map(s => ({ id: s.id, label: s.label })))
+  console.log('  Field Configuration included?', sections.some(s => s.id === 'fields'))
 
   const handleSectionClick = (section: ConfigSection) => {
     router.push(section.path)
@@ -144,7 +206,7 @@ export function ConfigSectionsSidebar({ pipeline, activeSection }: ConfigSection
       {/* Configuration Sections */}
       <nav className="p-2">
         <div className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider px-3 py-2">
-          Configuration
+          Configuration (TEST: {hasFieldPermissions ? 'HAS FIELDS' : 'NO FIELDS'})
         </div>
         
         {sections.map(section => (

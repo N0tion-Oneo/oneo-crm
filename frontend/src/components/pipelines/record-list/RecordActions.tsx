@@ -4,8 +4,8 @@ import { Trash2, Download, Upload, RefreshCw, X } from 'lucide-react'
 
 export interface RecordActionsProps {
   selectedCount: number
-  onBulkDelete: () => void
-  onBulkUpdate: () => void
+  onBulkDelete?: () => void
+  onBulkUpdate?: () => void
   onExport: (format: 'csv' | 'json' | 'excel') => void
   onRefresh: () => void
   onClearSelection: () => void
@@ -66,23 +66,27 @@ export function RecordActions({
       </span>
       
       <div className="flex items-center space-x-1">
-        <button
-          onClick={onBulkUpdate}
-          className="px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700"
-          title="Bulk update selected records"
-        >
-          <Upload className="w-3 h-3 mr-1 inline" />
-          Update
-        </button>
+        {onBulkUpdate && (
+          <button
+            onClick={onBulkUpdate}
+            className="px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700"
+            title="Bulk update selected records"
+          >
+            <Upload className="w-3 h-3 mr-1 inline" />
+            Update
+          </button>
+        )}
         
-        <button
-          onClick={onBulkDelete}
-          className="px-2 py-1 text-xs bg-red-600 text-white rounded hover:bg-red-700"
-          title="Delete selected records"
-        >
-          <Trash2 className="w-3 h-3 mr-1 inline" />
-          Delete
-        </button>
+        {onBulkDelete && (
+          <button
+            onClick={onBulkDelete}
+            className="px-2 py-1 text-xs bg-red-600 text-white rounded hover:bg-red-700"
+            title="Delete selected records"
+          >
+            <Trash2 className="w-3 h-3 mr-1 inline" />
+            Delete
+          </button>
+        )}
         
         <button
           onClick={onClearSelection}

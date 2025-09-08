@@ -128,35 +128,29 @@ class AsyncPermissionManager:
         return False
     
     async def get_accessible_pipelines(self):
-        """Get list of pipelines user can access"""
-        permissions = await self.get_user_permissions()
-        
-        # If user has full system access, return all
-        system_permissions = permissions.get('system', [])
-        if isinstance(system_permissions, list) and 'full_access' in system_permissions:
-            return 'all'
-        elif isinstance(system_permissions, dict) and system_permissions.get('full_access'):
+        """Get list of pipelines user can access via UserTypePipelinePermission"""
+        # Check if user has read_all permission (bypasses access control)
+        if await self.has_permission('action', 'pipelines', 'read_all'):
             return 'all'
         
-        # Get specific pipeline permissions
-        pipeline_perms = permissions.get('pipelines', [])
-        if isinstance(pipeline_perms, list):
-            # User has same permissions for all pipelines
-            return 'all' if 'read' in pipeline_perms else []
-        elif isinstance(pipeline_perms, dict):
-            # Return specific pipeline IDs user can access
-            accessible = []
-            for pipeline_id, actions in pipeline_perms.items():
-                if pipeline_id != 'default' and 'read' in actions:
-                    accessible.append(pipeline_id)
-            
-            # If user has default read access, they can see all
-            if 'read' in pipeline_perms.get('default', []):
-                return 'all'
-            
-            return accessible
+        # Check if user has full system access
+        if await self.has_permission('action', 'system', 'full_access'):
+            return 'all'
         
-        return []
+        # Get pipelines via UserTypePipelinePermission
+        if not self.user.user_type:
+            return []
+        
+        from authentication.models import UserTypePipelinePermission
+        
+        # Use sync_to_async for the ORM query
+        pipeline_ids = await sync_to_async(list)(
+            UserTypePipelinePermission.objects.filter(
+                user_type=self.user.user_type
+            ).values_list('pipeline_id', flat=True)
+        )
+        
+        return pipeline_ids
 
 
 class PermissionDecorator:
@@ -299,6 +293,48 @@ class SyncPermissionManager:
         
         # No access
         return queryset.none()
+    
+    def has_pipeline_access(self, pipeline_id):
+        """
+        Check if user has access to a specific pipeline via UserTypePipelinePermission.
+        This is different from pipeline permissions - it checks if the user's user_type
+        has been granted access to this specific pipeline.
+        """
+        # Check for bypass permissions first
+        if self.has_permission('action', 'pipelines', 'read_all'):
+            return True
+        if self.has_permission('action', 'system', 'full_access'):
+            return True
+        
+        if not self.user.user_type:
+            return False
+        
+        from authentication.models import UserTypePipelinePermission
+        return UserTypePipelinePermission.objects.filter(
+            user_type=self.user.user_type,
+            pipeline_id=pipeline_id
+        ).exists()
+    
+    def get_accessible_pipeline_ids(self):
+        """
+        Get list of pipeline IDs that user has access to via UserTypePipelinePermission.
+        This is the source of truth for which pipelines a user can work with.
+        """
+        # Check for bypass permissions first
+        if self.has_permission('action', 'pipelines', 'read_all'):
+            from pipelines.models import Pipeline
+            return list(Pipeline.objects.values_list('id', flat=True))
+        if self.has_permission('action', 'system', 'full_access'):
+            from pipelines.models import Pipeline
+            return list(Pipeline.objects.values_list('id', flat=True))
+        
+        if not self.user.user_type:
+            return []
+        
+        from authentication.models import UserTypePipelinePermission
+        return list(UserTypePipelinePermission.objects.filter(
+            user_type=self.user.user_type
+        ).values_list('pipeline_id', flat=True))
 
 
 class PermissionManager:

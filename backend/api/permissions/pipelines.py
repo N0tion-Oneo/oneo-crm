@@ -22,12 +22,12 @@ class PipelinePermission(permissions.BasePermission):
         if view.action == 'list':
             # Check if this is a field list or pipeline list
             if view.kwargs.get('pipeline_pk'):
-                # Field list - requires BOTH pipeline read AND field read permission
+                # Field list - requires pipeline ACCESS AND field read permission
                 pipeline_id = view.kwargs.get('pipeline_pk')
-                pipeline_access = permission_manager.has_permission('action', 'pipelines', 'read', pipeline_id)
+                pipeline_access = permission_manager.has_pipeline_access(pipeline_id)
                 field_access = permission_manager.has_permission('action', 'fields', 'read', pipeline_id)
                 result = pipeline_access and field_access
-                print(f"🔍 Field list permission check: pipelines.read={pipeline_access}, fields.read={field_access}, result={result}")
+                print(f"🔍 Field list permission check: pipeline_access={pipeline_access}, fields.read={field_access}, result={result}")
                 return result
             else:
                 # Pipeline list - requires pipeline read permission
@@ -35,12 +35,12 @@ class PipelinePermission(permissions.BasePermission):
         elif view.action == 'create':
             # Check if this is field creation or pipeline creation
             if view.kwargs.get('pipeline_pk'):
-                # Field creation - requires BOTH pipeline update AND field create permission
+                # Field creation - requires pipeline ACCESS (not update) AND field create permission
                 pipeline_id = view.kwargs.get('pipeline_pk')
-                pipeline_access = permission_manager.has_permission('action', 'pipelines', 'update', pipeline_id)
+                pipeline_access = permission_manager.has_pipeline_access(pipeline_id)
                 field_access = permission_manager.has_permission('action', 'fields', 'create', pipeline_id)
                 result = pipeline_access and field_access
-                print(f"🔍 Field create permission check: pipelines.update={pipeline_access}, fields.create={field_access}, result={result}")
+                print(f"🔍 Field create permission check: pipeline_access={pipeline_access}, fields.create={field_access}, result={result}")
                 return result
             else:
                 # Pipeline creation - requires pipeline create permission
@@ -57,7 +57,7 @@ class PipelinePermission(permissions.BasePermission):
             # Field reordering requires field update permission (detail=False action)
             pipeline_id = view.kwargs.get('pipeline_pk')
             if pipeline_id:
-                pipeline_access = permission_manager.has_permission('action', 'pipelines', 'read', pipeline_id)
+                pipeline_access = permission_manager.has_pipeline_access(pipeline_id)
                 field_access = permission_manager.has_permission('action', 'fields', 'update', pipeline_id)
                 return pipeline_access and field_access
             return False
@@ -71,7 +71,7 @@ class PipelinePermission(permissions.BasePermission):
                 # Field recovery operations require specific field.recover permission
                 pipeline_id = view.kwargs.get('pipeline_pk')
                 if pipeline_id:
-                    pipeline_access = permission_manager.has_permission('action', 'pipelines', 'read', pipeline_id)
+                    pipeline_access = permission_manager.has_pipeline_access(pipeline_id)
                     field_access = permission_manager.has_permission('action', 'fields', 'recover', pipeline_id)
                     return pipeline_access and field_access
                 return False
@@ -99,7 +99,7 @@ class PipelinePermission(permissions.BasePermission):
             # Field group management actions require field update permission
             pipeline_id = view.kwargs.get('pipeline_pk')
             if pipeline_id:
-                pipeline_access = permission_manager.has_permission('action', 'pipelines', 'read', pipeline_id)
+                pipeline_access = permission_manager.has_pipeline_access(pipeline_id)
                 field_access = permission_manager.has_permission('action', 'fields', 'update', pipeline_id)
                 return pipeline_access and field_access
             return False
@@ -114,15 +114,15 @@ class PipelinePermission(permissions.BasePermission):
             # Field group actions - check if user has field update permission for the pipeline
             if hasattr(obj, 'pipeline'):
                 # This is a field group object
-                pipeline_access = permission_manager.has_permission('action', 'pipelines', 'read', str(obj.pipeline.id))
+                pipeline_access = permission_manager.has_pipeline_access(str(obj.pipeline.id))
                 field_access = permission_manager.has_permission('action', 'fields', 'update', str(obj.pipeline.id))
                 return pipeline_access and field_access
             return False
         elif view.action in ['retrieve', 'analytics', 'export']:
             # Check if this is a field or pipeline object
             if hasattr(obj, 'pipeline'):
-                # Field object - requires BOTH pipeline read AND field read permission
-                pipeline_access = permission_manager.has_permission('action', 'pipelines', 'read', str(obj.pipeline.id))
+                # Field object - requires pipeline ACCESS AND field read permission
+                pipeline_access = permission_manager.has_pipeline_access(str(obj.pipeline.id))
                 field_access = permission_manager.has_permission('action', 'fields', 'read', str(obj.pipeline.id))
                 return pipeline_access and field_access
             else:
@@ -131,8 +131,8 @@ class PipelinePermission(permissions.BasePermission):
         elif view.action in ['update', 'partial_update']:
             # Check if this is a field or pipeline object
             if hasattr(obj, 'pipeline'):
-                # Field object - requires BOTH pipeline update AND field update permission
-                pipeline_access = permission_manager.has_permission('action', 'pipelines', 'update', str(obj.pipeline.id))
+                # Field object - requires pipeline ACCESS AND field update permission
+                pipeline_access = permission_manager.has_pipeline_access(str(obj.pipeline.id))
                 field_access = permission_manager.has_permission('action', 'fields', 'update', str(obj.pipeline.id))
                 return pipeline_access and field_access
             else:
@@ -141,8 +141,8 @@ class PipelinePermission(permissions.BasePermission):
         elif view.action == 'destroy':
             # Check if this is a field or pipeline object
             if hasattr(obj, 'pipeline'):
-                # Field object - requires BOTH pipeline delete AND field delete permission
-                pipeline_access = permission_manager.has_permission('action', 'pipelines', 'delete', str(obj.pipeline.id))
+                # Field object - requires pipeline ACCESS AND field delete permission
+                pipeline_access = permission_manager.has_pipeline_access(str(obj.pipeline.id))
                 field_access = permission_manager.has_permission('action', 'fields', 'delete', str(obj.pipeline.id))
                 return pipeline_access and field_access
             else:
@@ -152,7 +152,7 @@ class PipelinePermission(permissions.BasePermission):
             # Field management (soft delete/restore) operations require update permission
             if hasattr(obj, 'pipeline'):
                 # This is a field object - field management requires update permission
-                pipeline_access = permission_manager.has_permission('action', 'pipelines', 'read', str(obj.pipeline.id))
+                pipeline_access = permission_manager.has_pipeline_access(str(obj.pipeline.id))
                 field_access = permission_manager.has_permission('action', 'fields', 'update', str(obj.pipeline.id))
                 return pipeline_access and field_access
             else:
@@ -162,7 +162,7 @@ class PipelinePermission(permissions.BasePermission):
             # Field reordering requires field update permission
             pipeline_id = view.kwargs.get('pipeline_pk')
             if pipeline_id:
-                pipeline_access = permission_manager.has_permission('action', 'pipelines', 'read', pipeline_id)
+                pipeline_access = permission_manager.has_pipeline_access(pipeline_id)
                 field_access = permission_manager.has_permission('action', 'fields', 'update', pipeline_id)
                 return pipeline_access and field_access
             return False
@@ -170,29 +170,29 @@ class PipelinePermission(permissions.BasePermission):
             # Field migration requires specific field.migrate permission
             if hasattr(obj, 'pipeline'):
                 # This is a field object
-                pipeline_access = permission_manager.has_permission('action', 'pipelines', 'read', str(obj.pipeline.id))
+                pipeline_access = permission_manager.has_pipeline_access(str(obj.pipeline.id))
                 field_access = permission_manager.has_permission('action', 'fields', 'migrate', str(obj.pipeline.id))
                 return pipeline_access and field_access
             else:
                 # This is a pipeline object (shouldn't happen for field actions, but safe fallback)
-                pipeline_access = permission_manager.has_permission('action', 'pipelines', 'read', str(obj.id))
+                pipeline_access = permission_manager.has_pipeline_access(str(obj.id))
                 field_access = permission_manager.has_permission('action', 'fields', 'migrate', str(obj.id))
                 return pipeline_access and field_access
         elif view.action in ['deleted', 'restore', 'bulk_restore']:
             # Field recovery operations require specific field.recover permission
             pipeline_id = view.kwargs.get('pipeline_pk')
             if pipeline_id:
-                pipeline_access = permission_manager.has_permission('action', 'pipelines', 'read', pipeline_id)
+                pipeline_access = permission_manager.has_pipeline_access(pipeline_id)
                 field_access = permission_manager.has_permission('action', 'fields', 'recover', pipeline_id)
                 return pipeline_access and field_access
             elif hasattr(obj, 'pipeline'):
                 # This is a field object
-                pipeline_access = permission_manager.has_permission('action', 'pipelines', 'read', str(obj.pipeline.id))
+                pipeline_access = permission_manager.has_pipeline_access(str(obj.pipeline.id))
                 field_access = permission_manager.has_permission('action', 'fields', 'recover', str(obj.pipeline.id))
                 return pipeline_access and field_access
             else:
                 # This is a pipeline object
-                pipeline_access = permission_manager.has_permission('action', 'pipelines', 'read', str(obj.id))
+                pipeline_access = permission_manager.has_pipeline_access(str(obj.id))
                 field_access = permission_manager.has_permission('action', 'fields', 'recover', str(obj.id))
                 return pipeline_access and field_access
         
@@ -212,11 +212,17 @@ class RecordPermission(permissions.BasePermission):
         
         if view.action == 'list':
             if pipeline_id:
-                return permission_manager.has_permission('action', 'records', 'read', pipeline_id)
+                # Check pipeline access first, then record permission
+                has_access = permission_manager.has_pipeline_access(pipeline_id)
+                has_record_perm = permission_manager.has_permission('action', 'records', 'read', pipeline_id)
+                return has_access and has_record_perm
             return permission_manager.has_permission('action', 'records', 'read')
         elif view.action == 'create':
             if pipeline_id:
-                return permission_manager.has_permission('action', 'records', 'create', pipeline_id)
+                # Check pipeline access first, then record permission
+                has_access = permission_manager.has_pipeline_access(pipeline_id)
+                has_record_perm = permission_manager.has_permission('action', 'records', 'create', pipeline_id)
+                return has_access and has_record_perm
             return False
         elif view.action in ['retrieve', 'relationships', 'history']:
             return True  # Object-level check in has_object_permission
@@ -227,22 +233,30 @@ class RecordPermission(permissions.BasePermission):
         elif view.action == 'deleted':
             # List deleted records - requires read permission for the pipeline
             if pipeline_id:
-                return permission_manager.has_permission('action', 'records', 'read', pipeline_id)
+                has_access = permission_manager.has_pipeline_access(pipeline_id)
+                has_record_perm = permission_manager.has_permission('action', 'records', 'read', pipeline_id)
+                return has_access and has_record_perm
             return permission_manager.has_permission('action', 'records', 'read')
         elif view.action == 'bulk_create':
             # Bulk create requires create permission for the pipeline
             if pipeline_id:
-                return permission_manager.has_permission('action', 'records', 'create', pipeline_id)
+                has_access = permission_manager.has_pipeline_access(pipeline_id)
+                has_record_perm = permission_manager.has_permission('action', 'records', 'create', pipeline_id)
+                return has_access and has_record_perm
             return False
         elif view.action == 'bulk_update':
             # Bulk update requires update permission for the pipeline
             if pipeline_id:
-                return permission_manager.has_permission('action', 'records', 'update', pipeline_id)
+                has_access = permission_manager.has_pipeline_access(pipeline_id)
+                has_record_perm = permission_manager.has_permission('action', 'records', 'update', pipeline_id)
+                return has_access and has_record_perm
             return False
         elif view.action == 'validate':
             # Record validation requires read permission for the pipeline
             if pipeline_id:
-                return permission_manager.has_permission('action', 'records', 'read', pipeline_id)
+                has_access = permission_manager.has_pipeline_access(pipeline_id)
+                has_record_perm = permission_manager.has_permission('action', 'records', 'read', pipeline_id)
+                return has_access and has_record_perm
             return False
         elif view.action in ['generate_share_link', 'preview_shared_form']:
             # Share link generation requires read permission for the pipeline
@@ -255,6 +269,10 @@ class RecordPermission(permissions.BasePermission):
         """Check object-level permissions"""
         permission_manager = PermissionManager(request.user)
         pipeline_id = str(obj.pipeline_id)
+        
+        # First check if user has access to the pipeline at all
+        if not permission_manager.has_pipeline_access(pipeline_id):
+            return False
         
         if view.action in ['retrieve', 'relationships', 'history']:
             return permission_manager.has_permission('action', 'records', 'read', pipeline_id)

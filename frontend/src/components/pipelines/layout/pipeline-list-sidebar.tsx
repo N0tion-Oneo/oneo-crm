@@ -11,8 +11,11 @@ import {
   Archive,
   Star,
   Filter,
-  Folder
+  Folder,
+  Lock
 } from 'lucide-react'
+import { useAuth } from '@/features/auth/context'
+import { PermissionGuard } from '@/components/permissions/PermissionGuard'
 
 interface Pipeline {
   id: number
@@ -56,9 +59,15 @@ export function PipelineListSidebar({
   onToggleCollapse
 }: PipelineListSidebarProps) {
   const router = useRouter()
+  const { hasPermission } = useAuth()
   const [searchQuery, setSearchQuery] = useState('')
   const [filterType, setFilterType] = useState<string | null>(null)
   const [showArchived, setShowArchived] = useState(false)
+  
+  // Check permissions
+  const canCreatePipeline = hasPermission('pipelines', 'create')
+  const canReadPipelines = hasPermission('pipelines', 'read')
+  const canUpdatePipelines = hasPermission('pipelines', 'update')
 
   // Filter and group pipelines
   const { activePipelines, archivedPipelines, pipelinesByType } = useMemo(() => {
@@ -104,6 +113,28 @@ export function PipelineListSidebar({
   const handleNewPipeline = () => {
     // This will open the template loader or creation wizard
     router.push('/pipelines?action=new')
+  }
+
+  // If user can't read pipelines, show access denied
+  if (!canReadPipelines) {
+    return (
+      <div className="w-64 bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 flex flex-col">
+        <div className="flex-1 flex items-center justify-center p-6">
+          <div className="text-center">
+            <Lock className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+            <p className="text-sm text-gray-500 dark:text-gray-400">
+              No permission to view pipelines
+            </p>
+          </div>
+        </div>
+      </div>
+    )
+  }
+  
+  // If user has read but not update permissions, don't show this sidebar at all
+  // They should only see pipelines in the main navigation
+  if (!canUpdatePipelines) {
+    return null
   }
 
   if (collapsed) {
@@ -156,13 +187,28 @@ export function PipelineListSidebar({
           </button>
         </div>
         
-        <button
-          onClick={handleNewPipeline}
-          className="w-full px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md text-sm font-medium flex items-center justify-center"
+        <PermissionGuard 
+          category="pipelines" 
+          action="create"
+          fallback={
+            <button
+              disabled
+              className="w-full px-3 py-2 bg-gray-400 text-gray-200 rounded-md text-sm font-medium flex items-center justify-center cursor-not-allowed"
+              title="You don't have permission to create pipelines"
+            >
+              <Lock className="w-4 h-4 mr-1" />
+              New Pipeline (No Permission)
+            </button>
+          }
         >
-          <Plus className="w-4 h-4 mr-1" />
-          New Pipeline
-        </button>
+          <button
+            onClick={handleNewPipeline}
+            className="w-full px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md text-sm font-medium flex items-center justify-center"
+          >
+            <Plus className="w-4 h-4 mr-1" />
+            New Pipeline
+          </button>
+        </PermissionGuard>
       </div>
 
       {/* Search */}

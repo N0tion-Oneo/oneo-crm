@@ -49,7 +49,7 @@ PERMISSION_CATEGORIES = {
         'category_display': 'User Type Management'
     },
     'permissions': {
-        'actions': ['read', 'update', 'grant', 'revoke', 'assign', 'manage_roles'],
+        'actions': ['read', 'manage'],
         'description': 'Permission management and role assignment',
         'category_display': 'Permission Management'
     },
@@ -73,8 +73,8 @@ PERMISSION_CATEGORIES = {
         'category_display': 'Record Management'
     },
     'fields': {
-        'actions': ['create', 'read', 'update', 'delete', 'recover', 'migrate'],
-        'description': 'Field definition and configuration management',
+        'actions': ['read', 'manage', 'delete'],
+        'description': 'Field viewing and configuration management',
         'category_display': 'Field Management'
     },
     'relationships': {
@@ -83,7 +83,7 @@ PERMISSION_CATEGORIES = {
         'category_display': 'Relationship Management'
     },
     'business_rules': {
-        'actions': ['create', 'read', 'update', 'delete'],
+        'actions': ['create', 'read', 'update', 'delete', 'execute'],
         'description': 'Business rules configuration and management',
         'category_display': 'Business Rules'
     },
@@ -222,10 +222,7 @@ ACTION_DESCRIPTIONS = {
     'configure_shared_views_forms': 'Configure sharing settings and permissions',
     'revoke_shared_views_forms': 'Revoke and manage external shares',
     # Permission management actions
-    'grant': 'Grant permissions to users or roles',
-    'revoke': 'Revoke permissions from users or roles',
-    'assign': 'Assign roles and permissions to users',
-    'manage_roles': 'Create, modify, and delete user roles',
+    'manage': 'Manage permissions and role assignments (grant, revoke, update)',
     # Participant management actions
     'link': 'Link participants to records',
     'batch': 'Run batch participant processing',
@@ -373,7 +370,7 @@ def get_default_permissions_for_role(role_level: str) -> Dict[str, List[str]]:
             'filters': ['create_filters', 'edit_filters', 'delete_filters'],
             'sharing': ['create_shared_views', 'create_shared_forms', 'configure_shared_views_forms', 'revoke_shared_views_forms'],
             'forms': ['create', 'read', 'update', 'delete', 'configure'],
-            'permissions': ['read', 'update', 'grant', 'revoke', 'assign', 'manage_roles'],
+            'permissions': ['read', 'manage'],
             'staff_profiles': ['create', 'read', 'update', 'read_all', 'update_all', 'read_sensitive', 'update_sensitive'],
             'participants': ['create', 'read', 'update', 'link', 'batch']
         }

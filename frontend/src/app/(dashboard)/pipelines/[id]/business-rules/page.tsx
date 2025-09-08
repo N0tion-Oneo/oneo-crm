@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { useAuth } from '@/features/auth/context'
-import { ArrowLeft, Target, ChevronRight, Database, Settings } from 'lucide-react'
+import { ArrowLeft, Target, ChevronRight, Database, Settings, Lock } from 'lucide-react'
 import { BusinessRulesBuilder } from '@/components/pipelines/business-rules-builder'
 import { pipelinesApi } from '@/lib/api'
 
@@ -19,8 +19,15 @@ interface Pipeline {
 export default function BusinessRulesPage() {
   const params = useParams()
   const router = useRouter()
-  const { isLoading: authLoading } = useAuth()
+  const { isLoading: authLoading, hasPermission } = useAuth()
   const pipelineId = params.id as string
+  
+  // Check permissions
+  const canReadBusinessRules = hasPermission('business_rules', 'read')
+  const canCreateBusinessRules = hasPermission('business_rules', 'create')
+  const canUpdateBusinessRules = hasPermission('business_rules', 'update')
+  const canDeleteBusinessRules = hasPermission('business_rules', 'delete')
+  const canExecuteBusinessRules = hasPermission('business_rules', 'execute')
 
   const [pipeline, setPipeline] = useState<Pipeline | null>(null)
 
@@ -51,6 +58,23 @@ export default function BusinessRulesPage() {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="text-gray-500">Loading...</div>
+      </div>
+    )
+  }
+  
+  // Check if user has no access to business rules at all
+  if (!canReadBusinessRules) {
+    return (
+      <div className="flex items-center justify-center h-full">
+        <div className="text-center">
+          <Lock className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+          <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-2">
+            Access Denied
+          </h2>
+          <p className="text-gray-600 dark:text-gray-400">
+            You don't have permission to view business rules.
+          </p>
+        </div>
       </div>
     )
   }

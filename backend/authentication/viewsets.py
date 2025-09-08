@@ -642,12 +642,12 @@ class UserTypeViewSet(viewsets.ModelViewSet):
         # Normalize category name to prevent conflicts
         normalized_category = self._normalize_category_name(category)
         
-        # Check permission - user needs both user_types.update AND permissions.grant
+        # Check permission - user needs both user_types.update AND permissions.manage
         permission_manager = SyncPermissionManager(request.user)
         if not (permission_manager.has_permission('action', 'user_types', 'update') and 
-                permission_manager.has_permission('action', 'permissions', 'grant')):
+                permission_manager.has_permission('action', 'permissions', 'manage')):
             return Response(
-                {'error': 'Permission denied: Requires user_types.update and permissions.grant'},
+                {'error': 'Permission denied: Requires user_types.update and permissions.manage'},
                 status=status.HTTP_403_FORBIDDEN
             )
         
@@ -697,12 +697,12 @@ class UserTypeViewSet(viewsets.ModelViewSet):
         # Normalize category name to prevent conflicts
         normalized_category = self._normalize_category_name(category)
         
-        # Check permission - user needs both user_types.update AND permissions.revoke
+        # Check permission - user needs both user_types.update AND permissions.manage
         permission_manager = SyncPermissionManager(request.user)
         if not (permission_manager.has_permission('action', 'user_types', 'update') and 
-                permission_manager.has_permission('action', 'permissions', 'revoke')):
+                permission_manager.has_permission('action', 'permissions', 'manage')):
             return Response(
-                {'error': 'Permission denied: Requires user_types.update and permissions.revoke'},
+                {'error': 'Permission denied: Requires user_types.update and permissions.manage'},
                 status=status.HTTP_403_FORBIDDEN
             )
         
@@ -984,11 +984,11 @@ class UserTypePipelinePermissionViewSet(viewsets.ModelViewSet):
         if not user.is_authenticated:
             return UserTypePipelinePermission.objects.none()
         
-        # If user has permission management access, show all permissions (for admin interface)
-        if permission_manager.has_permission('action', 'permissions', 'read'):
+        # If user has pipeline access management permission, show all pipeline access entries
+        if permission_manager.has_permission('action', 'pipelines', 'access'):
             return UserTypePipelinePermission.objects.select_related('user_type').all()
         
-        # Otherwise, only show current user's permissions (for runtime access checking)
+        # Otherwise, only show current user's pipeline access (for runtime access checking)
         if user.user_type:
             return UserTypePipelinePermission.objects.filter(
                 user_type=user.user_type
@@ -1072,48 +1072,50 @@ class UserTypePipelinePermissionViewSet(viewsets.ModelViewSet):
         return Response(serializer.data)
     
     def create(self, request, *args, **kwargs):
-        """Create a new pipeline permission - requires permissions.grant"""
+        """Create a new pipeline access entry - requires pipelines.access"""
         permission_manager = SyncPermissionManager(request.user)
         
-        if not permission_manager.has_permission('action', 'permissions', 'grant'):
+        # Check for pipeline access management permission
+        if not permission_manager.has_permission('action', 'pipelines', 'access'):
             return Response(
-                {'error': 'Permission denied: Requires permissions.grant'},
+                {'error': 'Permission denied: Requires pipelines.access'},
                 status=status.HTTP_403_FORBIDDEN
             )
         
         return super().create(request, *args, **kwargs)
     
     def update(self, request, *args, **kwargs):
-        """Update a pipeline permission - requires permissions.update"""
+        """Update a pipeline access entry - requires pipelines.access"""
         permission_manager = SyncPermissionManager(request.user)
         
-        if not permission_manager.has_permission('action', 'permissions', 'update'):
+        if not permission_manager.has_permission('action', 'pipelines', 'access'):
             return Response(
-                {'error': 'Permission denied: Requires permissions.update'},
+                {'error': 'Permission denied: Requires pipelines.access'},
                 status=status.HTTP_403_FORBIDDEN
             )
         
         return super().update(request, *args, **kwargs)
     
     def partial_update(self, request, *args, **kwargs):
-        """Partially update a pipeline permission - requires permissions.update"""
+        """Partially update a pipeline access entry - requires pipelines.access"""
         permission_manager = SyncPermissionManager(request.user)
         
-        if not permission_manager.has_permission('action', 'permissions', 'update'):
+        if not permission_manager.has_permission('action', 'pipelines', 'access'):
             return Response(
-                {'error': 'Permission denied: Requires permissions.update'},
+                {'error': 'Permission denied: Requires pipelines.access'},
                 status=status.HTTP_403_FORBIDDEN
             )
         
         return super().partial_update(request, *args, **kwargs)
     
     def destroy(self, request, *args, **kwargs):
-        """Delete a pipeline permission - requires permissions.revoke"""
+        """Delete a pipeline access entry - requires pipelines.access"""
         permission_manager = SyncPermissionManager(request.user)
         
-        if not permission_manager.has_permission('action', 'permissions', 'revoke'):
+        # Check for pipeline access management permission
+        if not permission_manager.has_permission('action', 'pipelines', 'access'):
             return Response(
-                {'error': 'Permission denied: Requires permissions.revoke'},
+                {'error': 'Permission denied: Requires pipelines.access'},
                 status=status.HTTP_403_FORBIDDEN
             )
         
@@ -1210,22 +1212,22 @@ class UserTypeFieldPermissionViewSet(viewsets.ModelViewSet):
         return Response(serializer.data)
     
     def create(self, request, *args, **kwargs):
-        """Create a new field permission - requires permissions.grant"""
+        """Create a new field permission - requires permissions.manage"""
         permission_manager = SyncPermissionManager(request.user)
         
-        if not permission_manager.has_permission('action', 'permissions', 'grant'):
+        if not permission_manager.has_permission('action', 'permissions', 'manage'):
             return Response(
-                {'error': 'Permission denied: Requires permissions.grant'},
+                {'error': 'Permission denied: Requires permissions.manage'},
                 status=status.HTTP_403_FORBIDDEN
             )
         
         return super().create(request, *args, **kwargs)
     
     def update(self, request, *args, **kwargs):
-        """Update a field permission - requires permissions.update"""
+        """Update a field permission - requires permissions.manage"""
         permission_manager = SyncPermissionManager(request.user)
         
-        if not permission_manager.has_permission('action', 'permissions', 'update'):
+        if not permission_manager.has_permission('action', 'permissions', 'manage'):
             return Response(
                 {'error': 'Permission denied: Requires permissions.update'},
                 status=status.HTTP_403_FORBIDDEN
@@ -1234,10 +1236,10 @@ class UserTypeFieldPermissionViewSet(viewsets.ModelViewSet):
         return super().update(request, *args, **kwargs)
     
     def partial_update(self, request, *args, **kwargs):
-        """Partially update a field permission - requires permissions.update"""
+        """Partially update a field permission - requires permissions.manage"""
         permission_manager = SyncPermissionManager(request.user)
         
-        if not permission_manager.has_permission('action', 'permissions', 'update'):
+        if not permission_manager.has_permission('action', 'permissions', 'manage'):
             return Response(
                 {'error': 'Permission denied: Requires permissions.update'},
                 status=status.HTTP_403_FORBIDDEN
@@ -1246,12 +1248,12 @@ class UserTypeFieldPermissionViewSet(viewsets.ModelViewSet):
         return super().partial_update(request, *args, **kwargs)
     
     def destroy(self, request, *args, **kwargs):
-        """Delete a field permission - requires permissions.revoke"""
+        """Delete a field permission - requires permissions.manage"""
         permission_manager = SyncPermissionManager(request.user)
         
-        if not permission_manager.has_permission('action', 'permissions', 'revoke'):
+        if not permission_manager.has_permission('action', 'permissions', 'manage'):
             return Response(
-                {'error': 'Permission denied: Requires permissions.revoke'},
+                {'error': 'Permission denied: Requires permissions.manage'},
                 status=status.HTTP_403_FORBIDDEN
             )
         
@@ -1317,22 +1319,22 @@ class UserPipelinePermissionOverrideViewSet(viewsets.ModelViewSet):
         return Response(serializer.data)
     
     def create(self, request, *args, **kwargs):
-        """Create a new user permission override - requires permissions.grant"""
+        """Create a new user permission override - requires permissions.manage"""
         permission_manager = SyncPermissionManager(request.user)
         
-        if not permission_manager.has_permission('action', 'permissions', 'grant'):
+        if not permission_manager.has_permission('action', 'permissions', 'manage'):
             return Response(
-                {'error': 'Permission denied: Requires permissions.grant'},
+                {'error': 'Permission denied: Requires permissions.manage'},
                 status=status.HTTP_403_FORBIDDEN
             )
         
         return super().create(request, *args, **kwargs)
     
     def update(self, request, *args, **kwargs):
-        """Update a user permission override - requires permissions.update"""
+        """Update a user permission override - requires permissions.manage"""
         permission_manager = SyncPermissionManager(request.user)
         
-        if not permission_manager.has_permission('action', 'permissions', 'update'):
+        if not permission_manager.has_permission('action', 'permissions', 'manage'):
             return Response(
                 {'error': 'Permission denied: Requires permissions.update'},
                 status=status.HTTP_403_FORBIDDEN
@@ -1341,10 +1343,10 @@ class UserPipelinePermissionOverrideViewSet(viewsets.ModelViewSet):
         return super().update(request, *args, **kwargs)
     
     def partial_update(self, request, *args, **kwargs):
-        """Partially update a user permission override - requires permissions.update"""
+        """Partially update a user permission override - requires permissions.manage"""
         permission_manager = SyncPermissionManager(request.user)
         
-        if not permission_manager.has_permission('action', 'permissions', 'update'):
+        if not permission_manager.has_permission('action', 'permissions', 'manage'):
             return Response(
                 {'error': 'Permission denied: Requires permissions.update'},
                 status=status.HTTP_403_FORBIDDEN
@@ -1353,12 +1355,12 @@ class UserPipelinePermissionOverrideViewSet(viewsets.ModelViewSet):
         return super().partial_update(request, *args, **kwargs)
     
     def destroy(self, request, *args, **kwargs):
-        """Delete a user permission override - requires permissions.revoke"""
+        """Delete a user permission override - requires permissions.manage"""
         permission_manager = SyncPermissionManager(request.user)
         
-        if not permission_manager.has_permission('action', 'permissions', 'revoke'):
+        if not permission_manager.has_permission('action', 'permissions', 'manage'):
             return Response(
-                {'error': 'Permission denied: Requires permissions.revoke'},
+                {'error': 'Permission denied: Requires permissions.manage'},
                 status=status.HTTP_403_FORBIDDEN
             )
         

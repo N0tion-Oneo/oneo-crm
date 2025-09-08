@@ -11,7 +11,7 @@ export interface RecordTableRowProps {
   fields: RecordField[]
   isSelected: boolean
   onSelectRecord: (recordId: string) => void
-  onEditRecord: (record: Record) => void
+  onEditRecord?: (record: Record) => void
   onDeleteRecord?: (recordId: string) => void
   onOpenRelatedRecord?: (targetPipelineId: string, recordId: string) => void
   pipelineId: string
@@ -343,8 +343,8 @@ export function RecordTableRow({
 
   return (
     <tr
-      className={`hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer ${className}`}
-      onClick={() => onEditRecord(record)}
+      className={`hover:bg-gray-50 dark:hover:bg-gray-800 ${onEditRecord ? 'cursor-pointer' : ''} ${className}`}
+      onClick={() => onEditRecord && onEditRecord(record)}
     >
       {/* Selection cell */}
       <td className="px-4 py-3">
@@ -414,7 +414,7 @@ export function RecordTableRow({
           <button
             onClick={(e) => {
               e.stopPropagation()
-              onEditRecord(record)
+              if (onEditRecord) onEditRecord(record)
             }}
             className="text-gray-400 hover:text-blue-600 dark:hover:text-blue-400"
             title="Edit record"
@@ -425,7 +425,7 @@ export function RecordTableRow({
           <button
             onClick={(e) => {
               e.stopPropagation()
-              onEditRecord(record)
+              if (onEditRecord) onEditRecord(record)
             }}
             className="text-gray-400 hover:text-green-600 dark:hover:text-green-400"
             title="View record"

@@ -117,6 +117,11 @@ export default function PermissionsPage() {
   const hasUpdatePermission = hasPermission('user_types', 'update')
   const hasDeletePermission = hasPermission('user_types', 'delete')
   
+  // Pipeline access management permissions
+  // Users with pipelines.access can manage pipeline access for user types
+  const canGrantPipelineAccess = hasPermission('pipelines', 'access')
+  const canRevokePipelineAccess = hasPermission('pipelines', 'access')
+  
   // Page access: need settings permission to view the settings page
   const canViewPage = hasSettingsAccess
   
@@ -126,6 +131,7 @@ export default function PermissionsPage() {
   const canUpdateUserType = hasUpdatePermission
   const canDeleteUserType = hasDeletePermission
   const canModifyPermissions = hasUpdatePermission
+  const canManagePipelineAccess = canGrantPipelineAccess || canRevokePipelineAccess
   
   const [userTypes, setUserTypes] = useState<UserType[]>([])
   const [pipelines, setPipelines] = useState<Pipeline[]>([])
@@ -158,7 +164,7 @@ export default function PermissionsPage() {
         setLoading(true)
         const [userTypesResponse, pipelinesResponse, pipelinePermissionsResponse] = await Promise.all([
           api.get('/auth/user-types/'), // Get user types with their permissions
-          api.get('/api/pipelines/').catch(() => ({ data: { results: [] } })), // Get pipelines, fallback to empty if error
+          api.get('/api/pipelines/?settings_context=true').catch(() => ({ data: { results: [] } })), // Get ALL pipelines for access management
           api.get('/auth/user-type-pipeline-permissions/').catch(() => ({ data: { results: [] } })) // Get pipeline access permissions
         ])
 
@@ -206,9 +212,9 @@ export default function PermissionsPage() {
     const pipeline = pipelines.find(p => p.id === pipelineId)
     if (!userType || !pipeline) return
     
-    // Check if user can modify permissions
-    if (!canModifyPermissions) {
-      showNotification('You do not have permission to modify pipeline access', 'error')
+    // Check if user can manage pipeline access
+    if (!canManagePipelineAccess) {
+      showNotification('You do not have permission to modify pipeline access. Required: pipelines.access', 'error')
       return
     }
 
@@ -541,14 +547,33 @@ export default function PermissionsPage() {
       name: ut.name,
       hasBasePermissions: !!ut.base_permissions,
       permissionCount: Object.keys(ut.base_permissions || {}).length,
-      samplePermissions: Object.entries(ut.base_permissions || {}).slice(0, 2)
+      samplePermissions: Object.entries(ut.base_permissions || {}).slice(0, 2),
+      fieldsPermissions: ut.base_permissions?.fields || 'NO FIELDS PERMISSIONS'
     })))
     
     console.log('🔑 Generated permission matrix:', Object.keys(permissionMatrix).map(userType => ({
       userType,
       permissionCount: Object.keys(permissionMatrix[userType]).length,
-      samplePermissions: Object.entries(permissionMatrix[userType]).slice(0, 3)
+      samplePermissions: Object.entries(permissionMatrix[userType]).slice(0, 3),
+      fieldsInMatrix: Object.keys(permissionMatrix[userType]).filter(p => p.startsWith('fields:')),
     })))
+    
+    // Check specifically for Field Management category
+    const fieldManagementPerms = permissionsByCategory['Field Management'] || []
+    console.log('🔍 Field Management category:', {
+      exists: !!permissionsByCategory['Field Management'],
+      permissions: fieldManagementPerms.map(p => p.name),
+      count: fieldManagementPerms.length
+    })
+    
+    // Check Manager's fields permissions specifically
+    const manager = userTypes.find(ut => ut.name === 'Manager')
+    if (manager) {
+      console.log('👨‍💼 Manager fields check:', {
+        basePermissions: manager.base_permissions?.fields,
+        inMatrix: Object.keys(permissionMatrix['Manager'] || {}).filter(p => p.startsWith('fields:'))
+      })
+    }
     
     console.log('🎨 UI Debug - Should be rendering BUTTONS not checkboxes!')
     console.log('🎯 Frontend config:', !!frontendConfig)
@@ -744,7 +769,7 @@ export default function PermissionsPage() {
       // Reload the local data
       const [userTypesResponse, pipelinesResponse, pipelinePermissionsResponse] = await Promise.all([
         api.get('/auth/user-types/'),
-        api.get('/api/pipelines/').catch(() => ({ data: { results: [] } })),
+        api.get('/api/pipelines/?settings_context=true').catch(() => ({ data: { results: [] } })),
         api.get('/auth/user-type-pipeline-permissions/').catch(() => ({ data: { results: [] } }))
       ])
 

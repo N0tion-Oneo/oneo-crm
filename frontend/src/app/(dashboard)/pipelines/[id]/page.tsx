@@ -14,10 +14,13 @@ import {
   Archive,
   Activity,
   ChevronRight,
-  AlertCircle
+  AlertCircle,
+  Lock
 } from 'lucide-react'
 import { pipelinesApi } from '@/lib/api'
 import Link from 'next/link'
+import { useAuth } from '@/features/auth/context'
+import { PermissionGuard } from '@/components/permissions/PermissionGuard'
 
 interface PipelineStats {
   fieldCount: number
@@ -41,11 +44,17 @@ interface ActivityItem {
 export default function PipelineOverviewPage() {
   const params = useParams()
   const router = useRouter()
+  const { hasPermission } = useAuth()
   const pipelineId = params.id as string
   const [pipeline, setPipeline] = useState<any>(null)
   const [stats, setStats] = useState<PipelineStats | null>(null)
   const [recentActivity, setRecentActivity] = useState<ActivityItem[]>([])
   const [loading, setLoading] = useState(true)
+  
+  // Check permissions
+  const canReadPipeline = hasPermission('pipelines', 'read')
+  const canUpdatePipeline = hasPermission('pipelines', 'update')
+  const canDeletePipeline = hasPermission('pipelines', 'delete')
 
   useEffect(() => {
     const loadPipelineData = async () => {
@@ -141,6 +150,23 @@ export default function PipelineOverviewPage() {
     }
   }
 
+  // Check if user can read pipelines before loading
+  if (!canReadPipeline) {
+    return (
+      <div className="p-8">
+        <div className="text-center">
+          <Lock className="w-12 h-12 text-red-500 mx-auto mb-4" />
+          <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-2">
+            Access Denied
+          </h2>
+          <p className="text-gray-600 dark:text-gray-400">
+            You don't have permission to view this pipeline.
+          </p>
+        </div>
+      </div>
+    )
+  }
+
   if (loading) {
     return (
       <div className="p-8">
@@ -195,27 +221,74 @@ export default function PipelineOverviewPage() {
           
           {/* Quick Actions */}
           <div className="flex gap-2">
-            <button
-              onClick={() => handleQuickAction('export')}
-              className="px-3 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center text-sm"
+            <PermissionGuard 
+              category="pipelines" 
+              action="read"
+              fallback={
+                <button
+                  disabled
+                  className="px-3 py-2 bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md flex items-center text-sm opacity-50 cursor-not-allowed"
+                  title="You don't have permission to export pipelines"
+                >
+                  <Lock className="w-4 h-4 mr-1" />
+                  Export
+                </button>
+              }
             >
-              <Download className="w-4 h-4 mr-1" />
-              Export
-            </button>
-            <button
-              onClick={() => handleQuickAction('clone')}
-              className="px-3 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center text-sm"
+              <button
+                onClick={() => handleQuickAction('export')}
+                className="px-3 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center text-sm"
+              >
+                <Download className="w-4 h-4 mr-1" />
+                Export
+              </button>
+            </PermissionGuard>
+            
+            <PermissionGuard 
+              category="pipelines" 
+              action="create"
+              fallback={
+                <button
+                  disabled
+                  className="px-3 py-2 bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md flex items-center text-sm opacity-50 cursor-not-allowed"
+                  title="You don't have permission to clone pipelines"
+                >
+                  <Lock className="w-4 h-4 mr-1" />
+                  Clone
+                </button>
+              }
             >
-              <Copy className="w-4 h-4 mr-1" />
-              Clone
-            </button>
-            <button
-              onClick={() => handleQuickAction('archive')}
-              className="px-3 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center text-sm"
+              <button
+                onClick={() => handleQuickAction('clone')}
+                className="px-3 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center text-sm"
+              >
+                <Copy className="w-4 h-4 mr-1" />
+                Clone
+              </button>
+            </PermissionGuard>
+            
+            <PermissionGuard 
+              category="pipelines" 
+              action="delete"
+              fallback={
+                <button
+                  disabled
+                  className="px-3 py-2 bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md flex items-center text-sm opacity-50 cursor-not-allowed"
+                  title="You don't have permission to archive pipelines"
+                >
+                  <Lock className="w-4 h-4 mr-1" />
+                  Archive
+                </button>
+              }
             >
-              <Archive className="w-4 h-4 mr-1" />
-              Archive
-            </button>
+              <button
+                onClick={() => handleQuickAction('archive')}
+                className="px-3 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center text-sm"
+              >
+                <Archive className="w-4 h-4 mr-1" />
+                Archive
+              </button>
+            </PermissionGuard>
           </div>
         </div>
       </div>

@@ -1,3 +1,15 @@
+/**
+ * ⚠️ WARNING: This component is NOT CURRENTLY USED
+ * 
+ * This component is orphaned code - it's not imported anywhere in the codebase.
+ * The actual pipeline layout is implemented in /app/(dashboard)/pipelines/layout.tsx
+ * and the configuration sidebar is in /app/(dashboard)/pipelines/[id]/layout.tsx
+ * 
+ * See README.md in this directory for more details.
+ * 
+ * TODO: Consider removing this file to avoid confusion
+ */
+
 'use client'
 
 import { useState, useEffect } from 'react'
@@ -5,6 +17,7 @@ import { usePathname, useParams } from 'next/navigation'
 import { PipelineListSidebar } from './pipeline-list-sidebar'
 import { ConfigSectionsSidebar } from './config-sections-sidebar'
 import { pipelinesApi } from '@/lib/api'
+import { useAuth } from '@/features/auth/context'
 
 interface PipelineConfigWrapperProps {
   children: React.ReactNode
@@ -13,10 +26,14 @@ interface PipelineConfigWrapperProps {
 export function PipelineConfigWrapper({ children }: PipelineConfigWrapperProps) {
   const pathname = usePathname()
   const params = useParams()
+  const { hasPermission } = useAuth()
   const [pipelines, setPipelines] = useState<any[]>([])
   const [selectedPipeline, setSelectedPipeline] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  
+  // Check permissions
+  const canUpdatePipelines = hasPermission('pipelines', 'update')
 
   // Extract pipeline ID from URL
   const pipelineId = params?.id as string
@@ -59,9 +76,14 @@ export function PipelineConfigWrapper({ children }: PipelineConfigWrapperProps) 
   // Check if we're on the main pipelines page (no specific pipeline selected)
   const isMainPage = pathname === '/pipelines'
 
+  // For users with only read permissions, don't show the configuration wrapper at all
+  if (!canUpdatePipelines) {
+    return children
+  }
+
   return (
     <div className="flex h-[calc(100vh-4rem)] bg-gray-50 dark:bg-gray-900">
-      {/* Primary Sidebar - Pipeline List */}
+      {/* Primary Sidebar - Pipeline List (only shown if user has update permission) */}
       <PipelineListSidebar
         pipelines={pipelines}
         selectedPipeline={selectedPipeline}
@@ -71,7 +93,7 @@ export function PipelineConfigWrapper({ children }: PipelineConfigWrapperProps) 
         onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
       />
 
-      {/* Secondary Sidebar - Configuration Sections */}
+      {/* Secondary Sidebar - Configuration Sections (only shown if user has update permission) */}
       {selectedPipeline && !isMainPage && (
         <ConfigSectionsSidebar
           pipeline={selectedPipeline}

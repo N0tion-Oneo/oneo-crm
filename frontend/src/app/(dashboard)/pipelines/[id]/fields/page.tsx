@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { useAuth } from '@/features/auth/context'
-import { ArrowLeft, AlertCircle, ChevronRight, Settings, Database, Sparkles, Archive, RotateCcw, Check, Clock } from 'lucide-react'
+import { ArrowLeft, AlertCircle, ChevronRight, Settings, Database, Sparkles, Archive, RotateCcw, Check, Clock, Lock } from 'lucide-react'
 import { PipelineFieldBuilder } from '@/components/pipelines/pipeline-field-builder'
 import { DeletedFieldsList } from '@/components/pipelines/deleted-fields-list'
 import { PipelineTitleConfiguration } from '@/components/pipelines/pipeline-title-configuration'
@@ -80,8 +80,17 @@ interface Pipeline {
 export default function PipelineFieldsPage() {
   const params = useParams()
   const router = useRouter()
-  const { isLoading: authLoading, isAuthenticated } = useAuth()
+  const { isLoading: authLoading, isAuthenticated, hasPermission } = useAuth()
   const pipelineId = params.id as string
+  
+  // Check permissions (using new simplified structure)
+  const canReadFields = hasPermission('fields', 'read')
+  const canManageFields = hasPermission('fields', 'manage')  // Create and update
+  const canDeleteFields = hasPermission('fields', 'delete')   // Delete, recover, migrate
+  
+  // Legacy compatibility mappings
+  const canCreateFields = canManageFields
+  const canUpdateFields = canManageFields
 
   const [pipeline, setPipeline] = useState<Pipeline | null>(null)
   const [fields, setFields] = useState<PipelineField[]>([])
@@ -394,6 +403,23 @@ export default function PipelineFieldsPage() {
   if (!isAuthenticated && !authLoading) {
     router.push('/login')
     return null
+  }
+
+  // Check if user can read fields
+  if (!canReadFields) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="text-center">
+          <Lock className="w-12 h-12 text-red-500 mx-auto mb-4" />
+          <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-2">
+            Access Denied
+          </h2>
+          <p className="text-gray-600 dark:text-gray-400">
+            You don't have permission to view or manage pipeline fields.
+          </p>
+        </div>
+      </div>
+    )
   }
 
   // Only show loading if we're past auth and actually loading pipeline data

@@ -22,6 +22,7 @@ from api.serializers import (
 from pipelines.serializers import FieldManagementActionSerializer
 from api.filters import PipelineFilter
 from api.permissions import PipelinePermission
+from api.permissions.fields import FieldPermission, FieldGroupPermission
 from authentication.permissions import SyncPermissionManager as PermissionManager
 from rest_framework.exceptions import PermissionDenied, NotFound
 
@@ -46,10 +47,35 @@ class PipelineViewSet(viewsets.ModelViewSet):
         
         # Apply permission filtering
         permission_manager = PermissionManager(user)
-        if not permission_manager.has_permission('action', 'pipelines', 'read_all'):
-            # Filter to only accessible pipelines
-            accessible_pipeline_ids = self._get_accessible_pipeline_ids(user, permission_manager)
-            queryset = queryset.filter(id__in=accessible_pipeline_ids)
+        
+        # Check if user has permission to see pipelines
+        can_read = permission_manager.has_permission('action', 'pipelines', 'read')
+        can_read_all = permission_manager.has_permission('action', 'pipelines', 'read_all')
+        
+        # Get accessible pipelines via UserTypePipelinePermission
+        accessible_pipeline_ids = self._get_accessible_pipeline_ids(user, permission_manager)
+        
+        # User can see pipelines if they have read, read_all, OR specific pipeline access
+        if not (can_read or can_read_all or accessible_pipeline_ids):
+            # User has no way to see any pipelines
+            return Pipeline.objects.none()
+        
+        # Check if this is a request from the settings/permissions page
+        # Users with pipelines.access need to see ALL pipelines to manage access
+        is_settings_context = self.request.query_params.get('settings_context') == 'true'
+        
+        if is_settings_context and permission_manager.has_permission('action', 'pipelines', 'access'):
+            # User has pipelines.access and is in settings - show ALL pipelines
+            # so they can manage who has access to which pipelines
+            return queryset
+        
+        # If user has read_all, show all pipelines
+        if can_read_all:
+            return queryset
+        
+        # User has read permission - filter to only accessible pipelines via UserTypePipelinePermission
+        accessible_pipeline_ids = self._get_accessible_pipeline_ids(user, permission_manager)
+        queryset = queryset.filter(id__in=accessible_pipeline_ids)
         
         return queryset
     
@@ -446,7 +472,7 @@ class FieldViewSet(viewsets.ModelViewSet):
     Pipeline field management API
     """
     serializer_class = FieldSerializer
-    permission_classes = [PipelinePermission]
+    permission_classes = [FieldPermission]
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['field_type', 'is_visible_in_list', 'is_searchable']
     ordering = ['display_order', 'name']
@@ -1209,7 +1235,7 @@ class FieldGroupViewSet(viewsets.ModelViewSet):
     Field group management API for organizing fields within pipelines
     """
     serializer_class = FieldGroupSerializer
-    permission_classes = [PipelinePermission]
+    permission_classes = [FieldGroupPermission]
     filter_backends = [DjangoFilterBackend]
     ordering = ['display_order', 'name']
     

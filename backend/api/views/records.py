@@ -17,7 +17,7 @@ from api.serializers import (
 )
 from api.filters import DynamicRecordFilter, GlobalSearchFilter
 from api.permissions import RecordPermission
-from authentication.permissions import AsyncPermissionManager as PermissionManager
+from authentication.permissions import SyncPermissionManager as PermissionManager
 
 
 class RecordViewSet(viewsets.ModelViewSet):
@@ -33,18 +33,43 @@ class RecordViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         """Get records for specific pipeline or cross-pipeline"""
         pipeline_pk = self.kwargs.get('pipeline_pk')
+        user = self.request.user
+        permission_manager = PermissionManager(user)
         
         if pipeline_pk:
             # Pipeline-specific records
-            return Record.objects.filter(
+            queryset = Record.objects.filter(
                 pipeline_id=pipeline_pk,
                 is_deleted=False
             ).select_related('pipeline', 'created_by', 'updated_by')
+            
+            # Check if user has read_all permission (global or pipeline-specific)
+            # First check global permission, then pipeline-specific
+            has_global_read_all = permission_manager.has_permission('action', 'records', 'read_all')
+            has_global_read = permission_manager.has_permission('action', 'records', 'read')
+            
+            # Debug logging
+            print(f"🔍 RecordViewSet.get_queryset - User: {user.email}")
+            print(f"🔍 Pipeline: {pipeline_pk}")
+            print(f"🔍 has_global_read_all: {has_global_read_all}")
+            print(f"🔍 has_global_read: {has_global_read}")
+            
+            if has_global_read_all:
+                # User has global read_all permission - can see all records
+                print(f"✅ User has read_all - returning all {queryset.count()} records")
+                return queryset
+            elif has_global_read and not has_global_read_all:
+                # User has only global read permission - can only see assigned records
+                print(f"⚠️ User has only read permission - filtering to assigned records")
+                filtered = self._filter_assigned_records(queryset, user, pipeline_pk)
+                print(f"📊 Filtered from {queryset.count()} to {filtered.count()} assigned records")
+                return filtered
+            else:
+                # No read permission at all
+                print(f"❌ User has no read permissions")
+                return queryset.none()
         else:
             # Cross-pipeline record search
-            user = self.request.user
-            permission_manager = PermissionManager(user)
-            
             # Check if user has global records access
             if permission_manager.has_permission('action', 'records', 'read_all'):
                 # Admin users can see all records
@@ -56,10 +81,16 @@ class RecordViewSet(viewsets.ModelViewSet):
                     user_type=user.user_type
                 ).values_list('pipeline_id', flat=True)
             
-            return Record.objects.filter(
+            queryset = Record.objects.filter(
                 pipeline_id__in=accessible_pipelines,
                 is_deleted=False
             ).select_related('pipeline', 'created_by', 'updated_by')
+            
+            # If user only has read permission (not read_all), filter to assigned records
+            if not permission_manager.has_permission('action', 'records', 'read_all'):
+                return self._filter_assigned_records_cross_pipeline(queryset, user)
+            
+            return queryset
     
     def get_serializer_class(self):
         """Return dynamic serializer based on pipeline"""
@@ -1213,6 +1244,106 @@ class RecordViewSet(viewsets.ModelViewSet):
                 {'error': f'Failed to generate preview: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+    
+    def _filter_assigned_records(self, queryset, user, pipeline_id):
+        """
+        Filter records to only those where the user is assigned via USER fields.
+        
+        Args:
+            queryset: Base queryset of records
+            user: The user to filter for
+            pipeline_id: The pipeline ID to get fields from
+            
+        Returns:
+            Filtered queryset containing only records where user is assigned
+        """
+        from pipelines.models import Field
+        from pipelines.field_types import FieldType
+        
+        print(f"🔎 _filter_assigned_records called for user {user.email} in pipeline {pipeline_id}")
+        
+        # Get all USER type fields for this pipeline
+        # IMPORTANT: Use 'slug' not 'name' to match the actual field key in JSONB data
+        user_fields = Field.objects.filter(
+            pipeline_id=pipeline_id,
+            field_type=FieldType.USER,
+            is_deleted=False
+        ).values_list('slug', flat=True)
+        
+        print(f"🔎 Found USER fields: {list(user_fields)}")
+        
+        if not user_fields:
+            # No user fields in this pipeline, return empty queryset
+            print(f"❌ No USER fields found in pipeline {pipeline_id}")
+            return queryset.none()
+        
+        # Build Q object to check if user is assigned in any USER field
+        # Field slugs are normalized via field_slugify() so we can trust they're lowercase
+        q_filters = Q()
+        for field_name in user_fields:
+            # The USER field stores data directly as an array: data -> field_name -> [{"user_id": X, ...}]
+            # Only need to check the normalized field name since field_slugify ensures consistency
+            q_filters |= Q(**{
+                f'data__{field_name}__contains': [{"user_id": user.id}]
+            }) | Q(**{
+                # Also check with just user_id for partial matches
+                f'data__{field_name}__contains': {"user_id": user.id}
+            })
+        
+        print(f"🔎 Applying filter: {q_filters}")
+        filtered = queryset.filter(q_filters)
+        print(f"📊 Query SQL: {filtered.query}")
+        return filtered
+    
+    def _filter_assigned_records_cross_pipeline(self, queryset, user):
+        """
+        Filter records across multiple pipelines to only those where user is assigned.
+        
+        Args:
+            queryset: Base queryset of records from multiple pipelines
+            user: The user to filter for
+            
+        Returns:
+            Filtered queryset containing only records where user is assigned
+        """
+        from pipelines.models import Field, Pipeline
+        from pipelines.field_types import FieldType
+        
+        # Get all pipeline IDs from the queryset
+        pipeline_ids = queryset.values_list('pipeline_id', flat=True).distinct()
+        
+        # Build a complex Q filter for all pipelines and their USER fields
+        q_filters = Q()
+        
+        for pipeline_id in pipeline_ids:
+            # Get USER fields for this pipeline
+            # IMPORTANT: Use 'slug' not 'name' to match the actual field key in JSONB data
+            user_fields = Field.objects.filter(
+                pipeline_id=pipeline_id,
+                field_type=FieldType.USER,
+                is_deleted=False
+            ).values_list('slug', flat=True)
+            
+            if user_fields:
+                # Build Q object for this pipeline's USER fields
+                pipeline_q = Q(pipeline_id=pipeline_id)
+                field_q = Q()
+                for field_name in user_fields:
+                    # Field slugs are normalized, no need for case variations
+                    field_q |= Q(**{
+                        f'data__{field_name}__contains': [{"user_id": user.id}]
+                    }) | Q(**{
+                        # Also check with just user_id for partial matches
+                        f'data__{field_name}__contains': {"user_id": user.id}
+                    })
+                # Combine pipeline check with field checks
+                q_filters |= (pipeline_q & field_q)
+        
+        if not q_filters:
+            # No USER fields found in any pipeline
+            return queryset.none()
+        
+        return queryset.filter(q_filters)
 
 
 class GlobalSearchViewSet(viewsets.ReadOnlyModelViewSet):

@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
-import { Menu, X, Bell, Search, Settings, LogOut, User, Users, Database, Workflow, ChevronDown, ChevronRight, MessageSquare, Settings2 } from 'lucide-react'
+import { Menu, X, Bell, Search, Settings, LogOut, User, Users, Database, Workflow, ChevronDown, ChevronRight, Settings2 } from 'lucide-react'
 import Link from 'next/link'
 import { useAuth } from '@/features/auth/context'
 import { useWebSocket } from '@/contexts/websocket-context'
@@ -82,12 +82,6 @@ export function AppShell({ children }: AppShellProps) {
       href: '/pipelines',
       icon: Workflow,
       description: 'Data pipelines and workflows',
-    },
-    {
-      name: 'Communications',
-      href: '/communications',
-      icon: MessageSquare,
-      description: 'Account connections and messaging',
     },
     {
       name: 'Settings',

@@ -214,9 +214,13 @@ class RecordPermission(permissions.BasePermission):
             if pipeline_id:
                 # Check pipeline access first, then record permission
                 has_access = permission_manager.has_pipeline_access(pipeline_id)
-                has_record_perm = permission_manager.has_permission('action', 'records', 'read', pipeline_id)
-                return has_access and has_record_perm
-            return permission_manager.has_permission('action', 'records', 'read')
+                # Check for either read or read_all permission
+                has_read_all = permission_manager.has_permission('action', 'records', 'read_all', pipeline_id)
+                has_read = permission_manager.has_permission('action', 'records', 'read', pipeline_id)
+                return has_access and (has_read_all or has_read)
+            # Global check - accept either read or read_all
+            return (permission_manager.has_permission('action', 'records', 'read_all') or 
+                    permission_manager.has_permission('action', 'records', 'read'))
         elif view.action == 'create':
             if pipeline_id:
                 # Check pipeline access first, then record permission
@@ -231,12 +235,14 @@ class RecordPermission(permissions.BasePermission):
         elif view.action in ['destroy', 'soft_delete', 'restore']:
             return True  # Object-level check in has_object_permission
         elif view.action == 'deleted':
-            # List deleted records - requires read permission for the pipeline
+            # List deleted records - requires read or read_all permission for the pipeline
             if pipeline_id:
                 has_access = permission_manager.has_pipeline_access(pipeline_id)
-                has_record_perm = permission_manager.has_permission('action', 'records', 'read', pipeline_id)
-                return has_access and has_record_perm
-            return permission_manager.has_permission('action', 'records', 'read')
+                has_read_all = permission_manager.has_permission('action', 'records', 'read_all', pipeline_id)
+                has_read = permission_manager.has_permission('action', 'records', 'read', pipeline_id)
+                return has_access and (has_read_all or has_read)
+            return (permission_manager.has_permission('action', 'records', 'read_all') or 
+                    permission_manager.has_permission('action', 'records', 'read'))
         elif view.action == 'bulk_create':
             # Bulk create requires create permission for the pipeline
             if pipeline_id:
@@ -275,7 +281,29 @@ class RecordPermission(permissions.BasePermission):
             return False
         
         if view.action in ['retrieve', 'relationships', 'history']:
-            return permission_manager.has_permission('action', 'records', 'read', pipeline_id)
+            # Check if user has read_all permission
+            if permission_manager.has_permission('action', 'records', 'read_all', pipeline_id):
+                return True
+            # Check if user has read permission and is assigned to the record
+            if permission_manager.has_permission('action', 'records', 'read', pipeline_id):
+                # Check if user is assigned to this record via any USER field
+                from pipelines.models import Field
+                from pipelines.field_types import FieldType
+                
+                user_fields = Field.objects.filter(
+                    pipeline_id=pipeline_id,
+                    field_type=FieldType.USER,
+                    is_deleted=False
+                ).values_list('slug', flat=True)
+                
+                for field_slug in user_fields:
+                    # USER fields store data directly as an array
+                    # Field slugs are normalized via field_slugify, so we can trust they're consistent
+                    user_assignments = obj.data.get(field_slug, [])
+                    if isinstance(user_assignments, list):
+                        if any(assignment.get('user_id') == request.user.id for assignment in user_assignments):
+                            return True
+            return False
         elif view.action in ['update', 'partial_update']:
             return permission_manager.has_permission('action', 'records', 'update', pipeline_id)
         elif view.action in ['destroy', 'soft_delete']:

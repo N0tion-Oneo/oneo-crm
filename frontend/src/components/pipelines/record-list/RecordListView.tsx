@@ -60,6 +60,8 @@ export function RecordListView({ pipeline: initialPipeline, onEditRecord, onCrea
   const canCreateRecords = hasPermission('records', 'create')
   const canUpdateRecords = hasPermission('records', 'update')
   const canDeleteRecords = hasPermission('records', 'delete')
+  const hasReadAllPermission = hasPermission('records', 'read_all')
+  const hasReadPermission = hasPermission('records', 'read')
   
   // Internal pipeline state to handle minimal pipeline from parent
   const [pipeline, setPipeline] = useState(initialPipeline)
@@ -506,6 +508,38 @@ export function RecordListView({ pipeline: initialPipeline, onEditRecord, onCrea
             <p className="text-gray-600 dark:text-gray-400 mt-1">
               {pipeline.description}
             </p>
+            {/* Permission indicator */}
+            {(hasReadPermission || hasReadAllPermission) && (
+              <div className="flex items-center mt-2">
+                <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                  hasReadAllPermission 
+                    ? 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200' 
+                    : 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200'
+                }`}>
+                  {hasReadAllPermission ? (
+                    <>
+                      <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                        <path d="M10 12a2 2 0 100-4 2 2 0 000 4z"/>
+                        <path fillRule="evenodd" d="M.458 10C1.732 5.943 5.522 3 10 3s8.268 2.943 9.542 7c-1.274 4.057-5.064 7-9.542 7S1.732 14.057.458 10zM14 10a4 4 0 11-8 0 4 4 0 018 0z" clipRule="evenodd"/>
+                      </svg>
+                      Viewing: All Records
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clipRule="evenodd"/>
+                      </svg>
+                      Viewing: My Assigned Records
+                    </>
+                  )}
+                </span>
+                {!hasReadAllPermission && hasReadPermission && (
+                  <span className="ml-2 text-xs text-gray-500 dark:text-gray-400">
+                    (Only records where you are assigned)
+                  </span>
+                )}
+              </div>
+            )}
           </div>
           
           <div className="flex items-center space-x-3">

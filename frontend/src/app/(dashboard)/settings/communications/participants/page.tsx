@@ -13,6 +13,7 @@ import { ChannelSettings } from '@/components/settings/communications/ChannelSet
 import { CompanyLinkingSettings } from '@/components/settings/communications/CompanyLinkingSettings'
 import { BlacklistManagement } from '@/components/settings/communications/BlacklistManagement'
 import { ProcessingSettings } from '@/components/settings/communications/ProcessingSettings'
+import { ParticipantList } from '@/components/communications/participants/ParticipantList'
 
 interface ParticipantSettings {
   id: string
@@ -82,6 +83,7 @@ export default function ParticipantSettingsPage() {
   const canViewSettings = hasPageAccess || hasPermission('participants', 'read')
   const canEditSettings = hasPageAccess  // Having page access means can edit settings
   const canRunBatch = hasPermission('participants', 'batch')
+  const canViewParticipants = hasPermission('participants', 'read')
   
   const [settings, setSettings] = useState<ParticipantSettings | null>(null)
   const [blacklist, setBlacklist] = useState<BlacklistEntry[]>([])
@@ -94,7 +96,7 @@ export default function ParticipantSettingsPage() {
   const [loadingCompanyFields, setLoadingCompanyFields] = useState(false)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
-  const [activeTab, setActiveTab] = useState('auto-creation')
+  const [activeTab, setActiveTab] = useState('participants')
 
   useEffect(() => {
     // Always set loading to false if no permissions
@@ -138,6 +140,12 @@ export default function ParticipantSettingsPage() {
               creation_delay_hours: 0,
               default_contact_pipeline: null,
               default_contact_pipeline_name: null,
+              name_mapping_mode: 'single',
+              full_name_field: '',
+              first_name_field: '',
+              last_name_field: '',
+              name_split_strategy: 'smart',
+              company_name_field: '',
               auto_link_by_domain: false,
               create_company_if_missing: false,
               min_employees_for_company: 5,
@@ -470,13 +478,18 @@ export default function ParticipantSettingsPage() {
         </div>
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-          <TabsList className="grid w-full grid-cols-5">
+          <TabsList className="grid w-full grid-cols-6">
+            <TabsTrigger value="participants">Participants</TabsTrigger>
             <TabsTrigger value="auto-creation">Auto-Creation</TabsTrigger>
             <TabsTrigger value="channels">Channels</TabsTrigger>
             <TabsTrigger value="company">Companies</TabsTrigger>
             <TabsTrigger value="blacklist">Blacklist</TabsTrigger>
             <TabsTrigger value="processing">Processing</TabsTrigger>
           </TabsList>
+
+          <TabsContent value="participants" className="space-y-6">
+            <ParticipantList />
+          </TabsContent>
 
           <TabsContent value="auto-creation" className="space-y-6">
             <AutoCreationSettings

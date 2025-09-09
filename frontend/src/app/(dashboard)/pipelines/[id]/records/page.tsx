@@ -14,8 +14,8 @@ export default function PipelineRecordsPage() {
   const { isLoading: authLoading, isAuthenticated, hasPermission } = useAuth()
   const pipelineId = params.id as string
   
-  // Check permissions
-  const canReadRecords = hasPermission('records', 'read')
+  // Check permissions - users can have either 'read' or 'read_all'
+  const canReadRecords = hasPermission('records', 'read') || hasPermission('records', 'read_all')
   const canCreateRecords = hasPermission('records', 'create')
   const canUpdateRecords = hasPermission('records', 'update')
   const canDeleteRecords = hasPermission('records', 'delete')

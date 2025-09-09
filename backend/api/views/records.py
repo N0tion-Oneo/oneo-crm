@@ -9,6 +9,10 @@ from drf_spectacular.utils import extend_schema, OpenApiParameter
 from django.db.models import Q
 from django.utils import timezone
 from django.shortcuts import get_object_or_404
+from asgiref.sync import sync_to_async, async_to_sync
+from django.views.decorators.csrf import csrf_exempt
+from django.utils.decorators import method_decorator
+import asyncio
 
 from pipelines.models import Pipeline, Record
 from api.serializers import (
@@ -17,7 +21,7 @@ from api.serializers import (
 )
 from api.filters import DynamicRecordFilter, GlobalSearchFilter
 from api.permissions import RecordPermission
-from authentication.permissions import SyncPermissionManager as PermissionManager
+from authentication.permissions import AsyncPermissionManager, SyncPermissionManager as PermissionManager
 
 
 class RecordViewSet(viewsets.ModelViewSet):
@@ -34,52 +38,57 @@ class RecordViewSet(viewsets.ModelViewSet):
         """Get records for specific pipeline or cross-pipeline"""
         pipeline_pk = self.kwargs.get('pipeline_pk')
         user = self.request.user
+        
+        # Use SyncPermissionManager for better performance in sync context
         permission_manager = PermissionManager(user)
         
         if pipeline_pk:
-            # Pipeline-specific records
+            # Pipeline-specific records - optimize with single query and prefetching
             queryset = Record.objects.filter(
                 pipeline_id=pipeline_pk,
                 is_deleted=False
-            ).select_related('pipeline', 'created_by', 'updated_by')
+            ).select_related(
+                'pipeline', 
+                'created_by', 
+                'updated_by'
+            ).prefetch_related(
+                'pipeline__fields'  # Prefetch pipeline fields to avoid N+1 queries
+            )
             
-            # Check if user has read_all permission (global or pipeline-specific)
-            # First check global permission, then pipeline-specific
-            has_global_read_all = permission_manager.has_permission('action', 'records', 'read_all')
-            has_global_read = permission_manager.has_permission('action', 'records', 'read')
+            # Cache permission checks to avoid multiple database queries
+            # Get all permissions at once
+            user_permissions = permission_manager.get_user_permissions()
+            records_permissions = user_permissions.get('records', {})
             
-            # Debug logging
-            print(f"🔍 RecordViewSet.get_queryset - User: {user.email}")
-            print(f"🔍 Pipeline: {pipeline_pk}")
-            print(f"🔍 has_global_read_all: {has_global_read_all}")
-            print(f"🔍 has_global_read: {has_global_read}")
+            # Check permissions using cached data
+            has_global_read_all = 'read_all' in records_permissions if isinstance(records_permissions, list) else records_permissions.get('read_all', False)
+            has_global_read = 'read' in records_permissions if isinstance(records_permissions, list) else records_permissions.get('read', False)
             
             if has_global_read_all:
                 # User has global read_all permission - can see all records
-                print(f"✅ User has read_all - returning all {queryset.count()} records")
                 return queryset
             elif has_global_read and not has_global_read_all:
                 # User has only global read permission - can only see assigned records
-                print(f"⚠️ User has only read permission - filtering to assigned records")
-                filtered = self._filter_assigned_records(queryset, user, pipeline_pk)
-                print(f"📊 Filtered from {queryset.count()} to {filtered.count()} assigned records")
-                return filtered
+                return self._filter_assigned_records(queryset, user, pipeline_pk)
             else:
                 # No read permission at all
-                print(f"❌ User has no read permissions")
                 return queryset.none()
         else:
             # Cross-pipeline record search
             # Check if user has global records access
             if permission_manager.has_permission('action', 'records', 'read_all'):
                 # Admin users can see all records
-                accessible_pipelines = Pipeline.objects.filter(is_active=True).values_list('id', flat=True)
+                accessible_pipelines = list(
+                    Pipeline.objects.filter(is_active=True).values_list('id', flat=True)
+                )
             else:
                 # Regular users - filter by dynamic pipeline permissions
                 from authentication.models import UserTypePipelinePermission
-                accessible_pipelines = UserTypePipelinePermission.objects.filter(
-                    user_type=user.user_type
-                ).values_list('pipeline_id', flat=True)
+                accessible_pipelines = list(
+                    UserTypePipelinePermission.objects.filter(
+                        user_type=user.user_type
+                    ).values_list('pipeline_id', flat=True)
+                )
             
             queryset = Record.objects.filter(
                 pipeline_id__in=accessible_pipelines,
@@ -373,10 +382,15 @@ class RecordViewSet(viewsets.ModelViewSet):
     
     def perform_create(self, serializer):
         """Set pipeline and user when creating record"""
+        # Use async_to_sync for async database operations
+        return async_to_sync(self._perform_create_async)(serializer)
+    
+    async def _perform_create_async(self, serializer):
+        """Async version of perform_create"""
         pipeline_pk = self.kwargs.get('pipeline_pk')
         if pipeline_pk:
-            pipeline = Pipeline.objects.get(id=pipeline_pk)
-            serializer.save(
+            pipeline = await Pipeline.objects.aget(id=pipeline_pk)
+            await sync_to_async(serializer.save)(
                 pipeline=pipeline,
                 created_by=self.request.user,
                 updated_by=self.request.user
@@ -385,8 +399,8 @@ class RecordViewSet(viewsets.ModelViewSet):
             # Cross-pipeline creation requires pipeline_id in data
             pipeline_id = self.request.data.get('pipeline_id')
             if pipeline_id:
-                pipeline = Pipeline.objects.get(id=pipeline_id)
-                serializer.save(
+                pipeline = await Pipeline.objects.aget(id=pipeline_id)
+                await sync_to_async(serializer.save)(
                     pipeline=pipeline,
                     created_by=self.request.user,
                     updated_by=self.request.user
@@ -1258,15 +1272,9 @@ class RecordViewSet(viewsets.ModelViewSet):
         Returns:
             Filtered queryset containing only records where user is assigned
         """
-        print(f"🔎 _filter_assigned_records called for user {user.email} in pipeline {pipeline_id}")
-        
         # Use the indexed assigned_user_ids field for fast lookups
         # This field is automatically maintained by a database trigger
-        filtered = queryset.filter(assigned_user_ids__contains=[user.id])
-        
-        print(f"✅ Filtered result using indexed field: {filtered.count()} records")
-        print(f"📊 Optimized Query SQL: {filtered.query}")
-        return filtered
+        return queryset.filter(assigned_user_ids__contains=[user.id])
     
     def _filter_assigned_records_cross_pipeline(self, queryset, user):
         """

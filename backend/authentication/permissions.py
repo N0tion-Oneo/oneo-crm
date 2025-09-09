@@ -248,10 +248,30 @@ class SyncPermissionManager:
     def __init__(self, user):
         self.user = user
         self.async_manager = AsyncPermissionManager(user)
+        self._permissions_cache = None
     
     def get_user_permissions(self):
-        """Get all permissions for a user (sync wrapper)"""
-        return async_to_sync(self.async_manager.get_user_permissions)()
+        """Get all permissions for a user (sync wrapper with caching)"""
+        if self._permissions_cache is not None:
+            return self._permissions_cache
+        
+        # Check Redis cache first
+        from django.core.cache import cache
+        cache_key = f"user_permissions:{self.user.id}:{self.user.user_type_id}"
+        cached_permissions = cache.get(cache_key)
+        
+        if cached_permissions is not None:
+            self._permissions_cache = cached_permissions
+            return cached_permissions
+        
+        # Get permissions from async manager
+        permissions = async_to_sync(self.async_manager.get_user_permissions)()
+        
+        # Cache for 5 minutes
+        cache.set(cache_key, permissions, 300)
+        self._permissions_cache = permissions
+        
+        return permissions
     
     def has_permission(self, permission_type, resource_type, action, resource_id=None):
         """Check if user has specific permission (sync wrapper)"""

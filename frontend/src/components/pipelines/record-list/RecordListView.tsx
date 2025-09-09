@@ -63,63 +63,8 @@ export function RecordListView({ pipeline: initialPipeline, onEditRecord, onCrea
   const hasReadAllPermission = hasPermission('records', 'read_all')
   const hasReadPermission = hasPermission('records', 'read')
   
-  // Internal pipeline state to handle minimal pipeline from parent
-  const [pipeline, setPipeline] = useState(initialPipeline)
-  
-  // Load complete pipeline data if we received a minimal one
-  useEffect(() => {
-    const loadCompletePipeline = async () => {
-      if (pipeline.fields.length === 0 && pipeline.id) {
-        try {
-          const [pipelineResponse, fieldGroupsResponse] = await Promise.all([
-            pipelinesApi.get(pipeline.id),
-            pipelinesApi.getFieldGroups(pipeline.id)
-          ])
-          
-          const fieldGroups = (fieldGroupsResponse.data as any)?.results || fieldGroupsResponse.data || []
-          
-          const completePipeline = {
-            id: pipelineResponse.data.id?.toString() || pipeline.id,
-            name: pipelineResponse.data.name || 'Unknown Pipeline',
-            description: pipelineResponse.data.description || '',
-            record_count: pipelineResponse.data.record_count || 0,
-            fields: (pipelineResponse.data.fields || []).map((field: any) => ({
-              id: field.id?.toString() || `field_${Date.now()}`,
-              name: field.slug || field.name?.toLowerCase().replace(/\s+/g, '_'),
-              display_name: field.name || field.display_name || field.slug || 'Unknown Field',
-              field_type: field.field_type || 'text',
-              is_visible_in_list: field.is_visible_in_list !== false,
-              is_visible_in_detail: field.is_visible_in_detail !== false,
-              is_visible_in_public_forms: field.is_visible_in_public_forms || false,
-              display_order: field.display_order || 0,
-              field_config: field.field_config || {},
-              config: field.field_config || {},
-              ai_config: field.ai_config || {},
-              original_slug: field.slug,
-              business_rules: field.business_rules || {},
-              field_group: field.field_group?.toString() || null
-            })),
-            field_groups: fieldGroups.map((group: any) => ({
-              id: group.id?.toString() || `group_${Date.now()}`,
-              name: group.name || 'Unknown Group',
-              description: group.description || '',
-              color: group.color || '#3B82F6',
-              icon: group.icon || 'folder',
-              display_order: group.display_order || 0,
-              field_count: group.field_count || 0
-            })),
-            stages: pipelineResponse.data.stages || []
-          }
-          
-          setPipeline(completePipeline)
-        } catch (error) {
-          console.error('Failed to load complete pipeline data:', error)
-        }
-      }
-    }
-    
-    loadCompletePipeline()
-  }, [pipeline.id, pipeline.fields.length])
+  // Use the pipeline directly from props - parent ensures it's complete
+  const pipeline = initialPipeline
   
   // View state
   const [viewMode, setViewMode] = useState<ViewMode>('table')

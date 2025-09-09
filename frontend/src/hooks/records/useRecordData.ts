@@ -56,10 +56,14 @@ export function useRecordData(options: UseRecordDataOptions): UseRecordDataRetur
 
   const [records, setRecords] = useState<Record[]>([])
   const [loading, setLoading] = useState(false)
+  const [showLoading, setShowLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [currentPage, setCurrentPage] = useState(1)
   const [totalRecords, setTotalRecords] = useState(0)
   const [totalPages, setTotalPages] = useState(0)
+  
+  // Track if we've fetched data to prevent showing loading spinner on initial render
+  const [hasFetchedOnce, setHasFetchedOnce] = useState(false)
 
   // Create stable field types reference to prevent unnecessary re-renders
   const fieldTypes = useMemo(() => {
@@ -80,8 +84,25 @@ export function useRecordData(options: UseRecordDataOptions): UseRecordDataRetur
     return searchQuery.trim() || undefined
   }, [searchQuery])
 
+  // Never show loading spinner on first load
+  useEffect(() => {
+    if (loading && hasFetchedOnce) {
+      // Only show spinner for subsequent loads (pagination, filters, etc)
+      setShowLoading(true)
+    } else {
+      setShowLoading(false)
+    }
+  }, [loading, hasFetchedOnce])
+
   const fetchRecords = useCallback(async () => {
     if (!pipeline?.id) return
+
+    console.log('🔄 fetchRecords called', {
+      pipelineId: pipeline.id,
+      page: currentPage,
+      hasFields: pipeline.fields?.length > 0,
+      timestamp: new Date().toISOString()
+    })
 
     setLoading(true)
     setError(null)
@@ -100,11 +121,13 @@ export function useRecordData(options: UseRecordDataOptions): UseRecordDataRetur
       setRecords(response.results)
       setTotalRecords(response.count)
       setTotalPages(Math.ceil(response.count / recordsPerPage))
+      setHasFetchedOnce(true)
     } catch (err: any) {
       console.error('Failed to fetch records:', err)
       setError(err?.message || 'Failed to load records')
     } finally {
       setLoading(false)
+      setHasFetchedOnce(true)
     }
   }, [pipeline.id, currentPage, recordsPerPage, stableSearchQuery, stableFilters, sort, fieldTypes])
 
@@ -204,8 +227,10 @@ export function useRecordData(options: UseRecordDataOptions): UseRecordDataRetur
       fetchRecords()
     }
     // Note: fetchRecords is intentionally omitted from dependencies to prevent loops
+    // fieldTypes is also omitted as it's derived from pipeline and would cause duplicate fetches
+    // We only depend on pipeline.id (not the whole pipeline object) to prevent re-fetches when fields load
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoFetch, pipeline?.id, currentPage, recordsPerPage, stableSearchQuery, stableFilters, sort, fieldTypes])
+  }, [autoFetch, pipeline?.id, currentPage, recordsPerPage, stableSearchQuery, stableFilters, sort])
 
   // Reset page when search/filters change
   useEffect(() => {
@@ -229,7 +254,7 @@ export function useRecordData(options: UseRecordDataOptions): UseRecordDataRetur
 
   return {
     records,
-    loading,
+    loading: showLoading,  // Only show loading on subsequent fetches, never on first load
     error,
     pagination,
     fetchRecords,

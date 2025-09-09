@@ -133,15 +133,17 @@ export default function PipelineRecordsPage() {
     )
   }
 
-  // Create minimal pipeline object to eliminate sequential loading
-  const minimalPipeline = pipeline || {
-    id: pipelineId,
-    name: 'Loading...',
-    description: '',
-    record_count: 0,
-    fields: [],
-    field_groups: [],
-    stages: []
+  // Wait for pipeline to fully load before rendering RecordListView
+  // This prevents the waterfall of API calls
+  if (!pipeline) {
+    return (
+      <div className="h-screen flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
+          <p className="text-gray-500 mt-2">Loading pipeline...</p>
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -149,7 +151,7 @@ export default function PipelineRecordsPage() {
       {/* Main content area with RecordListView */}
       <div className="flex-1 overflow-hidden">
         <RecordListView
-          pipeline={minimalPipeline}
+          pipeline={pipeline}
           onEditRecord={canUpdateRecords ? handleEditRecord : undefined}
           onCreateRecord={canCreateRecords ? handleCreateRecord : undefined}
         />

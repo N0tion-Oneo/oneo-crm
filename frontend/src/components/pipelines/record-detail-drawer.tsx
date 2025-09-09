@@ -561,19 +561,31 @@ export function RecordDetailDrawer({
 
   // State for collapsible field groups
   const [expandedGroups, setExpandedGroups] = useState<Set<string | null>>(new Set())
+  const [hasInitializedGroups, setHasInitializedGroups] = useState(false)
   
-  // Initialize with all groups expanded
+  // Initialize with all groups expanded only once when drawer opens
   useEffect(() => {
-    const groupIds = new Set<string | null>()
-    if (pipeline.field_groups) {
-      pipeline.field_groups.forEach(group => groupIds.add(String(group.id)))
+    // Only initialize once when the drawer opens, not on every visibleFields change
+    if (!hasInitializedGroups && isOpen) {
+      const groupIds = new Set<string | null>()
+      if (pipeline.field_groups) {
+        pipeline.field_groups.forEach(group => groupIds.add(String(group.id)))
+      }
+      // Add null for ungrouped fields if they exist
+      if (visibleFields.some(field => !field.field_group)) {
+        groupIds.add(null)
+      }
+      setExpandedGroups(groupIds)
+      setHasInitializedGroups(true)
     }
-    // Add null for ungrouped fields if they exist
-    if (visibleFields.some(field => !field.field_group)) {
-      groupIds.add(null)
+  }, [isOpen, hasInitializedGroups, pipeline.field_groups, visibleFields])
+  
+  // Reset initialization flag when drawer closes
+  useEffect(() => {
+    if (!isOpen) {
+      setHasInitializedGroups(false)
     }
-    setExpandedGroups(groupIds)
-  }, [pipeline.field_groups, visibleFields])
+  }, [isOpen])
 
   // Toggle group expansion
   const toggleGroupExpansion = (groupId: string | null) => {

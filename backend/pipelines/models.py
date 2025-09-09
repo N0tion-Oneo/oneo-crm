@@ -1303,6 +1303,16 @@ class Record(models.Model):
     ai_score = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
     ai_last_updated = models.DateTimeField(null=True, blank=True)
     
+    # Denormalized field for fast user assignment lookups
+    # Maintained by database trigger to extract user_ids from USER type fields
+    assigned_user_ids = ArrayField(
+        models.IntegerField(),
+        default=list,
+        blank=True,
+        db_index=True,
+        help_text="Cached list of user IDs assigned via USER fields"
+    )
+    
     class Meta:
         db_table = 'pipelines_record'
         indexes = [
@@ -1317,6 +1327,8 @@ class Record(models.Model):
             # JSONB indexes
             GinIndex(fields=['data']),
             GinIndex(fields=['tags']),
+            # Index for fast user assignment lookups
+            GinIndex(fields=['assigned_user_ids'], name='idx_assigned_users'),
         ]
         ordering = ['-updated_at']
     

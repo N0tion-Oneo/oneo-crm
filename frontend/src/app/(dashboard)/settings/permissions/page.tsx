@@ -410,8 +410,8 @@ export default function PermissionsPage() {
     const staticPermissions: Permission[] = []
     
     // Use the category_order if provided, otherwise fall back to Object.entries
-    const categoriesToProcess = frontendConfig.category_order 
-      ? frontendConfig.category_order.filter((key: string) => frontendConfig.categories[key])
+    const categoriesToProcess = (frontendConfig as any).category_order 
+      ? (frontendConfig as any).category_order.filter((key: string) => frontendConfig.categories[key])
       : Object.keys(frontendConfig.categories)
     
     categoriesToProcess.forEach((categoryKey: string) => {
@@ -426,7 +426,8 @@ export default function PermissionsPage() {
       
       const categoryName = categoryData.category_display || categoryKey.charAt(0).toUpperCase() + categoryKey.slice(1)
       
-      categoryData.actions.forEach((action: string) => {
+      if (categoryData.actions && Array.isArray(categoryData.actions)) {
+        categoryData.actions.forEach((action: string) => {
         staticPermissions.push({
           id: staticPermissions.length + 1,
           name: `${categoryKey}:${action}`,
@@ -436,6 +437,7 @@ export default function PermissionsPage() {
           is_system: categoryKey === 'system'
         })
       })
+      }
     })
     
     console.log(`📊 Generated ${staticPermissions.length} static permissions for matrix view`)
@@ -466,7 +468,7 @@ export default function PermissionsPage() {
   
   // Group categories by sections for better visual organization
   const permissionsBySection = React.useMemo(() => {
-    if (!frontendConfig?.permission_sections) {
+    if (!(frontendConfig as any)?.permission_sections) {
       // Fallback to a single section if sections not defined
       return [{
         id: 'all',
@@ -479,17 +481,17 @@ export default function PermissionsPage() {
     }
     
     // Map categories to their sections
-    return frontendConfig.permission_sections.map((section: any) => ({
+    return (frontendConfig as any).permission_sections.map((section: any) => ({
       ...section,
       categoryData: section.categories
         .filter((cat: string) => {
           // Find the display name for this category
-          const categoryData = frontendConfig.categories[cat]
+          const categoryData = frontendConfig?.categories[cat]
           const displayName = categoryData?.category_display || cat
           return permissionsByCategory[displayName]
         })
         .map((cat: string) => {
-          const categoryData = frontendConfig.categories[cat]
+          const categoryData = frontendConfig?.categories[cat]
           const displayName = categoryData?.category_display || cat
           return {
             key: cat,
@@ -516,9 +518,9 @@ export default function PermissionsPage() {
             const permissionName = `${category}:${action}`
             matrix[userType.name][permissionName] = true
           })
-        } else if (actions && typeof actions === 'object' && Array.isArray(actions.actions)) {
+        } else if (actions && typeof actions === 'object' && Array.isArray((actions as any).actions)) {
           // New nested format: permissions are in an actions array
-          actions.actions.forEach(action => {
+          (actions as any).actions.forEach((action: string) => {
             const permissionName = `${category}:${action}`
             matrix[userType.name][permissionName] = true
           })
@@ -607,9 +609,9 @@ export default function PermissionsPage() {
     if (Array.isArray(categoryData)) {
       // Legacy format: permissions are directly in an array
       currentValue = categoryData.includes(action)
-    } else if (categoryData && typeof categoryData === 'object' && Array.isArray(categoryData.actions)) {
+    } else if (categoryData && typeof categoryData === 'object' && Array.isArray((categoryData as any).actions)) {
       // New nested format: permissions are in an actions array
-      currentValue = categoryData.actions.includes(action)
+      currentValue = (categoryData as any).actions.includes(action)
     }
     const newValue = !currentValue
     
@@ -1083,7 +1085,7 @@ export default function PermissionsPage() {
 
                 {/* Table Body */}
                 <tbody className="bg-white dark:bg-gray-800">
-                  {permissionsBySection.map((section, sectionIndex) => (
+                  {permissionsBySection.map((section: any, sectionIndex: number) => (
                     <React.Fragment key={`section-${section.id}`}>
                       {/* Section Header Row */}
                       {sectionIndex > 0 && (
@@ -1150,10 +1152,10 @@ export default function PermissionsPage() {
                         
                         {/* Category-level bulk actions */}
                         {userTypes.map((userType) => {
-                          const allGranted = categoryPermissions.every(permission => 
+                          const allGranted = categoryPermissions.every((permission: any) => 
                             permissionMatrix[userType.name]?.[permission.name] === true
                           )
-                          const someGranted = categoryPermissions.some(permission => 
+                          const someGranted = categoryPermissions.some((permission: any) => 
                             permissionMatrix[userType.name]?.[permission.name] === true
                           )
                           
@@ -1183,7 +1185,7 @@ export default function PermissionsPage() {
                       </tr>
                       
                       {/* Permission rows for this category - only show if expanded */}
-                      {expandedCategories.has(category) && categoryPermissions.map((permission, index) => (
+                      {expandedCategories.has(category) && categoryPermissions.map((permission: any, index: number) => (
                         <tr key={`permission-${permission.id}`} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
                           <td className="px-6 py-4 border-r border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 sticky left-0 z-10 w-72">
                             <div className="flex items-start">

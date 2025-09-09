@@ -230,7 +230,7 @@ export default function PipelinesPage() {
       {/* Pipeline Creation Wizard */}
       {showCreationWizard && (
         <PipelineCreationWizard
-          onSubmit={handlePipelineCreation}
+          onCreatePipeline={handlePipelineCreation}
           onCancel={() => setShowCreationWizard(false)}
           loading={creationLoading}
         />

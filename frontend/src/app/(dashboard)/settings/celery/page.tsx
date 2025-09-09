@@ -165,6 +165,7 @@ interface TaskHistoryItem {
   
   // Legacy fields
   messages_synced?: number
+  conversations_created?: number
   retry_count?: number
   traceback?: string
   date_done?: string

@@ -455,7 +455,7 @@ export function RecordListView({ pipeline: initialPipeline, onEditRecord, onCrea
         console.log('🔗 Target pipeline fields with groups:', targetPipeline.fields.map((f: any) => ({ name: f.name, field_group: f.field_group })))
         
         // Open the related record with its proper pipeline context
-        onEditRecord(recordResponse.data, targetPipeline)
+        onEditRecord?.(recordResponse.data, targetPipeline)
       } else {
         console.error('🔗 Missing pipeline or record data:', { 
           hasPipeline: !!pipelineResponse.data, 
@@ -701,8 +701,8 @@ export function RecordListView({ pipeline: initialPipeline, onEditRecord, onCrea
             records={records}
             pipeline={pipeline}
             kanbanField={kanbanField || selectFields[0]?.value || ''}
-            onEditRecord={onEditRecord}
-            onCreateRecord={onCreateRecord}
+            onEditRecord={onEditRecord || (() => {})}
+            onCreateRecord={onCreateRecord || (() => {})}
             onUpdateRecord={async (recordId: string, fieldName: string, value: any) => {
               // This will be handled by real-time updates
               await recordData.updateRecord(recordId, { [fieldName]: value })
@@ -715,8 +715,8 @@ export function RecordListView({ pipeline: initialPipeline, onEditRecord, onCrea
             records={records}
             pipeline={pipeline}
             calendarField={calendarField || dateFields[0]?.value || ''}
-            onEditRecord={onEditRecord}
-            onCreateRecord={onCreateRecord}
+            onEditRecord={onEditRecord || (() => {})}
+            onCreateRecord={onCreateRecord || (() => {})}
           />
         )}
       </div>

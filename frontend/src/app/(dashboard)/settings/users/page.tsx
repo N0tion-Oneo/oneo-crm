@@ -134,7 +134,7 @@ export default function UsersPage() {
           ...currentUser,
           user_type: currentUser.userType?.id,
           user_type_name: currentUser.userType?.name || 'User',
-          full_name: currentUser.full_name || `${currentUser.first_name || ''} ${currentUser.last_name || ''}`.trim() || currentUser.email
+          full_name: (currentUser as any).full_name || `${currentUser.firstName || ''} ${currentUser.lastName || ''}`.trim() || currentUser.email
         }]
       }
       
@@ -399,11 +399,11 @@ export default function UsersPage() {
                       onEditUser={handleEditUser as any}
                       onViewStaffProfile={handleViewStaffProfile as any}
                       canEdit={canUpdateUser || canDeleteUser}
-                      canUpdate={canUpdateUser || (user.id === currentUser?.id)}  // Can update own user
-                      canDelete={canDeleteUser && (user.id !== currentUser?.id)}  // Cannot delete own user
+                      canUpdate={canUpdateUser || (user.id === Number(currentUser?.id))}  // Can update own user
+                      canDelete={canDeleteUser && (user.id !== Number(currentUser?.id))}  // Cannot delete own user
                       canAssignRoles={canAssignRoles}
-                      canImpersonate={canImpersonate && (user.id !== currentUser?.id)}  // Cannot impersonate self
-                      isOwnUser={user.id === currentUser?.id}
+                      canImpersonate={canImpersonate && (user.id !== Number(currentUser?.id))}  // Cannot impersonate self
+                      isOwnUser={user.id === Number(currentUser?.id)}
                     />
                   </td>
                 </tr>

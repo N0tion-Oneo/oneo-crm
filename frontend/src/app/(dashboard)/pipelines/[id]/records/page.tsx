@@ -107,7 +107,7 @@ export default function PipelineRecordsPage() {
     setShowRecordDrawer(true)
   }
 
-  const handleRecordSave = async (updatedRecord: Record) => {
+  const handleRecordSave = async (recordId: string, data: { [key: string]: any }, fullRecord?: any) => {
     // Record will be updated in RecordListView through real-time updates or refresh
     setShowRecordDrawer(false)
     setSelectedRecord(null)
@@ -167,7 +167,6 @@ export default function PipelineRecordsPage() {
             setCreatingNewRecord(false)
           }}
           onSave={handleRecordSave}
-          isCreating={creatingNewRecord}
         />
       )}
     </div>

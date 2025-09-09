@@ -1248,6 +1248,7 @@ class RecordViewSet(viewsets.ModelViewSet):
     def _filter_assigned_records(self, queryset, user, pipeline_id):
         """
         Filter records to only those where the user is assigned via USER fields.
+        Uses the indexed assigned_user_ids field for optimal performance.
         
         Args:
             queryset: Base queryset of records
@@ -1257,47 +1258,20 @@ class RecordViewSet(viewsets.ModelViewSet):
         Returns:
             Filtered queryset containing only records where user is assigned
         """
-        from pipelines.models import Field
-        from pipelines.field_types import FieldType
-        
         print(f"🔎 _filter_assigned_records called for user {user.email} in pipeline {pipeline_id}")
         
-        # Get all USER type fields for this pipeline
-        # IMPORTANT: Use 'slug' not 'name' to match the actual field key in JSONB data
-        user_fields = Field.objects.filter(
-            pipeline_id=pipeline_id,
-            field_type=FieldType.USER,
-            is_deleted=False
-        ).values_list('slug', flat=True)
+        # Use the indexed assigned_user_ids field for fast lookups
+        # This field is automatically maintained by a database trigger
+        filtered = queryset.filter(assigned_user_ids__contains=[user.id])
         
-        print(f"🔎 Found USER fields: {list(user_fields)}")
-        
-        if not user_fields:
-            # No user fields in this pipeline, return empty queryset
-            print(f"❌ No USER fields found in pipeline {pipeline_id}")
-            return queryset.none()
-        
-        # Build Q object to check if user is assigned in any USER field
-        # Field slugs are normalized via field_slugify() so we can trust they're lowercase
-        q_filters = Q()
-        for field_name in user_fields:
-            # The USER field stores data directly as an array: data -> field_name -> [{"user_id": X, ...}]
-            # Only need to check the normalized field name since field_slugify ensures consistency
-            q_filters |= Q(**{
-                f'data__{field_name}__contains': [{"user_id": user.id}]
-            }) | Q(**{
-                # Also check with just user_id for partial matches
-                f'data__{field_name}__contains': {"user_id": user.id}
-            })
-        
-        print(f"🔎 Applying filter: {q_filters}")
-        filtered = queryset.filter(q_filters)
-        print(f"📊 Query SQL: {filtered.query}")
+        print(f"✅ Filtered result using indexed field: {filtered.count()} records")
+        print(f"📊 Optimized Query SQL: {filtered.query}")
         return filtered
     
     def _filter_assigned_records_cross_pipeline(self, queryset, user):
         """
         Filter records across multiple pipelines to only those where user is assigned.
+        Uses the indexed assigned_user_ids field for optimal performance.
         
         Args:
             queryset: Base queryset of records from multiple pipelines
@@ -1306,44 +1280,9 @@ class RecordViewSet(viewsets.ModelViewSet):
         Returns:
             Filtered queryset containing only records where user is assigned
         """
-        from pipelines.models import Field, Pipeline
-        from pipelines.field_types import FieldType
-        
-        # Get all pipeline IDs from the queryset
-        pipeline_ids = queryset.values_list('pipeline_id', flat=True).distinct()
-        
-        # Build a complex Q filter for all pipelines and their USER fields
-        q_filters = Q()
-        
-        for pipeline_id in pipeline_ids:
-            # Get USER fields for this pipeline
-            # IMPORTANT: Use 'slug' not 'name' to match the actual field key in JSONB data
-            user_fields = Field.objects.filter(
-                pipeline_id=pipeline_id,
-                field_type=FieldType.USER,
-                is_deleted=False
-            ).values_list('slug', flat=True)
-            
-            if user_fields:
-                # Build Q object for this pipeline's USER fields
-                pipeline_q = Q(pipeline_id=pipeline_id)
-                field_q = Q()
-                for field_name in user_fields:
-                    # Field slugs are normalized, no need for case variations
-                    field_q |= Q(**{
-                        f'data__{field_name}__contains': [{"user_id": user.id}]
-                    }) | Q(**{
-                        # Also check with just user_id for partial matches
-                        f'data__{field_name}__contains': {"user_id": user.id}
-                    })
-                # Combine pipeline check with field checks
-                q_filters |= (pipeline_q & field_q)
-        
-        if not q_filters:
-            # No USER fields found in any pipeline
-            return queryset.none()
-        
-        return queryset.filter(q_filters)
+        # Simply filter by the indexed assigned_user_ids field
+        # This works across all pipelines since it's a single indexed lookup
+        return queryset.filter(assigned_user_ids__contains=[user.id])
 
 
 class GlobalSearchViewSet(viewsets.ReadOnlyModelViewSet):

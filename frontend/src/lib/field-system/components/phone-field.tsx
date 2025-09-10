@@ -134,24 +134,30 @@ export const PhoneFieldComponent: FieldComponent = {
             }
             
             // State management for phone fields (similar to currency fields)
-            const [currentCountryCode, setCurrentCountryCode] = useState(() => {
-              // Parse existing value to get country code
-              if (value && typeof value === 'object' && value.country_code) {
-                return value.country_code
+            // Track both country and phone code to handle duplicates like US/CA (+1)
+            const [selectedCountry, setSelectedCountry] = useState<string>(() => {
+              // Parse existing value to get country
+              if (value && typeof value === 'object' && value.country) {
+                return value.country
               }
               
               // Use configured default country  
               if (defaultCountry) {
-                return getCountryCode(defaultCountry)
+                return defaultCountry
               }
               
               // Check if there are allowed countries - use the first one
               if (allowedCountries && allowedCountries.length > 0) {
-                return getCountryCode(allowedCountries[0])
+                return allowedCountries[0]
               }
               
-              // Final fallback to +1
-              return '+1'
+              // Final fallback to US
+              return 'US'
+            })
+            
+            const [currentCountryCode, setCurrentCountryCode] = useState(() => {
+              // Get the phone code for the selected country
+              return getCountryCode(selectedCountry)
             })
             
             const [currentNumber, setCurrentNumber] = useState(() => {
@@ -165,8 +171,34 @@ export const PhoneFieldComponent: FieldComponent = {
             // Update state when external value changes (for existing records)
             useEffect(() => {
               if (value && typeof value === 'object') {
-                if (value.country_code) {
+                if (value.country) {
+                  setSelectedCountry(value.country)
+                  setCurrentCountryCode(getCountryCode(value.country))
+                } else if (value.country_code) {
                   setCurrentCountryCode(value.country_code)
+                  // Try to guess the country from the phone code (default to first match)
+                  const allCountries = [
+                    { code: 'US', phoneCode: '+1' },
+                    { code: 'CA', phoneCode: '+1' },
+                    { code: 'GB', phoneCode: '+44' },
+                    { code: 'AU', phoneCode: '+61' },
+                    { code: 'DE', phoneCode: '+49' },
+                    { code: 'FR', phoneCode: '+33' },
+                    { code: 'IT', phoneCode: '+39' },
+                    { code: 'ES', phoneCode: '+34' },
+                    { code: 'NL', phoneCode: '+31' },
+                    { code: 'ZA', phoneCode: '+27' },
+                    { code: 'NG', phoneCode: '+234' },
+                    { code: 'IN', phoneCode: '+91' },
+                    { code: 'CN', phoneCode: '+86' },
+                    { code: 'JP', phoneCode: '+81' },
+                    { code: 'SG', phoneCode: '+65' },
+                    { code: 'BR', phoneCode: '+55' }
+                  ]
+                  const country = allCountries.find(c => c.phoneCode === value.country_code)
+                  if (country) {
+                    setSelectedCountry(country.code)
+                  }
                 }
                 if (value.number) {
                   setCurrentNumber(value.number)
@@ -174,7 +206,7 @@ export const PhoneFieldComponent: FieldComponent = {
               }
             }, [value])
             
-            const updatePhoneValue = (newNumber: string | null, newCountryCode: string) => {
+            const updatePhoneValue = (newNumber: string | null, newCountryCode: string, country?: string) => {
               if (newNumber === null || newNumber === '') {
                 onChange(null)
               } else {
@@ -185,7 +217,8 @@ export const PhoneFieldComponent: FieldComponent = {
                 
                 const phoneObject = {
                   country_code: newCountryCode,
-                  number: cleanNumber
+                  number: cleanNumber,
+                  country: country || selectedCountry  // Store country to distinguish US/CA
                 }
                 onChange(phoneObject)
               }
@@ -203,10 +236,13 @@ export const PhoneFieldComponent: FieldComponent = {
                 }}
               >
                 <Select
-                  value={currentCountryCode || undefined}
+                  value={`${selectedCountry}:${currentCountryCode}`}
                   onValueChange={(value) => {
-                    setCurrentCountryCode(value)
-                    updatePhoneValue(currentNumber, value)
+                    // Extract country and phone code from the combined value (e.g., "US:+1")
+                    const [country, phoneCode] = value.split(':')
+                    setSelectedCountry(country)
+                    setCurrentCountryCode(phoneCode)
+                    updatePhoneValue(currentNumber, phoneCode, country)
                   }}
                   disabled={disabled}
                 >
@@ -241,7 +277,7 @@ export const PhoneFieldComponent: FieldComponent = {
                         : allCountries
                       
                       return availableCountries.map(country => (
-                        <SelectItem key={country.code} value={country.phoneCode}>
+                        <SelectItem key={country.code} value={`${country.code}:${country.phoneCode}`}>
                           {country.phoneCode} ({country.code})
                         </SelectItem>
                       ))
@@ -257,10 +293,10 @@ export const PhoneFieldComponent: FieldComponent = {
                     
                     if (newValue === '') {
                       setCurrentNumber('')
-                      updatePhoneValue(null, currentCountryCode)
+                      updatePhoneValue(null, currentCountryCode, selectedCountry)
                     } else {
                       setCurrentNumber(newValue)
-                      updatePhoneValue(newValue, currentCountryCode)
+                      updatePhoneValue(newValue, currentCountryCode, selectedCountry)
                     }
                   }}
                   onFocus={handleFocus}
@@ -366,7 +402,7 @@ export const PhoneFieldComponent: FieldComponent = {
     return formattedPhoneStr
   },
 
-  validate: (value: any, field: Field): ValidationResult => {
+  validate: (value: any, _field: Field): ValidationResult => {
     // Handle phone objects - check if number is null/empty (similar to currency validation)
     let actualPhone = value
     if (typeof value === 'object' && value !== null && value.number !== undefined) {

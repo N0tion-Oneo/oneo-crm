@@ -1,7 +1,7 @@
 """
 Communication models - omni-channel messaging with UniPile integration
 Focused purely on communication functionality: channels, messages, conversations
-Includes tenant-level UniPile configuration
+Includes tenant-level UniPile configuration and scheduling system
 """
 import uuid
 import json
@@ -218,6 +218,9 @@ class ChannelType(models.TextChoices):
     MESSENGER = 'messenger', 'Facebook Messenger'
     TELEGRAM = 'telegram', 'Telegram'
     TWITTER = 'twitter', 'Twitter/X'
+    # Scheduling and Calendar types
+    SCHEDULING = 'scheduling', 'Scheduling'  # For scheduling links/booking
+    CALENDAR = 'calendar', 'Calendar'  # For synced calendars via UniPile
 
 
 class AuthStatus(models.TextChoices):
@@ -1281,5 +1284,15 @@ class ChannelParticipantSettings(models.Model):
     
     def __str__(self):
         return f"{self.channel_type} settings"
+
+
+# Import scheduling models to make them available for migrations
+from communications.scheduling.models import (
+    SchedulingProfile,
+    MeetingType,
+    SchedulingLink,
+    ScheduledMeeting,
+    AvailabilityOverride
+)
 
 

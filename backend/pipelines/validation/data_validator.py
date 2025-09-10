@@ -631,6 +631,7 @@ class FieldValidator:
             if config and hasattr(config, 'require_country_code') and config.require_country_code:
                 country_code = value.get('country_code', '')
                 number = value.get('number', '')
+                country = value.get('country', '')  # New country field for disambiguation
                 
                 if not country_code or not number:
                     raise ValueError('Phone number requires both country code and number')
@@ -640,9 +641,14 @@ class FieldValidator:
                     raise ValueError('Invalid country code format')
                 
                 # Check allowed countries if configured
-                if (hasattr(config, 'allowed_countries') and config.allowed_countries and 
-                    not any(country_code == f'+{self._get_country_phone_code(c)}' for c in config.allowed_countries)):
-                    raise ValueError(f'Country code {country_code} is not allowed')
+                if (hasattr(config, 'allowed_countries') and config.allowed_countries):
+                    # Check by country code if provided
+                    if country and country not in config.allowed_countries:
+                        raise ValueError(f'Country {country} is not allowed')
+                    elif not country:
+                        # Fallback to checking by phone code
+                        if not any(country_code == f'+{self._get_country_phone_code(c)}' for c in config.allowed_countries):
+                            raise ValueError(f'Country code {country_code} is not allowed')
                 
                 # Country-specific validation
                 # Build full number: country_code already has +, number is just digits
@@ -651,6 +657,7 @@ class FieldValidator:
                 
                 # Debug validation
                 print(f"🔍 PHONE VALIDATION DEBUG:")
+                print(f"  - country: {country}")  # New debug line
                 print(f"  - country_code: {country_code}")  
                 print(f"  - number: {number}")
                 print(f"  - full_number: {full_number}")
@@ -670,6 +677,7 @@ class FieldValidator:
                     if not re.match(config.validation_pattern, full_number):
                         raise ValueError('Phone number does not match required format')
                 
+                # Return the complete phone object including country
                 return value
             else:
                 raise ValueError('Phone objects are only supported when country code is required')

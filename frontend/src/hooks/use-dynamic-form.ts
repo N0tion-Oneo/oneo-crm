@@ -62,19 +62,19 @@ export function useDynamicForm({
       // Build endpoint based on form type
       switch (formType) {
         case 'internal_full':
-          endpoint = `/api/pipelines/${pipelineId}/forms/internal/`
+          endpoint = `/api/v1/pipelines/${pipelineId}/forms/internal/`
           break
         case 'public_filtered':
-          endpoint = `/api/public-forms/${pipelineSlug || pipelineId}/`
+          endpoint = `/api/v1/public-forms/${pipelineSlug || pipelineId}/`
           break
         case 'stage_internal':
-          endpoint = `/api/pipelines/${pipelineId}/forms/stage/${stage}/internal/`
+          endpoint = `/api/v1/pipelines/${pipelineId}/forms/stage/${stage}/internal/`
           break
         case 'stage_public':
-          endpoint = `/api/public-forms/${pipelineSlug || pipelineId}/stage/${stage}/`
+          endpoint = `/api/v1/public-forms/${pipelineSlug || pipelineId}/stage/${stage}/`
           break
         case 'shared_record':
-          endpoint = `/api/pipelines/${pipelineId}/records/${recordId}/share/`
+          endpoint = `/api/v1/pipelines/${pipelineId}/records/${recordId}/share/`
           break
       }
       

@@ -16,6 +16,7 @@ import { communicationsApi } from '@/lib/api'
 import { ParticipantList } from '@/components/communications/participants/ParticipantList'
 import { ParticipantAutoCreateSettings } from '@/components/communications/participants/ParticipantAutoCreateSettings'
 import { PermissionGuard } from '@/components/permissions/PermissionGuard'
+import { SchedulingSettings } from '@/components/communications/scheduling/SchedulingSettings'
 
 interface ProviderConfig {
   global: {
@@ -230,9 +231,10 @@ export default function CommunicationsSettingsPage() {
         </div>
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-          <TabsList className="grid w-full grid-cols-4">
+          <TabsList className="grid w-full grid-cols-5">
             <TabsTrigger value="participants">Participants</TabsTrigger>
             <TabsTrigger value="providers">Provider Settings</TabsTrigger>
+            <TabsTrigger value="scheduling">Scheduling</TabsTrigger>
             <TabsTrigger value="general">General Settings</TabsTrigger>
             <TabsTrigger value="advanced">Advanced</TabsTrigger>
           </TabsList>
@@ -368,6 +370,23 @@ export default function CommunicationsSettingsPage() {
                 </Card>
               ))}
             </div>
+          </TabsContent>
+
+          <TabsContent value="scheduling" className="space-y-6">
+            <PermissionGuard 
+              category="communications" 
+              action="update"
+              fallback={
+                <Alert>
+                  <Shield className="h-4 w-4" />
+                  <AlertDescription>
+                    You don't have permission to manage scheduling settings. Please contact your administrator.
+                  </AlertDescription>
+                </Alert>
+              }
+            >
+              <SchedulingSettings />
+            </PermissionGuard>
           </TabsContent>
 
           <TabsContent value="general" className="space-y-6">

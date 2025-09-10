@@ -176,7 +176,7 @@ class FieldOperationManager:
                     }
                 )
                 
-                # Step 4: Migrate existing records to include new field
+                # Step 4: Queue migration of existing records asynchronously
                 migration_result = None
                 records_migrated = 0
                 
@@ -184,20 +184,54 @@ class FieldOperationManager:
                 existing_records_count = self.pipeline.records.filter(is_deleted=False).count()
                 
                 if existing_records_count > 0:
-                    logger.info(f"[{operation_id}] Migrating {existing_records_count} existing records to include new field: {field.slug}")
+                    logger.info(f"[{operation_id}] Queueing migration of {existing_records_count} existing records for new field: {field.slug}")
                     
-                    # Use DataMigrator to add new field to existing records
-                    migration_result = self._migrate_new_field_to_existing_records(
-                        field, field_config, operation_id
-                    )
-                    
-                    if not migration_result.success:
-                        # Rollback field creation if migration failed
-                        field.delete()
-                        raise Exception(f"Migration failed: {'; '.join(migration_result.errors)}")
-                    
-                    records_migrated = migration_result.records_migrated
-                    logger.info(f"[{operation_id}] Successfully migrated {records_migrated} records")
+                    # Try to queue the migration as a background task
+                    # This prevents timeout issues with large record sets
+                    try:
+                        from pipelines.tasks import migrate_field_to_existing_records_task
+                        
+                        # Queue the migration task to the general queue
+                        task = migrate_field_to_existing_records_task.apply_async(
+                            args=[field.id, field_config, operation_id],
+                            queue='oneotalent_general'  # Use the tenant-specific general queue
+                        )
+                        
+                        migration_result = {
+                            'queued': True,
+                            'records_to_migrate': existing_records_count,
+                            'message': f'Migration queued for {existing_records_count} records',
+                            'task_id': task.id
+                        }
+                        
+                        logger.info(f"[{operation_id}] Migration task queued successfully with ID: {task.id}")
+                    except ImportError as import_error:
+                        # Celery task not available, fall back to synchronous if record count is small
+                        logger.warning(f"[{operation_id}] Could not import migration task: {import_error}")
+                        
+                        if existing_records_count <= 50:
+                            # Small number of records, do it synchronously
+                            logger.info(f"[{operation_id}] Performing synchronous migration for {existing_records_count} records")
+                            migration_result = self._migrate_new_field_to_existing_records(
+                                field, field_config, operation_id
+                            )
+                            if not migration_result.success:
+                                logger.warning(f"[{operation_id}] Synchronous migration had issues: {migration_result.errors}")
+                        else:
+                            # Too many records to do synchronously
+                            migration_result = {
+                                'queued': False,
+                                'message': f'Field created. Manual migration needed for {existing_records_count} records',
+                                'warning': 'Background task system unavailable'
+                            }
+                    except Exception as queue_error:
+                        # Other errors in queueing, still continue - field is created successfully
+                        logger.warning(f"[{operation_id}] Could not queue migration task: {queue_error}")
+                        migration_result = {
+                            'queued': False,
+                            'message': 'Field created but migration not queued',
+                            'error': str(queue_error)
+                        }
                 else:
                     logger.info(f"[{operation_id}] No existing records to migrate")
                 
@@ -210,13 +244,13 @@ class FieldOperationManager:
                     success=True,
                     field=field,
                     operation_id=operation_id,
-                    warnings=migration_result.warnings if migration_result else [],
+                    warnings=[],
                     metadata={
                         'operation_type': 'create',
                         'field_slug': field.slug,
                         'field_type': field.field_type,
-                        'existing_records_migrated': records_migrated,
-                        'migration_result': migration_result.to_dict() if migration_result else None
+                        'migration_status': migration_result if migration_result else None,
+                        'existing_records_count': existing_records_count
                     }
                 )
                 

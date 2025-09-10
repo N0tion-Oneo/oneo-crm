@@ -9,7 +9,8 @@ import {
   Settings2,
   Settings,
   Terminal,
-  ChevronRight
+  ChevronRight,
+  Calendar
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/features/auth/context";
@@ -52,6 +53,13 @@ const navigationItems = [
     permission: 'participants'
   },
   { 
+    name: 'Scheduling', 
+    href: '/settings/communications/scheduling', 
+    icon: Calendar,
+    description: 'Meeting scheduling and availability',
+    permission: 'scheduling'
+  },
+  { 
     name: 'Advanced', 
     href: '/settings/communications/advanced', 
     icon: Terminal,
@@ -71,11 +79,12 @@ export default function CommunicationsLayout({ children }: { children: ReactNode
   const hasAccountsPermission = hasPermission('communication_settings', 'accounts');
   const hasProvidersPermission = hasPermission('communication_settings', 'providers');
   const hasParticipantsPermission = hasPermission('communication_settings', 'participants');
+  const hasSchedulingPermission = hasPermission('communication_settings', 'scheduling') || hasPermission('communication_settings', 'scheduling_all');
   const hasAdvancedPermission = hasPermission('communication_settings', 'advanced');
   
   const hasAnyPermission = hasMainPermission || hasGeneralPermission || 
                           hasAccountsPermission || hasProvidersPermission || 
-                          hasParticipantsPermission || hasAdvancedPermission;
+                          hasParticipantsPermission || hasSchedulingPermission || hasAdvancedPermission;
   
   // Filter navigation items based on permissions
   const visibleItems = navigationItems.filter(item => {
@@ -86,7 +95,8 @@ export default function CommunicationsLayout({ children }: { children: ReactNode
     
     // Check specific sub-permission for other pages
     if (item.permission) {
-      return hasPermission('communication_settings', item.permission);
+      return hasPermission('communication_settings', item.permission) || 
+             (item.permission === 'scheduling' && hasPermission('communication_settings', 'scheduling_all'));
     }
     
     return false;

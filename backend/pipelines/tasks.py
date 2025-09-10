@@ -13,6 +13,140 @@ import json
 logger = logging.getLogger(__name__)
 
 
+@shared_task(bind=True, name='pipelines.tasks.migrate_field_to_existing_records')
+def migrate_field_to_existing_records_task(self, field_id, field_config, operation_id):
+    """
+    Asynchronously migrate existing records to include a new field.
+    This task is queued when a new field is created to prevent timeout issues.
+    
+    Args:
+        field_id: ID of the newly created field
+        field_config: Configuration used to create the field
+        operation_id: Operation ID for tracking
+    """
+    import time
+    from .models import Field, Record
+    from .field_operations import FieldOperationManager
+    
+    try:
+        # Get the field and pipeline
+        field = Field.objects.select_related('pipeline').get(id=field_id)
+        pipeline = field.pipeline
+        
+        logger.info(f"[{operation_id}] Starting async migration for field '{field.slug}' in pipeline '{pipeline.name}'")
+        
+        # Get the field operation manager
+        manager = FieldOperationManager(pipeline)
+        
+        # Determine default value for the new field
+        default_value = manager._get_field_default_value(field, field_config)
+        
+        # Get all active records in the pipeline
+        records = Record.objects.filter(pipeline=pipeline, is_deleted=False)
+        total_records = records.count()
+        
+        if total_records == 0:
+            logger.info(f"[{operation_id}] No records to migrate")
+            return {
+                'success': True,
+                'records_processed': 0,
+                'records_migrated': 0
+            }
+        
+        logger.info(f"[{operation_id}] Migrating {total_records} records with field '{field.slug}' = '{default_value}'")
+        
+        # Migrate records in batches for performance
+        batch_size = 100
+        migrated_count = 0
+        failed_count = 0
+        errors = []
+        start_time = time.time()
+        
+        # Use bulk update for better performance
+        records_to_update = []
+        
+        for batch_start in range(0, total_records, batch_size):
+            batch_records = records[batch_start:batch_start + batch_size]
+            
+            for record in batch_records:
+                try:
+                    # Only add field if it doesn't already exist
+                    if field.slug not in (record.data or {}):
+                        if record.data is None:
+                            record.data = {}
+                        
+                        record.data[field.slug] = default_value
+                        record._skip_broadcast = True  # Prevent real-time broadcasts
+                        record._migration_context = True  # Use migration validation context
+                        records_to_update.append(record)
+                        migrated_count += 1
+                        
+                except Exception as record_error:
+                    failed_count += 1
+                    errors.append(f"Record {record.id}: {str(record_error)}")
+                    logger.error(f"[{operation_id}] Failed to prepare record {record.id}: {record_error}")
+            
+            # Bulk update the batch
+            if records_to_update:
+                try:
+                    Record.objects.bulk_update(records_to_update, ['data'], batch_size=batch_size)
+                    records_to_update = []
+                except Exception as bulk_error:
+                    logger.error(f"[{operation_id}] Bulk update failed: {bulk_error}")
+                    # Fall back to individual saves
+                    for record in records_to_update:
+                        try:
+                            record.save(update_fields=['data'])
+                        except Exception as save_error:
+                            failed_count += 1
+                            errors.append(f"Record {record.id}: {str(save_error)}")
+                    records_to_update = []
+            
+            # Update task progress
+            progress = int((batch_start + batch_size) / total_records * 100)
+            self.update_state(
+                state='PROGRESS',
+                meta={
+                    'current': batch_start + batch_size,
+                    'total': total_records,
+                    'percent': progress,
+                    'field': field.slug
+                }
+            )
+        
+        processing_time = time.time() - start_time
+        
+        logger.info(f"[{operation_id}] Migration completed: {migrated_count} migrated, {failed_count} failed in {processing_time:.2f}s")
+        
+        # Update pipeline schema cache
+        pipeline._update_field_schema()
+        pipeline.save(update_fields=['field_schema'])
+        
+        return {
+            'success': failed_count == 0,
+            'records_processed': total_records,
+            'records_migrated': migrated_count,
+            'records_failed': failed_count,
+            'errors': errors[:10],  # Limit errors
+            'processing_time_seconds': processing_time,
+            'field_slug': field.slug,
+            'operation_id': operation_id
+        }
+        
+    except Field.DoesNotExist:
+        logger.error(f"[{operation_id}] Field {field_id} not found")
+        return {
+            'success': False,
+            'error': f'Field {field_id} not found'
+        }
+    except Exception as e:
+        logger.error(f"[{operation_id}] Migration task failed: {str(e)}")
+        return {
+            'success': False,
+            'error': str(e)
+        }
+
+
 # OLD AI TASK REMOVED - Now using ai.tasks.process_ai_job
 @shared_task(bind=True, name='pipelines.tasks.process_bulk_operation')
 def process_bulk_operation(self, operation_type, record_ids, operation_data):

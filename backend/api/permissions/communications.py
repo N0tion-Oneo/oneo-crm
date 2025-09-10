@@ -29,6 +29,9 @@ class CommunicationPermission(permissions.BasePermission):
             return True  # Object-level check in has_object_permission
         elif view.action in ['mark_conversation_read', 'mark_conversation_unread', 'archive', 'stats']:
             return True  # Object-level check in has_object_permission or general action
+        elif view.action in ['calendar_connections', 'availability', 'calendars_for_connection']:
+            # Allow authenticated users to see their own calendar connections and availability
+            return True
         
         return False
     

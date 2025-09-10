@@ -173,6 +173,8 @@ PERMISSION_CATEGORIES = {
             'accounts',          # /settings/communications/accounts page
             'providers',         # /settings/communications/providers page
             'participants',      # /settings/communications/participants page
+            'scheduling',        # /settings/communications/scheduling page
+            'scheduling_all',    # Admin: manage all users' scheduling
             'advanced'           # /settings/communications/advanced page
         ],
         'description': 'Communication settings sub-pages access',

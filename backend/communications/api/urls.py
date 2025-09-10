@@ -218,6 +218,9 @@ urlpatterns = [
     path('drafts/cleanup/', cleanup_stale_drafts, name='cleanup-stale-drafts'),
     path('draft-settings/', DraftSettingsView.as_view(), name='draft-settings'),
     
+    # Scheduling endpoints (integrated with communications)
+    path('scheduling/', include('communications.scheduling.urls')),
+    
     # Router URLs (includes /drafts/ ViewSet, but specific paths above take precedence)
     path('', include(router.urls)),
     

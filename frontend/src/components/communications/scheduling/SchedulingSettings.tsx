@@ -12,6 +12,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Checkbox } from '@/components/ui/checkbox'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { Switch } from '@/components/ui/switch'
 import { Calendar, Clock, Plus, Edit, Trash2, Copy, ExternalLink, Loader2, Settings, Link as LinkIcon } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
 import { useAuth } from '@/features/auth/context'
@@ -50,6 +51,9 @@ interface MeetingType {
   is_active: boolean
   total_bookings: number
   booking_url?: string
+  is_template?: boolean
+  template_source?: string
+  created_for_org?: boolean
 }
 
 interface Field {
@@ -90,6 +94,7 @@ interface SchedulingSettingsProps {
 export function SchedulingSettings({ canManageAll = false }: SchedulingSettingsProps) {
   const [profiles, setProfiles] = useState<SchedulingProfile[]>([])
   const [meetingTypes, setMeetingTypes] = useState<MeetingType[]>([])
+  const [templates, setTemplates] = useState<MeetingType[]>([])
   const [calendars, setCalendars] = useState<Calendar[]>([])
   const [loadingCalendars, setLoadingCalendars] = useState(false)
   const [pipelines, setPipelines] = useState<Pipeline[]>([])
@@ -98,6 +103,7 @@ export function SchedulingSettings({ canManageAll = false }: SchedulingSettingsP
   const [selectedStageField, setSelectedStageField] = useState<Field | null>(null)  // Selected stage field
   const [loading, setLoading] = useState(true)
   const [showMeetingDialog, setShowMeetingDialog] = useState(false)
+  const [showTemplateDialog, setShowTemplateDialog] = useState(false)
   const [editingMeeting, setEditingMeeting] = useState<MeetingType | null>(null)
   
   const { toast } = useToast()
@@ -118,7 +124,12 @@ export function SchedulingSettings({ canManageAll = false }: SchedulingSettingsP
       stage_field_id: null as string | null
     },
     required_fields: [] as string[],
-    is_active: true
+    is_active: true,
+    allow_rescheduling: true,
+    allow_cancellation: true,
+    cancellation_notice_hours: 24,
+    send_reminders: true,
+    reminder_hours: 24
   })
 
   useEffect(() => {
@@ -128,14 +139,18 @@ export function SchedulingSettings({ canManageAll = false }: SchedulingSettingsP
   const loadData = async () => {
     setLoading(true)
     try {
-      // Load meeting types and pipelines
+      // Load meeting types, templates and pipelines
       // Note: Backend API already filters based on permissions (scheduling_all vs scheduling)
-      const [meetingTypesRes, pipelinesRes] = await Promise.all([
+      const [meetingTypesRes, templatesRes, pipelinesRes] = await Promise.all([
         api.get('/api/v1/communications/scheduling/meeting-types/'),
+        api.get('/api/v1/communications/scheduling/meeting-types/templates/').catch(() => ({ data: [] })),
         api.get('/api/v1/pipelines/')
       ])
       
-      setMeetingTypes(meetingTypesRes.data.results || meetingTypesRes.data || [])
+      const allTypes = meetingTypesRes.data.results || meetingTypesRes.data || []
+      // Filter out templates from regular meeting types
+      setMeetingTypes(allTypes.filter((mt: MeetingType) => !mt.is_template))
+      setTemplates(templatesRes.data.results || templatesRes.data || [])
       setPipelines(pipelinesRes.data.results || pipelinesRes.data || [])
       
       // Try to load calendars from the user's profile connection
@@ -263,6 +278,41 @@ export function SchedulingSettings({ canManageAll = false }: SchedulingSettingsP
     }
   }
 
+  const handleMakeTemplate = async (id: string) => {
+    try {
+      await api.post(`/api/v1/communications/scheduling/meeting-types/${id}/make_template/`)
+      toast({
+        title: 'Template Created',
+        description: 'Meeting type has been converted to a template'
+      })
+      loadData()
+    } catch (error: any) {
+      toast({
+        title: 'Failed to create template',
+        description: error.response?.data?.error || 'An error occurred',
+        variant: 'destructive'
+      })
+    }
+  }
+
+  const handleCreateFromTemplate = async (templateId: string) => {
+    try {
+      await api.post(`/api/v1/communications/scheduling/meeting-types/${templateId}/copy_from_template/`)
+      toast({
+        title: 'Meeting Type Created',
+        description: 'Meeting type has been created from template'
+      })
+      setShowTemplateDialog(false)
+      loadData()
+    } catch (error: any) {
+      toast({
+        title: 'Failed to create from template',
+        description: error.response?.data?.error || 'An error occurred',
+        variant: 'destructive'
+      })
+    }
+  }
+
   const resetForm = () => {
     setFormData({
       name: '',
@@ -278,7 +328,12 @@ export function SchedulingSettings({ canManageAll = false }: SchedulingSettingsP
         stage_field_id: null
       },
       required_fields: [],
-      is_active: true
+      is_active: true,
+      allow_rescheduling: true,
+      allow_cancellation: true,
+      cancellation_notice_hours: 24,
+      send_reminders: true,
+      reminder_hours: 24
     })
     setEditingMeeting(null)
     // Don't reset calendars - they come from the profile
@@ -304,7 +359,12 @@ export function SchedulingSettings({ canManageAll = false }: SchedulingSettingsP
         stage_field_id: meeting.booking_form_config?.stage_field_id || null
       },
       required_fields: meeting.required_fields || [],
-      is_active: meeting.is_active
+      is_active: meeting.is_active,
+      allow_rescheduling: meeting.allow_rescheduling ?? true,
+      allow_cancellation: meeting.allow_cancellation ?? true,
+      cancellation_notice_hours: meeting.cancellation_notice_hours ?? 24,
+      send_reminders: meeting.send_reminders ?? true,
+      reminder_hours: meeting.reminder_hours ?? 24
     })
     
     // Set selected pipeline
@@ -399,13 +459,20 @@ export function SchedulingSettings({ canManageAll = false }: SchedulingSettingsP
                 Configure different types of meetings that external contacts can book
               </CardDescription>
             </div>
-            <Dialog open={showMeetingDialog} onOpenChange={setShowMeetingDialog}>
-              <DialogTrigger asChild>
-                <Button onClick={() => { resetForm(); setShowMeetingDialog(true) }}>
-                  <Plus className="h-4 w-4 mr-2" />
-                  Add Meeting Type
+            <div className="flex items-center gap-2">
+              {templates.length > 0 && (
+                <Button variant="outline" onClick={() => setShowTemplateDialog(true)}>
+                  <Copy className="h-4 w-4 mr-2" />
+                  Use Template
                 </Button>
-              </DialogTrigger>
+              )}
+              <Dialog open={showMeetingDialog} onOpenChange={setShowMeetingDialog}>
+                <DialogTrigger asChild>
+                  <Button onClick={() => { resetForm(); setShowMeetingDialog(true) }}>
+                    <Plus className="h-4 w-4 mr-2" />
+                    Add Meeting Type
+                  </Button>
+                </DialogTrigger>
               <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
                 <DialogHeader>
                   <DialogTitle>
@@ -617,6 +684,85 @@ export function SchedulingSettings({ canManageAll = false }: SchedulingSettingsP
                     </>
                   )}
 
+                  <div className="space-y-4 border-t pt-4">
+                    <h4 className="font-medium">Meeting Settings</h4>
+                    
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <div className="flex items-center justify-between">
+                        <Label htmlFor="allow-rescheduling">Allow Rescheduling</Label>
+                        <Switch
+                          id="allow-rescheduling"
+                          checked={formData.allow_rescheduling}
+                          onCheckedChange={(checked) => 
+                            setFormData({ ...formData, allow_rescheduling: checked })
+                          }
+                        />
+                      </div>
+
+                      <div className="flex items-center justify-between">
+                        <Label htmlFor="allow-cancellation">Allow Cancellation</Label>
+                        <Switch
+                          id="allow-cancellation"
+                          checked={formData.allow_cancellation}
+                          onCheckedChange={(checked) => 
+                            setFormData({ ...formData, allow_cancellation: checked })
+                          }
+                        />
+                      </div>
+                    </div>
+
+                    {formData.allow_cancellation && (
+                      <div>
+                        <Label htmlFor="cancellation-notice">Cancellation Notice (hours)</Label>
+                        <Input
+                          id="cancellation-notice"
+                          type="number"
+                          value={formData.cancellation_notice_hours}
+                          onChange={(e) => setFormData({ 
+                            ...formData, 
+                            cancellation_notice_hours: parseInt(e.target.value) || 24 
+                          })}
+                          min={0}
+                          max={168}
+                        />
+                        <p className="text-xs text-muted-foreground mt-1">
+                          Minimum hours before meeting that cancellation is allowed
+                        </p>
+                      </div>
+                    )}
+
+                    <div className="flex items-center justify-between">
+                      <Label htmlFor="send-reminders">Send Reminders</Label>
+                      <Switch
+                        id="send-reminders"
+                        checked={formData.send_reminders}
+                        onCheckedChange={(checked) => 
+                          setFormData({ ...formData, send_reminders: checked })
+                        }
+                      />
+                    </div>
+
+                    {formData.send_reminders && (
+                      <div>
+                        <Label htmlFor="reminder-hours">Reminder Time (hours before)</Label>
+                        <Input
+                          id="reminder-hours"
+                          type="number"
+                          value={formData.reminder_hours}
+                          onChange={(e) => setFormData({ 
+                            ...formData, 
+                            reminder_hours: parseInt(e.target.value) || 24 
+                          })}
+                          min={1}
+                          max={168}
+                        />
+                        <p className="text-xs text-muted-foreground mt-1">
+                          How many hours before the meeting to send reminder
+                        </p>
+                      </div>
+                    )}
+                  </div>
+
                   <div className="flex items-center justify-end space-x-2 pt-4">
                     <Button variant="outline" onClick={() => setShowMeetingDialog(false)}>
                       Cancel
@@ -628,6 +774,7 @@ export function SchedulingSettings({ canManageAll = false }: SchedulingSettingsP
                 </div>
               </DialogContent>
             </Dialog>
+            </div>
           </div>
         </CardHeader>
         <CardContent>
@@ -649,6 +796,11 @@ export function SchedulingSettings({ canManageAll = false }: SchedulingSettingsP
                         {meeting.total_bookings > 0 && (
                           <Badge variant="outline">
                             {meeting.total_bookings} bookings
+                          </Badge>
+                        )}
+                        {meeting.template_source && (
+                          <Badge variant="outline" className="bg-blue-50">
+                            From template
                           </Badge>
                         )}
                       </div>
@@ -706,6 +858,16 @@ export function SchedulingSettings({ canManageAll = false }: SchedulingSettingsP
                     </div>
                     
                     <div className="flex items-center gap-2">
+                      {canManageAll && !meeting.is_template && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => handleMakeTemplate(meeting.id)}
+                          title="Convert to template"
+                        >
+                          <Copy className="h-4 w-4" />
+                        </Button>
+                      )}
                       <Button
                         size="sm"
                         variant="ghost"
@@ -768,6 +930,67 @@ export function SchedulingSettings({ canManageAll = false }: SchedulingSettingsP
           )}
         </CardContent>
       </Card>
+
+      {/* Template Selection Dialog */}
+      <Dialog open={showTemplateDialog} onOpenChange={setShowTemplateDialog}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Choose a Template</DialogTitle>
+          </DialogHeader>
+          
+          <div className="space-y-4 mt-4">
+            {templates.length === 0 ? (
+              <div className="text-center py-8 text-muted-foreground">
+                No templates available
+              </div>
+            ) : (
+              <ScrollArea className="h-[400px] pr-4">
+                <div className="space-y-3">
+                  {templates.map((template) => (
+                    <div 
+                      key={template.id} 
+                      className="border rounded-lg p-4 hover:bg-muted/50 cursor-pointer transition-colors"
+                      onClick={() => handleCreateFromTemplate(template.id)}
+                    >
+                      <div className="flex items-start justify-between">
+                        <div className="flex-1">
+                          <h3 className="font-semibold">{template.name}</h3>
+                          {template.description && (
+                            <p className="text-sm text-muted-foreground mt-1">
+                              {template.description}
+                            </p>
+                          )}
+                          <div className="flex items-center gap-4 mt-2 text-sm text-muted-foreground">
+                            <span className="flex items-center gap-1">
+                              <Clock className="h-3 w-3" />
+                              {template.duration_minutes} min
+                            </span>
+                            <span className="flex items-center gap-1">
+                              <Calendar className="h-3 w-3" />
+                              {getLocationTypeDisplay(template.location_type)}
+                            </span>
+                          </div>
+                        </div>
+                        {template.created_for_org && (
+                          <Badge variant="secondary" className="bg-purple-100">
+                            Organization
+                          </Badge>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </ScrollArea>
+            )}
+            
+            <div className="flex justify-end pt-4 border-t">
+              <Button variant="outline" onClick={() => setShowTemplateDialog(false)}>
+                Cancel
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

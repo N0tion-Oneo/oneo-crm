@@ -60,7 +60,26 @@ class SchedulingProfilePermission(SchedulingPermission):
 
 class MeetingTypePermission(SchedulingPermission):
     """Permission class specifically for meeting types"""
-    pass
+    
+    def has_object_permission(self, request, view, obj):
+        """Check object-level permissions for meeting types"""
+        permission_manager = SyncPermissionManager(request.user)
+        
+        # Admin can manage all meeting types
+        if permission_manager.has_permission('action', 'communication_settings', 'scheduling_all', None):
+            return True
+        
+        # For templates, allow read access (including copy_from_template action) to all authenticated users
+        if obj.is_template and request.method in ['GET', 'POST'] and view.action == 'copy_from_template':
+            return True
+        
+        # Users can only manage their own meeting types
+        if permission_manager.has_permission('action', 'communication_settings', 'scheduling', None):
+            # Check if object belongs to user
+            if hasattr(obj, 'user'):
+                return obj.user == request.user
+                
+        return False
 
 
 class ScheduledMeetingPermission(permissions.BasePermission):

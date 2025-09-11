@@ -773,10 +773,32 @@ class BookingProcessor:
             
             # Send calendar invite asynchronously via Celery
             from .tasks import send_calendar_invite, send_booking_confirmation_email
-            send_calendar_invite.delay(str(meeting.id))
+            from django.db import connection
+            
+            # Get tenant schema for queue routing
+            tenant_schema = connection.schema_name
+            # Route scheduling tasks to communications queue (not general)
+            queue_name = f'{tenant_schema}_communications' if tenant_schema != 'public' else 'celery'
+            
+            logger.info(f"📅 Attempting to queue calendar invite for meeting {meeting.id}")
+            logger.info(f"Current tenant schema: {tenant_schema}, Queue: {queue_name}")
+            logger.info(f"Meeting host: {meeting.host.email if meeting.host else 'None'}")
+            
+            # Queue tasks to tenant-specific queue with tenant schema in headers
+            result = send_calendar_invite.apply_async(
+                args=[str(meeting.id)], 
+                queue=queue_name,
+                headers={'tenant_schema': tenant_schema}
+            )
+            logger.info(f"✅ Queued calendar invite task - Task ID: {result.id}")
             
             # Send confirmation email asynchronously
-            send_booking_confirmation_email.delay(str(meeting.id))
+            email_result = send_booking_confirmation_email.apply_async(
+                args=[str(meeting.id)], 
+                queue=queue_name,
+                headers={'tenant_schema': tenant_schema}
+            )
+            logger.info(f"✅ Queued booking confirmation email - Task ID: {email_result.id}")
             
             return meeting
             

@@ -32,6 +32,9 @@ interface MeetingType {
   location_details: any
   color?: string
   is_active: boolean
+  is_template?: boolean
+  template_type?: 'standalone' | 'centralized'
+  created_for_org?: boolean
   confirmation_required?: boolean
   max_bookings_per_day?: number
   pipeline?: string
@@ -85,9 +88,11 @@ export default function MeetingTypes() {
   const { user } = useAuth()
   const { toast } = useToast()
   const [meetingTypes, setMeetingTypes] = useState<MeetingType[]>([])
+  const [templates, setTemplates] = useState<MeetingType[]>([])
   const [pipelines, setPipelines] = useState<Pipeline[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [isDialogOpen, setIsDialogOpen] = useState(false)
+  const [isTemplateDialogOpen, setIsTemplateDialogOpen] = useState(false)
   const [editingType, setEditingType] = useState<MeetingType | null>(null)
   const [formData, setFormData] = useState<Partial<MeetingType>>({
     name: '',
@@ -104,6 +109,7 @@ export default function MeetingTypes() {
 
   useEffect(() => {
     fetchMeetingTypes()
+    fetchTemplates()
     fetchPipelines()
   }, [])
 
@@ -111,7 +117,9 @@ export default function MeetingTypes() {
     setIsLoading(true)
     try {
       const response = await api.get('/api/v1/communications/scheduling/meeting-types/')
-      setMeetingTypes(response.data.results || [])
+      const allTypes = response.data.results || []
+      // Filter out templates from regular meeting types
+      setMeetingTypes(allTypes.filter((type: MeetingType) => !type.is_template))
     } catch (error) {
       console.error('Failed to fetch meeting types:', error)
       toast({
@@ -121,6 +129,15 @@ export default function MeetingTypes() {
       })
     } finally {
       setIsLoading(false)
+    }
+  }
+
+  const fetchTemplates = async () => {
+    try {
+      const response = await api.get('/api/v1/communications/scheduling/meeting-types/templates/')
+      setTemplates(response.data || [])
+    } catch (error) {
+      console.error('Failed to fetch templates:', error)
     }
   }
 
@@ -236,6 +253,27 @@ export default function MeetingTypes() {
       toast({
         title: 'Error',
         description: 'Failed to update meeting type',
+        variant: 'destructive',
+      })
+    }
+  }
+
+  const handleCreateFromTemplate = async (templateId: string) => {
+    try {
+      const response = await api.post(
+        `/api/v1/communications/scheduling/meeting-types/${templateId}/copy_from_template/`
+      )
+      toast({
+        title: 'Success',
+        description: 'Meeting type created from template',
+      })
+      setIsTemplateDialogOpen(false)
+      await fetchMeetingTypes()
+    } catch (error) {
+      console.error('Failed to create from template:', error)
+      toast({
+        title: 'Error',
+        description: 'Failed to create meeting type from template',
         variant: 'destructive',
       })
     }
@@ -555,6 +593,69 @@ export default function MeetingTypes() {
           })}
         </div>
       )}
+
+      {/* Template Selection Dialog */}
+      <Dialog open={isTemplateDialogOpen} onOpenChange={setIsTemplateDialogOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Choose a Template</DialogTitle>
+            <DialogDescription>
+              Select a template to create a new meeting type
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="space-y-4 mt-4">
+            {templates.length === 0 ? (
+              <div className="text-center py-8 text-muted-foreground">
+                No templates available
+              </div>
+            ) : (
+              <div className="grid gap-3">
+                {templates.map((template) => (
+                  <Card 
+                    key={template.id} 
+                    className="cursor-pointer hover:bg-muted/50 transition-colors"
+                    onClick={() => handleCreateFromTemplate(template.id)}
+                  >
+                    <CardContent className="p-4">
+                      <div className="flex items-start justify-between">
+                        <div className="flex-1">
+                          <h3 className="font-semibold">{template.name}</h3>
+                          {template.description && (
+                            <p className="text-sm text-muted-foreground mt-1">
+                              {template.description}
+                            </p>
+                          )}
+                          <div className="flex items-center gap-4 mt-2 text-sm text-muted-foreground">
+                            <span className="flex items-center gap-1">
+                              <Clock className="h-3 w-3" />
+                              {template.duration_minutes} minutes
+                            </span>
+                            <span>
+                              {LOCATION_TYPES.find((l) => l.value === template.location_type)?.label}
+                            </span>
+                          </div>
+                        </div>
+                        {template.created_for_org && (
+                          <Badge variant="secondary" className="bg-purple-100">
+                            Organization
+                          </Badge>
+                        )}
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            )}
+            
+            <div className="flex justify-end pt-4 border-t">
+              <Button variant="outline" onClick={() => setIsTemplateDialogOpen(false)}>
+                Cancel
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

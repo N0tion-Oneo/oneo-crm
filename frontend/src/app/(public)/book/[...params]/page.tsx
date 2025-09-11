@@ -451,17 +451,48 @@ export default function BookingPage() {
         endpoint = `${apiUrl}/api/v1/communications/scheduling/public/links/${slug}/book/`
       }
       
-      const response = await axios.post(endpoint, {
+      // Ensure we're sending the required fields
+      const bookingPayload = {
+        email: formData.email || '',
+        name: formData.name || formData.full_name || '',
+        phone: formData.phone || '',
         ...formData,
         selected_slot: selectedSlot,
-        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone
-      })
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        booking_data: formData // Include all form data in booking_data
+      }
+      
+      console.log('Booking payload:', bookingPayload)
+      
+      const response = await axios.post(endpoint, bookingPayload)
       
       setBookingConfirmation(response.data)
       setCurrentStep('confirmation')
     } catch (err: any) {
       console.error('Booking failed:', err)
-      setError(err.response?.data?.error || 'Failed to complete booking')
+      console.error('Error response:', err.response?.data)
+      
+      // Handle different error formats
+      let errorMessage = 'Failed to complete booking'
+      if (err.response?.data?.error) {
+        errorMessage = err.response.data.error
+      } else if (err.response?.data?.detail) {
+        errorMessage = err.response.data.detail
+      } else if (err.response?.data) {
+        // Handle validation errors
+        const errors = err.response.data
+        if (typeof errors === 'object') {
+          const errorMessages = Object.entries(errors).map(([field, msgs]) => {
+            if (Array.isArray(msgs)) {
+              return `${field}: ${msgs.join(', ')}`
+            }
+            return `${field}: ${msgs}`
+          })
+          errorMessage = errorMessages.join('; ')
+        }
+      }
+      
+      setError(errorMessage)
     } finally {
       setSubmitting(false)
     }

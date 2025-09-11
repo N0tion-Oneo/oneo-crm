@@ -123,17 +123,20 @@ class SchedulingProfileSerializer(serializers.ModelSerializer):
 
 class MeetingTypeSerializer(serializers.ModelSerializer):
     """Serializer for meeting types"""
-    user = serializers.PrimaryKeyRelatedField(read_only=True)
+    user = serializers.SerializerMethodField()
     pipeline_name = serializers.CharField(source='pipeline.name', read_only=True)
     scheduling_links_count = serializers.IntegerField(source='scheduling_links.count', read_only=True)
     calendar_connection_display = serializers.SerializerMethodField()
     booking_url = serializers.SerializerMethodField()
     has_scheduling_profile = serializers.SerializerMethodField()
+    template_source_name = serializers.CharField(source='template_source.name', read_only=True, allow_null=True)
     
     class Meta:
         model = MeetingType
         fields = [
             'id', 'user', 'name', 'slug', 'description',
+            'is_template', 'template_type', 'template_source', 'template_source_name', 'is_synced_to_template',
+            'created_for_org', 'last_synced_at',
             'calendar_connection_display', 'calendar_id', 'calendar_name',
             'duration_minutes', 'location_type', 'location_details',
             'pipeline', 'pipeline_name', 'pipeline_stage',
@@ -146,9 +149,21 @@ class MeetingTypeSerializer(serializers.ModelSerializer):
             'created_at', 'updated_at'
         ]
         read_only_fields = [
-            'id', 'user', 'slug', 'total_bookings', 'total_completed',
+            'id', 'user', 'template_source', 'total_bookings', 'total_completed',
             'total_cancelled', 'total_no_shows', 'created_at', 'updated_at'
         ]
+    
+    def get_user(self, obj):
+        """Return user information"""
+        if obj.user:
+            return {
+                'id': str(obj.user.id),
+                'email': obj.user.email,
+                'first_name': obj.user.first_name,
+                'last_name': obj.user.last_name,
+                'full_name': obj.user.get_full_name() or obj.user.username
+            }
+        return None
     
     def get_calendar_connection_display(self, obj):
         """Return display information for the calendar connection from user's profile"""
@@ -535,13 +550,28 @@ class PublicSchedulingLinkSerializer(serializers.ModelSerializer):
 
 
 class BookingRequestSerializer(serializers.Serializer):
-    """Serializer for booking requests from external users"""
-    email = serializers.EmailField(required=True)
-    name = serializers.CharField(required=True, max_length=255)
-    phone = serializers.CharField(required=False, max_length=50, allow_blank=True)
+    """
+    Serializer for booking requests from external users.
+    Only validates system fields - actual form data is validated dynamically
+    based on the pipeline field configuration.
+    
+    This serializer is now just for OpenAPI documentation purposes.
+    The actual validation happens in the view using DataFieldValidator.
+    """
+    # System fields only
     timezone = serializers.CharField(required=False, default='UTC')
     selected_slot = serializers.DictField(required=True)
-    booking_data = serializers.DictField(required=False, default=dict)
+    
+    # We accept any additional fields dynamically
+    # The view will validate these based on the pipeline configuration
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Allow extra fields to pass through
+        self.allow_extra_fields = True
+    
+    class Meta:
+        # This allows the serializer to accept additional fields
+        strict = False
     
     def validate_selected_slot(self, value):
         """Validate selected slot format"""

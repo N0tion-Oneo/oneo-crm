@@ -4,11 +4,11 @@ import { useState, useEffect } from 'react'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { CalendarIcon, ClockIcon, LinkIcon, CalendarDaysIcon, UsersIcon } from 'lucide-react'
+import { CalendarIcon, ClockIcon, CalendarDaysIcon, UsersIcon } from 'lucide-react'
 import { useAuth } from '@/features/auth/context'
 import { useToast } from '@/hooks/use-toast'
 import AvailabilitySettings from './components/AvailabilitySettings'
-import { SchedulingSettings } from '@/components/communications/scheduling/SchedulingSettings'
+import { UnifiedSchedulingSettings } from '@/components/communications/scheduling/UnifiedSchedulingSettings'
 import ScheduledMeetings from './components/ScheduledMeetings'
 
 export default function SchedulingPage() {
@@ -95,7 +95,7 @@ export default function SchedulingPage() {
         </TabsContent>
 
         <TabsContent value="meeting-types" className="space-y-4">
-          <SchedulingSettings canManageAll={canManageAll} />
+          <UnifiedSchedulingSettings canManageAll={canManageAll} />
         </TabsContent>
 
         <TabsContent value="meetings" className="space-y-4">

@@ -28,34 +28,21 @@ from .serializers import (
 )
 from .services import AvailabilityCalculator, BookingProcessor
 from pipelines.form_generation import DynamicFormGenerator
+from pipelines.field_types import FieldType
+from pipelines.validation.data_validator import FieldValidator
+from pipelines.models import Pipeline, Field, field_slugify
 
 logger = logging.getLogger(__name__)
 
 
 def get_user_by_slug(username_slug):
     """
-    Get user by username slug which could be firstname-lastname or username
+    Get user by username slug.
+    Simplified to only use usernames for consistent URL handling.
     """
-    user = None
-    
-    if '-' in username_slug:
-        # Could be firstname-lastname format
-        parts = username_slug.split('-', 1)
-        if len(parts) == 2:
-            first_name = parts[0]
-            last_name = parts[1]
-            # Try to find user by first and last name (case-insensitive)
-            try:
-                user = User.objects.get(
-                    first_name__iexact=first_name.replace('-', ' '),
-                    last_name__iexact=last_name.replace('-', ' ')
-                )
-            except (User.DoesNotExist, User.MultipleObjectsReturned):
-                pass
-    
-    # If not found by name, try by username
-    if not user:
-        user = get_object_or_404(User, username=username_slug)
+    # Simply look up by username (case-insensitive)
+    user = get_object_or_404(User, username__iexact=username_slug)
+    logger.info(f"Found user: {user.username} for slug: {username_slug}")
     
     return user
 
@@ -228,6 +215,7 @@ class PublicBookingView(APIView):
     
     @extend_schema(
         summary="Book a meeting",
+        description="Create a booking with dynamic field validation based on pipeline configuration",
         request=BookingRequestSerializer,
         responses={201: dict}
     )
@@ -235,6 +223,7 @@ class PublicBookingView(APIView):
         """Create a booking for a scheduling link"""
         # Get the link
         link = get_object_or_404(SchedulingLink, slug=slug)
+        meeting_type = link.meeting_type
         
         # Check if link is accessible
         email = request.data.get('email')
@@ -254,21 +243,129 @@ class PublicBookingView(APIView):
                     status=status.HTTP_401_UNAUTHORIZED
                 )
         
-        # Validate booking data
-        serializer = BookingRequestSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        # Extract system fields
+        selected_slot = request.data.get('selected_slot')
+        timezone_str = request.data.get('timezone', 'UTC')
         
-        booking_data = serializer.validated_data
-        selected_slot = booking_data.pop('selected_slot')
+        if not selected_slot:
+            return Response(
+                {'error': 'Selected slot is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Get the form schema for validation
+        if not meeting_type.pipeline:
+            return Response(
+                {'error': 'Meeting type is not configured with a pipeline'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        form_generator = DynamicFormGenerator(meeting_type.pipeline)
+        
+        # Generate the form schema with appropriate mode
+        form_mode = 'stage_public' if meeting_type.pipeline_stage else 'public_filtered'
+        form_schema = form_generator.generate_form(
+            mode=form_mode,
+            stage=meeting_type.pipeline_stage if meeting_type.pipeline_stage else None
+        )
+        
+        # Validate each field using FieldValidator
+        booking_data = {}
+        validation_errors = {}
+        
+        # Get all form fields from the generated schema
+        for field_data in form_schema.fields:
+            field_name = field_data.field_slug
+            field_value = request.data.get(field_name)
+            
+            # Check if field is required
+            is_required = field_data.is_required
+            if is_required and (field_value is None or field_value == ''):
+                validation_errors[field_name] = f'{field_data.display_name} is required'
+                continue
+            
+            # Skip validation if field is not provided and not required
+            if field_value is None or field_value == '':
+                continue
+            
+            # Get the actual field model for validation
+            # The form sends field names as slugs (e.g., "first_name")
+            # Look up fields by slug for exact matching
+            try:
+                field = Field.objects.get(
+                    pipeline=meeting_type.pipeline,
+                    slug=field_name
+                )
+                
+                # Use FieldValidator to validate the field
+                # FieldValidator requires field_type and field_config
+                from pipelines.field_types import FieldType
+                field_type = FieldType(field.field_type)
+                validator = FieldValidator(field_type, field.field_config or {})
+                result = validator.validate_field_config(field_value)
+                
+                if result.is_valid:
+                    booking_data[field_name] = result.cleaned_value
+                else:
+                    # Join all errors into a single message
+                    validation_errors[field_name] = ' '.join(result.errors) if result.errors else 'Invalid value'
+                    
+            except Field.DoesNotExist:
+                # Field doesn't exist in pipeline, skip it
+                logger.warning(f"Field {field_name} not found in pipeline {meeting_type.pipeline_id if meeting_type.pipeline else 'None'}")
+                continue
+        
+        # Return validation errors if any
+        if validation_errors:
+            return Response(
+                {'field_errors': validation_errors},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Map common field aliases to standard fields expected by BookingProcessor
+        # The processor expects: email, name, phone
+        if 'personal_email' in booking_data and 'email' not in booking_data:
+            booking_data['email'] = booking_data['personal_email']
+        elif 'work_email' in booking_data and 'email' not in booking_data:
+            booking_data['email'] = booking_data['work_email']
+        
+        # Combine first and last name if available
+        if 'first_name' in booking_data or 'last_name' in booking_data:
+            first = booking_data.get('first_name', '')
+            last = booking_data.get('last_name', '')
+            full_name = f"{first} {last}".strip()
+            if full_name and 'name' not in booking_data:
+                booking_data['name'] = full_name
+        
+        # Map phone number field
+        if 'phone_number' in booking_data and 'phone' not in booking_data:
+            phone_data = booking_data['phone_number']
+            if isinstance(phone_data, dict):
+                # Handle structured phone data
+                country_code = phone_data.get('country_code', '')
+                number = phone_data.get('number', '')
+                booking_data['phone'] = f"{country_code}{number}".strip()
+            else:
+                booking_data['phone'] = phone_data
+        elif 'mobile' in booking_data and 'phone' not in booking_data:
+            booking_data['phone'] = booking_data['mobile']
+        elif 'mobile_phone' in booking_data and 'phone' not in booking_data:
+            booking_data['phone'] = booking_data['mobile_phone']
+        
+        # Ensure we have at least an email for the participant
+        if not booking_data.get('email'):
+            logger.error(f"No email field found in booking data: {booking_data.keys()}")
+            return Response(
+                {'error': 'Email is required for booking'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Add timezone to booking data
+        booking_data['timezone'] = timezone_str
         
         # Add metadata
         booking_data['ip_address'] = self._get_client_ip(request)
         booking_data['user_agent'] = request.META.get('HTTP_USER_AGENT', '')
-        
-        # Merge with custom booking data
-        custom_data = booking_data.pop('booking_data', {})
-        booking_data.update(custom_data)
         
         # Check if slot is still available
         slot_start = datetime.fromisoformat(selected_slot['start'])
@@ -710,8 +807,20 @@ class PublicMeetingTypeBookingView(APIView):
     )
     def post(self, request, username, slug):
         """Create a booking for a meeting type"""
+        # Log incoming request for debugging
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"Booking request for {username}/{slug} with data: {request.data}")
+        
         # Get user by username or firstname-lastname format
         user = get_user_by_slug(username)
+        if not user:
+            logger.error(f"User not found for slug: {username}")
+            return Response(
+                {'error': f'User not found: {username}'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
         meeting_type = get_object_or_404(
             MeetingType,
             user=user,
@@ -719,21 +828,144 @@ class PublicMeetingTypeBookingView(APIView):
             is_active=True
         )
         
-        # Validate booking data
+        # First validate system fields with the serializer
         serializer = BookingRequestSerializer(data=request.data)
         if not serializer.is_valid():
+            logger.error(f"System field validation failed: {serializer.errors}")
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         
-        booking_data = serializer.validated_data
-        selected_slot = booking_data.pop('selected_slot')
+        validated_data = serializer.validated_data
+        selected_slot = validated_data.pop('selected_slot')
+        
+        # Get the dynamic form fields to validate against
+        if not meeting_type.pipeline:
+            logger.error(f"Meeting type {meeting_type.id} has no pipeline configured")
+            return Response(
+                {'error': 'Meeting type is not configured properly'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Get form schema for validation
+        from pipelines.models import Field
+        from pipelines.validation.data_validator import FieldValidator as DataFieldValidator
+        
+        # Prepare booking data - merge all form fields
+        booking_data = validated_data.get('booking_data', {})
+        # Also include any legacy fields that were sent directly
+        for key in ['email', 'name', 'phone']:
+            if key in validated_data and validated_data[key]:
+                booking_data[key] = validated_data[key]
+        
+        # If data was sent directly in request (not in booking_data), merge it
+        for key, value in request.data.items():
+            if key not in ['selected_slot', 'timezone', 'booking_data'] and key not in booking_data:
+                booking_data[key] = value
+        
+        # Generate form schema to get field configuration
+        form_generator = DynamicFormGenerator(meeting_type.pipeline)
+        
+        # Generate the form schema with appropriate mode
+        form_mode = 'stage_public' if meeting_type.pipeline_stage else 'public_filtered'
+        form_schema = form_generator.generate_form(
+            mode=form_mode,
+            stage=meeting_type.pipeline_stage if meeting_type.pipeline_stage else None
+        )
+        
+        # Validate each field based on its configuration
+        validation_errors = {}
+        cleaned_data = {}
+        
+        for field_data in form_schema.fields:
+            field_name = field_data.field_slug
+            field_value = booking_data.get(field_name)
+            
+            # Check if field is required
+            is_required = field_data.is_required
+            if is_required and (field_value is None or field_value == ''):
+                validation_errors[field_name] = f'{field_data.display_name} is required'
+                continue
+            
+            # Skip validation if field is empty and not required
+            if field_value is None or field_value == '':
+                continue
+            
+            # Get the actual field model for validation
+            # The form sends field names as slugs (e.g., "first_name")
+            # Look up fields by slug for exact matching
+            try:
+                field = Field.objects.get(
+                    pipeline=meeting_type.pipeline,
+                    slug=field_name
+                )
+                
+                # Use FieldValidator to validate the field
+                # FieldValidator requires field_type and field_config
+                from pipelines.field_types import FieldType
+                field_type = FieldType(field.field_type)
+                validator = FieldValidator(field_type, field.field_config or {})
+                result = validator.validate_field_config(field_value)
+                
+                if result.is_valid:
+                    cleaned_data[field_name] = result.cleaned_value
+                else:
+                    # Join all errors into a single message
+                    validation_errors[field_name] = ' '.join(result.errors) if result.errors else 'Invalid value'
+                    
+            except Field.DoesNotExist:
+                # Field doesn't exist in pipeline, skip it
+                logger.warning(f"Field {field_name} not found in pipeline {meeting_type.pipeline.id}")
+                continue
+        
+        # Return validation errors if any
+        if validation_errors:
+            logger.error(f"Form validation failed: {validation_errors}")
+            return Response(validation_errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Use cleaned data for booking
+        booking_data = cleaned_data
+        
+        # Map common field aliases to standard fields expected by BookingProcessor
+        # The processor expects: email, name, phone
+        if 'personal_email' in booking_data and 'email' not in booking_data:
+            booking_data['email'] = booking_data['personal_email']
+        elif 'work_email' in booking_data and 'email' not in booking_data:
+            booking_data['email'] = booking_data['work_email']
+        
+        # Combine first and last name if available
+        if 'first_name' in booking_data or 'last_name' in booking_data:
+            first = booking_data.get('first_name', '')
+            last = booking_data.get('last_name', '')
+            full_name = f"{first} {last}".strip()
+            if full_name and 'name' not in booking_data:
+                booking_data['name'] = full_name
+        
+        # Map phone number field
+        if 'phone_number' in booking_data and 'phone' not in booking_data:
+            phone_data = booking_data['phone_number']
+            if isinstance(phone_data, dict):
+                # Handle structured phone data
+                country_code = phone_data.get('country_code', '')
+                number = phone_data.get('number', '')
+                booking_data['phone'] = f"{country_code}{number}".strip()
+            else:
+                booking_data['phone'] = phone_data
+        elif 'mobile' in booking_data and 'phone' not in booking_data:
+            booking_data['phone'] = booking_data['mobile']
+        elif 'mobile_phone' in booking_data and 'phone' not in booking_data:
+            booking_data['phone'] = booking_data['mobile_phone']
+        
+        # Ensure we have at least an email for the participant
+        if not booking_data.get('email'):
+            logger.error(f"No email field found in booking data: {booking_data.keys()}")
+            return Response(
+                {'error': 'Email is required for booking'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
         
         # Add metadata
         booking_data['ip_address'] = self._get_client_ip(request)
         booking_data['user_agent'] = request.META.get('HTTP_USER_AGENT', '')
-        
-        # Merge with custom booking data
-        custom_data = booking_data.pop('booking_data', {})
-        booking_data.update(custom_data)
+        booking_data['timezone'] = validated_data.get('timezone', 'UTC')
         
         # Check if slot is still available
         slot_start = datetime.fromisoformat(selected_slot['start'])

@@ -50,16 +50,28 @@ import { format, parseISO, isAfter, isBefore, startOfDay, endOfDay } from 'date-
 interface ScheduledMeeting {
   id: string
   meeting_type: MeetingType
-  scheduled_time: string
-  duration: number
-  status: 'pending' | 'confirmed' | 'cancelled' | 'completed'
+  meeting_type_name?: string
+  start_time: string
+  end_time: string
+  timezone: string
+  status: 'scheduled' | 'confirmed' | 'reminder_sent' | 'completed' | 'cancelled' | 'no_show'
   meeting_url?: string
-  meeting_details?: string
+  meeting_location?: string
   participant: Participant
-  notes?: string
+  participant_detail?: Participant
+  host?: any
+  host_name?: string
+  pre_meeting_notes?: string
+  post_meeting_notes?: string
   record?: any
+  record_display?: string
   created_at: string
   updated_at: string
+  can_cancel?: boolean
+  can_reschedule?: boolean
+  is_past?: boolean
+  is_upcoming?: boolean
+  is_in_progress?: boolean
 }
 
 interface MeetingType {
@@ -77,10 +89,12 @@ interface Participant {
 }
 
 const STATUS_BADGES = {
-  pending: { label: 'Pending', variant: 'secondary' as const, icon: AlertCircle },
+  scheduled: { label: 'Scheduled', variant: 'secondary' as const, icon: Calendar },
   confirmed: { label: 'Confirmed', variant: 'default' as const, icon: CheckCircle },
-  cancelled: { label: 'Cancelled', variant: 'destructive' as const, icon: XCircle },
+  reminder_sent: { label: 'Reminder Sent', variant: 'default' as const, icon: AlertCircle },
   completed: { label: 'Completed', variant: 'outline' as const, icon: CheckCircle },
+  cancelled: { label: 'Cancelled', variant: 'destructive' as const, icon: XCircle },
+  no_show: { label: 'No Show', variant: 'destructive' as const, icon: CalendarX },
 }
 
 const LOCATION_ICONS: Record<string, any> = {
@@ -116,7 +130,10 @@ export default function ScheduledMeetings({ canManageAll = false }: ScheduledMee
     try {
       // Backend API already filters based on permissions (scheduling_all shows all, scheduling shows own)
       const response = await api.get('/api/v1/communications/scheduling/meetings/')
-      setMeetings(response.data.results || [])
+      // Handle both paginated and non-paginated responses
+      const meetingsData = response.data.results || response.data || []
+      console.log('Fetched meetings data:', meetingsData) // Debug log to see structure
+      setMeetings(Array.isArray(meetingsData) ? meetingsData : [])
     } catch (error) {
       console.error('Failed to fetch scheduled meetings:', error)
       toast({
@@ -173,16 +190,28 @@ export default function ScheduledMeetings({ canManageAll = false }: ScheduledMee
     const now = new Date()
     if (activeTab === 'upcoming') {
       filtered = filtered.filter(
-        (m) =>
-          isAfter(parseISO(m.scheduled_time), now) &&
-          m.status !== 'cancelled' &&
-          m.status !== 'completed'
+        (m) => {
+          if (!m.start_time) return false
+          try {
+            return isAfter(parseISO(m.start_time), now) &&
+              m.status !== 'cancelled' &&
+              m.status !== 'completed'
+          } catch {
+            return false
+          }
+        }
       )
     } else if (activeTab === 'past') {
       filtered = filtered.filter(
-        (m) =>
-          (isBefore(parseISO(m.scheduled_time), now) || m.status === 'completed') &&
-          m.status !== 'cancelled'
+        (m) => {
+          if (!m.start_time) return m.status === 'completed'
+          try {
+            return (isBefore(parseISO(m.start_time), now) || m.status === 'completed') &&
+              m.status !== 'cancelled'
+          } catch {
+            return m.status === 'completed'
+          }
+        }
       )
     } else if (activeTab === 'cancelled') {
       filtered = filtered.filter((m) => m.status === 'cancelled')
@@ -193,11 +222,20 @@ export default function ScheduledMeetings({ canManageAll = false }: ScheduledMee
       filtered = filtered.filter((m) => m.status === filters.status)
     }
 
-    // Sort by scheduled time
+    // Sort by start time
     filtered.sort((a, b) => {
-      const timeA = new Date(a.scheduled_time).getTime()
-      const timeB = new Date(b.scheduled_time).getTime()
-      return activeTab === 'past' ? timeB - timeA : timeA - timeB
+      if (!a.start_time || !b.start_time) {
+        if (!a.start_time && !b.start_time) return 0
+        if (!a.start_time) return 1
+        return -1
+      }
+      try {
+        const timeA = new Date(a.start_time).getTime()
+        const timeB = new Date(b.start_time).getTime()
+        return activeTab === 'past' ? timeB - timeA : timeA - timeB
+      } catch {
+        return 0
+      }
     })
 
     return filtered
@@ -267,8 +305,9 @@ export default function ScheduledMeetings({ canManageAll = false }: ScheduledMee
           ) : (
             <div className="space-y-3">
               {filteredMeetings.map((meeting) => {
-                const StatusIcon = STATUS_BADGES[meeting.status].icon
-                const LocationIcon = LOCATION_ICONS[meeting.meeting_type.location_type] || Calendar
+                const statusBadge = STATUS_BADGES[meeting.status] || STATUS_BADGES.scheduled
+                const StatusIcon = statusBadge.icon
+                const LocationIcon = LOCATION_ICONS[meeting.meeting_type?.location_type] || Calendar
 
                 return (
                   <Card key={meeting.id} className="cursor-pointer hover:shadow-md transition-shadow"
@@ -279,31 +318,46 @@ export default function ScheduledMeetings({ canManageAll = false }: ScheduledMee
                         <div className="flex gap-4 flex-1">
                           <div
                             className="w-1 rounded-full"
-                            style={{ backgroundColor: meeting.meeting_type.color }}
+                            style={{ backgroundColor: meeting.meeting_type?.color || '#6366f1' }}
                           />
                           <div className="space-y-2 flex-1">
                             <div className="flex items-center gap-3">
                               <h3 className="font-medium">
-                                {meeting.meeting_type.name}
+                                {meeting.meeting_type?.name || meeting.meeting_type_name || 'Unknown Meeting'}
                               </h3>
-                              <Badge variant={STATUS_BADGES[meeting.status].variant}>
+                              <Badge variant={statusBadge.variant}>
                                 <StatusIcon className="h-3 w-3 mr-1" />
-                                {STATUS_BADGES[meeting.status].label}
+                                {statusBadge.label}
                               </Badge>
                             </div>
 
                             <div className="flex items-center gap-4 text-sm text-muted-foreground">
                               <div className="flex items-center gap-1">
                                 <Calendar className="h-3 w-3" />
-                                {format(parseISO(meeting.scheduled_time), 'MMM d, yyyy')}
+                                {meeting.start_time ? format(parseISO(meeting.start_time), 'MMM d, yyyy') : 'No date'}
                               </div>
                               <div className="flex items-center gap-1">
                                 <Clock className="h-3 w-3" />
-                                {format(parseISO(meeting.scheduled_time), 'h:mm a')}
+                                {meeting.start_time ? format(parseISO(meeting.start_time), 'h:mm a') : 'No time'}
                               </div>
                               <div className="flex items-center gap-1">
                                 <LocationIcon className="h-3 w-3" />
-                                {meeting.meeting_type.location_type.replace('_', ' ')}
+                                {(() => {
+                                  const locationType = meeting.meeting_type?.location_type
+                                  // For virtual meetings, show the URL if available
+                                  if (locationType && ['google_meet', 'zoom', 'teams'].includes(locationType)) {
+                                    return meeting.meeting_url || meeting.meeting_location || locationType.replace('_', ' ')
+                                  }
+                                  // For in-person or phone, show the location/phone
+                                  if (locationType === 'in_person') {
+                                    return meeting.meeting_location || 'In Person'
+                                  }
+                                  if (locationType === 'phone') {
+                                    return meeting.meeting_location || 'Phone Call'
+                                  }
+                                  // Default fallback
+                                  return meeting.meeting_location || (locationType ? locationType.replace('_', ' ') : 'No location')
+                                })()}
                               </div>
                             </div>
 
@@ -311,13 +365,13 @@ export default function ScheduledMeetings({ canManageAll = false }: ScheduledMee
                               <div className="flex items-center gap-2">
                                 <User className="h-4 w-4 text-muted-foreground" />
                                 <span className="text-sm font-medium">
-                                  {meeting.participant.name}
+                                  {meeting.participant_detail?.name || meeting.participant?.name || 'Unknown'}
                                 </span>
                               </div>
                               <div className="flex items-center gap-2">
                                 <Mail className="h-4 w-4 text-muted-foreground" />
                                 <span className="text-sm text-muted-foreground">
-                                  {meeting.participant.email}
+                                  {meeting.participant_detail?.email || meeting.participant?.email || 'No email'}
                                 </span>
                               </div>
                             </div>
@@ -331,7 +385,7 @@ export default function ScheduledMeetings({ canManageAll = false }: ScheduledMee
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
-                            {meeting.status === 'pending' && (
+                            {(meeting.status === 'scheduled' || meeting.status === 'pending') && (
                               <>
                                 <DropdownMenuItem
                                   onClick={(e) => {
@@ -354,7 +408,7 @@ export default function ScheduledMeetings({ canManageAll = false }: ScheduledMee
                                 </DropdownMenuItem>
                               </>
                             )}
-                            {meeting.status === 'confirmed' && (
+                            {(meeting.status === 'confirmed' || meeting.status === 'reminder_sent') && (
                               <DropdownMenuItem
                                 onClick={(e) => {
                                   e.stopPropagation()
@@ -413,18 +467,24 @@ export default function ScheduledMeetings({ canManageAll = false }: ScheduledMee
                   <div>
                     <Label>Date & Time</Label>
                     <p className="text-sm">
-                      {format(parseISO(selectedMeeting.scheduled_time), 'MMMM d, yyyy')} at{' '}
-                      {format(parseISO(selectedMeeting.scheduled_time), 'h:mm a')}
+                      {selectedMeeting.start_time ? format(parseISO(selectedMeeting.start_time), 'MMMM d, yyyy') : 'No date'} at{' '}
+                      {selectedMeeting.start_time ? format(parseISO(selectedMeeting.start_time), 'h:mm a') : 'No time'}
                     </p>
                   </div>
                   <div>
                     <Label>Duration</Label>
-                    <p className="text-sm">{selectedMeeting.duration} minutes</p>
+                    <p className="text-sm">
+                      {selectedMeeting.start_time && selectedMeeting.end_time ? 
+                        `${Math.round((new Date(selectedMeeting.end_time).getTime() - new Date(selectedMeeting.start_time).getTime()) / 60000)} minutes` : 
+                        'Duration not available'}
+                    </p>
                   </div>
                   <div>
                     <Label>Location</Label>
                     <p className="text-sm">
-                      {selectedMeeting.meeting_type.location_type.replace('_', ' ')}
+                      {selectedMeeting.meeting_type?.location_type ? 
+                        selectedMeeting.meeting_type.location_type.replace('_', ' ') : 
+                        'No location'}
                     </p>
                   </div>
                 </div>
@@ -432,16 +492,26 @@ export default function ScheduledMeetings({ canManageAll = false }: ScheduledMee
                 <div className="space-y-3">
                   <div>
                     <Label>Participant</Label>
-                    <p className="text-sm">{selectedMeeting.participant.name}</p>
+                    <p className="text-sm">
+                      {selectedMeeting.participant_detail?.name || 
+                       selectedMeeting.participant?.name || 
+                       'Unknown'}
+                    </p>
                   </div>
                   <div>
                     <Label>Email</Label>
-                    <p className="text-sm">{selectedMeeting.participant.email}</p>
+                    <p className="text-sm">
+                      {selectedMeeting.participant_detail?.email || 
+                       selectedMeeting.participant?.email || 
+                       'No email'}
+                    </p>
                   </div>
-                  {selectedMeeting.participant.phone && (
+                  {(selectedMeeting.participant_detail?.phone || selectedMeeting.participant?.phone) && (
                     <div>
                       <Label>Phone</Label>
-                      <p className="text-sm">{selectedMeeting.participant.phone}</p>
+                      <p className="text-sm">
+                        {selectedMeeting.participant_detail?.phone || selectedMeeting.participant?.phone}
+                      </p>
                     </div>
                   )}
                 </div>
@@ -463,15 +533,26 @@ export default function ScheduledMeetings({ canManageAll = false }: ScheduledMee
                 </div>
               )}
 
-              {selectedMeeting.notes && (
+              {(selectedMeeting.pre_meeting_notes || selectedMeeting.post_meeting_notes) && (
                 <div>
                   <Label>Notes</Label>
-                  <p className="text-sm mt-1">{selectedMeeting.notes}</p>
+                  {selectedMeeting.pre_meeting_notes && (
+                    <div className="mt-1">
+                      <p className="text-xs text-muted-foreground">Pre-meeting notes:</p>
+                      <p className="text-sm">{selectedMeeting.pre_meeting_notes}</p>
+                    </div>
+                  )}
+                  {selectedMeeting.post_meeting_notes && (
+                    <div className="mt-1">
+                      <p className="text-xs text-muted-foreground">Post-meeting notes:</p>
+                      <p className="text-sm">{selectedMeeting.post_meeting_notes}</p>
+                    </div>
+                  )}
                 </div>
               )}
 
               <div className="flex justify-end gap-2 pt-4 border-t">
-                {selectedMeeting.status === 'pending' && (
+                {(selectedMeeting.status === 'scheduled' || selectedMeeting.status === 'pending') && (
                   <>
                     <Button
                       variant="outline"
@@ -493,7 +574,7 @@ export default function ScheduledMeetings({ canManageAll = false }: ScheduledMee
                     </Button>
                   </>
                 )}
-                {selectedMeeting.status === 'confirmed' && (
+                {(selectedMeeting.status === 'confirmed' || selectedMeeting.status === 'reminder_sent') && (
                   <Button
                     variant="destructive"
                     onClick={() => {
@@ -502,6 +583,15 @@ export default function ScheduledMeetings({ canManageAll = false }: ScheduledMee
                     }}
                   >
                     Cancel Meeting
+                  </Button>
+                )}
+                {selectedMeeting.meeting_url && (
+                  <Button
+                    variant="default"
+                    onClick={() => window.open(selectedMeeting.meeting_url, '_blank')}
+                  >
+                    <Video className="h-4 w-4 mr-2" />
+                    Join Meeting
                   </Button>
                 )}
                 <Button variant="outline" onClick={() => setIsDetailsOpen(false)}>

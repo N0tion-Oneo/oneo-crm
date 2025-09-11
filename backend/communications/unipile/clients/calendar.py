@@ -84,9 +84,10 @@ class UnipileCalendarClient:
         description: Optional[str] = None,
         location: Optional[str] = None,
         attendees: Optional[List[str]] = None,
-        is_all_day: bool = False,
         transparency: str = 'opaque',
-        visibility: str = 'private'
+        visibility: str = 'private',
+        conference_provider: Optional[str] = None,
+        conference_url: Optional[str] = None
     ) -> Dict[str, Any]:
         """Create calendar event"""
         try:
@@ -102,8 +103,7 @@ class UnipileCalendarClient:
                     'time_zone': 'UTC'
                 },
                 'transparency': transparency,
-                'visibility': visibility,
-                'is_all_day': is_all_day
+                'visibility': visibility
             }
             
             if description:
@@ -112,6 +112,15 @@ class UnipileCalendarClient:
                 data['location'] = location
             if attendees:
                 data['attendees'] = [{'email': email} for email in attendees]
+            
+            # Add conference configuration if requested
+            if conference_provider:
+                conference_data = {'provider': conference_provider}
+                # If URL is provided, use it. Otherwise, let Unipile create one
+                if conference_url:
+                    conference_data['url'] = conference_url
+                # Note: Unipile will auto-create conference for google_meet and teams if no URL provided
+                data['conference'] = conference_data
             
             # Use the correct endpoint with calendar_id in path
             endpoint = f'calendars/{calendar_id}/events'

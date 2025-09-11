@@ -131,6 +131,7 @@ class MeetingType(models.Model):
     """
     Meeting templates that define duration, location, and booking forms
     Each meeting type has its own booking URL and calendar configuration
+    Can be templates for organization-wide use or personal meeting types
     """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     
@@ -139,6 +140,43 @@ class MeetingType(models.Model):
     name = models.CharField(max_length=255)
     slug = models.SlugField(max_length=100, help_text="Clean URL for this meeting type")
     description = models.TextField(blank=True)
+    
+    # Template fields
+    is_template = models.BooleanField(
+        default=False,
+        help_text="Whether this is a template for others to copy"
+    )
+    template_type = models.CharField(
+        max_length=20,
+        choices=[
+            ('standalone', 'Standalone - One-time copy'),
+            ('centralized', 'Centralized - Stays synced')
+        ],
+        null=True,
+        blank=True,
+        help_text="How the template behaves when used"
+    )
+    template_source = models.ForeignKey(
+        'self',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='copied_instances',
+        help_text="The template this meeting type was copied from"
+    )
+    is_synced_to_template = models.BooleanField(
+        default=False,
+        help_text="Whether this meeting type stays synced with its template"
+    )
+    created_for_org = models.BooleanField(
+        default=False,
+        help_text="Whether this template is available organization-wide"
+    )
+    last_synced_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When this was last synced with its template"
+    )
     
     # Calendar configuration - uses specific calendar from user's profile connection
     calendar_id = models.CharField(
@@ -273,31 +311,37 @@ class MeetingType(models.Model):
         return self.calendar_connection
     
     def save(self, *args, **kwargs):
-        """Auto-generate slug if not provided"""
-        if not self.slug:
-            from django.utils.text import slugify
-            base_slug = slugify(self.name)
-            slug = base_slug
-            counter = 1
-            # Ensure slug is unique for this user
-            while MeetingType.objects.filter(user=self.user, slug=slug).exclude(pk=self.pk).exists():
-                slug = f"{base_slug}-{counter}"
-                counter += 1
-            self.slug = slug
+        """Auto-generate or update slug based on name"""
+        from django.utils.text import slugify
+        
+        # Check if this is a new object or if the name has changed
+        if not self.slug or (self.pk and self._state.adding is False):
+            # Get the old instance to check if name changed
+            old_instance = None
+            if self.pk and not self._state.adding:
+                try:
+                    old_instance = MeetingType.objects.get(pk=self.pk)
+                except MeetingType.DoesNotExist:
+                    pass
+            
+            # Regenerate slug if name changed or if it's a new object
+            if not self.slug or (old_instance and old_instance.name != self.name):
+                base_slug = slugify(self.name)
+                slug = base_slug
+                counter = 1
+                # Ensure slug is unique for this user
+                while MeetingType.objects.filter(user=self.user, slug=slug).exclude(pk=self.pk).exists():
+                    slug = f"{base_slug}-{counter}"
+                    counter += 1
+                self.slug = slug
+        
         super().save(*args, **kwargs)
     
     def get_booking_url(self):
         """Get the clean public booking URL for this meeting type"""
-        # Format: /book/[firstname-lastname]/[meeting-type-slug]
-        # Create a URL-safe version of the user's name
-        first_name = self.user.first_name.lower().replace(' ', '-') if self.user.first_name else ''
-        last_name = self.user.last_name.lower().replace(' ', '-') if self.user.last_name else ''
-        
-        # Use username as fallback if no first/last name
-        if first_name and last_name:
-            user_slug = f"{first_name}-{last_name}"
-        else:
-            user_slug = self.user.username.lower()
+        # Format: /book/[username]/[meeting-type-slug]
+        # Always use username for consistent URL generation
+        user_slug = self.user.username.lower()
         
         return f"/book/{user_slug}/{self.slug}"
     

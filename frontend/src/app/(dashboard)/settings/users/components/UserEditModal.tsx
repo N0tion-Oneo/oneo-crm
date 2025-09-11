@@ -35,6 +35,7 @@ interface UserEditModalProps {
 }
 
 interface FormData {
+  username: string
   first_name: string
   last_name: string
   email: string
@@ -48,6 +49,7 @@ interface FormData {
 
 export default function UserEditModal({ user, isOpen, onClose, onUserUpdated }: UserEditModalProps) {
   const [formData, setFormData] = useState<FormData>({
+    username: '',
     first_name: '',
     last_name: '',
     email: '',
@@ -67,6 +69,7 @@ export default function UserEditModal({ user, isOpen, onClose, onUserUpdated }: 
   useEffect(() => {
     if (isOpen && user) {
       setFormData({
+        username: user.username || '',
         first_name: user.first_name || '',
         last_name: user.last_name || '',
         email: user.email || '',
@@ -102,10 +105,17 @@ export default function UserEditModal({ user, isOpen, onClose, onUserUpdated }: 
     const newErrors: Record<string, string> = {}
 
     // Required fields
+    if (!formData.username.trim()) newErrors.username = 'Username is required'
     if (!formData.first_name.trim()) newErrors.first_name = 'First name is required'
     if (!formData.last_name.trim()) newErrors.last_name = 'Last name is required'
     if (!formData.email.trim()) newErrors.email = 'Email is required'
     if (!formData.user_type) newErrors.user_type = 'User type is required'
+
+    // Username validation
+    const usernameRegex = /^[a-zA-Z0-9._-]+$/
+    if (formData.username && !usernameRegex.test(formData.username)) {
+      newErrors.username = 'Username can only contain letters, numbers, dots, underscores, and hyphens'
+    }
 
     // Email validation
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
@@ -211,6 +221,35 @@ export default function UserEditModal({ user, isOpen, onClose, onUserUpdated }: 
 
           {/* Basic Information */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* Username - Admin Only */}
+            <div className="md:col-span-2">
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                Username *
+              </label>
+              <div className="relative">
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                  <User className="h-4 w-4 text-gray-400" />
+                </div>
+                <input
+                  type="text"
+                  value={formData.username}
+                  onChange={(e) => handleInputChange('username', e.target.value)}
+                  className={`block w-full pl-10 pr-3 py-2 border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent ${
+                    errors.username
+                      ? 'border-red-300 dark:border-red-600'
+                      : 'border-gray-300 dark:border-gray-600'
+                  } bg-white dark:bg-gray-700 text-gray-900 dark:text-white`}
+                  placeholder="Enter username"
+                />
+              </div>
+              {errors.username && (
+                <p className="mt-1 text-sm text-red-600 dark:text-red-400">{errors.username}</p>
+              )}
+              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                This username is used for booking URLs and system identification
+              </p>
+            </div>
+
             {/* First Name */}
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">

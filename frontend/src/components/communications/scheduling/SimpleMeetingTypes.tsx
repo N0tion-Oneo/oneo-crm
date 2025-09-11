@@ -36,6 +36,9 @@ interface MeetingType {
     selected_fields?: string[]
   }
   required_fields?: string[]
+  is_template?: boolean
+  template_source?: string
+  created_for_org?: boolean
 }
 
 interface Pipeline {
@@ -54,12 +57,16 @@ interface Field {
 
 export default function SimpleMeetingTypes() {
   const [meetingTypes, setMeetingTypes] = useState<MeetingType[]>([])
+  const [templates, setTemplates] = useState<MeetingType[]>([])
   const [calendars, setCalendars] = useState<CalendarConnection[]>([])
   const [pipelines, setPipelines] = useState<Pipeline[]>([])
   const [pipelineFields, setPipelineFields] = useState<Field[]>([])
   const [selectedFields, setSelectedFields] = useState<string[]>([])
   const [showDialog, setShowDialog] = useState(false)
+  const [showTemplateDialog, setShowTemplateDialog] = useState(false)
+  const [selectedTemplate, setSelectedTemplate] = useState<MeetingType | null>(null)
   const [loading, setLoading] = useState(false)
+  const [hasManageAllPermission, setHasManageAllPermission] = useState(false)
   const { toast } = useToast()
   
   const [formData, setFormData] = useState({
@@ -78,16 +85,39 @@ export default function SimpleMeetingTypes() {
 
   useEffect(() => {
     loadMeetingTypes()
+    loadTemplates()
     loadCalendars()
     loadPipelines()
+    checkPermissions()
   }, [])
+
+  const checkPermissions = async () => {
+    try {
+      const response = await axios.get('/api/v1/auth/me/')
+      const permissions = response.data.permissions || {}
+      setHasManageAllPermission(permissions.communication_settings?.scheduling_all === true)
+    } catch (error) {
+      console.error('Failed to check permissions:', error)
+    }
+  }
 
   const loadMeetingTypes = async () => {
     try {
       const response = await axios.get('/api/v1/communications/scheduling/meeting-types/')
-      setMeetingTypes(response.data.results || response.data)
+      const allTypes = response.data.results || response.data
+      // Filter out templates from regular meeting types
+      setMeetingTypes(allTypes.filter((mt: MeetingType) => !mt.is_template))
     } catch (error) {
       console.error('Failed to load meeting types:', error)
+    }
+  }
+
+  const loadTemplates = async () => {
+    try {
+      const response = await axios.get('/api/v1/communications/scheduling/meeting-types/templates/')
+      setTemplates(response.data.results || response.data)
+    } catch (error) {
+      console.error('Failed to load templates:', error)
     }
   }
 
@@ -136,18 +166,34 @@ export default function SimpleMeetingTypes() {
 
     setLoading(true)
     try {
-      await axios.post('/api/v1/communications/scheduling/meeting-types/', formData)
-      toast({
-        title: 'Success',
-        description: 'Meeting type created'
-      })
+      if (selectedTemplate) {
+        // Creating from template
+        const calendar = calendars.find(c => c.id === formData.calendar_connection)
+        await axios.post(`/api/v1/communications/scheduling/meeting-types/${selectedTemplate.id}/copy_from_template/`, {
+          name: formData.name,
+          calendar_id: formData.calendar_connection,
+          calendar_name: calendar?.name || ''
+        })
+        toast({
+          title: 'Success',
+          description: 'Meeting type created from template'
+        })
+      } else {
+        // Creating new meeting type
+        await axios.post('/api/v1/communications/scheduling/meeting-types/', formData)
+        toast({
+          title: 'Success',
+          description: 'Meeting type created'
+        })
+      }
       setShowDialog(false)
       resetForm()
+      setSelectedTemplate(null)
       loadMeetingTypes()
     } catch (error) {
       toast({
         title: 'Error',
-        description: 'Failed to create meeting type',
+        description: selectedTemplate ? 'Failed to create from template' : 'Failed to create meeting type',
         variant: 'destructive'
       })
     } finally {
@@ -162,6 +208,7 @@ export default function SimpleMeetingTypes() {
       await axios.delete(`/api/v1/communications/scheduling/meeting-types/${id}/`)
       toast({ title: 'Deleted' })
       loadMeetingTypes()
+      loadTemplates()
     } catch (error) {
       toast({
         title: 'Error',
@@ -169,6 +216,57 @@ export default function SimpleMeetingTypes() {
         variant: 'destructive'
       })
     }
+  }
+
+  const handleMakeTemplate = async (id: string) => {
+    try {
+      await axios.post(`/api/v1/communications/scheduling/meeting-types/${id}/make_template/`)
+      toast({
+        title: 'Success',
+        description: 'Meeting type converted to template'
+      })
+      loadMeetingTypes()
+      loadTemplates()
+    } catch (error) {
+      toast({
+        title: 'Error',
+        description: 'Failed to create template',
+        variant: 'destructive'
+      })
+    }
+  }
+
+  const handleCreateFromTemplate = async (templateId: string) => {
+    // First, check if user has calendars configured
+    if (calendars.length === 0) {
+      toast({
+        title: 'No Calendar',
+        description: 'Please configure your calendar first',
+        variant: 'destructive'
+      })
+      return
+    }
+
+    // Set the selected template and open the main dialog to get calendar info
+    const template = templates.find(t => t.id === templateId)
+    if (!template) return
+    
+    // Pre-fill form with template data
+    setFormData({
+      name: template.name,
+      description: template.description,
+      duration_minutes: template.duration_minutes,
+      location_type: template.location_type,
+      calendar_connection: calendars[0]?.id || '',
+      pipeline: template.pipeline || '',
+      pipeline_stage: template.pipeline_stage || '',
+      booking_form_config: template.booking_form_config || { selected_fields: [] },
+      required_fields: template.required_fields || []
+    })
+    
+    setSelectedTemplate(template)
+    setShowTemplateDialog(false)
+    setShowDialog(true)
   }
 
   const copyLink = (url: string) => {
@@ -192,6 +290,7 @@ export default function SimpleMeetingTypes() {
     })
     setSelectedFields([])
     setPipelineFields([])
+    setSelectedTemplate(null)
   }
 
   return (
@@ -204,10 +303,18 @@ export default function SimpleMeetingTypes() {
               Create different types of meetings people can book with you
             </CardDescription>
           </div>
-          <Button onClick={() => { resetForm(); setShowDialog(true) }}>
-            <Plus className="h-4 w-4 mr-2" />
-            Add Meeting Type
-          </Button>
+          <div className="flex items-center gap-2">
+            {templates.length > 0 && (
+              <Button variant="outline" onClick={() => setShowTemplateDialog(true)}>
+                <Copy className="h-4 w-4 mr-2" />
+                Use Template
+              </Button>
+            )}
+            <Button onClick={() => { resetForm(); setShowDialog(true) }}>
+              <Plus className="h-4 w-4 mr-2" />
+              Add Meeting Type
+            </Button>
+          </div>
         </div>
       </CardHeader>
       
@@ -248,14 +355,33 @@ export default function SimpleMeetingTypes() {
                         <Copy className="h-3 w-3" />
                       </Button>
                     </div>
+                    {meeting.template_source && (
+                      <div className="mt-2">
+                        <span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-blue-100 text-blue-800">
+                          Created from template
+                        </span>
+                      </div>
+                    )}
                   </div>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => handleDelete(meeting.id)}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    {hasManageAllPermission && !meeting.is_template && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => handleMakeTemplate(meeting.id)}
+                        title="Convert to template"
+                      >
+                        <Copy className="h-4 w-4" />
+                      </Button>
+                    )}
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => handleDelete(meeting.id)}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
                 </div>
               </div>
             ))}
@@ -266,7 +392,9 @@ export default function SimpleMeetingTypes() {
       <Dialog open={showDialog} onOpenChange={setShowDialog}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Create Meeting Type</DialogTitle>
+            <DialogTitle>
+              {selectedTemplate ? `Create from Template: ${selectedTemplate.name}` : 'Create Meeting Type'}
+            </DialogTitle>
           </DialogHeader>
           
           <div className="space-y-4 mt-4">
@@ -441,6 +569,56 @@ export default function SimpleMeetingTypes() {
               </Button>
               <Button onClick={handleSubmit} disabled={loading}>
                 Create
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showTemplateDialog} onOpenChange={setShowTemplateDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Choose a Template</DialogTitle>
+          </DialogHeader>
+          
+          <div className="space-y-4 mt-4">
+            {templates.length === 0 ? (
+              <div className="text-center py-8 text-muted-foreground">
+                No templates available yet
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {templates.map((template) => (
+                  <div key={template.id} className="border rounded-lg p-4 hover:bg-muted/50 cursor-pointer"
+                       onClick={() => handleCreateFromTemplate(template.id)}>
+                    <div>
+                      <h3 className="font-semibold">{template.name}</h3>
+                      {template.description && (
+                        <p className="text-sm text-muted-foreground mt-1">{template.description}</p>
+                      )}
+                      <div className="flex items-center gap-4 mt-2 text-sm text-muted-foreground">
+                        <span className="flex items-center gap-1">
+                          <Clock className="h-3 w-3" />
+                          {template.duration_minutes} min
+                        </span>
+                        <span>{template.location_type}</span>
+                      </div>
+                      {template.created_for_org && (
+                        <div className="mt-2">
+                          <span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-purple-100 text-purple-800">
+                            Organization Template
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            
+            <div className="flex justify-end">
+              <Button variant="outline" onClick={() => setShowTemplateDialog(false)}>
+                Cancel
               </Button>
             </div>
           </div>

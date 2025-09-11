@@ -297,6 +297,12 @@ def setup_periodic_tasks(sender, **kwargs):
     # Import email and utility tasks
     from communications.email_tasks import sync_email_read_status_to_provider
     from communications.utility_tasks import cleanup_old_messages, update_communication_analytics
+    
+    # Import scheduling tasks
+    from communications.scheduling.tasks import (
+        send_calendar_invite,
+        send_booking_confirmation_email
+    )
 
 if __name__ == '__main__':
     app.start()

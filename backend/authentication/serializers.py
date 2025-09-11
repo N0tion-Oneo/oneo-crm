@@ -309,10 +309,29 @@ class UserUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = [
-            'first_name', 'last_name', 'email', 'phone', 
+            'username', 'first_name', 'last_name', 'email', 'phone', 
             'timezone', 'language', 'avatar_url',
             'user_type', 'is_active', 'is_staff'
         ]
+    
+    def validate_username(self, value):
+        """Validate username is unique within the tenant"""
+        if not value or not value.strip():
+            raise serializers.ValidationError("Username cannot be empty")
+        
+        # Check for valid characters
+        import re
+        if not re.match(r'^[a-zA-Z0-9._-]+$', value):
+            raise serializers.ValidationError(
+                "Username can only contain letters, numbers, dots, underscores, and hyphens"
+            )
+        
+        # Check uniqueness (exclude current user)
+        user = self.instance
+        if User.objects.exclude(id=user.id).filter(username=value).exists():
+            raise serializers.ValidationError("This username is already taken")
+        
+        return value
 
     def validate_email(self, value):
         """Validate email is unique (excluding current user)"""

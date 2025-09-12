@@ -101,7 +101,7 @@ export function EventScheduler({
       }
 
       // Call the API to create the calendar event
-      const response = await api.post('/api/v1/communications/calendar/events/create_event/', eventData)
+      const response = await api.post('/api/v1/communications/scheduling/meetings/create-event/', eventData)
 
       toast({
         title: 'Meeting Scheduled',

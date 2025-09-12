@@ -935,32 +935,20 @@ export const communicationsApi = {
     pipeline_id: string
   }) => api.post('/api/v1/participants/bulk_create_records/', data),
   
-  // Calendar API
-  createCalendarEvent: (data: {
-    account_id: string
-    calendar_id: string
+  // Scheduling API (consolidated calendar and scheduling)
+  createManualEvent: (data: {
     title: string
+    event_type?: string
     start_time: string
     end_time: string
-    description?: string
     location?: string
+    location_type?: string
+    description?: string
     attendees?: string[]
-    reminder_minutes?: number
-  }) => api.post('/api/v1/communications/calendar/events/', data),
-  
-  getCalendarEvents: (accountId: string, params?: {
-    calendar_id?: string
-    start_date?: string
-    end_date?: string
-    limit?: number
-  }) => api.get('/api/v1/communications/calendar/events/', {
-    params: { account_id: accountId, ...params }
-  }),
-  
-  getCalendars: (accountId: string) =>
-    api.get('/api/v1/communications/calendar/', {
-      params: { account_id: accountId }
-    }),
+    record_id?: string
+    add_to_calendar?: boolean
+    metadata?: any
+  }) => api.post('/api/v1/communications/scheduling/meetings/create-event/', data),
 
   // Contact Resolution API
   getUnmatchedContacts: () => 

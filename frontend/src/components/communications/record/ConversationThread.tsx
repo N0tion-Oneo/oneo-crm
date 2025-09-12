@@ -88,7 +88,7 @@ export function ConversationThread({
   const [isLoadingMore, setIsLoadingMore] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [showScrollButton, setShowScrollButton] = useState(false)
-  const [conversationType, setConversationType] = useState<'email' | 'message'>('message')
+  const [conversationType, setConversationType] = useState<'email' | 'message' | 'calendar'>('message')
   const [expandedEmails, setExpandedEmails] = useState<Set<string>>(new Set())
   const [hasMoreMessages, setHasMoreMessages] = useState(true)
   const [initialLoadComplete, setInitialLoadComplete] = useState(false)
@@ -531,6 +531,8 @@ export function ConversationThread({
         setConversationType('email')
         // Auto-expand the latest email (which is now first)
         setExpandedEmails(new Set([messages[0].id]))
+      } else if (firstMessage.channel_type === 'calendar') {
+        setConversationType('calendar')
       } else {
         setConversationType('message')
       }

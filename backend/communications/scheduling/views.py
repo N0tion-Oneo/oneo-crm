@@ -1012,6 +1012,82 @@ class ScheduledMeetingViewSet(viewsets.ModelViewSet):
             })
         
         return Response({'events': events})
+    
+    @action(detail=False, methods=['post'], url_path='create-event')
+    def create_event(self, request):
+        """
+        Create a manual calendar event without booking flow
+        
+        Expected data:
+        - title: Event title
+        - start_time: ISO datetime
+        - end_time: ISO datetime
+        - attendees: List of email addresses
+        - location: Location/meeting link (optional)
+        - location_type: google_meet/teams/zoom/phone/in_person/other (optional)
+        - description: Event description (optional)
+        - record_id: Associated record ID (optional)
+        - add_to_calendar: Boolean to add to user's calendar (default True)
+        """
+        from .services import BookingProcessor
+        from pipelines.models import Record
+        from asgiref.sync import async_to_sync
+        
+        # Validate required fields
+        if not request.data.get('title') or not request.data.get('start_time'):
+            return Response(
+                {'error': 'Title and start time are required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            # Parse dates
+            start_time = datetime.fromisoformat(request.data['start_time'].replace('Z', '+00:00'))
+            end_time = datetime.fromisoformat(request.data['end_time'].replace('Z', '+00:00')) if request.data.get('end_time') else None
+            
+            # If no end time, default to 1 hour after start
+            if not end_time:
+                end_time = start_time + timedelta(hours=1)
+            
+            # Get associated record if provided
+            record = None
+            if request.data.get('record_id'):
+                try:
+                    record = Record.objects.get(id=request.data['record_id'])
+                except Record.DoesNotExist:
+                    logger.warning(f"Record {request.data['record_id']} not found")
+            
+            # Create the event using BookingProcessor
+            # We pass None for meeting_type since this is a manual event
+            processor = BookingProcessor(meeting_type=None)
+            
+            # Call the async method synchronously
+            result = async_to_sync(processor.create_manual_event)(
+                user=request.user,
+                title=request.data['title'],
+                start_time=start_time,
+                end_time=end_time,
+                attendees=request.data.get('attendees', []),
+                location=request.data.get('location'),
+                location_type=request.data.get('location_type', 'other'),
+                description=request.data.get('description'),
+                record=record,
+                add_to_calendar=request.data.get('add_to_calendar', True)
+            )
+            
+            return Response(result)
+            
+        except ValueError as e:
+            return Response(
+                {'error': f'Invalid date format: {str(e)}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            logger.error(f"Failed to create manual event: {e}")
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 class AvailabilityOverrideViewSet(viewsets.ModelViewSet):

@@ -245,6 +245,7 @@ class ConversationType(models.TextChoices):
     GROUP = 'group', 'Group Chat'
     BROADCAST = 'broadcast', 'Broadcast List'
     CHANNEL = 'channel', 'Channel/Community'
+    CALENDAR_EVENT = 'calendar_event', 'Calendar Event'
 
 
 

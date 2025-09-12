@@ -29,8 +29,9 @@ interface MessageComposeProps {
   onMessageSent?: () => void
   replyTo?: any // Message to reply to
   onCancelReply?: () => void
-  channelType: 'whatsapp' | 'linkedin'
+  channelType: 'whatsapp' | 'linkedin' | 'calendar'
   defaultRecipient?: string // For new messages at record level (phone for WhatsApp, name for LinkedIn)
+  placeholder?: string // Custom placeholder text
 }
 
 export function MessageCompose({
@@ -40,7 +41,8 @@ export function MessageCompose({
   replyTo,
   onCancelReply,
   channelType,
-  defaultRecipient
+  defaultRecipient,
+  placeholder
 }: MessageComposeProps) {
   const [to, setTo] = useState(() => {
     if (typeof defaultRecipient === 'string') return defaultRecipient
@@ -159,7 +161,7 @@ export function MessageCompose({
       return
     }
 
-    if (!conversationId && !to.trim()) {
+    if (!conversationId && !to.trim() && channelType !== 'calendar') {
       toast({
         title: "Error", 
         description: `Please enter a ${channelType === 'whatsapp' ? 'phone number' : 'LinkedIn profile'}`,
@@ -168,7 +170,7 @@ export function MessageCompose({
       return
     }
 
-    if (!selectedAccountId) {
+    if (!selectedAccountId && channelType !== 'calendar') {
       toast({
         title: "Error",
         description: `Please select a ${channelType} account`,
@@ -180,29 +182,41 @@ export function MessageCompose({
     setIsSending(true)
 
     try {
-      // Build request data
-      const requestData: any = {
-        from_account_id: selectedAccountId,
-        text: text.trim(),
-        conversation_id: conversationId
-      }
+      let endpoint: string
+      let requestData: any
       
-      // Add recipient for new conversations
-      if (!conversationId && to) {
-        requestData.to = to.trim()
+      if (channelType === 'calendar') {
+        // For calendar notes, use a different endpoint
+        endpoint = `/api/v1/communications/conversations/${conversationId}/add_note/`
+        requestData = {
+          content: text.trim(),
+          note_type: 'meeting_note'
+        }
+      } else {
+        // Build request data for regular messages
+        requestData = {
+          from_account_id: selectedAccountId,
+          text: text.trim(),
+          conversation_id: conversationId
+        }
+        
+        // Add recipient for new conversations
+        if (!conversationId && to) {
+          requestData.to = to.trim()
+        }
+        
+        // Add attachments if any
+        if (attachments.length > 0) {
+          requestData.attachments = attachments.map(att => ({
+            filename: att.filename,
+            content_type: att.content_type,
+            data: att.data
+          }))
+        }
+        
+        // Send message via record communications API
+        endpoint = `/api/v1/communications/records/${recordId}/send_message/`
       }
-      
-      // Add attachments if any
-      if (attachments.length > 0) {
-        requestData.attachments = attachments.map(att => ({
-          filename: att.filename,
-          content_type: att.content_type,
-          data: att.data
-        }))
-      }
-
-      // Send message via record communications API
-      const endpoint = `/api/v1/communications/records/${recordId}/send_message/`
       console.log('📤 MessageCompose: Sending request')
       console.log('   Endpoint:', endpoint)
       console.log('   Full URL:', `http://${window.location.hostname}:8000${endpoint}`)
@@ -212,10 +226,12 @@ export function MessageCompose({
       
       console.log('✅ MessageCompose: Success Response:', response.data)
 
-      if (response.data.success) {
+      if (response.data.success || response.data.id) {
         toast({
-          title: "Message Sent",
-          description: `${channelType === 'whatsapp' ? 'WhatsApp' : 'LinkedIn'} message sent successfully`
+          title: channelType === 'calendar' ? "Note Added" : "Message Sent",
+          description: channelType === 'calendar' ? 
+            "Meeting note added successfully" :
+            `${channelType === 'whatsapp' ? 'WhatsApp' : 'LinkedIn'} message sent successfully`
         })
 
         // Clear form
@@ -368,25 +384,27 @@ export function MessageCompose({
 
       {/* Body */}
       <div className="p-4 space-y-3">
-        {/* Account selector */}
-        <div>
-          <Label>From</Label>
-          <Select value={selectedAccountId} onValueChange={setSelectedAccountId}>
-            <SelectTrigger>
-              <SelectValue placeholder={`Select ${channelType} account`} />
-            </SelectTrigger>
-            <SelectContent>
-              {accounts.map(account => (
-                <SelectItem key={account.externalAccountId || account.id} value={account.externalAccountId || account.id}>
-                  {account.accountName || account.externalAccountId || 'Unknown Account'}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+        {/* Account selector - not needed for calendar notes */}
+        {channelType !== 'calendar' && (
+          <div>
+            <Label>From</Label>
+            <Select value={selectedAccountId} onValueChange={setSelectedAccountId}>
+              <SelectTrigger>
+                <SelectValue placeholder={`Select ${channelType} account`} />
+              </SelectTrigger>
+              <SelectContent>
+                {accounts.map(account => (
+                  <SelectItem key={account.externalAccountId || account.id} value={account.externalAccountId || account.id}>
+                    {account.accountName || account.externalAccountId || 'Unknown Account'}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
 
-        {/* To field for new conversations */}
-        {!conversationId && (
+        {/* To field for new conversations - not needed for calendar notes */}
+        {!conversationId && channelType !== 'calendar' && (
           <div>
             <Label>To</Label>
             <Input
@@ -404,7 +422,7 @@ export function MessageCompose({
             ref={textareaRef}
             value={text}
             onChange={(e) => setText(e.target.value)}
-            placeholder="Type your message..."
+            placeholder={placeholder || "Type your message..."}
             rows={4}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && e.ctrlKey) {

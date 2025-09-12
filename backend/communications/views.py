@@ -311,6 +311,84 @@ class ConversationViewSet(viewsets.ModelViewSet):
                 'success': False,
                 'error': 'No messages to mark as unread'
             }, status=status.HTTP_400_BAD_REQUEST)
+    
+    @action(detail=True, methods=['post'], url_path='add-note')
+    def add_note(self, request, pk=None):
+        """Add a note to a calendar conversation"""
+        conversation = self.get_object()
+        
+        # Validate that this is a calendar conversation
+        # Allow notes on calendar_event conversations OR conversations in calendar channels
+        if conversation.conversation_type != 'calendar_event' and conversation.channel.channel_type != 'calendar':
+            return Response({
+                'success': False,
+                'error': 'Notes can only be added to calendar conversations'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Get the content from request
+        content = request.data.get('content', '').strip()
+        note_type = request.data.get('note_type', 'meeting_notes')
+        metadata = request.data.get('metadata', {})
+        
+        if not content:
+            return Response({
+                'success': False,
+                'error': 'Content is required'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Prepare message metadata
+        message_metadata = {
+            'note_type': note_type,
+            'created_by': request.user.username,
+            'has_notes': metadata.get('has_notes', False),
+            'has_actions': metadata.get('has_actions', False),
+            'has_tasks': metadata.get('has_tasks', False)
+        }
+        
+        # Add action items if present
+        if 'action_items' in metadata:
+            message_metadata['action_items'] = metadata['action_items']
+        
+        # Add created task IDs if present
+        if 'created_tasks' in metadata:
+            message_metadata['created_tasks'] = metadata['created_tasks']
+        
+        # Determine subject based on content types
+        subject_parts = []
+        if metadata.get('has_notes'):
+            subject_parts.append('Notes')
+        if metadata.get('has_actions'):
+            subject_parts.append('Action Items')
+        if metadata.get('has_tasks'):
+            subject_parts.append('Tasks')
+        
+        subject = 'Meeting ' + (', '.join(subject_parts) if subject_parts else 'Update')
+        
+        # Create a message for the note
+        message = Message.objects.create(
+            conversation=conversation,
+            channel=conversation.channel,
+            direction='outbound',
+            content=content,
+            subject=subject,
+            sent_at=timezone.now(),
+            metadata=message_metadata
+        )
+        
+        # Update conversation updated_at
+        conversation.updated_at = timezone.now()
+        conversation.message_count = conversation.messages.count()
+        conversation.save(update_fields=['updated_at', 'message_count'])
+        
+        # Serialize the message for response
+        from .serializers import MessageSerializer
+        serializer = MessageSerializer(message)
+        
+        return Response({
+            'success': True,
+            'message': serializer.data,
+            'id': str(message.id)
+        })
 
 
 class MessageViewSet(viewsets.ModelViewSet):

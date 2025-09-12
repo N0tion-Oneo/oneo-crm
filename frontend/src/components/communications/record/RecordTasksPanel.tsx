@@ -14,7 +14,9 @@ import {
   ChevronDown,
   ChevronUp,
   Check,
-  X
+  X,
+  Edit2,
+  ListTodo
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -30,6 +32,15 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 
+interface ChecklistItem {
+  id: string
+  text: string
+  is_completed: boolean
+  order: number
+  completed_at?: string
+  completed_by?: string
+}
+
 interface Task {
   id: string
   title: string
@@ -39,10 +50,23 @@ interface Task {
   due_date?: string
   reminder_at?: string
   assigned_to?: string
+  assigned_to_name?: string
+  assigned_to_email?: string
   created_at: string
   updated_at: string
   completed_at?: string
   metadata?: any
+  checklist_items?: ChecklistItem[]
+  checklist_progress?: {
+    completed: number
+    total: number
+    percentage: number
+  }
+  is_overdue?: boolean
+  record_name?: string
+  pipeline_name?: string
+  created_by_name?: string
+  created_by_email?: string
 }
 
 interface RecordTasksPanelProps {
@@ -59,6 +83,8 @@ export function RecordTasksPanel({
   const [expandedTasks, setExpandedTasks] = useState<Set<string>>(new Set())
   const [filter, setFilter] = useState<'all' | 'pending' | 'in_progress' | 'completed'>('all')
   const [sortBy, setSortBy] = useState<'priority' | 'due_date' | 'created'>('priority')
+  const [selectedTask, setSelectedTask] = useState<Task | null>(null)
+  const [isEditingTask, setIsEditingTask] = useState(false)
 
   // Fetch tasks for this record
   const fetchTasks = async () => {
@@ -131,6 +157,20 @@ export function RecordTasksPanel({
         variant: 'destructive'
       })
     }
+  }
+
+  // Open task for editing
+  const openTaskEditor = (task: Task) => {
+    setSelectedTask(task)
+    setIsEditingTask(true)
+    setIsCreatingTask(false) // Close create mode if open
+  }
+
+  // Handle task editor close
+  const handleTaskEditorClose = () => {
+    setSelectedTask(null)
+    setIsEditingTask(false)
+    fetchTasks() // Refresh tasks after potential updates
   }
 
   // Toggle task expansion
@@ -213,60 +253,66 @@ export function RecordTasksPanel({
 
   return (
     <div className="flex flex-col h-full">
-      {/* Header */}
+      {/* Header - Compact to match other tabs */}
       <div className="flex-shrink-0 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
-        <div className="flex items-center justify-between p-4">
-          <div className="flex items-center gap-4">
-            <h2 className="text-lg font-semibold flex items-center gap-2">
-              <CheckSquare className="w-5 h-5" />
-              Tasks
-            </h2>
-            <div className="flex gap-2">
+        <div className="flex items-center justify-between p-3 gap-3">
+          {/* New Task button */}
+          <Button
+            onClick={() => setIsCreatingTask(true)}
+            size="sm"
+            variant="outline"
+            className="mr-2"
+          >
+            <Plus className="w-4 h-4 mr-1" />
+            New Task
+          </Button>
+          
+          {/* Filter tabs */}
+          <div className="flex-1">
+            <div className="flex gap-1 bg-gray-100 dark:bg-gray-900 rounded-lg p-1">
               {(['all', 'pending', 'in_progress', 'completed'] as const).map(status => (
-                <Button
+                <button
                   key={status}
-                  variant={filter === status ? 'default' : 'outline'}
-                  size="sm"
                   onClick={() => setFilter(status)}
+                  className={`flex-1 px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
+                    filter === status
+                      ? 'bg-white dark:bg-gray-800 text-gray-900 dark:text-white shadow-sm'
+                      : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
+                  }`}
                 >
                   {status.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())}
-                  <Badge variant="secondary" className="ml-2">
-                    {taskCounts[status]}
-                  </Badge>
-                </Button>
+                  <span className="ml-1.5 text-xs">
+                    ({taskCounts[status]})
+                  </span>
+                </button>
               ))}
             </div>
           </div>
+          
+          {/* Sort and Refresh */}
           <div className="flex items-center gap-2">
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="outline" size="sm">
-                  Sort: {sortBy.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())}
-                  <ChevronDown className="w-4 h-4 ml-1" />
+                <Button variant="ghost" size="sm">
+                  <ChevronDown className="w-4 h-4 mr-1" />
+                  {sortBy === 'priority' ? 'Priority' : sortBy === 'due_date' ? 'Due Date' : 'Created'}
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent>
+              <DropdownMenuContent align="end">
                 <DropdownMenuItem onClick={() => setSortBy('priority')}>
-                  Priority
+                  Sort by Priority
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => setSortBy('due_date')}>
-                  Due Date
+                  Sort by Due Date
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => setSortBy('created')}>
-                  Created Date
+                  Sort by Created Date
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
             <Button
-              onClick={() => setIsCreatingTask(true)}
-              size="sm"
-            >
-              <Plus className="w-4 h-4 mr-1" />
-              New Task
-            </Button>
-            <Button
               onClick={fetchTasks}
-              variant="outline"
+              variant="ghost"
               size="sm"
             >
               <RefreshCw className="w-4 h-4" />
@@ -275,18 +321,28 @@ export function RecordTasksPanel({
         </div>
       </div>
 
-      {/* Task List or Creator */}
+      {/* Task List or Creator/Editor */}
       <div className="flex-1 overflow-y-auto p-4">
-        {isCreatingTask ? (
+        {(isCreatingTask || isEditingTask) ? (
           <Card>
             <CardContent className="p-0">
               <TaskCreator
                 recordId={recordId}
+                task={isEditingTask ? selectedTask : null}
                 onTaskCreated={() => {
                   setIsCreatingTask(false)
                   fetchTasks()
                 }}
-                onCancel={() => setIsCreatingTask(false)}
+                onTaskUpdated={() => {
+                  setIsEditingTask(false)
+                  setSelectedTask(null)
+                  fetchTasks()
+                }}
+                onCancel={() => {
+                  setIsCreatingTask(false)
+                  setIsEditingTask(false)
+                  setSelectedTask(null)
+                }}
               />
             </CardContent>
           </Card>
@@ -336,6 +392,11 @@ export function RecordTasksPanel({
                             <Badge className={getStatusColor(task.status)}>
                               {task.status.replace('_', ' ')}
                             </Badge>
+                            {isOverdue && (
+                              <Badge variant="destructive" className="text-xs">
+                                Overdue
+                              </Badge>
+                            )}
                           </div>
                           <div className="flex items-center gap-4 text-sm text-gray-500 dark:text-gray-400">
                             {task.due_date && (
@@ -344,10 +405,16 @@ export function RecordTasksPanel({
                                 {new Date(task.due_date).toLocaleDateString()}
                               </span>
                             )}
-                            {task.assigned_to && (
+                            {task.assigned_to_name || task.assigned_to ? (
                               <span className="flex items-center gap-1">
                                 <User className="w-3 h-3" />
-                                {task.assigned_to}
+                                {task.assigned_to_name || task.assigned_to}
+                              </span>
+                            ) : null}
+                            {task.checklist_progress && task.checklist_progress.total > 0 && (
+                              <span className="flex items-center gap-1">
+                                <ListTodo className="w-3 h-3" />
+                                {task.checklist_progress.completed}/{task.checklist_progress.total} items
                               </span>
                             )}
                             {task.reminder_at && (
@@ -360,6 +427,14 @@ export function RecordTasksPanel({
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => openTaskEditor(task)}
+                          title="Edit task"
+                        >
+                          <Edit2 className="w-4 h-4" />
+                        </Button>
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
                             <Button variant="ghost" size="sm">

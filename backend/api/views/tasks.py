@@ -8,14 +8,15 @@ from rest_framework.permissions import IsAuthenticated
 from django.shortcuts import get_object_or_404
 from django.db.models import Q, Count, Prefetch
 from django.utils import timezone
-from tasks.models import Task, TaskComment, TaskAttachment
+from tasks.models import Task, TaskComment, TaskAttachment, TaskChecklistItem
 from tasks.serializers import (
     TaskSerializer,
     TaskCreateSerializer,
     TaskStatusUpdateSerializer,
     TaskListSerializer,
     TaskCommentSerializer,
-    TaskAttachmentSerializer
+    TaskAttachmentSerializer,
+    TaskChecklistItemSerializer
 )
 from pipelines.models import Record
 
@@ -108,7 +109,7 @@ class TaskViewSet(viewsets.ModelViewSet):
         
         tasks = Task.objects.filter(record=record).select_related(
             'assigned_to', 'created_by'
-        ).prefetch_related('comments', 'attachments')
+        ).prefetch_related('comments', 'attachments', 'checklist_items')
         
         # Apply status filter if provided
         status_filter = request.query_params.get('status')
@@ -208,6 +209,45 @@ class TaskViewSet(viewsets.ModelViewSet):
             'tasks': serializer.data,
             'count': tasks.count()
         })
+    
+    @action(detail=True, methods=['get', 'post'], url_path='checklist')
+    def checklist(self, request, pk=None):
+        """Get or add checklist items for a task"""
+        task = self.get_object()
+        
+        if request.method == 'POST':
+            # Add a checklist item
+            serializer = TaskChecklistItemSerializer(data=request.data)
+            if serializer.is_valid():
+                serializer.save(task=task)
+                return Response(serializer.data, status=status.HTTP_201_CREATED)
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        else:
+            # List checklist items
+            items = task.checklist_items.all()
+            serializer = TaskChecklistItemSerializer(items, many=True, context={'request': request})
+            return Response(serializer.data)
+    
+    @action(detail=True, methods=['patch', 'delete'], url_path='checklist/(?P<item_id>[^/.]+)')
+    def checklist_item(self, request, pk=None, item_id=None):
+        """Update or delete a specific checklist item"""
+        task = self.get_object()
+        item = get_object_or_404(TaskChecklistItem, id=item_id, task=task)
+        
+        if request.method == 'DELETE':
+            item.delete()
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        else:
+            # Update checklist item
+            serializer = TaskChecklistItemSerializer(item, data=request.data, partial=True)
+            if serializer.is_valid():
+                # If marking as completed, set completed_by
+                if 'is_completed' in request.data and request.data['is_completed']:
+                    serializer.save(completed_by=request.user)
+                else:
+                    serializer.save()
+                return Response(serializer.data)
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
     
     def perform_create(self, serializer):
         """Set created_by when creating a task"""

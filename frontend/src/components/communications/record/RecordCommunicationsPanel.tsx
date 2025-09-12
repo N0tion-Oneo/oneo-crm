@@ -24,6 +24,7 @@ import { EmailCompose } from './EmailCompose'
 import { MessageCompose } from './MessageCompose'
 import { EventScheduler } from './EventScheduler'
 import { CallLogger } from './CallLogger'
+import { MeetingCaptureSimple } from './MeetingCaptureSimple'
 import { api } from '@/lib/api'
 
 interface RecordCommunicationsPanelProps {
@@ -355,9 +356,18 @@ export function RecordCommunicationsPanel({
                   
                   {/* Reply/compose area - Fixed at bottom */}
                   <div className="flex-shrink-0">
-                    {(activeTab === 'calendar' || activeTab === 'calls') ? (
-                      // Calendar and Calls don't have a compose area at the bottom (shown in main area instead)
+                    {(activeTab === 'calls') ? (
+                      // Calls don't have a compose area at the bottom (shown in main area instead)
                       null
+                    ) : activeTab === 'calendar' && selectedConversation ? (
+                      // Calendar conversations can have notes, action items, and tasks added
+                      <MeetingCaptureSimple
+                        conversationId={selectedConversation}
+                        recordId={recordId}
+                        onContentAdded={() => {
+                          fetchConversations(activeTab)
+                        }}
+                      />
                     ) : activeTab === 'email' ? (
                       <EmailCompose
                         conversationId={selectedConversation}

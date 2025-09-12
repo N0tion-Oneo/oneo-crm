@@ -18,12 +18,15 @@ import {
   FileText,
   Plus,
   Send,
-  RefreshCw
+  RefreshCw,
+  ListTodo,
+  Trash
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
+import { Checkbox } from '@/components/ui/checkbox'
 // Using custom drawer implementation similar to record-detail-drawer
 import {
   Select,
@@ -38,6 +41,16 @@ import { api } from '@/lib/api'
 import { toast } from '@/hooks/use-toast'
 import { format } from 'date-fns'
 import { useAuth } from '@/features/auth/context'
+
+interface ChecklistItem {
+  id?: string
+  text: string
+  is_completed: boolean
+  order: number
+  completed_at?: string
+  completed_by?: string
+  completed_by_name?: string
+}
 
 interface Task {
   id: string
@@ -78,6 +91,12 @@ interface Task {
   attachments?: any[]
   comments_count?: number
   attachments_count?: number
+  checklist_items?: ChecklistItem[]
+  checklist_progress?: {
+    completed: number
+    total: number
+    percentage: number
+  }
   created_at: string
   updated_at: string
   metadata?: any
@@ -114,6 +133,8 @@ export function TaskDetailDrawer({
     due_date: '',
     assigned_to_id: null as number | null,
   })
+  const [checklistItems, setChecklistItems] = useState<ChecklistItem[]>([])
+  const [newChecklistItem, setNewChecklistItem] = useState('')
 
   // Initialize form data when task changes
   useEffect(() => {
@@ -126,6 +147,7 @@ export function TaskDetailDrawer({
         due_date: task.due_date ? task.due_date.split('T')[0] : '',
         assigned_to_id: task.assigned_to?.id ? parseInt(task.assigned_to.id) : null,
       })
+      setChecklistItems(task.checklist_items || [])
       setActiveTab('details')
       setIsEditing(false)
     }
@@ -136,7 +158,38 @@ export function TaskDetailDrawer({
 
     setIsSaving(true)
     try {
+      // Update task basic info
       await api.patch(`/api/v1/tasks/${task.id}/`, formData)
+      
+      // Update checklist items if they've changed
+      if (checklistItems !== task.checklist_items) {
+        // Delete removed items
+        const originalIds = task.checklist_items?.map(item => item.id).filter(Boolean) || []
+        const currentIds = checklistItems.map(item => item.id).filter(Boolean)
+        const toDelete = originalIds.filter(id => !currentIds.includes(id))
+        
+        for (const id of toDelete) {
+          await api.delete(`/api/v1/tasks/${task.id}/checklist/${id}/`).catch(() => {})
+        }
+        
+        // Update or create items
+        for (let i = 0; i < checklistItems.length; i++) {
+          const item = checklistItems[i]
+          const data = {
+            text: item.text,
+            is_completed: item.is_completed,
+            order: i
+          }
+          
+          if (item.id) {
+            // Update existing item
+            await api.patch(`/api/v1/tasks/${task.id}/checklist/${item.id}/`, data).catch(() => {})
+          } else {
+            // Create new item
+            await api.post(`/api/v1/tasks/${task.id}/checklist/`, data).catch(() => {})
+          }
+        }
+      }
       
       toast({
         title: 'Task Updated',
@@ -389,6 +442,8 @@ export function TaskDetailDrawer({
                     due_date: task.due_date ? task.due_date.split('T')[0] : '',
                     assigned_to_id: task.assigned_to?.id ? parseInt(task.assigned_to.id) : null,
                   })
+                  setChecklistItems(task.checklist_items || [])
+                  setNewChecklistItem('')
                 }}
                 variant="outline"
                 size="sm"
@@ -459,6 +514,104 @@ export function TaskDetailDrawer({
               </div>
 
               <Separator />
+
+              {/* Checklist Section */}
+              {(isEditing || (task.checklist_items && task.checklist_items.length > 0)) && (
+                <>
+                  <div>
+                    <Label className="text-sm font-medium mb-2">Checklist</Label>
+                    {isEditing && (
+                      <div className="flex gap-2 mt-2 mb-3">
+                        <Input
+                          value={newChecklistItem}
+                          onChange={(e) => setNewChecklistItem(e.target.value)}
+                          placeholder="Add checklist item..."
+                          onKeyPress={(e) => {
+                            if (e.key === 'Enter' && newChecklistItem.trim()) {
+                              e.preventDefault()
+                              setChecklistItems([
+                                ...checklistItems,
+                                {
+                                  text: newChecklistItem.trim(),
+                                  is_completed: false,
+                                  order: checklistItems.length
+                                }
+                              ])
+                              setNewChecklistItem('')
+                            }
+                          }}
+                        />
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => {
+                            if (newChecklistItem.trim()) {
+                              setChecklistItems([
+                                ...checklistItems,
+                                {
+                                  text: newChecklistItem.trim(),
+                                  is_completed: false,
+                                  order: checklistItems.length
+                                }
+                              ])
+                              setNewChecklistItem('')
+                            }
+                          }}
+                        >
+                          <Plus className="w-4 h-4" />
+                        </Button>
+                      </div>
+                    )}
+                    <div className="space-y-2 mt-2">
+                      {checklistItems.map((item, index) => (
+                        <div key={item.id || `new-${index}`} className="flex items-center gap-2">
+                          <Checkbox
+                            checked={item.is_completed}
+                            onCheckedChange={(checked) => {
+                              const updated = [...checklistItems]
+                              updated[index] = { ...item, is_completed: checked as boolean }
+                              setChecklistItems(updated)
+                            }}
+                            disabled={!isEditing}
+                          />
+                          {isEditing ? (
+                            <>
+                              <Input
+                                value={item.text}
+                                onChange={(e) => {
+                                  const updated = [...checklistItems]
+                                  updated[index] = { ...item, text: e.target.value }
+                                  setChecklistItems(updated)
+                                }}
+                                className="flex-1"
+                              />
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => {
+                                  setChecklistItems(checklistItems.filter((_, i) => i !== index))
+                                }}
+                              >
+                                <Trash className="w-4 h-4 text-red-500" />
+                              </Button>
+                            </>
+                          ) : (
+                            <span className={`flex-1 ${item.is_completed ? 'line-through text-gray-500' : ''}`}>
+                              {item.text}
+                            </span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                    {checklistItems.length > 0 && task.checklist_progress && (
+                      <div className="mt-3 text-sm text-gray-500">
+                        Progress: {task.checklist_progress.completed}/{task.checklist_progress.total} items ({Math.round(task.checklist_progress.percentage)}%)
+                      </div>
+                    )}
+                  </div>
+                  <Separator />
+                </>
+              )}
 
               {/* Task Details Grid */}
               <div className="grid grid-cols-2 gap-4">

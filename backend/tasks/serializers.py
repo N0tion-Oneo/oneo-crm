@@ -3,7 +3,7 @@ Serializers for task management
 """
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
-from .models import Task, TaskComment, TaskAttachment
+from .models import Task, TaskComment, TaskAttachment, TaskChecklistItem
 from pipelines.models import Record
 
 User = get_user_model()
@@ -21,6 +21,25 @@ class TaskCommentSerializer(serializers.ModelSerializer):
             'created_at', 'updated_at'
         ]
         read_only_fields = ['user', 'created_at', 'updated_at']
+
+
+class TaskChecklistItemSerializer(serializers.ModelSerializer):
+    """Serializer for task checklist items"""
+    completed_by_name = serializers.CharField(source='completed_by.get_full_name', read_only=True)
+    
+    class Meta:
+        model = TaskChecklistItem
+        fields = [
+            'id', 'text', 'is_completed', 'completed_by', 'completed_by_name',
+            'completed_at', 'order', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['completed_at', 'created_at', 'updated_at']
+    
+    def validate_order(self, value):
+        """Ensure order is non-negative"""
+        if value < 0:
+            raise serializers.ValidationError("Order must be non-negative")
+        return value
 
 
 class TaskAttachmentSerializer(serializers.ModelSerializer):
@@ -53,6 +72,7 @@ class TaskSerializer(serializers.ModelSerializer):
     is_overdue = serializers.BooleanField(read_only=True)
     comments_count = serializers.IntegerField(source='comments.count', read_only=True)
     attachments_count = serializers.IntegerField(source='attachments.count', read_only=True)
+    checklist_progress = serializers.SerializerMethodField()
     
     # Record information
     record_id = serializers.IntegerField(source='record.id', read_only=True)
@@ -63,6 +83,7 @@ class TaskSerializer(serializers.ModelSerializer):
     # Nested serializers for read operations
     comments = TaskCommentSerializer(many=True, read_only=True)
     attachments = TaskAttachmentSerializer(many=True, read_only=True)
+    checklist_items = TaskChecklistItemSerializer(many=True, read_only=True)
     
     class Meta:
         model = Task
@@ -72,9 +93,10 @@ class TaskSerializer(serializers.ModelSerializer):
             'record', 'record_id', 'record_name', 'pipeline_id', 'pipeline_name',
             'assigned_to', 'assigned_to_name', 'assigned_to_email',
             'created_by', 'created_by_name', 'created_by_email',
-            'metadata', 'is_overdue',
+            'metadata', 'is_overdue', 'checklist_progress',
             'comments', 'comments_count',
             'attachments', 'attachments_count',
+            'checklist_items',
             'created_at', 'updated_at'
         ]
         read_only_fields = ['created_by', 'created_at', 'updated_at', 'completed_at']
@@ -100,6 +122,10 @@ class TaskSerializer(serializers.ModelSerializer):
         record_data = RecordSerializer(obj.record).data
         return record_data.get('title', f"Record #{obj.record.id}")
     
+    def get_checklist_progress(self, obj):
+        """Get checklist completion progress"""
+        return obj.checklist_progress
+    
     def validate_due_date(self, value):
         """Validate due date if provided"""
         if value:
@@ -116,13 +142,19 @@ class TaskCreateSerializer(serializers.ModelSerializer):
     """Serializer for creating tasks with minimal fields"""
     record_id = serializers.IntegerField(write_only=True)
     assigned_to_id = serializers.IntegerField(required=False, allow_null=True, write_only=True)
+    initial_checklist = serializers.ListField(
+        child=serializers.CharField(max_length=500),
+        required=False,
+        write_only=True,
+        help_text="List of checklist item texts to create with the task"
+    )
     
     class Meta:
         model = Task
         fields = [
             'title', 'description', 'priority', 'status',
             'due_date', 'reminder_at', 'record_id', 'assigned_to_id',
-            'metadata'
+            'metadata', 'initial_checklist'
         ]
     
     def validate_record_id(self, value):
@@ -148,6 +180,7 @@ class TaskCreateSerializer(serializers.ModelSerializer):
         # Extract and convert IDs to objects
         record = validated_data.pop('record_id')
         assigned_to = validated_data.pop('assigned_to_id', None)
+        initial_checklist = validated_data.pop('initial_checklist', [])
         
         # Set the created_by from request context
         validated_data['created_by'] = self.context['request'].user
@@ -155,7 +188,19 @@ class TaskCreateSerializer(serializers.ModelSerializer):
         if assigned_to:
             validated_data['assigned_to'] = assigned_to
         
-        return super().create(validated_data)
+        # Create the task
+        task = super().create(validated_data)
+        
+        # Create checklist items if provided
+        if initial_checklist:
+            for index, item_text in enumerate(initial_checklist):
+                TaskChecklistItem.objects.create(
+                    task=task,
+                    text=item_text,
+                    order=index
+                )
+        
+        return task
 
 
 class TaskStatusUpdateSerializer(serializers.ModelSerializer):

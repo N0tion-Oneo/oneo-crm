@@ -152,6 +152,20 @@ class Task(models.Model):
             'low': 1
         }
         return priority_map.get(self.priority, 0)
+    
+    @property
+    def checklist_progress(self):
+        """Get checklist completion progress"""
+        total_items = self.checklist_items.count()
+        if total_items == 0:
+            return None
+        
+        completed_items = self.checklist_items.filter(is_completed=True).count()
+        return {
+            'completed': completed_items,
+            'total': total_items,
+            'percentage': (completed_items / total_items) * 100
+        }
 
 
 class TaskComment(models.Model):
@@ -177,6 +191,68 @@ class TaskComment(models.Model):
     
     def __str__(self):
         return f"Comment on {self.task.title} by {self.user}"
+
+
+class TaskChecklistItem(models.Model):
+    """
+    Checklist items within a task
+    """
+    task = models.ForeignKey(
+        Task,
+        on_delete=models.CASCADE,
+        related_name='checklist_items',
+        help_text="Parent task"
+    )
+    text = models.CharField(
+        max_length=500,
+        help_text="Checklist item text"
+    )
+    is_completed = models.BooleanField(
+        default=False,
+        help_text="Whether this checklist item is completed"
+    )
+    completed_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='completed_checklist_items',
+        help_text="User who completed this item"
+    )
+    completed_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When this item was completed"
+    )
+    order = models.IntegerField(
+        default=0,
+        help_text="Display order within the task"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        ordering = ['order', 'created_at']
+        indexes = [
+            models.Index(fields=['task', 'order']),
+            models.Index(fields=['task', 'is_completed']),
+        ]
+        verbose_name = 'Task Checklist Item'
+        verbose_name_plural = 'Task Checklist Items'
+    
+    def __str__(self):
+        status = "✓" if self.is_completed else "○"
+        return f"{status} {self.text}"
+    
+    def save(self, *args, **kwargs):
+        """Override save to handle completion tracking"""
+        if self.is_completed and not self.completed_at:
+            self.completed_at = timezone.now()
+        elif not self.is_completed:
+            self.completed_at = None
+            self.completed_by = None
+        
+        super().save(*args, **kwargs)
 
 
 class TaskAttachment(models.Model):

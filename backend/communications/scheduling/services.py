@@ -10,15 +10,22 @@ from django.utils import timezone
 from django.db import transaction
 from asgiref.sync import sync_to_async
 
-from communications.models import Channel, Conversation, Participant, Message, ChannelType, UserChannelConnection
+from communications.models import (
+    Channel, Conversation, Participant, Message, ChannelType, 
+    UserChannelConnection, ConversationParticipant,
+    MessageDirection, MessageStatus
+)
 from communications.unipile.core.client import UnipileClient
 from communications.unipile.clients.calendar import UnipileCalendarClient
 from django.conf import settings
+from django.contrib.auth import get_user_model
 from pipelines.models import Pipeline, Record
 from .models import (
     SchedulingProfile, MeetingType, SchedulingLink,
     ScheduledMeeting
 )
+
+User = get_user_model()
 
 logger = logging.getLogger(__name__)
 
@@ -424,9 +431,11 @@ class BookingProcessor:
             self.link = None
             self.meeting_type = meeting_type
         else:
-            raise ValueError("Either scheduling_link or meeting_type must be provided")
+            # Allow initialization without meeting_type for manual events
+            self.link = None
+            self.meeting_type = None
         
-        self.user = self.meeting_type.user
+        self.user = self.meeting_type.user if self.meeting_type else None
     
     @transaction.atomic
     async def process_booking(
@@ -876,9 +885,11 @@ class BookingProcessor:
         )()
         
         if not conversation:
-            # Create new conversation if it doesn't exist
+            # Create new conversation if it doesn't exist with unique external_thread_id
+            import uuid
             conversation = await sync_to_async(Conversation.objects.create)(
                 channel=channel,
+                external_thread_id=f"booking_{uuid.uuid4().hex[:12]}",
                 subject=subject,
                 conversation_type='direct',
                 status='active',
@@ -982,6 +993,108 @@ class BookingProcessor:
             logger.error(f"Failed to create/update record: {e}")
             return None
     
+    async def _create_unipile_calendar_event(
+        self,
+        account_id: str,
+        title: str,
+        start_time: datetime,
+        end_time: datetime,
+        description: Optional[str] = None,
+        location: Optional[str] = None,
+        attendees: Optional[List[str]] = None,
+        conference_provider: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Unified method to create calendar events via UniPile.
+        Used by both booking flow and manual event creation.
+        
+        Returns:
+            Dict with 'event_id' and optionally 'meeting_url' if conference was created
+        """
+        try:
+            from django.db import connection
+            from django.conf import settings
+            
+            # Initialize UniPile client
+            tenant = connection.tenant
+            if hasattr(tenant, 'unipile_config') and tenant.unipile_config.is_configured():
+                client = UnipileClient(tenant.unipile_config.dsn, tenant.unipile_config.get_access_token())
+            else:
+                if not hasattr(settings, 'UNIPILE_DSN'):
+                    logger.warning("UniPile not configured")
+                    return None
+                client = UnipileClient(settings.UNIPILE_DSN, settings.UNIPILE_API_KEY)
+            
+            calendar_client = UnipileCalendarClient(client)
+            
+            # Get calendars and find primary
+            calendars_response = await calendar_client.get_calendars(account_id)
+            if not calendars_response:
+                logger.error("Failed to get calendars")
+                return None
+            
+            # Handle both response formats (data/items)
+            calendars = calendars_response.get('data', calendars_response.get('items', []))
+            if not calendars:
+                logger.error("No calendars found")
+                return None
+            
+            # Find primary calendar
+            primary_calendar = None
+            for calendar in calendars:
+                # Handle both field names (is_primary/primary)
+                if calendar.get('is_primary') or calendar.get('primary'):
+                    primary_calendar = calendar['id']
+                    break
+            
+            # If no primary, use first calendar
+            if not primary_calendar:
+                primary_calendar = calendars[0]['id']
+            
+            # Create the event
+            event_response = await calendar_client.create_event(
+                account_id=account_id,
+                calendar_id=primary_calendar,
+                title=title,
+                start_time=start_time.isoformat(),
+                end_time=end_time.isoformat(),
+                description=description or '',
+                location=location or '',
+                attendees=attendees if attendees else None,
+                conference_provider=conference_provider
+            )
+            
+            if not event_response:
+                logger.error("No response from calendar event creation")
+                return None
+            
+            # Extract event ID and meeting URL
+            result = {}
+            
+            # Handle different response formats
+            event_data = event_response
+            if 'data' in event_response:
+                event_data = event_response['data']
+            
+            # Get event ID
+            event_id = event_data.get('id') or event_data.get('event_id')
+            if event_id:
+                result['event_id'] = event_id
+            
+            # Get meeting URL if conference was created
+            if 'conference' in event_data and 'url' in event_data['conference']:
+                result['meeting_url'] = event_data['conference']['url']
+            elif 'hangoutLink' in event_data:  # Google Meet specific
+                result['meeting_url'] = event_data['hangoutLink']
+            elif 'onlineMeetingUrl' in event_data:  # Microsoft Teams specific
+                result['meeting_url'] = event_data['onlineMeetingUrl']
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error creating calendar event: {e}")
+            return None
+    
     async def _create_calendar_event(self, meeting: ScheduledMeeting) -> None:
         """Create calendar event for the meeting"""
         try:
@@ -994,64 +1107,41 @@ class BookingProcessor:
                 logger.warning("No calendar connection configured for user")
                 return
             
-            # Get UniPile client
             account_id = profile.calendar_connection.unipile_account_id
-            
-            from django.db import connection
-            tenant = connection.tenant
-            
-            if hasattr(tenant, 'unipile_config') and tenant.unipile_config.is_configured():
-                client = UnipileClient(tenant.unipile_config.dsn, tenant.unipile_config.get_access_token())
-            else:
-                # Fall back to global config
-                if not hasattr(settings, 'UNIPILE_DSN') or not hasattr(settings, 'UNIPILE_API_KEY'):
-                    logger.warning("UniPile not configured for calendar event creation")
-                    return
-                client = UnipileClient(settings.UNIPILE_DSN, settings.UNIPILE_API_KEY)
-            
-            calendar_client = UnipileCalendarClient(client)
-            
-            # Get calendars to find primary one
-            calendars_response = await calendar_client.get_calendars(account_id)
-            calendar_id = None
-            
-            if calendars_response and 'items' in calendars_response:
-                # Find primary calendar or first available
-                for cal in calendars_response['items']:
-                    if cal.get('primary'):
-                        calendar_id = cal['id']
-                        break
-                if not calendar_id and calendars_response['items']:
-                    calendar_id = calendars_response['items'][0]['id']
-            
-            if not calendar_id:
-                logger.warning("No suitable calendar found for scheduling")
-                return
             
             # Prepare meeting details
             title = f"{self.meeting_type.name} with {meeting.participant.name or meeting.participant.email}"
             description = self._generate_meeting_description(meeting)
             
-            # Create the event
-            event = await calendar_client.create_event(
+            # Determine conference provider based on meeting type configuration
+            conference_provider = None
+            if self.meeting_type.location_type == 'google_meet':
+                conference_provider = 'google_meet'
+            elif self.meeting_type.location_type == 'teams':
+                conference_provider = 'teams'
+            elif self.meeting_type.location_type == 'zoom':
+                conference_provider = 'zoom'
+            
+            # Use unified method to create event
+            result = await self._create_unipile_calendar_event(
                 account_id=account_id,
-                calendar_id=calendar_id,
                 title=title,
-                start_time=meeting.start_time.isoformat(),
-                end_time=meeting.end_time.isoformat(),
+                start_time=meeting.start_time,
+                end_time=meeting.end_time,
                 description=description,
                 location=meeting.meeting_location or meeting.meeting_url,
-                attendees=[meeting.participant.email] if meeting.participant.email else None
+                attendees=[meeting.participant.email] if meeting.participant.email else None,
+                conference_provider=conference_provider
             )
             
-            # Update meeting with event ID
-            if event and 'id' in event:
-                meeting.calendar_event_id = event['id']
-                meeting.calendar_sync_status = 'synced'
+            # Update meeting with results
+            if result:
+                if result.get('event_id'):
+                    meeting.calendar_event_id = result['event_id']
+                    meeting.calendar_sync_status = 'synced'
                 
-                # Extract meeting URL if provided
-                if 'conference' in event and 'url' in event['conference']:
-                    meeting.meeting_url = event['conference']['url']
+                if result.get('meeting_url'):
+                    meeting.meeting_url = result['meeting_url']
                 
                 await sync_to_async(meeting.save)(
                     update_fields=['calendar_event_id', 'calendar_sync_status', 'meeting_url']
@@ -1116,6 +1206,257 @@ class BookingProcessor:
             )
         except Exception as e:
             logger.error(f"Failed to create booking message: {e}")
+
+
+    async def create_manual_event(
+        self,
+        user: User,
+        title: str,
+        start_time: datetime,
+        end_time: datetime,
+        attendees: List[str] = None,
+        location: Optional[str] = None,
+        location_type: Optional[str] = 'other',
+        description: Optional[str] = None,
+        record: Optional['Record'] = None,
+        add_to_calendar: bool = True
+    ) -> Dict[str, Any]:
+        """
+        Create a manual calendar event without booking flow
+        
+        Args:
+            user: User creating the event
+            title: Event title
+            start_time: Event start time
+            end_time: Event end time
+            attendees: List of attendee email addresses
+            location: Event location/meeting link
+            location_type: Type of location (google_meet, teams, zoom, in_person, etc.)
+            description: Event description
+            record: Optional associated record
+            add_to_calendar: Whether to create in UniPile calendar
+            
+        Returns:
+            Dict with conversation and event details
+        """
+        try:
+            # Override the user from meeting_type with the manual event creator
+            self.user = user
+            
+            # Get or create scheduling channel
+            channel = await self._get_or_create_scheduling_channel()
+            
+            # Create conversation for the event
+            import uuid
+            conversation = await sync_to_async(Conversation.objects.create)(
+                channel=channel,
+                external_thread_id=f"event_{uuid.uuid4().hex[:12]}",
+                subject=title,
+                conversation_type='calendar_event',
+                status='scheduled',
+                metadata={
+                    'event_type': 'manual',
+                    'event_details': {
+                        'title': title,
+                        'start_time': start_time.isoformat(),
+                        'end_time': end_time.isoformat(),
+                        'location': location or '',
+                        'location_type': location_type,
+                        'description': description or '',
+                    },
+                    'created_by': user.id,
+                    'is_manual_event': True
+                }
+            )
+            
+            # Add organizer as participant
+            organizer = await self._find_or_create_participant(
+                email=user.email,
+                name=user.get_full_name() or user.username,
+                phone=''
+            )
+            
+            await sync_to_async(ConversationParticipant.objects.create)(
+                conversation=conversation,
+                participant=organizer,
+                role='organizer'
+            )
+            
+            # Add attendees as participants
+            participant_list = [organizer]
+            if attendees:
+                for email in attendees:
+                    if email and email != user.email:
+                        participant = await self._find_or_create_participant(
+                            email=email,
+                            name=email.split('@')[0],
+                            phone=''
+                        )
+                        participant_list.append(participant)
+                        
+                        await sync_to_async(ConversationParticipant.objects.create)(
+                            conversation=conversation,
+                            participant=participant,
+                            role='attendee'
+                        )
+            
+            # Add record participant if provided
+            if record and hasattr(record, 'communication_identifiers'):
+                record_email = record.communication_identifiers.get('email', [None])[0]
+                if record_email and record_email not in (attendees or []) + [user.email]:
+                    from pipelines.serializers import RecordSerializer
+                    record_data = RecordSerializer(record).data
+                    
+                    participant = await self._find_or_create_participant(
+                        email=record_email,
+                        name=record_data.get('title', record_email.split('@')[0]),
+                        phone=record.communication_identifiers.get('phone', [''])[0]
+                    )
+                    participant.contact_record = record
+                    await sync_to_async(participant.save)(update_fields=['contact_record'])
+                    participant_list.append(participant)
+                    
+                    await sync_to_async(ConversationParticipant.objects.create)(
+                        conversation=conversation,
+                        participant=participant,
+                        role='contact'
+                    )
+            
+            # Create calendar event in UniPile FIRST if requested
+            calendar_event_id = None
+            meeting_url = None
+            if add_to_calendar:
+                # Get user's scheduling profile
+                profile = await sync_to_async(
+                    SchedulingProfile.objects.filter(user=user).select_related('calendar_connection').first
+                )()
+                
+                if profile and profile.calendar_connection:
+                    # Determine conference provider based on location type
+                    # Always set conference provider for virtual meeting types
+                    conference_provider = None
+                    if location_type == 'google_meet':
+                        conference_provider = 'google_meet'
+                    elif location_type == 'teams':
+                        conference_provider = 'teams'
+                    elif location_type == 'zoom':
+                        conference_provider = 'zoom'
+                    
+                    # Use unified method to create event
+                    result = await self._create_unipile_calendar_event(
+                        account_id=profile.calendar_connection.unipile_account_id,
+                        title=title,
+                        start_time=start_time,
+                        end_time=end_time,
+                        description=description,
+                        location=location,
+                        attendees=attendees,
+                        conference_provider=conference_provider
+                    )
+                    
+                    if result:
+                        calendar_event_id = result.get('event_id')
+                        meeting_url = result.get('meeting_url')
+                        
+                        # Update location with actual meeting URL if we got one
+                        if meeting_url and not location:
+                            location = meeting_url
+                        
+                        if calendar_event_id:
+                            conversation.metadata['calendar_event_id'] = calendar_event_id
+                            conversation.metadata['unipile_event_id'] = calendar_event_id
+                        if meeting_url:
+                            conversation.metadata['meeting_url'] = meeting_url
+                            
+                        await sync_to_async(conversation.save)(update_fields=['metadata'])
+                else:
+                    logger.info(f"User {user.username} has no calendar connection for event sync")
+            
+            # Create event message with actual meeting link
+            message_parts = [
+                f"📅 **Event Created: {title}**",
+                "",
+                f"**Date & Time:**",
+                f"📆 {start_time.strftime('%A, %B %d, %Y')}",
+                f"🕐 {start_time.strftime('%I:%M %p')} - {end_time.strftime('%I:%M %p %Z')}",
+                ""
+            ]
+            
+            # Add location/meeting link
+            if meeting_url or location:
+                location_icon = {
+                    'google_meet': '🎥',
+                    'teams': '🎥',
+                    'zoom': '🎥',
+                    'in_person': '📍',
+                    'phone': '📞',
+                    'other': '🔗'
+                }.get(location_type, '🔗')
+                
+                # Use meeting URL if available, otherwise use location
+                display_location = meeting_url if meeting_url else location
+                
+                message_parts.extend([
+                    f"**Location:**",
+                    f"{location_icon} {display_location}",
+                    ""
+                ])
+            
+            if description:
+                message_parts.extend([
+                    f"**Details:**",
+                    description,
+                    ""
+                ])
+            
+            if participant_list:
+                message_parts.append("**Participants:**")
+                for p in participant_list:
+                    role_suffix = " (Organizer)" if p.email == user.email else ""
+                    message_parts.append(f"• {p.name or p.email}{role_suffix}")
+                message_parts.append("")
+            
+            # Create the message with complete information
+            await sync_to_async(Message.objects.create)(
+                conversation=conversation,
+                channel=channel,
+                direction=MessageDirection.OUTBOUND,
+                content="\n".join(message_parts),
+                status=MessageStatus.SENT,
+                sent_at=timezone.now(),
+                metadata={
+                    'message_type': 'event_created',
+                    'sender_type': 'system',
+                    'event_data': {
+                        'title': title,
+                        'start_time': start_time.isoformat(),
+                        'end_time': end_time.isoformat(),
+                        'location': location or '',
+                        'meeting_url': meeting_url or '',
+                        'location_type': location_type,
+                        'description': description or '',
+                        'attendees': attendees or [],
+                        'organizer': {
+                            'id': user.id,
+                            'email': user.email,
+                            'name': user.get_full_name() or user.username
+                        }
+                    },
+                    'calendar_event_id': calendar_event_id
+                }
+            )
+            
+            return {
+                'success': True,
+                'conversation_id': str(conversation.id),
+                'calendar_event_id': calendar_event_id,
+                'message': f'Event "{title}" created successfully'
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to create manual event: {e}")
+            raise
+    
 
 
 class MeetingReminderService:

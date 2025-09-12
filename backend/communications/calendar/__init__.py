@@ -1,1 +1,0 @@
-# Calendar module for custom events

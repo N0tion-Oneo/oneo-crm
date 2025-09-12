@@ -27,7 +27,7 @@ class CommunicationPermission(permissions.BasePermission):
             return True  # Object-level check in has_object_permission
         elif view.action in ['send', 'resend']:
             return True  # Object-level check in has_object_permission
-        elif view.action in ['mark_conversation_read', 'mark_conversation_unread', 'archive', 'stats']:
+        elif view.action in ['mark_conversation_read', 'mark_conversation_unread', 'archive', 'stats', 'add_note']:
             return True  # Object-level check in has_object_permission or general action
         elif view.action in ['calendar_connections', 'availability', 'calendars_for_connection']:
             # Allow authenticated users to see their own calendar connections and availability
@@ -47,8 +47,8 @@ class CommunicationPermission(permissions.BasePermission):
             return permission_manager.has_permission('action', 'communications', 'delete', str(obj.id))
         elif view.action in ['send', 'resend']:
             return permission_manager.has_permission('action', 'communications', 'send', str(obj.id))
-        elif view.action in ['mark_conversation_read', 'mark_conversation_unread', 'archive']:
-            # Allow users to mark conversations as read/unread if they can read them
+        elif view.action in ['mark_conversation_read', 'mark_conversation_unread', 'archive', 'add_note']:
+            # Allow users to mark conversations as read/unread or add notes if they can update them
             return permission_manager.has_permission('action', 'communications', 'update', str(obj.id))
         elif view.action == 'stats':
             # Stats is a list action, not object-specific
@@ -95,14 +95,11 @@ class MessagePermission(permissions.BasePermission):
         if view.action in ['retrieve', 'thread', 'attachments', 'mark_read']:
             return permission_manager.has_permission('action', 'communications', 'read', None)
         elif view.action in ['update', 'partial_update']:
-            # Only allow editing own messages or with update permission
-            if obj.sent_by == request.user:
-                return True
+            # Allow all users with update permission to edit messages
+            # (Notes don't have a traditional sender, they're created by staff)
             return permission_manager.has_permission('action', 'communications', 'update', None)
         elif view.action == 'destroy':
-            # Only allow deleting own messages or with delete permission
-            if obj.sent_by == request.user:
-                return True
+            # Allow all users with delete permission to delete messages
             return permission_manager.has_permission('action', 'communications', 'delete', None)
         elif view.action in ['reply', 'forward']:
             return permission_manager.has_permission('action', 'communications', 'send', None)

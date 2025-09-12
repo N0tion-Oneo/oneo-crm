@@ -49,6 +49,7 @@ from communications.views_settings import (
     ParticipantOverrideViewSet, ChannelParticipantSettingsViewSet
 )
 from communications.api.views import AccountConnectionViewSet
+from .views.tasks import TaskViewSet, TaskCommentViewSet
 from .views.celery_management import CeleryManagementViewSet
 from .views.tracking import (
     CommunicationTrackingViewSet, DeliveryTrackingViewSet,
@@ -116,6 +117,10 @@ router.register(r'content-assets', ContentAssetViewSet, basename='content-asset'
 router.register(r'content-tags', ContentTagViewSet, basename='content-tag')
 router.register(r'content-usage', ContentUsageViewSet, basename='content-usage')
 router.register(r'content-approvals', ContentApprovalViewSet, basename='content-approval')
+
+# Task management endpoints
+router.register(r'tasks', TaskViewSet, basename='task')
+router.register(r'task-comments', TaskCommentViewSet, basename='task-comment')
 
 # Communication endpoints
 router.register(r'channels', ChannelViewSet, basename='channel')
@@ -229,9 +234,8 @@ api_patterns = [
 
 # Main URL patterns  
 urlpatterns = [
-    # API v1 endpoints (tenant URLs already include 'api/' prefix)
+    # API v1 endpoints
     path('v1/', include(api_patterns)),
-    
-    # Root API endpoints (for direct access without v1)
+    # Also include at root for backward compatibility
     path('', include(api_patterns)),
 ]

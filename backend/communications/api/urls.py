@@ -221,6 +221,9 @@ urlpatterns = [
     # Scheduling endpoints (integrated with communications)
     path('scheduling/', include('communications.scheduling.urls')),
     
+    # Calendar endpoints for custom events
+    path('calendar/', include('communications.calendar.urls')),
+    
     # Router URLs (includes /drafts/ ViewSet, but specific paths above take precedence)
     path('', include(router.urls)),
     

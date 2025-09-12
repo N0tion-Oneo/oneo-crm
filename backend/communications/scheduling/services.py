@@ -567,6 +567,14 @@ class BookingProcessor:
             metadata=metadata
         )
         
+        # Add participant to conversation
+        from communications.models import ConversationParticipant
+        ConversationParticipant.objects.create(
+            conversation=conversation,
+            participant=participant,
+            role='primary'
+        )
+        
         # Update link with conversation if we have one
         if self.link:
             self.link.conversation = conversation
@@ -575,17 +583,17 @@ class BookingProcessor:
         return conversation
     
     def _get_or_create_scheduling_channel_sync(self) -> Channel:
-        """Get or create a scheduling channel for the user (sync version)"""
+        """Get or create a calendar channel for the user (sync version)"""
         channel = Channel.objects.filter(
-            channel_type=ChannelType.SCHEDULING,
+            channel_type=ChannelType.CALENDAR,
             created_by=self.user
         ).first()
         
         if not channel:
             channel = Channel.objects.create(
-                name=f"{self.user.username} - Scheduling",
-                channel_type=ChannelType.SCHEDULING,
-                unipile_account_id=f"scheduling_{self.user.id}",
+                name=f"{self.user.username} - Calendar",
+                channel_type=ChannelType.CALENDAR,
+                unipile_account_id=f"calendar_{self.user.id}",
                 auth_status='authenticated',
                 created_by=self.user
             )
@@ -876,6 +884,14 @@ class BookingProcessor:
                 status='active',
                 metadata=metadata
             )
+            
+            # Add participant to conversation
+            from communications.models import ConversationParticipant
+            await sync_to_async(ConversationParticipant.objects.create)(
+                conversation=conversation,
+                participant=participant,
+                role='primary'
+            )
         
         # Update link with conversation if we have one
         if self.link:
@@ -885,19 +901,19 @@ class BookingProcessor:
         return conversation
     
     async def _get_or_create_scheduling_channel(self) -> Channel:
-        """Get or create a scheduling channel for the user"""
+        """Get or create a calendar channel for the user"""
         channel = await sync_to_async(
             Channel.objects.filter(
-                channel_type=ChannelType.SCHEDULING,
+                channel_type=ChannelType.CALENDAR,
                 created_by=self.user
             ).first
         )()
         
         if not channel:
             channel = await sync_to_async(Channel.objects.create)(
-                name=f"{self.user.username} - Scheduling",
-                channel_type=ChannelType.SCHEDULING,
-                unipile_account_id=f"scheduling_{self.user.id}",
+                name=f"{self.user.username} - Calendar",
+                channel_type=ChannelType.CALENDAR,
+                unipile_account_id=f"calendar_{self.user.id}",
                 auth_status='authenticated',
                 created_by=self.user
             )

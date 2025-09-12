@@ -138,14 +138,14 @@ class RecordCommunicationsViewSet(viewsets.ViewSet):
             conversation_ids = self._get_record_conversation_ids(record)
             
             if mode == 'smart':
-                # Smart loading: All WhatsApp/LinkedIn + last 10 emails
+                # Smart loading: All WhatsApp/LinkedIn/Calendar + last 10 emails
                 conversations_query = Conversation.objects.filter(
                     id__in=conversation_ids
                 ).select_related('channel')
                 
-                # Get all WhatsApp and LinkedIn conversations
+                # Get all WhatsApp, LinkedIn, and Calendar conversations
                 social_conversations = conversations_query.filter(
-                    channel__channel_type__in=['whatsapp', 'linkedin']
+                    channel__channel_type__in=['whatsapp', 'linkedin', 'calendar', 'scheduling']  # Include both for compatibility
                 )
                 
                 # Get last 10 email conversations (gmail, email, or any email-like channel)
@@ -176,6 +176,11 @@ class RecordCommunicationsViewSet(viewsets.ViewSet):
                         # Email tab should include all email-type channels
                         conversations_query = conversations_query.filter(
                             channel__channel_type__in=['email', 'gmail', 'outlook', 'office365']
+                        )
+                    elif channel_type == 'calendar':
+                        # Calendar tab should include both calendar and scheduling (for compatibility)
+                        conversations_query = conversations_query.filter(
+                            channel__channel_type__in=['calendar', 'scheduling']
                         )
                     else:
                         # For other channels (whatsapp, linkedin), use exact match

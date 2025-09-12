@@ -10,7 +10,8 @@ import {
   Users,
   Loader2,
   CheckCircle,
-  Plus
+  Plus,
+  Calendar
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -21,6 +22,8 @@ import { SyncStatusIndicator } from './SyncStatusIndicator'
 import { QuickReply } from './QuickReply'
 import { EmailCompose } from './EmailCompose'
 import { MessageCompose } from './MessageCompose'
+import { EventScheduler } from './EventScheduler'
+import { CallLogger } from './CallLogger'
 import { api } from '@/lib/api'
 
 interface RecordCommunicationsPanelProps {
@@ -32,7 +35,7 @@ export function RecordCommunicationsPanel({
   recordId
 }: RecordCommunicationsPanelProps) {
   const [selectedConversation, setSelectedConversation] = useState<string | null>(null)
-  const [activeTab, setActiveTab] = useState<'email' | 'whatsapp' | 'linkedin'>('email')
+  const [activeTab, setActiveTab] = useState<'email' | 'whatsapp' | 'linkedin' | 'calendar' | 'calls'>('email')
   const [loadingChannel, setLoadingChannel] = useState<string | null>(null)
   const [replyTo, setReplyTo] = useState<any>(null)
   const [replyMode, setReplyMode] = useState<'reply' | 'reply-all' | 'forward' | null>(null)
@@ -162,7 +165,7 @@ export function RecordCommunicationsPanel({
             className="mr-2"
           >
             <Plus className="w-4 h-4 mr-1" />
-            New
+            {activeTab === 'calendar' ? 'New Event' : activeTab === 'calls' ? 'Log Call' : 'New'}
           </Button>
           <Tabs value={activeTab} onValueChange={(value: any) => setActiveTab(value)} className="flex-1">
             <TabsList className="h-9">
@@ -187,6 +190,22 @@ export function RecordCommunicationsPanel({
               LinkedIn
               {stats?.channel_breakdown?.linkedin && (
                 <span className="ml-1 text-xs">({stats.channel_breakdown.linkedin.messages || 0})</span>
+              )}
+            </TabsTrigger>
+            <TabsTrigger value="calendar" className="flex-1">
+              <Calendar className="w-4 h-4 mr-1" />
+              Calendar
+              {(stats?.channel_breakdown?.calendar || stats?.channel_breakdown?.scheduling) && (
+                <span className="ml-1 text-xs">
+                  ({(stats.channel_breakdown.calendar?.messages || 0) + (stats.channel_breakdown.scheduling?.messages || 0)})
+                </span>
+              )}
+            </TabsTrigger>
+            <TabsTrigger value="calls" className="flex-1">
+              <Phone className="w-4 h-4 mr-1" />
+              Calls
+              {stats?.channel_breakdown?.calls && (
+                <span className="ml-1 text-xs">({stats.channel_breakdown.calls.messages || 0})</span>
               )}
             </TabsTrigger>
           </TabsList>
@@ -268,34 +287,78 @@ export function RecordCommunicationsPanel({
                     </div>
                   )}
                   
-                  {/* New message header when composing new */}
+                  {/* New message/event area when composing new */}
                   {!selectedConversation && isComposingNew && (
-                    <div className="flex-1 min-h-0 flex flex-col">
-                      <div className="border-b border-gray-200 dark:border-gray-700 p-4">
-                        <div className="flex items-center justify-between">
-                          <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
-                            New {activeTab === 'email' ? 'Email' : activeTab === 'whatsapp' ? 'WhatsApp Message' : 'LinkedIn Message'}
-                          </h3>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => {
-                              setIsComposingNew(false)
-                              setReplyTo(null)
-                              setReplyMode(null)
-                            }}
-                          >
-                            Cancel
-                          </Button>
-                        </div>
+                    activeTab === 'calendar' ? (
+                      // For calendar, show EventScheduler in the main area
+                      <div className="flex-1 min-h-0 overflow-y-auto">
+                        <EventScheduler
+                          recordId={recordId}
+                          onEventScheduled={() => {
+                            fetchConversations('calendar')
+                            setIsComposingNew(false)
+                          }}
+                          onCancel={() => {
+                            setIsComposingNew(false)
+                          }}
+                          defaultParticipant={{
+                            email: profile?.communication_identifiers?.email?.[0],
+                            name: profile?.name,
+                            phone: profile?.communication_identifiers?.phone?.[0]
+                          }}
+                        />
                       </div>
-                      <div className="flex-1" />
-                    </div>
+                    ) : activeTab === 'calls' ? (
+                      // For calls, show CallLogger in the main area
+                      <div className="flex-1 min-h-0 overflow-y-auto">
+                        <CallLogger
+                          recordId={recordId}
+                          onCallLogged={() => {
+                            fetchConversations('calls')
+                            setIsComposingNew(false)
+                          }}
+                          onCancel={() => {
+                            setIsComposingNew(false)
+                          }}
+                          defaultParticipant={{
+                            email: profile?.communication_identifiers?.email?.[0],
+                            name: profile?.name,
+                            phone: profile?.communication_identifiers?.phone?.[0]
+                          }}
+                        />
+                      </div>
+                    ) : (
+                      // For other channels, show header with spacer
+                      <div className="flex-1 min-h-0 flex flex-col">
+                        <div className="border-b border-gray-200 dark:border-gray-700 p-4">
+                          <div className="flex items-center justify-between">
+                            <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
+                              New {activeTab === 'email' ? 'Email' : activeTab === 'whatsapp' ? 'WhatsApp Message' : activeTab === 'linkedin' ? 'LinkedIn Message' : 'Message'}
+                            </h3>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => {
+                                setIsComposingNew(false)
+                                setReplyTo(null)
+                                setReplyMode(null)
+                              }}
+                            >
+                              Cancel
+                            </Button>
+                          </div>
+                        </div>
+                        <div className="flex-1" />
+                      </div>
+                    )
                   )}
                   
                   {/* Reply/compose area - Fixed at bottom */}
                   <div className="flex-shrink-0">
-                    {activeTab === 'email' ? (
+                    {(activeTab === 'calendar' || activeTab === 'calls') ? (
+                      // Calendar and Calls don't have a compose area at the bottom (shown in main area instead)
+                      null
+                    ) : activeTab === 'email' ? (
                       <EmailCompose
                         conversationId={selectedConversation}
                         recordId={recordId}
@@ -343,7 +406,7 @@ export function RecordCommunicationsPanel({
                       className="mt-3"
                     >
                       <Plus className="w-4 h-4 mr-2" />
-                      New {activeTab === 'email' ? 'Email' : 'Message'}
+                      New {activeTab === 'email' ? 'Email' : activeTab === 'calendar' ? 'Event' : activeTab === 'calls' ? 'Call Log' : 'Message'}
                     </Button>
                   </div>
                 </div>

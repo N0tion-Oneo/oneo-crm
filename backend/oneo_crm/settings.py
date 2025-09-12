@@ -153,6 +153,7 @@ TENANT_APPS = [
     'duplicates',  # Duplicate detection system
     'ai',  # Phase 09 - AI Integration & Intelligent Workflows
     'sharing',  # Record sharing system
+    'tasks',  # Task management system
 ]
 
 # Combine apps (avoid duplicates)

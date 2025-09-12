@@ -16,6 +16,7 @@ import '@/lib/field-system'
 import { DuplicateIndicator } from '@/components/duplicates/duplicate-indicator'
 import { UnifiedRecordSharing } from './UnifiedRecordSharing'
 import { RecordCommunicationsPanel } from '@/components/communications/record/RecordCommunicationsPanel'
+import { RecordTasksPanel } from '@/components/communications/record/RecordTasksPanel'
 import { UnifiedActivityView } from './UnifiedActivityView'
 import { useRecordCommunications } from '@/components/communications/record/hooks/useRecordCommunications'
 import { 
@@ -456,7 +457,7 @@ export function RecordDetailDrawer({
 }: RecordDetailDrawerProps) {
   const { user } = useAuth()
   const [formData, setFormData] = useState<{ [key: string]: any }>({})
-  const [activeTab, setActiveTab] = useState<'details' | 'activity' | 'communications'>('details')
+  const [activeTab, setActiveTab] = useState<'details' | 'activity' | 'communications' | 'tasks'>('details')
   
   const [fieldErrors, setFieldErrors] = useState<{[key: string]: string}>({})
   
@@ -1155,6 +1156,17 @@ export function RecordDetailDrawer({
                   </span>
                 )}
               </Button>
+              <Button
+                onClick={() => setActiveTab('tasks')}
+                variant="ghost"
+                className={`px-6 py-3 rounded-none border-b-2 transition-colors ${
+                  activeTab === 'tasks'
+                    ? 'border-primary text-primary'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'
+                }`}
+              >
+                Tasks
+              </Button>
             </>
           )}
         </div>
@@ -1259,6 +1271,15 @@ export function RecordDetailDrawer({
           {activeTab === 'communications' && record && (
             <div className="h-full">
               <RecordCommunicationsPanel 
+                recordId={record.id}
+                pipelineId={pipeline.id}
+              />
+            </div>
+          )}
+
+          {activeTab === 'tasks' && record && (
+            <div className="h-full">
+              <RecordTasksPanel 
                 recordId={record.id}
                 pipelineId={pipeline.id}
               />

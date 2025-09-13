@@ -38,12 +38,14 @@ import {
   CalendarX,
   Copy,
   Send,
+  Eye,
 } from 'lucide-react'
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
+  DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu'
 import { useAuth } from '@/features/auth/context'
 import { useToast } from '@/hooks/use-toast'
@@ -129,6 +131,8 @@ interface MeetingType {
   name: string
   location_type: string
   color: string
+  duration_minutes?: number
+  buffer_time?: number
 }
 
 interface Participant {
@@ -136,6 +140,7 @@ interface Participant {
   name: string
   email: string
   phone?: string
+  notes?: string
 }
 
 const STATUS_BADGES = {
@@ -270,10 +275,6 @@ export default function ScheduledMeetings({ canManageAll = false }: ScheduledMee
   const cancelMeeting = async (meeting: ScheduledMeeting) => {
     if (!confirm('Are you sure you want to cancel this meeting?')) return
     await updateMeetingStatus(meeting, 'cancelled')
-  }
-
-  const confirmMeeting = async (meeting: ScheduledMeeting) => {
-    await updateMeetingStatus(meeting, 'confirmed')
   }
 
   const openMeetingDetails = (meeting: ScheduledMeeting) => {
@@ -441,89 +442,206 @@ export default function ScheduledMeetings({ canManageAll = false }: ScheduledMee
                 const StatusIcon = statusBadge.icon
                 const LocationIcon = LOCATION_ICONS[meeting.meeting_type?.location_type] || Calendar
 
+                // Calculate time until meeting for upcoming meetings
+                const timeUntilMeeting = meeting.start_time ? 
+                  Math.floor((new Date(meeting.start_time).getTime() - Date.now()) / (1000 * 60)) : null
+                const isStartingSoon = timeUntilMeeting !== null && timeUntilMeeting > 0 && timeUntilMeeting <= 15
+
                 return (
-                  <Card key={meeting.id} className="cursor-pointer hover:shadow-md transition-shadow"
+                  <Card 
+                    key={meeting.id} 
+                    className={`cursor-pointer hover:shadow-md transition-all ${
+                      meeting.is_facilitator_meeting ? 'border-l-4 border-l-purple-500' : ''
+                    } ${isStartingSoon ? 'ring-2 ring-primary ring-opacity-50' : ''}`}
                     onClick={() => openMeetingDetails(meeting)}
                   >
                     <CardContent className="p-4">
-                      <div className="flex items-start justify-between">
-                        <div className="flex gap-4 flex-1">
-                          <div
-                            className="w-1 rounded-full"
-                            style={{ backgroundColor: meeting.meeting_type?.color || '#6366f1' }}
-                          />
-                          <div className="space-y-2 flex-1">
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="flex-1 space-y-3">
+                          {/* Header Row */}
+                          <div className="flex items-start justify-between">
                             <div className="flex items-center gap-3">
-                              <h3 className="font-medium">
-                                {meeting.meeting_type?.name || meeting.meeting_type_name || 'Unknown Meeting'}
-                              </h3>
+                              {meeting.is_facilitator_meeting && (
+                                <div className="p-1.5 bg-purple-100 dark:bg-purple-900/30 rounded-md">
+                                  <Users className="h-4 w-4 text-purple-600 dark:text-purple-400" />
+                                </div>
+                              )}
+                              <div>
+                                <h3 className="font-medium flex items-center gap-2">
+                                  {meeting.meeting_type?.name || meeting.meeting_type_name || 'Unknown Meeting'}
+                                  {meeting.is_facilitator_meeting && (
+                                    <span className="text-xs text-purple-600 dark:text-purple-400 font-normal">
+                                      (Facilitator)
+                                    </span>
+                                  )}
+                                </h3>
+                                {meeting.meeting_type?.duration_minutes && (
+                                  <p className="text-xs text-muted-foreground mt-0.5">
+                                    {meeting.meeting_type.duration_minutes} minutes
+                                    {meeting.meeting_type?.buffer_time && ` • ${meeting.meeting_type.buffer_time}min buffer`}
+                                  </p>
+                                )}
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              {isStartingSoon && (
+                                <Badge variant="default" className="animate-pulse">
+                                  Starting in {timeUntilMeeting}m
+                                </Badge>
+                              )}
                               <Badge variant={statusBadge.variant}>
                                 <StatusIcon className="h-3 w-3 mr-1" />
                                 {statusBadge.label}
                               </Badge>
                             </div>
+                          </div>
 
-                            <div className="flex items-center gap-4 text-sm text-muted-foreground">
-                              <div className="flex items-center gap-1">
-                                <Calendar className="h-3 w-3" />
+                          {/* Date, Time & Location Row */}
+                          <div className="flex flex-wrap items-center gap-4 text-sm">
+                            <div className="flex items-center gap-1.5 text-muted-foreground">
+                              <Calendar className="h-3.5 w-3.5" />
+                              <span className="font-medium">
                                 {meeting.start_time ? format(parseISO(meeting.start_time), 'MMM d, yyyy') : 'No date'}
-                              </div>
-                              <div className="flex items-center gap-1">
-                                <Clock className="h-3 w-3" />
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-1.5 text-muted-foreground">
+                              <Clock className="h-3.5 w-3.5" />
+                              <span>
                                 {meeting.start_time ? format(parseISO(meeting.start_time), 'h:mm a') : 'No time'}
-                              </div>
-                              <div className="flex items-center gap-1">
-                                <LocationIcon className="h-3 w-3" />
+                                {meeting.end_time && ` - ${format(parseISO(meeting.end_time), 'h:mm a')}`}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                              <LocationIcon className="h-3.5 w-3.5 text-muted-foreground" />
+                              <span className="text-muted-foreground">
                                 {(() => {
                                   const locationType = meeting.meeting_type?.location_type
-                                  // For virtual meetings, show the URL if available
-                                  if (locationType && ['google_meet', 'zoom', 'teams'].includes(locationType)) {
-                                    return meeting.meeting_url || meeting.meeting_location || locationType.replace('_', ' ')
-                                  }
-                                  // For in-person or phone, show the location/phone
-                                  if (locationType === 'in_person') {
-                                    return meeting.meeting_location || 'In Person'
-                                  }
-                                  if (locationType === 'phone') {
-                                    return meeting.meeting_location || 'Phone Call'
-                                  }
-                                  // Default fallback
-                                  return meeting.meeting_location || (locationType ? locationType.replace('_', ' ') : 'No location')
+                                  if (locationType === 'google_meet') return 'Google Meet'
+                                  if (locationType === 'zoom') return 'Zoom'
+                                  if (locationType === 'teams') return 'MS Teams'
+                                  if (locationType === 'phone') return meeting.meeting_location || 'Phone Call'
+                                  if (locationType === 'in_person') return meeting.meeting_location || 'In Person'
+                                  return meeting.meeting_location || 'TBD'
                                 })()}
+                              </span>
+                              {meeting.meeting_url && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-6 px-2"
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    navigator.clipboard.writeText(meeting.meeting_url || '')
+                                    toast({ title: 'Meeting link copied!' })
+                                  }}
+                                >
+                                  <Copy className="h-3 w-3" />
+                                </Button>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Participants Row */}
+                          {meeting.is_facilitator_meeting && meeting.facilitator_booking ? (
+                            <div className="space-y-2">
+                              {/* Progress indicator for facilitator bookings */}
+                              {meeting.facilitator_booking.status === 'pending_p1' && (
+                                <div className="flex items-center gap-3">
+                                  <div className="flex-1">
+                                    <div className="flex items-center justify-between text-xs mb-1">
+                                      <span>Booking Progress</span>
+                                      <span className="text-muted-foreground">Step 1 of 2</span>
+                                    </div>
+                                    <div className="h-1.5 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+                                      <div className="h-full w-1/3 bg-purple-500 rounded-full" />
+                                    </div>
+                                  </div>
+                                </div>
+                              )}
+                              {meeting.facilitator_booking.status === 'pending_p2' && (
+                                <div className="flex items-center gap-3">
+                                  <div className="flex-1">
+                                    <div className="flex items-center justify-between text-xs mb-1">
+                                      <span>Booking Progress</span>
+                                      <span className="text-muted-foreground">Step 2 of 2</span>
+                                    </div>
+                                    <div className="h-1.5 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+                                      <div className="h-full w-2/3 bg-purple-500 rounded-full" />
+                                    </div>
+                                  </div>
+                                </div>
+                              )}
+                              
+                              <div className="grid grid-cols-2 gap-3">
+                                <div className="flex items-start gap-2">
+                                  <User className="h-3.5 w-3.5 text-muted-foreground mt-0.5" />
+                                  <div className="min-w-0">
+                                    <p className="text-sm font-medium truncate">
+                                      {meeting.facilitator_booking.participant_1_name || 'Participant 1'}
+                                    </p>
+                                    <p className="text-xs text-muted-foreground truncate">
+                                      {meeting.facilitator_booking.participant_1_email}
+                                    </p>
+                                    {meeting.facilitator_booking.participant_1_completed_at && (
+                                      <p className="text-xs text-green-600 dark:text-green-400 mt-0.5">
+                                        ✓ Selected times
+                                      </p>
+                                    )}
+                                  </div>
+                                </div>
+                                <div className="flex items-start gap-2">
+                                  <User className="h-3.5 w-3.5 text-muted-foreground mt-0.5" />
+                                  <div className="min-w-0">
+                                    <p className="text-sm font-medium truncate">
+                                      {meeting.facilitator_booking.participant_2_name || 'Participant 2'}
+                                    </p>
+                                    <p className="text-xs text-muted-foreground truncate">
+                                      {meeting.facilitator_booking.participant_2_email}
+                                    </p>
+                                    {meeting.facilitator_booking.participant_2_completed_at && (
+                                      <p className="text-xs text-green-600 dark:text-green-400 mt-0.5">
+                                        ✓ Confirmed
+                                      </p>
+                                    )}
+                                  </div>
+                                </div>
                               </div>
                             </div>
-
-                            {meeting.is_facilitator_meeting && meeting.facilitator_booking ? (
-                              <div className="flex items-center gap-4">
+                          ) : (
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-3">
                                 <div className="flex items-center gap-2">
-                                  <Users className="h-4 w-4 text-muted-foreground" />
-                                  <span className="text-sm font-medium">
-                                    {meeting.facilitator_booking.participant_1_name} & {meeting.facilitator_booking.participant_2_name}
-                                  </span>
-                                </div>
-                                {meeting.facilitator_booking.status && (
-                                  <Badge variant={FACILITATOR_STATUS_CONFIG[meeting.facilitator_booking.status]?.variant || 'default'}>
-                                    Facilitator: {FACILITATOR_STATUS_CONFIG[meeting.facilitator_booking.status]?.label || meeting.facilitator_booking.status}
-                                  </Badge>
-                                )}
-                              </div>
-                            ) : (
-                              <div className="flex items-center gap-4">
-                                <div className="flex items-center gap-2">
-                                  <User className="h-4 w-4 text-muted-foreground" />
+                                  <User className="h-3.5 w-3.5 text-muted-foreground" />
                                   <span className="text-sm font-medium">
                                     {meeting.participant_detail?.name || meeting.participant?.name || 'Unknown'}
                                   </span>
                                 </div>
                                 <div className="flex items-center gap-2">
-                                  <Mail className="h-4 w-4 text-muted-foreground" />
+                                  <Mail className="h-3.5 w-3.5 text-muted-foreground" />
                                   <span className="text-sm text-muted-foreground">
                                     {meeting.participant_detail?.email || meeting.participant?.email || 'No email'}
                                   </span>
                                 </div>
                               </div>
-                            )}
-                          </div>
+                              {meeting.participant_detail?.phone && (
+                                <div className="flex items-center gap-2">
+                                  <Phone className="h-3.5 w-3.5 text-muted-foreground" />
+                                  <span className="text-sm text-muted-foreground">
+                                    {meeting.participant_detail.phone}
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                          {/* Notes preview if available */}
+                          {meeting.participant_detail?.notes && (
+                            <div className="p-2 bg-gray-50 dark:bg-gray-800/50 rounded-md">
+                              <p className="text-xs text-muted-foreground line-clamp-2">
+                                {meeting.participant_detail.notes}
+                              </p>
+                            </div>
+                          )}
                         </div>
 
                         <DropdownMenu>
@@ -533,17 +651,41 @@ export default function ScheduledMeetings({ canManageAll = false }: ScheduledMee
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
-                            {(meeting.status === 'scheduled' || meeting.status === 'pending') && (
+                            <DropdownMenuItem
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                openMeetingDetails(meeting)
+                              }}
+                            >
+                              <Eye className="h-4 w-4 mr-2" />
+                              View Details
+                            </DropdownMenuItem>
+                            {meeting.meeting_url && (
                               <>
                                 <DropdownMenuItem
                                   onClick={(e) => {
                                     e.stopPropagation()
-                                    confirmMeeting(meeting)
+                                    window.open(meeting.meeting_url, '_blank')
                                   }}
                                 >
-                                  <CheckCircle className="h-4 w-4 mr-2" />
-                                  Confirm Meeting
+                                  <ExternalLink className="h-4 w-4 mr-2" />
+                                  Join Meeting
                                 </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    navigator.clipboard.writeText(meeting.meeting_url || '')
+                                    toast({ title: 'Meeting link copied!' })
+                                  }}
+                                >
+                                  <Copy className="h-4 w-4 mr-2" />
+                                  Copy Link
+                                </DropdownMenuItem>
+                              </>
+                            )}
+                            {(meeting.status === 'scheduled' || meeting.status === 'pending' || meeting.status === 'reminder_sent') && (
+                              <>
+                                <DropdownMenuSeparator />
                                 <DropdownMenuItem
                                   onClick={(e) => {
                                     e.stopPropagation()
@@ -551,33 +693,10 @@ export default function ScheduledMeetings({ canManageAll = false }: ScheduledMee
                                   }}
                                   className="text-destructive"
                                 >
-                                  <XCircle className="h-4 w-4 mr-2" />
+                                  <CalendarX className="h-4 w-4 mr-2" />
                                   Cancel Meeting
                                 </DropdownMenuItem>
                               </>
-                            )}
-                            {(meeting.status === 'confirmed' || meeting.status === 'reminder_sent') && (
-                              <DropdownMenuItem
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  cancelMeeting(meeting)
-                                }}
-                                className="text-destructive"
-                              >
-                                <CalendarX className="h-4 w-4 mr-2" />
-                                Cancel Meeting
-                              </DropdownMenuItem>
-                            )}
-                            {meeting.meeting_url && (
-                              <DropdownMenuItem
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  window.open(meeting.meeting_url, '_blank')
-                                }}
-                              >
-                                <ExternalLink className="h-4 w-4 mr-2" />
-                                Join Meeting
-                              </DropdownMenuItem>
                             )}
                           </DropdownMenuContent>
                         </DropdownMenu>
@@ -592,157 +711,161 @@ export default function ScheduledMeetings({ canManageAll = false }: ScheduledMee
       </Tabs>
 
       <Dialog open={isDetailsOpen} onOpenChange={setIsDetailsOpen}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Meeting Details</DialogTitle>
+            <DialogTitle className="flex items-center justify-between">
+              <span>{selectedMeeting?.meeting_type.name}</span>
+              {selectedMeeting && (
+                <Badge variant={STATUS_BADGES[selectedMeeting.status].variant}>
+                  {STATUS_BADGES[selectedMeeting.status].label}
+                </Badge>
+              )}
+            </DialogTitle>
             <DialogDescription>
-              View and manage meeting information
+              {selectedMeeting?.host_name && `Hosted by ${selectedMeeting.host_name}`}
             </DialogDescription>
           </DialogHeader>
           {selectedMeeting && (
             <div className="space-y-4 mt-4">
-              <div className="flex items-center justify-between">
-                <h3 className="text-lg font-medium">
-                  {selectedMeeting.meeting_type.name}
-                </h3>
-                <Badge variant={STATUS_BADGES[selectedMeeting.status].variant}>
-                  {STATUS_BADGES[selectedMeeting.status].label}
-                </Badge>
-              </div>
-
-              <div className="grid gap-4 md:grid-cols-2">
-                <div className="space-y-3">
-                  <div>
-                    <Label>Date & Time</Label>
-                    <p className="text-sm">
-                      {selectedMeeting.start_time ? format(parseISO(selectedMeeting.start_time), 'MMMM d, yyyy') : 'No date'} at{' '}
-                      {selectedMeeting.start_time ? format(parseISO(selectedMeeting.start_time), 'h:mm a') : 'No time'}
-                    </p>
+              {/* Meeting Details - Compact Grid */}
+              <div className="grid gap-3 md:grid-cols-2">
+                {/* Date & Time Info */}
+                <div className="border rounded-lg p-3 space-y-2">
+                  <div className="flex items-center gap-2 text-sm font-medium">
+                    <Calendar className="h-3 w-3" />
+                    Meeting Schedule
                   </div>
-                  <div>
-                    <Label>Duration</Label>
+                  <div className="space-y-1">
                     <p className="text-sm">
+                      {selectedMeeting.start_time ? format(parseISO(selectedMeeting.start_time), 'MMM d, yyyy') : 'No date'}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {selectedMeeting.start_time ? format(parseISO(selectedMeeting.start_time), 'h:mm a') : 'No time'}
+                      {selectedMeeting.end_time && ` - ${format(parseISO(selectedMeeting.end_time), 'h:mm a')}`}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
                       {selectedMeeting.start_time && selectedMeeting.end_time ? 
                         `${Math.round((new Date(selectedMeeting.end_time).getTime() - new Date(selectedMeeting.start_time).getTime()) / 60000)} minutes` : 
                         'Duration not available'}
                     </p>
                   </div>
-                  <div>
-                    <Label>Location</Label>
-                    <p className="text-sm">
-                      {selectedMeeting.meeting_type?.location_type ? 
-                        selectedMeeting.meeting_type.location_type.replace('_', ' ') : 
-                        'No location'}
-                    </p>
-                  </div>
                 </div>
 
-                <div className="space-y-3">
-                  <div>
-                    <Label>Participant</Label>
-                    <p className="text-sm">
-                      {selectedMeeting.participant_detail?.name || 
-                       selectedMeeting.participant?.name || 
-                       'Unknown'}
-                    </p>
+                {/* Participant Info */}
+                <div className="border rounded-lg p-3 space-y-2">
+                  <div className="flex items-center gap-2 text-sm font-medium">
+                    <User className="h-3 w-3" />
+                    Participant
                   </div>
-                  <div>
-                    <Label>Email</Label>
-                    <p className="text-sm">
-                      {selectedMeeting.participant_detail?.email || 
-                       selectedMeeting.participant?.email || 
-                       'No email'}
+                  <div className="space-y-1">
+                    <p className="text-sm font-medium">
+                      {selectedMeeting.participant_detail?.name || selectedMeeting.participant?.name || 'Unknown'}
                     </p>
-                  </div>
-                  {(selectedMeeting.participant_detail?.phone || selectedMeeting.participant?.phone) && (
-                    <div>
-                      <Label>Phone</Label>
-                      <p className="text-sm">
+                    <p className="text-xs text-muted-foreground">
+                      {selectedMeeting.participant_detail?.email || selectedMeeting.participant?.email || 'No email'}
+                    </p>
+                    {(selectedMeeting.participant_detail?.phone || selectedMeeting.participant?.phone) && (
+                      <p className="text-xs text-muted-foreground">
                         {selectedMeeting.participant_detail?.phone || selectedMeeting.participant?.phone}
                       </p>
-                    </div>
-                  )}
+                    )}
+                  </div>
                 </div>
               </div>
 
+              {/* Location Info - Compact Display */}
+              <div className="border rounded-lg p-3 bg-muted/30">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-muted-foreground flex items-center gap-1">
+                    <MapPin className="h-3 w-3" />
+                    Location
+                  </span>
+                  <span className="font-medium">
+                    {LOCATION_DISPLAY[selectedMeeting.meeting_type?.location_type] || 
+                     selectedMeeting.meeting_type?.location_type?.replace('_', ' ') || 
+                     'No location'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Meeting Link - Compact */}
               {selectedMeeting.meeting_url && (
-                <div>
-                  <Label>Meeting Link</Label>
-                  <div className="flex items-center gap-2 mt-1">
-                    <Input value={selectedMeeting.meeting_url} readOnly />
+                <div className="border rounded-lg p-3 bg-blue-50 dark:bg-blue-950/20">
+                  <div className="flex items-center gap-2">
+                    <Video className="h-3 w-3 text-muted-foreground" />
+                    <Input 
+                      value={selectedMeeting.meeting_url} 
+                      readOnly 
+                      className="h-7 text-xs font-mono flex-1"
+                    />
                     <Button
                       size="sm"
-                      variant="outline"
+                      variant="ghost"
+                      className="h-7 w-7 p-0"
+                      onClick={() => {
+                        navigator.clipboard.writeText(selectedMeeting.meeting_url || '')
+                        toast({
+                          title: 'Link copied!',
+                          description: 'Meeting link copied to clipboard',
+                        })
+                      }}
+                    >
+                      <Copy className="h-3 w-3" />
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="default"
+                      className="h-7 text-xs"
                       onClick={() => window.open(selectedMeeting.meeting_url, '_blank')}
                     >
-                      <ExternalLink className="h-4 w-4" />
+                      <ExternalLink className="h-3 w-3 mr-1" />
+                      Join
                     </Button>
                   </div>
                 </div>
               )}
 
+              {/* Notes - Compact */}
               {(selectedMeeting.pre_meeting_notes || selectedMeeting.post_meeting_notes) && (
-                <div>
-                  <Label>Notes</Label>
+                <div className="border rounded-lg p-3 space-y-2">
+                  <div className="flex items-center gap-2 text-sm font-medium">
+                    <AlertCircle className="h-3 w-3" />
+                    Notes
+                  </div>
                   {selectedMeeting.pre_meeting_notes && (
-                    <div className="mt-1">
-                      <p className="text-xs text-muted-foreground">Pre-meeting notes:</p>
-                      <p className="text-sm">{selectedMeeting.pre_meeting_notes}</p>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Pre-meeting:</p>
+                      <p className="text-xs">{selectedMeeting.pre_meeting_notes}</p>
                     </div>
                   )}
                   {selectedMeeting.post_meeting_notes && (
-                    <div className="mt-1">
-                      <p className="text-xs text-muted-foreground">Post-meeting notes:</p>
-                      <p className="text-sm">{selectedMeeting.post_meeting_notes}</p>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Post-meeting:</p>
+                      <p className="text-xs">{selectedMeeting.post_meeting_notes}</p>
                     </div>
                   )}
                 </div>
               )}
 
-              <div className="flex justify-end gap-2 pt-4 border-t">
-                {(selectedMeeting.status === 'scheduled' || selectedMeeting.status === 'pending') && (
-                  <>
+              {/* Action Buttons - Compact Footer */}
+              <div className="flex justify-between items-center pt-3">
+                <div className="flex gap-2">
+                  {(selectedMeeting.status === 'scheduled' || selectedMeeting.status === 'pending' || selectedMeeting.status === 'reminder_sent') && (
                     <Button
-                      variant="outline"
-                      onClick={() => {
-                        confirmMeeting(selectedMeeting)
-                        setIsDetailsOpen(false)
-                      }}
-                    >
-                      Confirm Meeting
-                    </Button>
-                    <Button
+                      size="sm"
                       variant="destructive"
+                      className="h-8 text-xs"
                       onClick={() => {
                         cancelMeeting(selectedMeeting)
                         setIsDetailsOpen(false)
                       }}
                     >
+                      <XCircle className="h-3 w-3 mr-1" />
                       Cancel Meeting
                     </Button>
-                  </>
-                )}
-                {(selectedMeeting.status === 'confirmed' || selectedMeeting.status === 'reminder_sent') && (
-                  <Button
-                    variant="destructive"
-                    onClick={() => {
-                      cancelMeeting(selectedMeeting)
-                      setIsDetailsOpen(false)
-                    }}
-                  >
-                    Cancel Meeting
-                  </Button>
-                )}
-                {selectedMeeting.meeting_url && (
-                  <Button
-                    variant="default"
-                    onClick={() => window.open(selectedMeeting.meeting_url, '_blank')}
-                  >
-                    <Video className="h-4 w-4 mr-2" />
-                    Join Meeting
-                  </Button>
-                )}
-                <Button variant="outline" onClick={() => setIsDetailsOpen(false)}>
+                  )}
+                </div>
+                <Button size="sm" variant="outline" onClick={() => setIsDetailsOpen(false)}>
                   Close
                 </Button>
               </div>
@@ -753,267 +876,218 @@ export default function ScheduledMeetings({ canManageAll = false }: ScheduledMee
 
       {/* Facilitator Booking Details Dialog */}
       <Dialog open={isFacilitatorModalOpen} onOpenChange={setIsFacilitatorModalOpen}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Facilitator Booking Details</DialogTitle>
+            <DialogTitle className="flex items-center justify-between">
+              <span>{selectedFacilitatorBooking?.meeting_type.name}</span>
+              {selectedFacilitatorBooking && (
+                <Badge variant={FACILITATOR_STATUS_CONFIG[selectedFacilitatorBooking.status].variant}>
+                  {FACILITATOR_STATUS_CONFIG[selectedFacilitatorBooking.status].label}
+                </Badge>
+              )}
+            </DialogTitle>
             <DialogDescription>
-              {selectedFacilitatorBooking && FACILITATOR_STATUS_CONFIG[selectedFacilitatorBooking.status].description}
+              Facilitated by {selectedFacilitatorBooking?.facilitator.username}
             </DialogDescription>
           </DialogHeader>
           
           {selectedFacilitatorBooking && (
-            <div className="space-y-6 mt-4">
-              {/* Status and Meeting Type */}
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="text-lg font-medium">{selectedFacilitatorBooking.meeting_type.name}</h3>
-                  <p className="text-sm text-muted-foreground">
-                    Facilitated by {selectedFacilitatorBooking.facilitator.username}
-                  </p>
+            <div className="space-y-4 mt-4">
+              {/* Participants - Compact Grid */}
+              <div className="grid gap-3 md:grid-cols-2">
+                {/* Participant 1 */}
+                <div className="border rounded-lg p-3 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-medium flex items-center gap-1">
+                      <Users className="h-3 w-3" />
+                      Participant 1
+                    </span>
+                    {selectedFacilitatorBooking.participant_1_completed_at && (
+                      <Badge variant="outline" className="h-5 text-xs">
+                        <CheckCircle className="h-3 w-3 mr-1" />
+                        Done
+                      </Badge>
+                    )}
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-sm font-medium">{selectedFacilitatorBooking.participant_1_name}</p>
+                    <p className="text-xs text-muted-foreground">{selectedFacilitatorBooking.participant_1_email}</p>
+                    {selectedFacilitatorBooking.participant_1_phone && (
+                      <p className="text-xs text-muted-foreground">{selectedFacilitatorBooking.participant_1_phone}</p>
+                    )}
+                  </div>
+                  {selectedFacilitatorBooking.status === 'pending_p1' && (
+                    <div className="flex gap-2 pt-1">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="flex-1 h-7 text-xs"
+                        onClick={() => copyLink(selectedFacilitatorBooking.participant_1_token, 1)}
+                      >
+                        <Copy className="h-3 w-3 mr-1" />
+                        Copy Link
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="flex-1 h-7 text-xs"
+                        onClick={() => resendInvitation(selectedFacilitatorBooking)}
+                      >
+                        <Send className="h-3 w-3 mr-1" />
+                        Resend
+                      </Button>
+                    </div>
+                  )}
                 </div>
-                <Badge variant={FACILITATOR_STATUS_CONFIG[selectedFacilitatorBooking.status].variant}>
-                  {FACILITATOR_STATUS_CONFIG[selectedFacilitatorBooking.status].label}
-                </Badge>
-              </div>
 
-              {/* Participants */}
-              <div className="space-y-4">
-                <h4 className="font-medium">Participants</h4>
-                
-                <div className="grid gap-4 md:grid-cols-2">
-                  <Card>
-                    <CardHeader className="pb-3">
-                      <CardTitle className="text-sm">Participant 1</CardTitle>
-                      {selectedFacilitatorBooking.participant_1_completed_at && (
-                        <Badge variant="outline" className="w-fit">
-                          <CheckCircle className="h-3 w-3 mr-1" />
-                          Completed
-                        </Badge>
-                      )}
-                    </CardHeader>
-                    <CardContent className="space-y-2">
-                      <div className="text-sm">
-                        <Users className="h-3 w-3 inline mr-1" />
-                        {selectedFacilitatorBooking.participant_1_name}
-                      </div>
-                      <div className="text-sm">
-                        <Mail className="h-3 w-3 inline mr-1" />
-                        {selectedFacilitatorBooking.participant_1_email}
-                      </div>
-                      {selectedFacilitatorBooking.participant_1_phone && (
-                        <div className="text-sm">
-                          <Phone className="h-3 w-3 inline mr-1" />
-                          {selectedFacilitatorBooking.participant_1_phone}
-                        </div>
-                      )}
-                      {selectedFacilitatorBooking.status === 'pending_p1' && (
-                        <div className="pt-2 space-y-2">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="w-full"
-                            onClick={() => copyLink(selectedFacilitatorBooking.participant_1_token, 1)}
-                          >
-                            <Copy className="h-3 w-3 mr-1" />
-                            Copy Booking Link
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="w-full"
-                            onClick={() => resendInvitation(selectedFacilitatorBooking)}
-                          >
-                            <Send className="h-3 w-3 mr-1" />
-                            Resend Invitation
-                          </Button>
-                        </div>
-                      )}
-                    </CardContent>
-                  </Card>
-
-                  <Card>
-                    <CardHeader className="pb-3">
-                      <CardTitle className="text-sm">Participant 2</CardTitle>
-                      {selectedFacilitatorBooking.participant_2_completed_at && (
-                        <Badge variant="outline" className="w-fit">
-                          <CheckCircle className="h-3 w-3 mr-1" />
-                          Completed
-                        </Badge>
-                      )}
-                    </CardHeader>
-                    <CardContent className="space-y-2">
-                      <div className="text-sm">
-                        <Users className="h-3 w-3 inline mr-1" />
-                        {selectedFacilitatorBooking.participant_2_name}
-                      </div>
-                      <div className="text-sm">
-                        <Mail className="h-3 w-3 inline mr-1" />
-                        {selectedFacilitatorBooking.participant_2_email}
-                      </div>
-                      {selectedFacilitatorBooking.participant_2_phone && (
-                        <div className="text-sm">
-                          <Phone className="h-3 w-3 inline mr-1" />
-                          {selectedFacilitatorBooking.participant_2_phone}
-                        </div>
-                      )}
-                      {selectedFacilitatorBooking.status === 'pending_p2' && (
-                        <div className="pt-2 space-y-2">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="w-full"
-                            onClick={() => copyLink(selectedFacilitatorBooking.participant_2_token, 2)}
-                          >
-                            <Copy className="h-3 w-3 mr-1" />
-                            Copy Booking Link
-                          </Button>
-                        </div>
-                      )}
-                    </CardContent>
-                  </Card>
+                {/* Participant 2 */}
+                <div className="border rounded-lg p-3 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-medium flex items-center gap-1">
+                      <Users className="h-3 w-3" />
+                      Participant 2
+                    </span>
+                    {selectedFacilitatorBooking.participant_2_completed_at && (
+                      <Badge variant="outline" className="h-5 text-xs">
+                        <CheckCircle className="h-3 w-3 mr-1" />
+                        Done
+                      </Badge>
+                    )}
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-sm font-medium">{selectedFacilitatorBooking.participant_2_name}</p>
+                    <p className="text-xs text-muted-foreground">{selectedFacilitatorBooking.participant_2_email}</p>
+                    {selectedFacilitatorBooking.participant_2_phone && (
+                      <p className="text-xs text-muted-foreground">{selectedFacilitatorBooking.participant_2_phone}</p>
+                    )}
+                  </div>
+                  {selectedFacilitatorBooking.status === 'pending_p2' && (
+                    <div className="flex gap-2 pt-1">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="flex-1 h-7 text-xs"
+                        onClick={() => copyLink(selectedFacilitatorBooking.participant_2_token, 2)}
+                      >
+                        <Copy className="h-3 w-3 mr-1" />
+                        Copy Link
+                      </Button>
+                    </div>
+                  )}
                 </div>
               </div>
 
-              {/* Meeting Options (if P1 completed) */}
+              {/* Meeting Configuration - Compact Display */}
               {selectedFacilitatorBooking.selected_duration_minutes && (
-                <div className="space-y-3">
-                  <h4 className="font-medium">Selected Meeting Options</h4>
-                  <Card>
-                    <CardContent className="pt-4 space-y-2">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <Clock className="h-4 w-4 text-muted-foreground" />
-                          <span className="text-sm">Duration</span>
-                        </div>
-                        <span className="text-sm font-medium">
-                          {selectedFacilitatorBooking.selected_duration_minutes} minutes
-                        </span>
-                      </div>
+                <div className="border rounded-lg p-3 bg-muted/30">
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-muted-foreground">Meeting Configuration</span>
+                    <div className="flex items-center gap-3">
+                      <span className="flex items-center gap-1">
+                        <Clock className="h-3 w-3" />
+                        {selectedFacilitatorBooking.selected_duration_minutes} min
+                      </span>
                       {selectedFacilitatorBooking.selected_location_type && (
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2">
-                            <MapPin className="h-4 w-4 text-muted-foreground" />
-                            <span className="text-sm">Location</span>
-                          </div>
-                          <span className="text-sm font-medium">
-                            {LOCATION_DISPLAY[selectedFacilitatorBooking.selected_location_type]}
-                          </span>
-                        </div>
+                        <span className="flex items-center gap-1">
+                          <MapPin className="h-3 w-3" />
+                          {LOCATION_DISPLAY[selectedFacilitatorBooking.selected_location_type]}
+                        </span>
                       )}
-                      {selectedFacilitatorBooking.participant_1_message && (
-                        <div>
-                          <p className="text-sm text-muted-foreground mb-1">Message from Participant 1:</p>
-                          <p className="text-sm italic">{selectedFacilitatorBooking.participant_1_message}</p>
-                        </div>
-                      )}
-                    </CardContent>
-                  </Card>
+                    </div>
+                  </div>
+                  {selectedFacilitatorBooking.participant_1_message && (
+                    <p className="text-xs text-muted-foreground mt-2 italic">
+                      Note: {selectedFacilitatorBooking.participant_1_message}
+                    </p>
+                  )}
                 </div>
               )}
 
-              {/* Available Time Slots (if P1 completed) */}
+              {/* Available Time Slots - Compact List */}
               {selectedFacilitatorBooking.selected_slots && selectedFacilitatorBooking.selected_slots.length > 0 && (
-                <div className="space-y-3">
-                  <h4 className="font-medium">Available Time Slots</h4>
-                  <div className="grid gap-2">
+                <div className="border rounded-lg p-3">
+                  <p className="text-sm font-medium mb-2">Available Time Slots</p>
+                  <div className="space-y-1 max-h-32 overflow-y-auto">
                     {selectedFacilitatorBooking.selected_slots.map((slot, index) => (
-                      <Card key={index}>
-                        <CardContent className="py-2 px-4">
-                          <div className="flex items-center gap-2">
-                            <Calendar className="h-4 w-4 text-muted-foreground" />
-                            <span className="text-sm">
-                              {format(parseISO(slot.start), 'MMM d, yyyy h:mm a')} - {format(parseISO(slot.end), 'h:mm a')}
-                            </span>
-                          </div>
-                        </CardContent>
-                      </Card>
+                      <div key={index} className="flex items-center gap-2 text-xs text-muted-foreground py-1">
+                        <Calendar className="h-3 w-3" />
+                        <span>
+                          {format(parseISO(slot.start), 'MMM d, h:mm a')} - {format(parseISO(slot.end), 'h:mm a')}
+                        </span>
+                      </div>
                     ))}
                   </div>
                 </div>
               )}
 
-              {/* Final Scheduled Time (if completed) */}
-              {selectedFacilitatorBooking.final_slot && (
-                <div className="space-y-3">
-                  <h4 className="font-medium">Scheduled Meeting</h4>
-                  <Card>
-                    <CardContent className="pt-4 space-y-2">
-                      <div className="flex items-center gap-2">
-                        <CheckCircle className="h-5 w-5 text-green-500" />
-                        <span className="font-medium">Meeting Confirmed</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Calendar className="h-4 w-4 text-muted-foreground" />
-                        <span className="text-sm">
-                          {format(parseISO(selectedFacilitatorBooking.final_slot.start), 'MMMM d, yyyy')}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Clock className="h-4 w-4 text-muted-foreground" />
-                        <span className="text-sm">
-                          {format(parseISO(selectedFacilitatorBooking.final_slot.start), 'h:mm a')} - 
-                          {format(parseISO(selectedFacilitatorBooking.final_slot.end), 'h:mm a')}
-                        </span>
-                      </div>
-                    </CardContent>
-                  </Card>
+              {/* Confirmed Meeting Details - Combined Section */}
+              {(selectedFacilitatorBooking.final_slot || selectedFacilitatorBooking.scheduled_meeting?.meeting_url) && (
+                <div className="border rounded-lg p-3 bg-green-50 dark:bg-green-950/20">
+                  <div className="flex items-center gap-2 mb-2">
+                    <CheckCircle className="h-4 w-4 text-green-600" />
+                    <span className="text-sm font-medium">Meeting Confirmed</span>
+                  </div>
+                  
+                  {selectedFacilitatorBooking.final_slot && (
+                    <div className="flex items-center gap-4 text-sm text-muted-foreground mb-2">
+                      <span className="flex items-center gap-1">
+                        <Calendar className="h-3 w-3" />
+                        {format(parseISO(selectedFacilitatorBooking.final_slot.start), 'MMM d, yyyy')}
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <Clock className="h-3 w-3" />
+                        {format(parseISO(selectedFacilitatorBooking.final_slot.start), 'h:mm a')} - 
+                        {format(parseISO(selectedFacilitatorBooking.final_slot.end), 'h:mm a')}
+                      </span>
+                    </div>
+                  )}
+                  
+                  {selectedFacilitatorBooking.scheduled_meeting?.meeting_url && (
+                    <div className="flex items-center gap-2">
+                      <Video className="h-3 w-3 text-muted-foreground" />
+                      <Input 
+                        value={selectedFacilitatorBooking.scheduled_meeting.meeting_url} 
+                        readOnly 
+                        className="h-7 text-xs font-mono flex-1"
+                      />
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 w-7 p-0"
+                        onClick={() => {
+                          navigator.clipboard.writeText(selectedFacilitatorBooking.scheduled_meeting?.meeting_url || '')
+                          toast({
+                            title: 'Link copied!',
+                            description: 'Meeting link copied to clipboard',
+                          })
+                        }}
+                      >
+                        <Copy className="h-3 w-3" />
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="default"
+                        className="h-7 text-xs"
+                        onClick={() => window.open(selectedFacilitatorBooking.scheduled_meeting?.meeting_url, '_blank')}
+                      >
+                        <ExternalLink className="h-3 w-3 mr-1" />
+                        Join
+                      </Button>
+                    </div>
+                  )}
                 </div>
               )}
 
-              {/* Meeting Link (if available) */}
-              {selectedFacilitatorBooking.scheduled_meeting?.meeting_url && (
-                <div className="space-y-3">
-                  <h4 className="font-medium">Meeting Link</h4>
-                  <Card>
-                    <CardContent className="pt-4">
-                      <div className="flex items-center gap-2">
-                        <Video className="h-4 w-4 text-muted-foreground" />
-                        <div className="flex-1">
-                          <Input 
-                            value={selectedFacilitatorBooking.scheduled_meeting.meeting_url} 
-                            readOnly 
-                            className="font-mono text-sm"
-                          />
-                        </div>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => {
-                            navigator.clipboard.writeText(selectedFacilitatorBooking.scheduled_meeting?.meeting_url || '')
-                            toast({
-                              title: 'Meeting link copied!',
-                              description: 'The meeting link has been copied to your clipboard',
-                            })
-                          }}
-                        >
-                          <Copy className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="default"
-                          onClick={() => window.open(selectedFacilitatorBooking.scheduled_meeting?.meeting_url, '_blank')}
-                        >
-                          <ExternalLink className="h-4 w-4 mr-1" />
-                          Join
-                        </Button>
-                      </div>
-                    </CardContent>
-                  </Card>
-                </div>
-              )}
-
-              {/* Expiry Information */}
+              {/* Expiry Warning - Compact */}
               {selectedFacilitatorBooking.status !== 'completed' && selectedFacilitatorBooking.status !== 'cancelled' && (
-                <div className="flex items-center gap-2 p-3 bg-muted rounded-lg">
-                  <AlertCircle className="h-4 w-4 text-muted-foreground" />
-                  <span className="text-sm text-muted-foreground">
-                    This booking expires on {format(parseISO(selectedFacilitatorBooking.expires_at), 'MMMM d, yyyy at h:mm a')}
-                  </span>
+                <div className="flex items-center gap-2 p-2 bg-amber-50 dark:bg-amber-950/20 rounded text-xs text-amber-700 dark:text-amber-400">
+                  <AlertCircle className="h-3 w-3" />
+                  <span>Expires {format(parseISO(selectedFacilitatorBooking.expires_at), 'MMM d, h:mm a')}</span>
                 </div>
               )}
 
-              <div className="flex justify-end gap-2 pt-4 border-t">
-                <Button variant="outline" onClick={() => setIsFacilitatorModalOpen(false)}>
+              <div className="flex justify-end pt-3">
+                <Button size="sm" variant="outline" onClick={() => setIsFacilitatorModalOpen(false)}>
                   Close
                 </Button>
               </div>

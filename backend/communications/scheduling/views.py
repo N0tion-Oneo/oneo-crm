@@ -8,9 +8,10 @@ from rest_framework import viewsets, status, permissions
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.filters import SearchFilter, OrderingFilter
+from rest_framework.pagination import PageNumberPagination
 from django_filters.rest_framework import DjangoFilterBackend
 from django.utils import timezone
-from django.db.models import Q, Count
+from django.db.models import Q, Count, Case, When, BooleanField, Value
 from drf_spectacular.utils import extend_schema, OpenApiParameter
 from asgiref.sync import async_to_sync
 
@@ -348,6 +349,8 @@ class MeetingTypeViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'])
     def calendars_for_connection(self, request):
         """Get calendars from user's profile connection"""
+        from django.core.cache import cache
+        
         # First try to get connection_id from query params (for backward compatibility)
         connection_id = request.query_params.get('connection_id')
         
@@ -816,26 +819,148 @@ class ScheduledMeetingViewSet(viewsets.ModelViewSet):
     search_fields = ['participant__name', 'participant__email']
     ordering_fields = ['start_time', 'created_at', 'status']
     ordering = ['start_time']
+    pagination_class = PageNumberPagination  # Add default pagination
+    
+    def list(self, request, *args, **kwargs):
+        """Override list to add timing"""
+        import time
+        import logging
+        
+        logger = logging.getLogger(__name__)
+        start_time = time.time()
+        
+        # Get queryset
+        queryset_start = time.time()
+        queryset = self.filter_queryset(self.get_queryset())
+        queryset_time = time.time() - queryset_start
+        logger.warning(f"[TIMING] Queryset filtering took: {queryset_time:.3f}s")
+        
+        # Paginate
+        page_start = time.time()
+        page = self.paginate_queryset(queryset)
+        page_time = time.time() - page_start
+        logger.warning(f"[TIMING] Pagination took: {page_time:.3f}s")
+        
+        if page is not None:
+            # Serialize
+            serialize_start = time.time()
+            serializer = self.get_serializer(page, many=True)
+            data = serializer.data
+            serialize_time = time.time() - serialize_start
+            logger.warning(f"[TIMING] Serialization took: {serialize_time:.3f}s for {len(page)} objects")
+            
+            response_start = time.time()
+            response = self.get_paginated_response(data)
+            response_time = time.time() - response_start
+            logger.warning(f"[TIMING] Response creation took: {response_time:.3f}s")
+            
+            total_time = time.time() - start_time
+            logger.warning(f"[TIMING] Total list() took: {total_time:.3f}s")
+            
+            return response
+        
+        # No pagination
+        serialize_start = time.time()
+        serializer = self.get_serializer(queryset, many=True)
+        data = serializer.data
+        serialize_time = time.time() - serialize_start
+        logger.warning(f"[TIMING] Serialization (no page) took: {serialize_time:.3f}s for {queryset.count()} objects")
+        
+        total_time = time.time() - start_time
+        logger.warning(f"[TIMING] Total list() (no page) took: {total_time:.3f}s")
+        
+        from rest_framework.response import Response
+        return Response(data)
     
     def get_queryset(self):
         """Filter scheduled meetings based on permissions"""
-        permission_manager = SyncPermissionManager(self.request.user)
+        import time
+        import logging
+        from django.db import connection
         
-        if permission_manager.has_permission('action', 'communication_settings', 'scheduling_all', None):
-            # Admin can see all scheduled meetings
-            queryset = ScheduledMeeting.objects.all().select_related(
-                'meeting_type', 'scheduling_link', 'participant',
-                'host', 'record', 'conversation'
+        logger = logging.getLogger(__name__)
+        start_time = time.time()
+        
+        # Cache permission checks to avoid multiple async_to_sync calls
+        user = self.request.user
+        from django.core.cache import cache
+        
+        # Create a cache key for permissions
+        perm_cache_key = f"user_perms_scheduling:{user.id}"
+        cached_perms = cache.get(perm_cache_key)
+        
+        perm_check_start = time.time()
+        if cached_perms is None:
+            permission_manager = SyncPermissionManager(user)
+            cached_perms = {
+                'scheduling_all': permission_manager.has_permission('action', 'communication_settings', 'scheduling_all', None),
+                'scheduling': permission_manager.has_permission('action', 'communication_settings', 'scheduling', None)
+            }
+            # Cache for 60 seconds
+            cache.set(perm_cache_key, cached_perms, 60)
+        perm_check_time = time.time() - perm_check_start
+        logger.warning(f"[TIMING] Permission check took: {perm_check_time:.3f}s (cached: {cached_perms is not None})")
+        
+        # Get current time once
+        now = timezone.now()
+        
+        # Base queryset with annotations for computed fields
+        # Use different names to avoid conflicts with model methods
+        query_build_start = time.time()
+        base_queryset = ScheduledMeeting.objects.annotate(
+            _is_past=Case(
+                When(end_time__lt=now, then=Value(True)),
+                default=Value(False),
+                output_field=BooleanField()
+            ),
+            _is_upcoming=Case(
+                When(start_time__gt=now, then=Value(True)),
+                default=Value(False),
+                output_field=BooleanField()
+            ),
+            _is_in_progress=Case(
+                When(start_time__lte=now, end_time__gte=now, then=Value(True)),
+                default=Value(False),
+                output_field=BooleanField()
+            ),
+            _can_cancel=Case(
+                # Cannot cancel if status is already cancelled/completed/no_show
+                When(status__in=['cancelled', 'completed', 'no_show'], then=Value(False)),
+                # Cannot cancel if meeting type doesn't allow it
+                When(meeting_type__allow_cancellation=False, then=Value(False)),
+                # Can cancel otherwise (simplified - ignoring cancellation notice hours for now)
+                default=Value(True),
+                output_field=BooleanField()
+            ),
+            _can_reschedule=Case(
+                # Cannot reschedule if status is already cancelled/completed/no_show
+                When(status__in=['cancelled', 'completed', 'no_show'], then=Value(False)),
+                # Cannot reschedule if meeting type doesn't allow it
+                When(meeting_type__allow_rescheduling=False, then=Value(False)),
+                # Can reschedule otherwise (simplified - ignoring cancellation notice hours for now)
+                default=Value(True),
+                output_field=BooleanField()
             )
-        elif permission_manager.has_permission('action', 'communication_settings', 'scheduling', None):
+        ).select_related(
+            'meeting_type', 'meeting_type__user', 'scheduling_link', 'participant',
+            'host', 'record', 'conversation', 'facilitator_booking',
+            'facilitator_booking__meeting_type', 'facilitator_booking__facilitator'
+        ).prefetch_related(
+            'meeting_type__pipeline'  # Prefetch pipeline since it might be a ForeignKey
+        )
+        
+        query_build_time = time.time() - query_build_start
+        logger.warning(f"[TIMING] Query building took: {query_build_time:.3f}s")
+        
+        if cached_perms['scheduling_all']:
+            # Admin can see all scheduled meetings
+            queryset = base_queryset
+        elif cached_perms['scheduling']:
             # Users can see meetings they host or participate in
-            queryset = ScheduledMeeting.objects.filter(
-                Q(host=self.request.user) |
-                Q(meeting_type__user=self.request.user) |
-                Q(participant__email=self.request.user.email)
-            ).select_related(
-                'meeting_type', 'scheduling_link', 'participant',
-                'host', 'record', 'conversation'
+            queryset = base_queryset.filter(
+                Q(host=user) |
+                Q(meeting_type__user=user) |
+                Q(participant__email=user.email)
             )
         else:
             return ScheduledMeeting.objects.none()
@@ -857,6 +982,10 @@ class ScheduledMeetingViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(
                 start_time__date=today
             )
+        
+        total_time = time.time() - start_time
+        logger.warning(f"[TIMING] Total get_queryset took: {total_time:.3f}s")
+        logger.warning(f"[TIMING] Query count before evaluation: {len(connection.queries)}")
         
         return queryset
     

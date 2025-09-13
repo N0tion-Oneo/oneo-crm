@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -219,6 +219,7 @@ export default function ScheduledMeetings({ canManageAll = false }: ScheduledMee
   const [isDetailsOpen, setIsDetailsOpen] = useState(false)
   const [isFacilitatorModalOpen, setIsFacilitatorModalOpen] = useState(false)
   const [selectedFacilitatorBooking, setSelectedFacilitatorBooking] = useState<FacilitatorBooking | null>(null)
+  const [selectedFacilitatorMeeting, setSelectedFacilitatorMeeting] = useState<ScheduledMeeting | null>(null)
   const [filters, setFilters] = useState({
     status: 'all',
     dateRange: 'all',
@@ -280,6 +281,7 @@ export default function ScheduledMeetings({ canManageAll = false }: ScheduledMee
   const openMeetingDetails = (meeting: ScheduledMeeting) => {
     if (meeting.is_facilitator_meeting && meeting.facilitator_booking) {
       setSelectedFacilitatorBooking(meeting.facilitator_booking)
+      setSelectedFacilitatorMeeting(meeting)
       setIsFacilitatorModalOpen(true)
     } else {
       setSelectedMeeting(meeting)
@@ -374,7 +376,26 @@ export default function ScheduledMeetings({ canManageAll = false }: ScheduledMee
     return filtered
   }
 
-  const filteredMeetings = filterMeetings(meetings)
+  // Memoize filtered meetings to avoid recalculating on every render
+  const filteredMeetings = useMemo(() => filterMeetings(meetings), [meetings, activeTab, filters.status])
+  
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(1)
+  const itemsPerPage = 10
+  
+  // Calculate paginated meetings
+  const paginatedMeetings = useMemo(() => {
+    const startIndex = (currentPage - 1) * itemsPerPage
+    const endIndex = startIndex + itemsPerPage
+    return filteredMeetings.slice(startIndex, endIndex)
+  }, [filteredMeetings, currentPage])
+  
+  const totalPages = Math.ceil(filteredMeetings.length / itemsPerPage)
+  
+  // Reset to page 1 when filters change
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [activeTab, filters.status])
 
   if (isLoading) {
     return (
@@ -436,8 +457,9 @@ export default function ScheduledMeetings({ canManageAll = false }: ScheduledMee
               </CardContent>
             </Card>
           ) : (
-            <div className="space-y-3">
-              {filteredMeetings.map((meeting) => {
+            <>
+              <div className="space-y-3">
+                {paginatedMeetings.map((meeting) => {
                 const statusBadge = STATUS_BADGES[meeting.status] || STATUS_BADGES.scheduled
                 const StatusIcon = statusBadge.icon
                 const LocationIcon = LOCATION_ICONS[meeting.meeting_type?.location_type] || Calendar
@@ -541,11 +563,35 @@ export default function ScheduledMeetings({ canManageAll = false }: ScheduledMee
                             </div>
                           </div>
 
+                          {/* Meeting URL - More Visible */}
+                          {meeting.meeting_url && (
+                            <div className="flex items-center gap-2 mt-2">
+                              <div className="flex items-center gap-2 px-2 py-1 bg-blue-50 dark:bg-blue-950/30 rounded-md">
+                                <Video className="h-3.5 w-3.5 text-blue-600 dark:text-blue-400" />
+                                <span className="text-sm font-medium text-blue-600 dark:text-blue-400">
+                                  Meeting Link Available
+                                </span>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-5 px-1.5 hover:bg-blue-100 dark:hover:bg-blue-900/50"
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    navigator.clipboard.writeText(meeting.meeting_url || '')
+                                    toast({ title: 'Meeting link copied!' })
+                                  }}
+                                >
+                                  <Copy className="h-3 w-3" />
+                                </Button>
+                              </div>
+                            </div>
+                          )}
+
                           {/* Participants Row */}
                           {meeting.is_facilitator_meeting && meeting.facilitator_booking ? (
                             <div className="space-y-2">
                               {/* Progress indicator for facilitator bookings */}
-                              {meeting.facilitator_booking.status === 'pending_p1' && (
+                              {meeting.facilitator_booking?.status === 'pending_p1' && (
                                 <div className="flex items-center gap-3">
                                   <div className="flex-1">
                                     <div className="flex items-center justify-between text-xs mb-1">
@@ -558,7 +604,7 @@ export default function ScheduledMeetings({ canManageAll = false }: ScheduledMee
                                   </div>
                                 </div>
                               )}
-                              {meeting.facilitator_booking.status === 'pending_p2' && (
+                              {meeting.facilitator_booking?.status === 'pending_p2' && (
                                 <div className="flex items-center gap-3">
                                   <div className="flex-1">
                                     <div className="flex items-center justify-between text-xs mb-1">
@@ -577,12 +623,12 @@ export default function ScheduledMeetings({ canManageAll = false }: ScheduledMee
                                   <User className="h-3.5 w-3.5 text-muted-foreground mt-0.5" />
                                   <div className="min-w-0">
                                     <p className="text-sm font-medium truncate">
-                                      {meeting.facilitator_booking.participant_1_name || 'Participant 1'}
+                                      {meeting.facilitator_booking?.participant_1_name || 'Participant 1'}
                                     </p>
                                     <p className="text-xs text-muted-foreground truncate">
-                                      {meeting.facilitator_booking.participant_1_email}
+                                      {meeting.facilitator_booking?.participant_1_email}
                                     </p>
-                                    {meeting.facilitator_booking.participant_1_completed_at && (
+                                    {meeting.facilitator_booking?.participant_1_completed_at && (
                                       <p className="text-xs text-green-600 dark:text-green-400 mt-0.5">
                                         ✓ Selected times
                                       </p>
@@ -593,12 +639,12 @@ export default function ScheduledMeetings({ canManageAll = false }: ScheduledMee
                                   <User className="h-3.5 w-3.5 text-muted-foreground mt-0.5" />
                                   <div className="min-w-0">
                                     <p className="text-sm font-medium truncate">
-                                      {meeting.facilitator_booking.participant_2_name || 'Participant 2'}
+                                      {meeting.facilitator_booking?.participant_2_name || 'Participant 2'}
                                     </p>
                                     <p className="text-xs text-muted-foreground truncate">
-                                      {meeting.facilitator_booking.participant_2_email}
+                                      {meeting.facilitator_booking?.participant_2_email}
                                     </p>
-                                    {meeting.facilitator_booking.participant_2_completed_at && (
+                                    {meeting.facilitator_booking?.participant_2_completed_at && (
                                       <p className="text-xs text-green-600 dark:text-green-400 mt-0.5">
                                         ✓ Confirmed
                                       </p>
@@ -627,7 +673,7 @@ export default function ScheduledMeetings({ canManageAll = false }: ScheduledMee
                                 <div className="flex items-center gap-2">
                                   <Phone className="h-3.5 w-3.5 text-muted-foreground" />
                                   <span className="text-sm text-muted-foreground">
-                                    {meeting.participant_detail.phone}
+                                    {meeting.participant_detail?.phone}
                                   </span>
                                 </div>
                               )}
@@ -638,7 +684,7 @@ export default function ScheduledMeetings({ canManageAll = false }: ScheduledMee
                           {meeting.participant_detail?.notes && (
                             <div className="p-2 bg-gray-50 dark:bg-gray-800/50 rounded-md">
                               <p className="text-xs text-muted-foreground line-clamp-2">
-                                {meeting.participant_detail.notes}
+                                {meeting.participant_detail?.notes}
                               </p>
                             </div>
                           )}
@@ -705,7 +751,60 @@ export default function ScheduledMeetings({ canManageAll = false }: ScheduledMee
                   </Card>
                 )
               })}
-            </div>
+              </div>
+              
+              {/* Pagination Controls */}
+              {totalPages > 1 && (
+                <div className="flex items-center justify-between pt-4">
+                  <div className="text-sm text-muted-foreground">
+                    Showing {((currentPage - 1) * itemsPerPage) + 1}-{Math.min(currentPage * itemsPerPage, filteredMeetings.length)} of {filteredMeetings.length} meetings
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                      disabled={currentPage === 1}
+                    >
+                      Previous
+                    </Button>
+                    <div className="flex items-center gap-1">
+                      {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                        let pageNum
+                        if (totalPages <= 5) {
+                          pageNum = i + 1
+                        } else if (currentPage <= 3) {
+                          pageNum = i + 1
+                        } else if (currentPage >= totalPages - 2) {
+                          pageNum = totalPages - 4 + i
+                        } else {
+                          pageNum = currentPage - 2 + i
+                        }
+                        return (
+                          <Button
+                            key={pageNum}
+                            variant={pageNum === currentPage ? "default" : "outline"}
+                            size="sm"
+                            className="w-8 h-8 p-0"
+                            onClick={() => setCurrentPage(pageNum)}
+                          >
+                            {pageNum}
+                          </Button>
+                        )
+                      })}
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                      disabled={currentPage === totalPages}
+                    >
+                      Next
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </>
           )}
         </TabsContent>
       </Tabs>
@@ -714,7 +813,7 @@ export default function ScheduledMeetings({ canManageAll = false }: ScheduledMee
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center justify-between">
-              <span>{selectedMeeting?.meeting_type.name}</span>
+              <span>{selectedMeeting?.meeting_type?.name}</span>
               {selectedMeeting && (
                 <Badge variant={STATUS_BADGES[selectedMeeting.status].variant}>
                   {STATUS_BADGES[selectedMeeting.status].label}
@@ -737,14 +836,14 @@ export default function ScheduledMeetings({ canManageAll = false }: ScheduledMee
                   </div>
                   <div className="space-y-1">
                     <p className="text-sm">
-                      {selectedMeeting.start_time ? format(parseISO(selectedMeeting.start_time), 'MMM d, yyyy') : 'No date'}
+                      {selectedMeeting?.start_time ? format(parseISO(selectedMeeting.start_time), 'MMM d, yyyy') : 'No date'}
                     </p>
                     <p className="text-xs text-muted-foreground">
-                      {selectedMeeting.start_time ? format(parseISO(selectedMeeting.start_time), 'h:mm a') : 'No time'}
-                      {selectedMeeting.end_time && ` - ${format(parseISO(selectedMeeting.end_time), 'h:mm a')}`}
+                      {selectedMeeting?.start_time ? format(parseISO(selectedMeeting.start_time), 'h:mm a') : 'No time'}
+                      {selectedMeeting?.end_time && ` - ${format(parseISO(selectedMeeting.end_time), 'h:mm a')}`}
                     </p>
                     <p className="text-xs text-muted-foreground">
-                      {selectedMeeting.start_time && selectedMeeting.end_time ? 
+                      {selectedMeeting?.start_time && selectedMeeting?.end_time ? 
                         `${Math.round((new Date(selectedMeeting.end_time).getTime() - new Date(selectedMeeting.start_time).getTime()) / 60000)} minutes` : 
                         'Duration not available'}
                     </p>
@@ -759,14 +858,14 @@ export default function ScheduledMeetings({ canManageAll = false }: ScheduledMee
                   </div>
                   <div className="space-y-1">
                     <p className="text-sm font-medium">
-                      {selectedMeeting.participant_detail?.name || selectedMeeting.participant?.name || 'Unknown'}
+                      {selectedMeeting?.participant_detail?.name || selectedMeeting?.participant?.name || 'Unknown'}
                     </p>
                     <p className="text-xs text-muted-foreground">
-                      {selectedMeeting.participant_detail?.email || selectedMeeting.participant?.email || 'No email'}
+                      {selectedMeeting?.participant_detail?.email || selectedMeeting?.participant?.email || 'No email'}
                     </p>
-                    {(selectedMeeting.participant_detail?.phone || selectedMeeting.participant?.phone) && (
+                    {(selectedMeeting?.participant_detail?.phone || selectedMeeting?.participant?.phone) && (
                       <p className="text-xs text-muted-foreground">
-                        {selectedMeeting.participant_detail?.phone || selectedMeeting.participant?.phone}
+                        {selectedMeeting?.participant_detail?.phone || selectedMeeting?.participant?.phone}
                       </p>
                     )}
                   </div>
@@ -781,67 +880,74 @@ export default function ScheduledMeetings({ canManageAll = false }: ScheduledMee
                     Location
                   </span>
                   <span className="font-medium">
-                    {LOCATION_DISPLAY[selectedMeeting.meeting_type?.location_type] || 
-                     selectedMeeting.meeting_type?.location_type?.replace('_', ' ') || 
+                    {LOCATION_DISPLAY[selectedMeeting?.meeting_type?.location_type] || 
+                     selectedMeeting?.meeting_type?.location_type?.replace('_', ' ') || 
                      'No location'}
                   </span>
                 </div>
               </div>
 
-              {/* Meeting Link - Compact */}
-              {selectedMeeting.meeting_url && (
-                <div className="border rounded-lg p-3 bg-blue-50 dark:bg-blue-950/20">
-                  <div className="flex items-center gap-2">
-                    <Video className="h-3 w-3 text-muted-foreground" />
-                    <Input 
-                      value={selectedMeeting.meeting_url} 
-                      readOnly 
-                      className="h-7 text-xs font-mono flex-1"
-                    />
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="h-7 w-7 p-0"
-                      onClick={() => {
-                        navigator.clipboard.writeText(selectedMeeting.meeting_url || '')
-                        toast({
-                          title: 'Link copied!',
-                          description: 'Meeting link copied to clipboard',
-                        })
-                      }}
-                    >
-                      <Copy className="h-3 w-3" />
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="default"
-                      className="h-7 text-xs"
-                      onClick={() => window.open(selectedMeeting.meeting_url, '_blank')}
-                    >
-                      <ExternalLink className="h-3 w-3 mr-1" />
-                      Join
-                    </Button>
+              {/* Meeting Link - Enhanced */}
+              {selectedMeeting?.meeting_url && (
+                <div className="border-2 border-blue-200 dark:border-blue-800 rounded-lg p-3 bg-blue-50 dark:bg-blue-950/20">
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2">
+                      <Video className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+                      <span className="text-sm font-semibold text-blue-600 dark:text-blue-400">
+                        Meeting Link
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Input 
+                        value={selectedMeeting?.meeting_url || ''} 
+                        readOnly 
+                        className="h-8 text-xs font-mono flex-1 bg-white dark:bg-gray-900"
+                      />
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-8 px-2"
+                        onClick={() => {
+                          navigator.clipboard.writeText(selectedMeeting?.meeting_url || '')
+                          toast({
+                            title: 'Link copied!',
+                            description: 'Meeting link copied to clipboard',
+                          })
+                        }}
+                      >
+                        <Copy className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="default"
+                        className="h-8 px-3 bg-blue-600 hover:bg-blue-700"
+                        onClick={() => window.open(selectedMeeting?.meeting_url, '_blank')}
+                      >
+                        <ExternalLink className="h-3.5 w-3.5 mr-1.5" />
+                        Join Meeting
+                      </Button>
+                    </div>
                   </div>
                 </div>
               )}
 
               {/* Notes - Compact */}
-              {(selectedMeeting.pre_meeting_notes || selectedMeeting.post_meeting_notes) && (
+              {(selectedMeeting?.pre_meeting_notes || selectedMeeting?.post_meeting_notes) && (
                 <div className="border rounded-lg p-3 space-y-2">
                   <div className="flex items-center gap-2 text-sm font-medium">
                     <AlertCircle className="h-3 w-3" />
                     Notes
                   </div>
-                  {selectedMeeting.pre_meeting_notes && (
+                  {selectedMeeting?.pre_meeting_notes && (
                     <div>
                       <p className="text-xs text-muted-foreground">Pre-meeting:</p>
-                      <p className="text-xs">{selectedMeeting.pre_meeting_notes}</p>
+                      <p className="text-xs">{selectedMeeting?.pre_meeting_notes}</p>
                     </div>
                   )}
-                  {selectedMeeting.post_meeting_notes && (
+                  {selectedMeeting?.post_meeting_notes && (
                     <div>
                       <p className="text-xs text-muted-foreground">Post-meeting:</p>
-                      <p className="text-xs">{selectedMeeting.post_meeting_notes}</p>
+                      <p className="text-xs">{selectedMeeting?.post_meeting_notes}</p>
                     </div>
                   )}
                 </div>
@@ -850,7 +956,7 @@ export default function ScheduledMeetings({ canManageAll = false }: ScheduledMee
               {/* Action Buttons - Compact Footer */}
               <div className="flex justify-between items-center pt-3">
                 <div className="flex gap-2">
-                  {(selectedMeeting.status === 'scheduled' || selectedMeeting.status === 'pending' || selectedMeeting.status === 'reminder_sent') && (
+                  {(selectedMeeting?.status === 'scheduled' || selectedMeeting?.status === 'pending' || selectedMeeting?.status === 'reminder_sent') && (
                     <Button
                       size="sm"
                       variant="destructive"
@@ -879,7 +985,7 @@ export default function ScheduledMeetings({ canManageAll = false }: ScheduledMee
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center justify-between">
-              <span>{selectedFacilitatorBooking?.meeting_type.name}</span>
+              <span>{selectedFacilitatorBooking?.meeting_type?.name}</span>
               {selectedFacilitatorBooking && (
                 <Badge variant={FACILITATOR_STATUS_CONFIG[selectedFacilitatorBooking.status].variant}>
                   {FACILITATOR_STATUS_CONFIG[selectedFacilitatorBooking.status].label}
@@ -887,7 +993,7 @@ export default function ScheduledMeetings({ canManageAll = false }: ScheduledMee
               )}
             </DialogTitle>
             <DialogDescription>
-              Facilitated by {selectedFacilitatorBooking?.facilitator.username}
+              Facilitated by {selectedFacilitatorBooking?.facilitator?.username || selectedFacilitatorBooking?.facilitator_username || 'Unknown'}
             </DialogDescription>
           </DialogHeader>
           
@@ -902,7 +1008,7 @@ export default function ScheduledMeetings({ canManageAll = false }: ScheduledMee
                       <Users className="h-3 w-3" />
                       Participant 1
                     </span>
-                    {selectedFacilitatorBooking.participant_1_completed_at && (
+                    {selectedFacilitatorBooking?.participant_1_completed_at && (
                       <Badge variant="outline" className="h-5 text-xs">
                         <CheckCircle className="h-3 w-3 mr-1" />
                         Done
@@ -910,19 +1016,19 @@ export default function ScheduledMeetings({ canManageAll = false }: ScheduledMee
                     )}
                   </div>
                   <div className="space-y-1">
-                    <p className="text-sm font-medium">{selectedFacilitatorBooking.participant_1_name}</p>
-                    <p className="text-xs text-muted-foreground">{selectedFacilitatorBooking.participant_1_email}</p>
-                    {selectedFacilitatorBooking.participant_1_phone && (
-                      <p className="text-xs text-muted-foreground">{selectedFacilitatorBooking.participant_1_phone}</p>
+                    <p className="text-sm font-medium">{selectedFacilitatorBooking?.participant_1_name}</p>
+                    <p className="text-xs text-muted-foreground">{selectedFacilitatorBooking?.participant_1_email}</p>
+                    {selectedFacilitatorBooking?.participant_1_phone && (
+                      <p className="text-xs text-muted-foreground">{selectedFacilitatorBooking?.participant_1_phone}</p>
                     )}
                   </div>
-                  {selectedFacilitatorBooking.status === 'pending_p1' && (
+                  {selectedFacilitatorBooking?.status === 'pending_p1' && (
                     <div className="flex gap-2 pt-1">
                       <Button
                         size="sm"
                         variant="outline"
                         className="flex-1 h-7 text-xs"
-                        onClick={() => copyLink(selectedFacilitatorBooking.participant_1_token, 1)}
+                        onClick={() => copyLink(selectedFacilitatorBooking?.participant_1_token, 1)}
                       >
                         <Copy className="h-3 w-3 mr-1" />
                         Copy Link
@@ -947,7 +1053,7 @@ export default function ScheduledMeetings({ canManageAll = false }: ScheduledMee
                       <Users className="h-3 w-3" />
                       Participant 2
                     </span>
-                    {selectedFacilitatorBooking.participant_2_completed_at && (
+                    {selectedFacilitatorBooking?.participant_2_completed_at && (
                       <Badge variant="outline" className="h-5 text-xs">
                         <CheckCircle className="h-3 w-3 mr-1" />
                         Done
@@ -955,19 +1061,19 @@ export default function ScheduledMeetings({ canManageAll = false }: ScheduledMee
                     )}
                   </div>
                   <div className="space-y-1">
-                    <p className="text-sm font-medium">{selectedFacilitatorBooking.participant_2_name}</p>
-                    <p className="text-xs text-muted-foreground">{selectedFacilitatorBooking.participant_2_email}</p>
-                    {selectedFacilitatorBooking.participant_2_phone && (
-                      <p className="text-xs text-muted-foreground">{selectedFacilitatorBooking.participant_2_phone}</p>
+                    <p className="text-sm font-medium">{selectedFacilitatorBooking?.participant_2_name}</p>
+                    <p className="text-xs text-muted-foreground">{selectedFacilitatorBooking?.participant_2_email}</p>
+                    {selectedFacilitatorBooking?.participant_2_phone && (
+                      <p className="text-xs text-muted-foreground">{selectedFacilitatorBooking?.participant_2_phone}</p>
                     )}
                   </div>
-                  {selectedFacilitatorBooking.status === 'pending_p2' && (
+                  {selectedFacilitatorBooking?.status === 'pending_p2' && (
                     <div className="flex gap-2 pt-1">
                       <Button
                         size="sm"
                         variant="outline"
                         className="flex-1 h-7 text-xs"
-                        onClick={() => copyLink(selectedFacilitatorBooking.participant_2_token, 2)}
+                        onClick={() => copyLink(selectedFacilitatorBooking?.participant_2_token, 2)}
                       >
                         <Copy className="h-3 w-3 mr-1" />
                         Copy Link
@@ -978,37 +1084,37 @@ export default function ScheduledMeetings({ canManageAll = false }: ScheduledMee
               </div>
 
               {/* Meeting Configuration - Compact Display */}
-              {selectedFacilitatorBooking.selected_duration_minutes && (
+              {selectedFacilitatorBooking?.selected_duration_minutes && (
                 <div className="border rounded-lg p-3 bg-muted/30">
                   <div className="flex items-center justify-between text-sm">
                     <span className="text-muted-foreground">Meeting Configuration</span>
                     <div className="flex items-center gap-3">
                       <span className="flex items-center gap-1">
                         <Clock className="h-3 w-3" />
-                        {selectedFacilitatorBooking.selected_duration_minutes} min
+                        {selectedFacilitatorBooking?.selected_duration_minutes} min
                       </span>
-                      {selectedFacilitatorBooking.selected_location_type && (
+                      {selectedFacilitatorBooking?.selected_location_type && (
                         <span className="flex items-center gap-1">
                           <MapPin className="h-3 w-3" />
-                          {LOCATION_DISPLAY[selectedFacilitatorBooking.selected_location_type]}
+                          {LOCATION_DISPLAY[selectedFacilitatorBooking?.selected_location_type]}
                         </span>
                       )}
                     </div>
                   </div>
-                  {selectedFacilitatorBooking.participant_1_message && (
+                  {selectedFacilitatorBooking?.participant_1_message && (
                     <p className="text-xs text-muted-foreground mt-2 italic">
-                      Note: {selectedFacilitatorBooking.participant_1_message}
+                      Note: {selectedFacilitatorBooking?.participant_1_message}
                     </p>
                   )}
                 </div>
               )}
 
               {/* Available Time Slots - Compact List */}
-              {selectedFacilitatorBooking.selected_slots && selectedFacilitatorBooking.selected_slots.length > 0 && (
+              {selectedFacilitatorBooking?.selected_slots && selectedFacilitatorBooking?.selected_slots.length > 0 && (
                 <div className="border rounded-lg p-3">
                   <p className="text-sm font-medium mb-2">Available Time Slots</p>
                   <div className="space-y-1 max-h-32 overflow-y-auto">
-                    {selectedFacilitatorBooking.selected_slots.map((slot, index) => (
+                    {selectedFacilitatorBooking?.selected_slots.map((slot, index) => (
                       <div key={index} className="flex items-center gap-2 text-xs text-muted-foreground py-1">
                         <Calendar className="h-3 w-3" />
                         <span>
@@ -1021,68 +1127,75 @@ export default function ScheduledMeetings({ canManageAll = false }: ScheduledMee
               )}
 
               {/* Confirmed Meeting Details - Combined Section */}
-              {(selectedFacilitatorBooking.final_slot || selectedFacilitatorBooking.scheduled_meeting?.meeting_url) && (
+              {(selectedFacilitatorBooking?.final_slot || selectedFacilitatorMeeting?.meeting_url) && (
                 <div className="border rounded-lg p-3 bg-green-50 dark:bg-green-950/20">
                   <div className="flex items-center gap-2 mb-2">
                     <CheckCircle className="h-4 w-4 text-green-600" />
                     <span className="text-sm font-medium">Meeting Confirmed</span>
                   </div>
                   
-                  {selectedFacilitatorBooking.final_slot && (
+                  {selectedFacilitatorBooking?.final_slot && (
                     <div className="flex items-center gap-4 text-sm text-muted-foreground mb-2">
                       <span className="flex items-center gap-1">
                         <Calendar className="h-3 w-3" />
-                        {format(parseISO(selectedFacilitatorBooking.final_slot.start), 'MMM d, yyyy')}
+                        {selectedFacilitatorBooking?.final_slot?.start ? format(parseISO(selectedFacilitatorBooking.final_slot.start), 'MMM d, yyyy') : 'No date'}
                       </span>
                       <span className="flex items-center gap-1">
                         <Clock className="h-3 w-3" />
-                        {format(parseISO(selectedFacilitatorBooking.final_slot.start), 'h:mm a')} - 
-                        {format(parseISO(selectedFacilitatorBooking.final_slot.end), 'h:mm a')}
+                        {selectedFacilitatorBooking?.final_slot?.start ? format(parseISO(selectedFacilitatorBooking.final_slot.start), 'h:mm a') : 'No time'} - 
+                        {selectedFacilitatorBooking?.final_slot?.end ? format(parseISO(selectedFacilitatorBooking.final_slot.end), 'h:mm a') : 'No time'}
                       </span>
                     </div>
                   )}
                   
-                  {selectedFacilitatorBooking.scheduled_meeting?.meeting_url && (
-                    <div className="flex items-center gap-2">
-                      <Video className="h-3 w-3 text-muted-foreground" />
-                      <Input 
-                        value={selectedFacilitatorBooking.scheduled_meeting.meeting_url} 
-                        readOnly 
-                        className="h-7 text-xs font-mono flex-1"
-                      />
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="h-7 w-7 p-0"
-                        onClick={() => {
-                          navigator.clipboard.writeText(selectedFacilitatorBooking.scheduled_meeting?.meeting_url || '')
-                          toast({
-                            title: 'Link copied!',
-                            description: 'Meeting link copied to clipboard',
-                          })
-                        }}
-                      >
-                        <Copy className="h-3 w-3" />
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="default"
-                        className="h-7 text-xs"
-                        onClick={() => window.open(selectedFacilitatorBooking.scheduled_meeting?.meeting_url, '_blank')}
-                      >
-                        <ExternalLink className="h-3 w-3 mr-1" />
-                        Join
-                      </Button>
+                  {selectedFacilitatorMeeting?.meeting_url && (
+                    <div className="mt-3 pt-3 border-t space-y-2">
+                      <div className="flex items-center gap-2">
+                        <Video className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+                        <span className="text-sm font-semibold text-blue-600 dark:text-blue-400">
+                          Meeting Link
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Input 
+                          value={selectedFacilitatorMeeting?.meeting_url || ''} 
+                          readOnly 
+                          className="h-8 text-xs font-mono flex-1 bg-white dark:bg-gray-900"
+                        />
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-8 px-2"
+                          onClick={() => {
+                            navigator.clipboard.writeText(selectedFacilitatorMeeting?.meeting_url || '')
+                            toast({
+                              title: 'Link copied!',
+                              description: 'Meeting link copied to clipboard',
+                            })
+                          }}
+                        >
+                          <Copy className="h-3.5 w-3.5" />
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="default"
+                          className="h-8 px-3 bg-blue-600 hover:bg-blue-700"
+                          onClick={() => window.open(selectedFacilitatorMeeting?.meeting_url, '_blank')}
+                        >
+                          <ExternalLink className="h-3.5 w-3.5 mr-1.5" />
+                          Join Meeting
+                        </Button>
+                      </div>
                     </div>
                   )}
                 </div>
               )}
 
               {/* Expiry Warning - Compact */}
-              {selectedFacilitatorBooking.status !== 'completed' && selectedFacilitatorBooking.status !== 'cancelled' && (
+              {selectedFacilitatorBooking?.status !== 'completed' && selectedFacilitatorBooking?.status !== 'cancelled' && (
                 <div className="flex items-center gap-2 p-2 bg-amber-50 dark:bg-amber-950/20 rounded text-xs text-amber-700 dark:text-amber-400">
                   <AlertCircle className="h-3 w-3" />
-                  <span>Expires {format(parseISO(selectedFacilitatorBooking.expires_at), 'MMM d, h:mm a')}</span>
+                  <span>Expires {selectedFacilitatorBooking?.expires_at ? format(parseISO(selectedFacilitatorBooking.expires_at), 'MMM d, h:mm a') : 'Unknown'}</span>
                 </div>
               )}
 

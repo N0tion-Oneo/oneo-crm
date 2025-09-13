@@ -285,15 +285,23 @@ class SchedulingLinkSerializer(serializers.ModelSerializer):
 
 
 class FacilitatorBookingSerializer(serializers.ModelSerializer):
-    """Serializer for facilitator bookings"""
-    meeting_type = serializers.SerializerMethodField()
-    facilitator = serializers.SerializerMethodField()
-    scheduled_meeting = serializers.SerializerMethodField()
+    """Serializer for facilitator bookings - optimized version"""
+    # Use direct field access instead of SerializerMethodField for better performance
+    meeting_type_id = serializers.UUIDField(source='meeting_type.id', read_only=True)
+    meeting_type_name = serializers.CharField(source='meeting_type.name', read_only=True)
+    facilitator_id = serializers.UUIDField(source='facilitator.id', read_only=True)
+    facilitator_username = serializers.CharField(source='facilitator.username', read_only=True)
+    facilitator_email = serializers.EmailField(source='facilitator.email', read_only=True)
+    scheduled_meeting_id = serializers.UUIDField(source='scheduled_meeting.id', read_only=True, allow_null=True)
+    scheduled_meeting_url = serializers.CharField(source='scheduled_meeting.meeting_url', read_only=True, allow_null=True)
+    scheduled_meeting_location = serializers.CharField(source='scheduled_meeting.meeting_location', read_only=True, allow_null=True)
+    scheduled_meeting_status = serializers.CharField(source='scheduled_meeting.status', read_only=True, allow_null=True)
     
     class Meta:
         model = FacilitatorBooking
         fields = [
-            'id', 'meeting_type', 'facilitator',
+            'id', 'meeting_type_id', 'meeting_type_name', 
+            'facilitator_id', 'facilitator_username', 'facilitator_email',
             'participant_1_email', 'participant_1_name', 'participant_1_phone',
             'participant_1_record_id', 'participant_1_completed_at', 'participant_1_message',
             'participant_2_email', 'participant_2_name', 'participant_2_phone',
@@ -302,46 +310,25 @@ class FacilitatorBookingSerializer(serializers.ModelSerializer):
             'selected_slots', 'final_slot', 'status',
             'participant_1_token', 'participant_2_token',
             'expires_at', 'invitation_sent_at', 'invitation_opened_at', 'reminder_sent_at',
-            'scheduled_meeting', 'created_at', 'updated_at'
+            'scheduled_meeting_id', 'scheduled_meeting_url', 'scheduled_meeting_location', 
+            'scheduled_meeting_status', 'created_at', 'updated_at'
         ]
-    
-    def get_meeting_type(self, obj):
-        return {
-            'id': str(obj.meeting_type.id),
-            'name': obj.meeting_type.name
-        }
-    
-    def get_facilitator(self, obj):
-        return {
-            'id': str(obj.facilitator.id),
-            'username': obj.facilitator.username,
-            'email': obj.facilitator.email
-        }
-    
-    def get_scheduled_meeting(self, obj):
-        """Return scheduled meeting details if exists"""
-        if obj.scheduled_meeting:
-            return {
-                'id': str(obj.scheduled_meeting.id),
-                'meeting_url': obj.scheduled_meeting.meeting_url,
-                'meeting_location': obj.scheduled_meeting.meeting_location,
-                'calendar_event_id': obj.scheduled_meeting.calendar_event_id,
-                'status': obj.scheduled_meeting.status
-            }
-        return None
 
 
 class ScheduledMeetingSerializer(serializers.ModelSerializer):
     """Serializer for scheduled meetings"""
     meeting_type_name = serializers.CharField(source='meeting_type.name', read_only=True)
-    participant_detail = ParticipantSerializer(source='participant', read_only=True)
-    host_name = serializers.CharField(source='host.get_full_name', read_only=True)
-    record_display = serializers.CharField(source='record.display_name', read_only=True)
-    can_cancel = serializers.BooleanField(read_only=True)
-    can_reschedule = serializers.BooleanField(read_only=True)
-    is_past = serializers.BooleanField(read_only=True)
-    is_upcoming = serializers.BooleanField(read_only=True)
-    is_in_progress = serializers.BooleanField(read_only=True)
+    # Don't use nested serializer that triggers N+1 queries - use simple field extraction
+    participant_detail = serializers.SerializerMethodField()
+    # Don't call methods that might trigger queries - use simple field access
+    host_name = serializers.SerializerMethodField()
+    record_display = serializers.SerializerMethodField()
+    # Use the annotated fields with underscore prefix to avoid calling model methods
+    can_cancel = serializers.BooleanField(source='_can_cancel', read_only=True)
+    can_reschedule = serializers.BooleanField(source='_can_reschedule', read_only=True)
+    is_past = serializers.BooleanField(source='_is_past', read_only=True)
+    is_upcoming = serializers.BooleanField(source='_is_upcoming', read_only=True)
+    is_in_progress = serializers.BooleanField(source='_is_in_progress', read_only=True)
     is_facilitator_meeting = serializers.SerializerMethodField()
     facilitator_booking = FacilitatorBookingSerializer(read_only=True)
     
@@ -369,9 +356,43 @@ class ScheduledMeetingSerializer(serializers.ModelSerializer):
             'reminder_sent_at', 'created_at', 'updated_at'
         ]
     
+    def get_participant_detail(self, obj):
+        """Get participant details without triggering N+1 queries"""
+        if obj.participant:
+            # Return only essential fields without triggering additional queries
+            return {
+                'id': obj.participant.id,
+                'name': obj.participant.name,
+                'email': obj.participant.email,
+                'phone': obj.participant.phone,
+                'avatar_url': obj.participant.avatar_url,
+            }
+        return None
+    
+    def get_host_name(self, obj):
+        """Get host name efficiently"""
+        if obj.host:
+            # Use simple string concatenation instead of get_full_name method
+            return f"{obj.host.first_name} {obj.host.last_name}".strip() or obj.host.username
+        return None
+    
+    def get_record_display(self, obj):
+        """Get record display name efficiently"""
+        # Since record is select_related, this should be cached
+        if obj.record:
+            # Assuming display_name is a field, not a method
+            return getattr(obj.record, 'display_name', str(obj.record.id))
+        return None
+    
     def get_is_facilitator_meeting(self, obj):
         """Check if this is a facilitator meeting"""
-        return hasattr(obj, 'facilitator_booking')
+        # Since facilitator_booking is already select_related in the queryset,
+        # this should not trigger a new query
+        try:
+            # Try to access the cached attribute without triggering a query
+            return obj.facilitator_booking is not None
+        except:
+            return False
     
     def validate_status(self, value):
         """Validate status transitions"""

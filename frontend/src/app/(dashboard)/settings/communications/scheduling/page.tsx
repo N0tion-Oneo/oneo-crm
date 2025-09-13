@@ -89,13 +89,13 @@ export default function SchedulingPage() {
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <AvailabilitySettings canManageAll={canManageAll} />
+              {activeTab === 'availability' && <AvailabilitySettings canManageAll={canManageAll} />}
             </CardContent>
           </Card>
         </TabsContent>
 
         <TabsContent value="meeting-types" className="space-y-4">
-          <UnifiedSchedulingSettings canManageAll={canManageAll} />
+          {activeTab === 'meeting-types' && <UnifiedSchedulingSettings canManageAll={canManageAll} />}
         </TabsContent>
 
         <TabsContent value="meetings" className="space-y-4">
@@ -107,7 +107,7 @@ export default function SchedulingPage() {
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <ScheduledMeetings canManageAll={canManageAll} />
+              {activeTab === 'meetings' && <ScheduledMeetings canManageAll={canManageAll} />}
             </CardContent>
           </Card>
         </TabsContent>

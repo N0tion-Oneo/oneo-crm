@@ -103,7 +103,7 @@ export default function SchedulingPage() {
             <CardHeader>
               <CardTitle>Scheduled Meetings</CardTitle>
               <CardDescription>
-                View and manage your upcoming meetings
+                View and manage all your scheduled and facilitator meetings
               </CardDescription>
             </CardHeader>
             <CardContent>

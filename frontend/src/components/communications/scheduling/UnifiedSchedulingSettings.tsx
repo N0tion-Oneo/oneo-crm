@@ -18,12 +18,13 @@ import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { 
   Calendar, Clock, Plus, Edit, Trash2, Copy, ExternalLink, Loader2, 
   Settings, Link as LinkIcon, Building, User, Globe, Shield, 
-  RefreshCw, Unlink, Users, Filter
+  RefreshCw, Unlink, Users, Filter, Send
 } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
 import { useAuth } from '@/features/auth/context'
 import { api } from '@/lib/api'
 import { format } from 'date-fns'
+import FacilitatorMeetingInitiator from './FacilitatorMeetingInitiator'
 
 interface Pipeline {
   id: string
@@ -62,6 +63,18 @@ interface MeetingType {
   name: string
   slug: string
   description?: string
+  meeting_mode?: 'direct' | 'facilitator'
+  facilitator_settings?: {
+    max_time_options?: number
+    participant_1_label?: string
+    participant_2_label?: string
+    include_facilitator?: boolean
+    allow_duration_selection?: boolean
+    duration_options?: number[]
+    allow_location_selection?: boolean
+    location_options?: string[]
+    link_expiry_hours?: number
+  }
   duration_minutes: number
   location_type: string
   location_details?: any
@@ -115,6 +128,8 @@ export function UnifiedSchedulingSettings({ canManageAll = false }: UnifiedSched
   const [stageFields, setStageFields] = useState<Field[]>([])
   const [selectedStageField, setSelectedStageField] = useState<Field | null>(null)
   const [loading, setLoading] = useState(true)
+  const [showFacilitatorDialog, setShowFacilitatorDialog] = useState(false)
+  const [facilitatorMeetingType, setFacilitatorMeetingType] = useState<MeetingType | null>(null)
   const [viewMode, setViewMode] = useState<'all' | 'meeting-types' | 'templates'>('all')
   
   // Dialog states
@@ -130,6 +145,18 @@ export function UnifiedSchedulingSettings({ canManageAll = false }: UnifiedSched
   const [formData, setFormData] = useState({
     name: '',
     description: '',
+    meeting_mode: 'direct' as 'direct' | 'facilitator',
+    facilitator_settings: {
+      max_time_options: 3,
+      participant_1_label: 'First Participant',
+      participant_2_label: 'Second Participant',
+      include_facilitator: true,
+      allow_duration_selection: true,
+      duration_options: [30, 60, 90],
+      allow_location_selection: true,
+      location_options: ['google_meet', 'teams', 'in_person'],
+      link_expiry_hours: 72
+    },
     duration_minutes: 30,
     location_type: 'google_meet',
     calendar_id: '',
@@ -270,6 +297,18 @@ export function UnifiedSchedulingSettings({ canManageAll = false }: UnifiedSched
     setFormData({
       name: '',
       description: '',
+      meeting_mode: 'direct' as 'direct' | 'facilitator',
+      facilitator_settings: {
+        max_time_options: 3,
+        participant_1_label: 'First Participant',
+        participant_2_label: 'Second Participant',
+        include_facilitator: true,
+        allow_duration_selection: true,
+        duration_options: [30, 60, 90],
+        allow_location_selection: true,
+        location_options: ['google_meet', 'teams', 'in_person'],
+        link_expiry_hours: 72
+      },
       duration_minutes: 30,
       location_type: 'google_meet',
       calendar_id: '',
@@ -304,6 +343,18 @@ export function UnifiedSchedulingSettings({ canManageAll = false }: UnifiedSched
     setFormData({
       name: meeting.name,
       description: meeting.description || '',
+      meeting_mode: meeting.meeting_mode || 'direct',
+      facilitator_settings: meeting.facilitator_settings || {
+        max_time_options: 3,
+        participant_1_label: 'First Participant',
+        participant_2_label: 'Second Participant',
+        include_facilitator: true,
+        allow_duration_selection: true,
+        duration_options: [30, 60, 90],
+        allow_location_selection: true,
+        location_options: ['google_meet', 'teams', 'in_person'],
+        link_expiry_hours: 72
+      },
       duration_minutes: meeting.duration_minutes,
       location_type: meeting.location_type,
       calendar_id: meeting.calendar_id || '',
@@ -365,10 +416,13 @@ export function UnifiedSchedulingSettings({ canManageAll = false }: UnifiedSched
       const payload = {
         ...formData,
         user: formData.is_template ? null : user?.id,
+        slug: formData.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, ''),
+        location_details: {},
         booking_form_config: {
           ...formData.booking_form_config,
           stage_field_id: selectedStageField?.id || null
         },
+        custom_questions: [],
         reminder_hours: formData.is_template || formData.send_reminders ? [formData.reminder_hours] : []
       }
 
@@ -401,6 +455,11 @@ export function UnifiedSchedulingSettings({ canManageAll = false }: UnifiedSched
         variant: 'destructive'
       })
     }
+  }
+
+  const handleInitiateFacilitatorMeeting = (meetingType: MeetingType) => {
+    setFacilitatorMeetingType(meetingType)
+    setShowFacilitatorDialog(true)
   }
 
   const handleDeleteMeeting = async (id: string, isTemplate: boolean) => {
@@ -480,7 +539,8 @@ export function UnifiedSchedulingSettings({ canManageAll = false }: UnifiedSched
   const filteredItems = getFilteredItems()
 
   return (
-    <Card>
+    <>
+      <Card>
       <CardHeader>
         <div className="flex items-center justify-between">
           <div>
@@ -553,6 +613,157 @@ export function UnifiedSchedulingSettings({ canManageAll = false }: UnifiedSched
                       rows={3}
                     />
                   </div>
+
+                  <div>
+                    <Label htmlFor="meeting_mode">Meeting Mode</Label>
+                    <Select
+                      value={formData.meeting_mode}
+                      onValueChange={(value: 'direct' | 'facilitator') => 
+                        setFormData({ ...formData, meeting_mode: value })
+                      }
+                    >
+                      <SelectTrigger id="meeting_mode">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="direct">
+                          <div className="flex flex-col">
+                            <span>Direct Meeting</span>
+                            <span className="text-xs text-muted-foreground">Regular 1-on-1 booking</span>
+                          </div>
+                        </SelectItem>
+                        <SelectItem value="facilitator">
+                          <div className="flex flex-col">
+                            <span>Facilitator Meeting</span>
+                            <span className="text-xs text-muted-foreground">Coordinate between two participants</span>
+                          </div>
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  {formData.meeting_mode === 'facilitator' && (
+                    <div className="space-y-4 p-4 border rounded-lg bg-muted/30">
+                      <h4 className="font-medium">Facilitator Settings</h4>
+                      
+                      <div className="grid gap-4 md:grid-cols-2">
+                        <div>
+                          <Label htmlFor="participant_1_label">Participant 1 Label</Label>
+                          <Input
+                            id="participant_1_label"
+                            value={formData.facilitator_settings.participant_1_label}
+                            onChange={(e) => setFormData({
+                              ...formData,
+                              facilitator_settings: {
+                                ...formData.facilitator_settings,
+                                participant_1_label: e.target.value
+                              }
+                            })}
+                            placeholder="e.g., Candidate, Client"
+                          />
+                        </div>
+                        <div>
+                          <Label htmlFor="participant_2_label">Participant 2 Label</Label>
+                          <Input
+                            id="participant_2_label"
+                            value={formData.facilitator_settings.participant_2_label}
+                            onChange={(e) => setFormData({
+                              ...formData,
+                              facilitator_settings: {
+                                ...formData.facilitator_settings,
+                                participant_2_label: e.target.value
+                              }
+                            })}
+                            placeholder="e.g., Interviewer, Partner"
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <Label htmlFor="max_time_options">Maximum Time Options for Participant 1</Label>
+                        <Select
+                          value={String(formData.facilitator_settings.max_time_options)}
+                          onValueChange={(value) => setFormData({
+                            ...formData,
+                            facilitator_settings: {
+                              ...formData.facilitator_settings,
+                              max_time_options: parseInt(value)
+                            }
+                          })}
+                        >
+                          <SelectTrigger id="max_time_options">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {[1, 2, 3, 4, 5].map(num => (
+                              <SelectItem key={num} value={String(num)}>
+                                {num} time slot{num > 1 ? 's' : ''}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      <div className="space-y-4">
+                        <div className="flex items-center justify-between">
+                          <div className="space-y-0.5">
+                            <Label>Include Facilitator in Meeting</Label>
+                            <p className="text-sm text-muted-foreground">
+                              Add yourself as a meeting participant. When disabled, you can coordinate multiple meetings simultaneously.
+                            </p>
+                          </div>
+                          <Switch
+                            checked={formData.facilitator_settings.include_facilitator}
+                            onCheckedChange={(checked) => setFormData({
+                              ...formData,
+                              facilitator_settings: {
+                                ...formData.facilitator_settings,
+                                include_facilitator: checked
+                              }
+                            })}
+                          />
+                        </div>
+
+                        <div className="flex items-center justify-between">
+                          <div className="space-y-0.5">
+                            <Label>Allow Duration Selection</Label>
+                            <p className="text-sm text-muted-foreground">
+                              Let Participant 1 choose meeting duration
+                            </p>
+                          </div>
+                          <Switch
+                            checked={formData.facilitator_settings.allow_duration_selection}
+                            onCheckedChange={(checked) => setFormData({
+                              ...formData,
+                              facilitator_settings: {
+                                ...formData.facilitator_settings,
+                                allow_duration_selection: checked
+                              }
+                            })}
+                          />
+                        </div>
+
+                        <div className="flex items-center justify-between">
+                          <div className="space-y-0.5">
+                            <Label>Allow Location Selection</Label>
+                            <p className="text-sm text-muted-foreground">
+                              Let Participant 1 choose meeting location
+                            </p>
+                          </div>
+                          <Switch
+                            checked={formData.facilitator_settings.allow_location_selection}
+                            onCheckedChange={(checked) => setFormData({
+                              ...formData,
+                              facilitator_settings: {
+                                ...formData.facilitator_settings,
+                                allow_location_selection: checked
+                              }
+                            })}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  )}
 
                   <div className="grid gap-4 md:grid-cols-2">
                     <div>
@@ -900,6 +1111,12 @@ export function UnifiedSchedulingSettings({ canManageAll = false }: UnifiedSched
                           <Badge variant={item.is_active ? 'default' : 'secondary'}>
                             {item.is_active ? 'Active' : 'Inactive'}
                           </Badge>
+                          {item.meeting_mode === 'facilitator' && (
+                            <Badge variant="outline" className="bg-purple-50 text-purple-700 border-purple-300">
+                              <Users className="h-3 w-3 mr-1" />
+                              Facilitator
+                            </Badge>
+                          )}
                           {item.is_synced_to_template && (
                             <Badge variant="outline">
                               <LinkIcon className="h-3 w-3 mr-1" />
@@ -1014,13 +1231,24 @@ export function UnifiedSchedulingSettings({ canManageAll = false }: UnifiedSched
                     
                     {/* View Link Button (for non-templates) */}
                     {!item.is_template && item.booking_url && (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => window.open(item.booking_url, '_blank')}
-                      >
-                        <ExternalLink className="h-4 w-4" />
-                      </Button>
+                      item.meeting_mode === 'facilitator' ? (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => handleInitiateFacilitatorMeeting(item)}
+                          title="Initiate Facilitator Meeting"
+                        >
+                          <Send className="h-4 w-4" />
+                        </Button>
+                      ) : (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => window.open(item.booking_url, '_blank')}
+                        >
+                          <ExternalLink className="h-4 w-4" />
+                        </Button>
+                      )
                     )}
                   </div>
                 </div>
@@ -1030,5 +1258,26 @@ export function UnifiedSchedulingSettings({ canManageAll = false }: UnifiedSched
         )}
       </CardContent>
     </Card>
+    
+    {/* Facilitator Meeting Initiator Dialog */}
+    <Dialog open={showFacilitatorDialog} onOpenChange={setShowFacilitatorDialog}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Initiate Facilitator Meeting</DialogTitle>
+        </DialogHeader>
+        {facilitatorMeetingType && (
+          <FacilitatorMeetingInitiator
+            meetingTypeId={facilitatorMeetingType.id}
+            pipelineId={facilitatorMeetingType.pipeline}
+            meetingType={facilitatorMeetingType}
+            onClose={() => {
+              setShowFacilitatorDialog(false)
+              setFacilitatorMeetingType(null)
+            }}
+          />
+        )}
+      </DialogContent>
+    </Dialog>
+    </>
   )
 }

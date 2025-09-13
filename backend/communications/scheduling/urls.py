@@ -10,7 +10,8 @@ from .views import (
     MeetingTypeViewSet,
     SchedulingLinkViewSet,
     ScheduledMeetingViewSet,
-    AvailabilityOverrideViewSet
+    AvailabilityOverrideViewSet,
+    FacilitatorBookingViewSet
 )
 from .public_views import (
     PublicSchedulingLinkView,
@@ -24,6 +25,15 @@ from .public_views import (
     PublicMeetingTypeAvailabilityView,
     PublicMeetingTypeBookingView
 )
+from .facilitator_views import (
+    FacilitatorInitiateView,
+    FacilitatorParticipant1View,
+    FacilitatorBookingConfigView,
+    FacilitatorBookingAvailabilityView,
+    FacilitatorBookingStep1View,
+    FacilitatorBookingDetailView,
+    FacilitatorBookingStep2View
+)
 
 # Internal API router
 router = DefaultRouter()
@@ -32,6 +42,7 @@ router.register(r'meeting-types', MeetingTypeViewSet, basename='meeting-type')
 router.register(r'links', SchedulingLinkViewSet, basename='scheduling-link')
 router.register(r'meetings', ScheduledMeetingViewSet, basename='scheduled-meeting')
 router.register(r'overrides', AvailabilityOverrideViewSet, basename='availability-override')
+router.register(r'facilitator-bookings', FacilitatorBookingViewSet, basename='facilitator-booking')
 
 # URL patterns
 urlpatterns = [
@@ -53,4 +64,15 @@ urlpatterns = [
     path('public/meetings/<uuid:meeting_id>/status/', PublicMeetingStatusView.as_view(), name='public-meeting-status'),
     path('public/meetings/<uuid:meeting_id>/cancel/', PublicMeetingCancelView.as_view(), name='public-meeting-cancel'),
     path('public/meetings/<uuid:meeting_id>/reschedule/', PublicMeetingRescheduleView.as_view(), name='public-meeting-reschedule'),
+    
+    # Facilitator booking endpoints - NEW flow
+    path('facilitator/initiate/', FacilitatorInitiateView.as_view(), name='facilitator-initiate'),  # Dashboard endpoint
+    path('public/facilitator/<uuid:token>/participant1/', FacilitatorParticipant1View.as_view(), name='facilitator-p1'),  # P1 config
+    path('public/facilitator/<uuid:token>/', FacilitatorBookingDetailView.as_view(), name='facilitator-detail'),  # P2 view (keep existing)
+    path('public/facilitator/<uuid:token>/confirm/', FacilitatorBookingStep2View.as_view(), name='facilitator-step2'),  # P2 confirm (keep existing)
+    
+    # Legacy facilitator endpoints (to be deprecated)
+    path('public/facilitator/<str:username>/<str:slug>/config/', FacilitatorBookingConfigView.as_view(), name='facilitator-config'),
+    path('public/facilitator/<str:username>/<str:slug>/availability/', FacilitatorBookingAvailabilityView.as_view(), name='facilitator-availability'),
+    path('public/facilitator/<str:username>/<str:slug>/step1/', FacilitatorBookingStep1View.as_view(), name='facilitator-step1'),
 ]

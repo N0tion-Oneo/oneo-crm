@@ -28,6 +28,7 @@ import {
   Phone,
   MapPin,
   User,
+  Users,
   Mail,
   CheckCircle,
   XCircle,
@@ -35,6 +36,8 @@ import {
   ExternalLink,
   MoreVertical,
   CalendarX,
+  Copy,
+  Send,
 } from 'lucide-react'
 import {
   DropdownMenu,
@@ -47,6 +50,51 @@ import { useToast } from '@/hooks/use-toast'
 import api from '@/lib/api'
 import { format, parseISO, isAfter, isBefore, startOfDay, endOfDay } from 'date-fns'
 
+interface FacilitatorBooking {
+  id: string
+  meeting_type: {
+    id: string
+    name: string
+  }
+  facilitator: {
+    id: string
+    username: string
+    email: string
+  }
+  participant_1_email: string
+  participant_1_name: string
+  participant_1_phone?: string
+  participant_1_record_id?: string
+  participant_1_completed_at?: string
+  participant_1_message?: string
+  participant_2_email: string
+  participant_2_name: string
+  participant_2_phone?: string
+  participant_2_record_id?: string
+  participant_2_completed_at?: string
+  selected_duration_minutes?: number
+  selected_location_type?: string
+  selected_location_details?: any
+  selected_slots?: Array<{ start: string; end: string }>
+  final_slot?: { start: string; end: string }
+  status: 'pending_p1' | 'pending_p2' | 'completed' | 'expired' | 'cancelled'
+  participant_1_token: string
+  participant_2_token: string
+  expires_at: string
+  invitation_sent_at?: string
+  invitation_opened_at?: string
+  reminder_sent_at?: string
+  scheduled_meeting?: {
+    id: string
+    meeting_url?: string
+    meeting_location?: string
+    calendar_event_id?: string
+    status?: string
+  }
+  created_at: string
+  updated_at: string
+}
+
 interface ScheduledMeeting {
   id: string
   meeting_type: MeetingType
@@ -54,7 +102,7 @@ interface ScheduledMeeting {
   start_time: string
   end_time: string
   timezone: string
-  status: 'scheduled' | 'confirmed' | 'reminder_sent' | 'completed' | 'cancelled' | 'no_show'
+  status: 'scheduled' | 'confirmed' | 'reminder_sent' | 'completed' | 'cancelled' | 'no_show' | 'pending'
   meeting_url?: string
   meeting_location?: string
   participant: Participant
@@ -72,6 +120,8 @@ interface ScheduledMeeting {
   is_past?: boolean
   is_upcoming?: boolean
   is_in_progress?: boolean
+  is_facilitator_meeting?: boolean
+  facilitator_booking?: FacilitatorBooking
 }
 
 interface MeetingType {
@@ -90,6 +140,7 @@ interface Participant {
 
 const STATUS_BADGES = {
   scheduled: { label: 'Scheduled', variant: 'secondary' as const, icon: Calendar },
+  pending: { label: 'Pending', variant: 'secondary' as const, icon: Clock },
   confirmed: { label: 'Confirmed', variant: 'default' as const, icon: CheckCircle },
   reminder_sent: { label: 'Reminder Sent', variant: 'default' as const, icon: AlertCircle },
   completed: { label: 'Completed', variant: 'outline' as const, icon: CheckCircle },
@@ -102,6 +153,51 @@ const LOCATION_ICONS: Record<string, any> = {
   phone: Phone,
   in_person: MapPin,
   custom: Calendar,
+  zoom: Video,
+  google_meet: Video,
+  teams: Video,
+}
+
+const FACILITATOR_STATUS_CONFIG = {
+  pending_p1: { 
+    label: 'Awaiting Participant 1', 
+    variant: 'secondary' as const, 
+    icon: Clock,
+    description: 'Waiting for first participant to select meeting options'
+  },
+  pending_p2: { 
+    label: 'Awaiting Participant 2', 
+    variant: 'default' as const, 
+    icon: Clock,
+    description: 'Waiting for second participant to choose a time'
+  },
+  completed: { 
+    label: 'Completed', 
+    variant: 'outline' as const, 
+    icon: CheckCircle,
+    description: 'Meeting successfully scheduled'
+  },
+  expired: { 
+    label: 'Expired', 
+    variant: 'destructive' as const, 
+    icon: AlertCircle,
+    description: 'Booking link has expired'
+  },
+  cancelled: { 
+    label: 'Cancelled', 
+    variant: 'destructive' as const, 
+    icon: XCircle,
+    description: 'Booking was cancelled'
+  },
+}
+
+const LOCATION_DISPLAY: Record<string, string> = {
+  zoom: 'Zoom',
+  google_meet: 'Google Meet',
+  teams: 'Microsoft Teams',
+  phone: 'Phone Call',
+  in_person: 'In Person',
+  custom: 'Custom Location',
 }
 
 interface ScheduledMeetingsProps {
@@ -116,6 +212,8 @@ export default function ScheduledMeetings({ canManageAll = false }: ScheduledMee
   const [activeTab, setActiveTab] = useState('upcoming')
   const [selectedMeeting, setSelectedMeeting] = useState<ScheduledMeeting | null>(null)
   const [isDetailsOpen, setIsDetailsOpen] = useState(false)
+  const [isFacilitatorModalOpen, setIsFacilitatorModalOpen] = useState(false)
+  const [selectedFacilitatorBooking, setSelectedFacilitatorBooking] = useState<FacilitatorBooking | null>(null)
   const [filters, setFilters] = useState({
     status: 'all',
     dateRange: 'all',
@@ -179,8 +277,42 @@ export default function ScheduledMeetings({ canManageAll = false }: ScheduledMee
   }
 
   const openMeetingDetails = (meeting: ScheduledMeeting) => {
-    setSelectedMeeting(meeting)
-    setIsDetailsOpen(true)
+    if (meeting.is_facilitator_meeting && meeting.facilitator_booking) {
+      setSelectedFacilitatorBooking(meeting.facilitator_booking)
+      setIsFacilitatorModalOpen(true)
+    } else {
+      setSelectedMeeting(meeting)
+      setIsDetailsOpen(true)
+    }
+  }
+
+  const copyLink = (token: string, participant: 1 | 2) => {
+    const baseUrl = window.location.origin
+    const url = participant === 1 
+      ? `${baseUrl}/book/facilitator/${token}/participant1/`
+      : `${baseUrl}/book/facilitator/${token}/`
+    
+    navigator.clipboard.writeText(url)
+    toast({
+      title: 'Link copied!',
+      description: `Booking link for participant ${participant} copied to clipboard`,
+    })
+  }
+
+  const resendInvitation = async (booking: FacilitatorBooking) => {
+    try {
+      await api.post(`/api/v1/communications/scheduling/facilitator-bookings/${booking.id}/resend/`)
+      toast({
+        title: 'Invitation sent',
+        description: 'Booking invitation has been resent',
+      })
+    } catch (error: any) {
+      toast({
+        title: 'Failed to resend invitation',
+        description: error.response?.data?.error || 'Please try again',
+        variant: 'destructive'
+      })
+    }
   }
 
   const filterMeetings = (meetings: ScheduledMeeting[]) => {
@@ -361,20 +493,36 @@ export default function ScheduledMeetings({ canManageAll = false }: ScheduledMee
                               </div>
                             </div>
 
-                            <div className="flex items-center gap-4">
-                              <div className="flex items-center gap-2">
-                                <User className="h-4 w-4 text-muted-foreground" />
-                                <span className="text-sm font-medium">
-                                  {meeting.participant_detail?.name || meeting.participant?.name || 'Unknown'}
-                                </span>
+                            {meeting.is_facilitator_meeting && meeting.facilitator_booking ? (
+                              <div className="flex items-center gap-4">
+                                <div className="flex items-center gap-2">
+                                  <Users className="h-4 w-4 text-muted-foreground" />
+                                  <span className="text-sm font-medium">
+                                    {meeting.facilitator_booking.participant_1_name} & {meeting.facilitator_booking.participant_2_name}
+                                  </span>
+                                </div>
+                                {meeting.facilitator_booking.status && (
+                                  <Badge variant={FACILITATOR_STATUS_CONFIG[meeting.facilitator_booking.status]?.variant || 'default'}>
+                                    Facilitator: {FACILITATOR_STATUS_CONFIG[meeting.facilitator_booking.status]?.label || meeting.facilitator_booking.status}
+                                  </Badge>
+                                )}
                               </div>
-                              <div className="flex items-center gap-2">
-                                <Mail className="h-4 w-4 text-muted-foreground" />
-                                <span className="text-sm text-muted-foreground">
-                                  {meeting.participant_detail?.email || meeting.participant?.email || 'No email'}
-                                </span>
+                            ) : (
+                              <div className="flex items-center gap-4">
+                                <div className="flex items-center gap-2">
+                                  <User className="h-4 w-4 text-muted-foreground" />
+                                  <span className="text-sm font-medium">
+                                    {meeting.participant_detail?.name || meeting.participant?.name || 'Unknown'}
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <Mail className="h-4 w-4 text-muted-foreground" />
+                                  <span className="text-sm text-muted-foreground">
+                                    {meeting.participant_detail?.email || meeting.participant?.email || 'No email'}
+                                  </span>
+                                </div>
                               </div>
-                            </div>
+                            )}
                           </div>
                         </div>
 
@@ -595,6 +743,277 @@ export default function ScheduledMeetings({ canManageAll = false }: ScheduledMee
                   </Button>
                 )}
                 <Button variant="outline" onClick={() => setIsDetailsOpen(false)}>
+                  Close
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Facilitator Booking Details Dialog */}
+      <Dialog open={isFacilitatorModalOpen} onOpenChange={setIsFacilitatorModalOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Facilitator Booking Details</DialogTitle>
+            <DialogDescription>
+              {selectedFacilitatorBooking && FACILITATOR_STATUS_CONFIG[selectedFacilitatorBooking.status].description}
+            </DialogDescription>
+          </DialogHeader>
+          
+          {selectedFacilitatorBooking && (
+            <div className="space-y-6 mt-4">
+              {/* Status and Meeting Type */}
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-lg font-medium">{selectedFacilitatorBooking.meeting_type.name}</h3>
+                  <p className="text-sm text-muted-foreground">
+                    Facilitated by {selectedFacilitatorBooking.facilitator.username}
+                  </p>
+                </div>
+                <Badge variant={FACILITATOR_STATUS_CONFIG[selectedFacilitatorBooking.status].variant}>
+                  {FACILITATOR_STATUS_CONFIG[selectedFacilitatorBooking.status].label}
+                </Badge>
+              </div>
+
+              {/* Participants */}
+              <div className="space-y-4">
+                <h4 className="font-medium">Participants</h4>
+                
+                <div className="grid gap-4 md:grid-cols-2">
+                  <Card>
+                    <CardHeader className="pb-3">
+                      <CardTitle className="text-sm">Participant 1</CardTitle>
+                      {selectedFacilitatorBooking.participant_1_completed_at && (
+                        <Badge variant="outline" className="w-fit">
+                          <CheckCircle className="h-3 w-3 mr-1" />
+                          Completed
+                        </Badge>
+                      )}
+                    </CardHeader>
+                    <CardContent className="space-y-2">
+                      <div className="text-sm">
+                        <Users className="h-3 w-3 inline mr-1" />
+                        {selectedFacilitatorBooking.participant_1_name}
+                      </div>
+                      <div className="text-sm">
+                        <Mail className="h-3 w-3 inline mr-1" />
+                        {selectedFacilitatorBooking.participant_1_email}
+                      </div>
+                      {selectedFacilitatorBooking.participant_1_phone && (
+                        <div className="text-sm">
+                          <Phone className="h-3 w-3 inline mr-1" />
+                          {selectedFacilitatorBooking.participant_1_phone}
+                        </div>
+                      )}
+                      {selectedFacilitatorBooking.status === 'pending_p1' && (
+                        <div className="pt-2 space-y-2">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="w-full"
+                            onClick={() => copyLink(selectedFacilitatorBooking.participant_1_token, 1)}
+                          >
+                            <Copy className="h-3 w-3 mr-1" />
+                            Copy Booking Link
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="w-full"
+                            onClick={() => resendInvitation(selectedFacilitatorBooking)}
+                          >
+                            <Send className="h-3 w-3 mr-1" />
+                            Resend Invitation
+                          </Button>
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+
+                  <Card>
+                    <CardHeader className="pb-3">
+                      <CardTitle className="text-sm">Participant 2</CardTitle>
+                      {selectedFacilitatorBooking.participant_2_completed_at && (
+                        <Badge variant="outline" className="w-fit">
+                          <CheckCircle className="h-3 w-3 mr-1" />
+                          Completed
+                        </Badge>
+                      )}
+                    </CardHeader>
+                    <CardContent className="space-y-2">
+                      <div className="text-sm">
+                        <Users className="h-3 w-3 inline mr-1" />
+                        {selectedFacilitatorBooking.participant_2_name}
+                      </div>
+                      <div className="text-sm">
+                        <Mail className="h-3 w-3 inline mr-1" />
+                        {selectedFacilitatorBooking.participant_2_email}
+                      </div>
+                      {selectedFacilitatorBooking.participant_2_phone && (
+                        <div className="text-sm">
+                          <Phone className="h-3 w-3 inline mr-1" />
+                          {selectedFacilitatorBooking.participant_2_phone}
+                        </div>
+                      )}
+                      {selectedFacilitatorBooking.status === 'pending_p2' && (
+                        <div className="pt-2 space-y-2">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="w-full"
+                            onClick={() => copyLink(selectedFacilitatorBooking.participant_2_token, 2)}
+                          >
+                            <Copy className="h-3 w-3 mr-1" />
+                            Copy Booking Link
+                          </Button>
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                </div>
+              </div>
+
+              {/* Meeting Options (if P1 completed) */}
+              {selectedFacilitatorBooking.selected_duration_minutes && (
+                <div className="space-y-3">
+                  <h4 className="font-medium">Selected Meeting Options</h4>
+                  <Card>
+                    <CardContent className="pt-4 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <Clock className="h-4 w-4 text-muted-foreground" />
+                          <span className="text-sm">Duration</span>
+                        </div>
+                        <span className="text-sm font-medium">
+                          {selectedFacilitatorBooking.selected_duration_minutes} minutes
+                        </span>
+                      </div>
+                      {selectedFacilitatorBooking.selected_location_type && (
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <MapPin className="h-4 w-4 text-muted-foreground" />
+                            <span className="text-sm">Location</span>
+                          </div>
+                          <span className="text-sm font-medium">
+                            {LOCATION_DISPLAY[selectedFacilitatorBooking.selected_location_type]}
+                          </span>
+                        </div>
+                      )}
+                      {selectedFacilitatorBooking.participant_1_message && (
+                        <div>
+                          <p className="text-sm text-muted-foreground mb-1">Message from Participant 1:</p>
+                          <p className="text-sm italic">{selectedFacilitatorBooking.participant_1_message}</p>
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                </div>
+              )}
+
+              {/* Available Time Slots (if P1 completed) */}
+              {selectedFacilitatorBooking.selected_slots && selectedFacilitatorBooking.selected_slots.length > 0 && (
+                <div className="space-y-3">
+                  <h4 className="font-medium">Available Time Slots</h4>
+                  <div className="grid gap-2">
+                    {selectedFacilitatorBooking.selected_slots.map((slot, index) => (
+                      <Card key={index}>
+                        <CardContent className="py-2 px-4">
+                          <div className="flex items-center gap-2">
+                            <Calendar className="h-4 w-4 text-muted-foreground" />
+                            <span className="text-sm">
+                              {format(parseISO(slot.start), 'MMM d, yyyy h:mm a')} - {format(parseISO(slot.end), 'h:mm a')}
+                            </span>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Final Scheduled Time (if completed) */}
+              {selectedFacilitatorBooking.final_slot && (
+                <div className="space-y-3">
+                  <h4 className="font-medium">Scheduled Meeting</h4>
+                  <Card>
+                    <CardContent className="pt-4 space-y-2">
+                      <div className="flex items-center gap-2">
+                        <CheckCircle className="h-5 w-5 text-green-500" />
+                        <span className="font-medium">Meeting Confirmed</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Calendar className="h-4 w-4 text-muted-foreground" />
+                        <span className="text-sm">
+                          {format(parseISO(selectedFacilitatorBooking.final_slot.start), 'MMMM d, yyyy')}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Clock className="h-4 w-4 text-muted-foreground" />
+                        <span className="text-sm">
+                          {format(parseISO(selectedFacilitatorBooking.final_slot.start), 'h:mm a')} - 
+                          {format(parseISO(selectedFacilitatorBooking.final_slot.end), 'h:mm a')}
+                        </span>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </div>
+              )}
+
+              {/* Meeting Link (if available) */}
+              {selectedFacilitatorBooking.scheduled_meeting?.meeting_url && (
+                <div className="space-y-3">
+                  <h4 className="font-medium">Meeting Link</h4>
+                  <Card>
+                    <CardContent className="pt-4">
+                      <div className="flex items-center gap-2">
+                        <Video className="h-4 w-4 text-muted-foreground" />
+                        <div className="flex-1">
+                          <Input 
+                            value={selectedFacilitatorBooking.scheduled_meeting.meeting_url} 
+                            readOnly 
+                            className="font-mono text-sm"
+                          />
+                        </div>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => {
+                            navigator.clipboard.writeText(selectedFacilitatorBooking.scheduled_meeting?.meeting_url || '')
+                            toast({
+                              title: 'Meeting link copied!',
+                              description: 'The meeting link has been copied to your clipboard',
+                            })
+                          }}
+                        >
+                          <Copy className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="default"
+                          onClick={() => window.open(selectedFacilitatorBooking.scheduled_meeting?.meeting_url, '_blank')}
+                        >
+                          <ExternalLink className="h-4 w-4 mr-1" />
+                          Join
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </div>
+              )}
+
+              {/* Expiry Information */}
+              {selectedFacilitatorBooking.status !== 'completed' && selectedFacilitatorBooking.status !== 'cancelled' && (
+                <div className="flex items-center gap-2 p-3 bg-muted rounded-lg">
+                  <AlertCircle className="h-4 w-4 text-muted-foreground" />
+                  <span className="text-sm text-muted-foreground">
+                    This booking expires on {format(parseISO(selectedFacilitatorBooking.expires_at), 'MMMM d, yyyy at h:mm a')}
+                  </span>
+                </div>
+              )}
+
+              <div className="flex justify-end gap-2 pt-4 border-t">
+                <Button variant="outline" onClick={() => setIsFacilitatorModalOpen(false)}>
                   Close
                 </Button>
               </div>

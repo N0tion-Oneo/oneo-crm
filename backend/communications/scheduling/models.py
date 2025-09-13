@@ -141,6 +141,36 @@ class MeetingType(models.Model):
     slug = models.SlugField(max_length=100, help_text="Clean URL for this meeting type")
     description = models.TextField(blank=True)
     
+    # Meeting Mode
+    meeting_mode = models.CharField(
+        max_length=20,
+        choices=[
+            ('direct', 'Direct Meeting'),
+            ('facilitator', 'Facilitator Meeting')
+        ],
+        default='direct',
+        help_text="Direct: Regular 1-on-1 booking. Facilitator: Coordinate meeting between two other people"
+    )
+    
+    # Facilitator Settings (only used when meeting_mode='facilitator')
+    facilitator_settings = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Settings for facilitator meeting mode"
+    )
+    # facilitator_settings structure:
+    # {
+    #     "max_time_options": 3,  # Max slots P1 can select
+    #     "participant_1_label": "First Participant",
+    #     "participant_2_label": "Second Participant",
+    #     "include_facilitator": true,  # Add facilitator to meeting
+    #     "allow_duration_selection": true,
+    #     "duration_options": [30, 60, 90],  # Minutes
+    #     "allow_location_selection": true,
+    #     "location_options": ["google_meet", "teams", "in_person"],
+    #     "link_expiry_hours": 72
+    # }
+    
     # Template fields
     is_template = models.BooleanField(
         default=False,
@@ -770,3 +800,114 @@ class AvailabilityOverride(models.Model):
     
     def __str__(self):
         return f"{self.profile.user.username} - {self.date} ({self.override_type})"
+
+
+class FacilitatorBooking(models.Model):
+    """
+    Tracks the two-step booking process for facilitator meetings
+    where the facilitator coordinates between two participants
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    
+    # Meeting type and facilitator
+    meeting_type = models.ForeignKey(MeetingType, on_delete=models.CASCADE, related_name='facilitator_bookings')
+    facilitator = models.ForeignKey(User, on_delete=models.CASCADE, related_name='facilitated_bookings')
+    
+    # Participant records from pipeline
+    participant_1_record_id = models.CharField(max_length=255, null=True, blank=True)  # Record ID from pipeline
+    participant_1_email = models.EmailField()  # Cached from record
+    participant_1_name = models.CharField(max_length=255)  # Cached from record
+    participant_1_phone = models.CharField(max_length=50, blank=True)  # Cached from record
+    participant_1_data = models.JSONField(default=dict, blank=True)  # Additional data from record
+    
+    # Meeting parameters selected by Participant 1 (null until P1 completes)
+    selected_duration_minutes = models.IntegerField(null=True, blank=True)
+    selected_location_type = models.CharField(
+        max_length=50,
+        null=True,
+        blank=True,
+        choices=[
+            ('zoom', 'Zoom'),
+            ('google_meet', 'Google Meet'),
+            ('teams', 'Microsoft Teams'),
+            ('phone', 'Phone Call'),
+            ('in_person', 'In Person'),
+            ('custom', 'Custom Location')
+        ]
+    )
+    selected_location_details = models.JSONField(default=dict, blank=True)  # Address for in-person, etc.
+    
+    # Selected time slots by Participant 1 (adjusted for chosen duration)
+    selected_slots = models.JSONField(default=list)  # List of {start, end} objects
+    participant_1_completed_at = models.DateTimeField(null=True, blank=True)
+    participant_1_message = models.TextField(blank=True)  # Optional message from P1 to P2
+    
+    # Participant 2 information
+    participant_2_record_id = models.CharField(max_length=255, null=True, blank=True)  # Record ID from pipeline
+    participant_2_email = models.EmailField()  # Cached from record
+    participant_2_name = models.CharField(max_length=255, blank=True)  # Cached from record
+    participant_2_phone = models.CharField(max_length=50, blank=True)  # Cached from record
+    participant_2_data = models.JSONField(null=True, blank=True)  # Additional data from record
+    
+    # Final selection
+    final_slot = models.JSONField(null=True, blank=True)  # The slot P2 selected
+    participant_2_completed_at = models.DateTimeField(null=True, blank=True)
+    
+    # Booking status
+    status = models.CharField(
+        max_length=20,
+        choices=[
+            ('pending_p1', 'Pending Participant 1'),  # Initial state after facilitator creates
+            ('pending_p2', 'Pending Participant 2'),  # After P1 selects times
+            ('completed', 'Completed'),  # After P2 confirms
+            ('expired', 'Expired'),
+            ('cancelled', 'Cancelled')
+        ],
+        default='pending_p1'
+    )
+    
+    # Unique tokens for participant booking links
+    participant_1_token = models.UUIDField(default=uuid.uuid4, unique=True)
+    participant_2_token = models.UUIDField(default=uuid.uuid4, unique=True)
+    unique_token = models.UUIDField(default=uuid.uuid4, unique=True)  # Keep for backward compatibility
+    expires_at = models.DateTimeField()
+    
+    # Communication tracking
+    invitation_sent_at = models.DateTimeField(null=True, blank=True)
+    invitation_opened_at = models.DateTimeField(null=True, blank=True)
+    reminder_sent_at = models.DateTimeField(null=True, blank=True)
+    
+    # Resulting scheduled meeting
+    scheduled_meeting = models.OneToOneField(
+        ScheduledMeeting,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='facilitator_booking'
+    )
+    
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        indexes = [
+            models.Index(fields=['unique_token']),
+            models.Index(fields=['meeting_type', 'status']),
+            models.Index(fields=['expires_at']),
+            models.Index(fields=['facilitator']),
+        ]
+    
+    def __str__(self):
+        return f"Facilitator Booking: {self.participant_1_name} & {self.participant_2_email} - {self.status}"
+    
+    def is_expired(self):
+        """Check if the booking link has expired"""
+        return timezone.now() > self.expires_at
+    
+    def get_shareable_link(self, request=None):
+        """Generate the shareable link for Participant 2"""
+        if request:
+            return f"{request.scheme}://{request.get_host()}/book/facilitator/{self.unique_token}"
+        from django.conf import settings
+        return f"{settings.FRONTEND_URL}/book/facilitator/{self.unique_token}"

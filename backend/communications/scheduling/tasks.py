@@ -4,10 +4,12 @@ Celery tasks for scheduling functionality
 import logging
 from celery import shared_task
 from django.conf import settings
+from django.core.mail import send_mail
+from django.template.loader import render_to_string
 from asgiref.sync import async_to_sync
 from datetime import datetime, timezone
 
-from .models import ScheduledMeeting, SchedulingProfile
+from .models import ScheduledMeeting, SchedulingProfile, FacilitatorBooking
 from communications.unipile.core.client import UnipileClient
 from communications.unipile.clients.calendar import UnipileCalendarClient
 
@@ -143,38 +145,100 @@ async def create_calendar_event_async(client: UnipileClient, account_id: str, me
         logger.error(f"Failed to get calendars - Response: {calendars_response}")
         return
     
-    # Find primary calendar
-    primary_calendar = None
-    for calendar in calendars_response['data']:
-        if calendar.get('is_primary'):
-            primary_calendar = calendar['id']
-            break
+    # Determine which calendar to use
+    target_calendar = None
     
-    if not primary_calendar and calendars_response['data']:
-        # Use first calendar if no primary
-        primary_calendar = calendars_response['data'][0]['id']
+    # Check if meeting type has a specific calendar configured
+    if meeting.meeting_type and meeting.meeting_type.calendar_id:
+        target_calendar = meeting.meeting_type.calendar_id
+        logger.info(f"Using meeting type's configured calendar: {target_calendar}")
+    else:
+        # Find primary calendar as fallback
+        for calendar in calendars_response['data']:
+            if calendar.get('is_primary'):
+                target_calendar = calendar['id']
+                break
+        
+        if not target_calendar and calendars_response['data']:
+            # Use first calendar if no primary
+            target_calendar = calendars_response['data'][0]['id']
     
-    if not primary_calendar:
+    if not target_calendar:
         logger.error("No calendar found")
         return
     
-    logger.info(f"Using primary calendar: {primary_calendar}")
+    logger.info(f"Using calendar: {target_calendar}")
     
     # Create the event
     try:
         logger.info(f"Creating calendar event for meeting {meeting.id}")
         
-        # Determine conference provider based on location type
-        conference_provider = None
-        if meeting.meeting_type.location_type == 'google_meet':
-            conference_provider = 'google_meet'
-            logger.info("Adding Google Meet conference to calendar event")
-        elif meeting.meeting_type.location_type == 'teams':
-            conference_provider = 'teams'
-            logger.info("Adding Microsoft Teams conference to calendar event")
+        # Check if this is a facilitator meeting
+        is_facilitator_meeting = meeting.booking_data.get('facilitator_booking_id') is not None
         
-        # Prepare description
-        description = f"""Meeting booked via {meeting.meeting_type.name}
+        # Determine conference provider
+        conference_provider = None
+        if is_facilitator_meeting:
+            # For facilitator meetings, check booking_data for conference provider
+            provider = meeting.booking_data.get('conference_provider', '')
+            if provider == 'google_meet':
+                conference_provider = 'google_meet'
+                logger.info("Adding Google Meet conference to facilitator meeting")
+            elif provider == 'teams':
+                conference_provider = 'teams'
+                logger.info("Adding Microsoft Teams conference to facilitator meeting")
+        else:
+            # For direct bookings, use meeting type location type
+            if meeting.meeting_type.location_type == 'google_meet':
+                conference_provider = 'google_meet'
+                logger.info("Adding Google Meet conference to calendar event")
+            elif meeting.meeting_type.location_type == 'teams':
+                conference_provider = 'teams'
+                logger.info("Adding Microsoft Teams conference to calendar event")
+        
+        # Prepare attendees
+        attendees = []
+        if is_facilitator_meeting and 'attendees' in meeting.booking_data:
+            # Use the attendees list from booking_data for facilitator meetings
+            attendees = meeting.booking_data['attendees']
+            logger.info(f"Facilitator meeting with attendees: {attendees}")
+        elif meeting.participant and meeting.participant.email:
+            # For direct bookings, just the participant
+            attendees = [meeting.participant.email]
+        
+        # Prepare description and title
+        if is_facilitator_meeting:
+            # Get facilitator booking details if available
+            from .models import FacilitatorBooking
+            facilitator_booking = None
+            try:
+                booking_id = meeting.booking_data.get('facilitator_booking_id')
+                if booking_id:
+                    facilitator_booking = await FacilitatorBooking.objects.aget(id=booking_id)
+            except:
+                pass
+            
+            if facilitator_booking:
+                title = f"{meeting.meeting_type.name} - {facilitator_booking.participant_1_name} & {facilitator_booking.participant_2_name}"
+                description = f"""Facilitator Meeting
+
+Participants:
+- {facilitator_booking.participant_1_name} ({facilitator_booking.participant_1_email})
+- {facilitator_booking.participant_2_name} ({facilitator_booking.participant_2_email})
+
+Meeting Type: {meeting.meeting_type.name}
+Duration: {facilitator_booking.selected_duration_minutes} minutes
+
+{meeting.meeting_type.description or ''}
+"""
+            else:
+                # Fallback if we can't get the booking
+                title = meeting.meeting_type.name
+                description = f"Meeting booked via {meeting.meeting_type.name}"
+        else:
+            # Direct booking
+            title = meeting.meeting_type.name
+            description = f"""Meeting booked via {meeting.meeting_type.name}
         
 Participant: {meeting.participant.name}
 Email: {meeting.participant.email}
@@ -187,13 +251,13 @@ Notes: {meeting.booking_data.get('notes', 'No additional notes')}
         
         event_response = await calendar_client.create_event(
             account_id=account_id,
-            calendar_id=primary_calendar,
-            title=meeting.meeting_type.name,
+            calendar_id=target_calendar,
+            title=title,
             start_time=meeting.start_time.isoformat(),
             end_time=meeting.end_time.isoformat(),
             description=description,
             location=meeting.meeting_location or meeting.meeting_url or '',
-            attendees=[meeting.participant.email] if meeting.participant.email else None,
+            attendees=attendees if attendees else None,
             conference_provider=conference_provider  # This will auto-create conference if provider is set
         )
         
@@ -226,8 +290,8 @@ Notes: {meeting.booking_data.get('notes', 'No additional notes')}
         
         if event_id:
             # Update meeting with calendar event ID
-            # Store the event ID in the booking_data JSON field since external_calendar_event_id doesn't exist
-            meeting.booking_data['calendar_event_id'] = event_id
+            meeting.calendar_event_id = event_id  # Save to the actual field
+            meeting.booking_data['calendar_event_id'] = event_id  # Also save to booking_data for reference
             
             # If we created a conference, fetch the event to get the conference URL
             if conference_provider:
@@ -259,13 +323,255 @@ Notes: {meeting.booking_data.get('notes', 'No additional notes')}
                 except Exception as e:
                     logger.warning(f"Could not fetch conference URL: {e}")
             
-            await meeting.asave(update_fields=['booking_data', 'meeting_url'])
+            from asgiref.sync import sync_to_async
+            await sync_to_async(meeting.save)(update_fields=['booking_data', 'meeting_url', 'calendar_event_id'])
             logger.info(f"✅ Calendar event created successfully: {event_id}")
         else:
             logger.error(f"❌ Failed to create calendar event: {event_response}")
             
     except Exception as e:
         logger.error(f"Error creating calendar event: {e}")
+
+
+@shared_task(bind=True)
+def send_facilitator_p1_invitation(self, booking_id: str, tenant_schema: str = None):
+    """
+    Send invitation email to Participant 1 with configuration link
+    
+    Args:
+        booking_id: UUID of the FacilitatorBooking
+        tenant_schema: Tenant schema name
+    """
+    try:
+        # Get tenant schema from task headers if not provided
+        from django_tenants.utils import schema_context
+        
+        if not tenant_schema:
+            if hasattr(self.request, 'headers') and self.request.headers:
+                tenant_schema = self.request.headers.get('tenant_schema')
+            if not tenant_schema:
+                tenant_schema = getattr(self.request, 'tenant_schema', None)
+        
+        if not tenant_schema or tenant_schema == 'public':
+            logger.error(f"No tenant schema found for task {self.request.id}")
+            raise ValueError("Tenant schema required for participant invitation")
+        
+        # Execute in tenant context
+        with schema_context(tenant_schema):
+            from .models import FacilitatorBooking
+            booking = FacilitatorBooking.objects.select_related(
+                'meeting_type',
+                'facilitator'
+            ).get(id=booking_id)
+            
+            # Build the configuration link
+            # TODO: Use proper domain configuration
+            base_url = settings.FRONTEND_URL if hasattr(settings, 'FRONTEND_URL') else 'http://localhost:3000'
+            config_url = f"{base_url}/book/facilitator/{booking.participant_1_token}/participant1/"
+            
+            # Email content
+            subject = f"Configure meeting with {booking.participant_2_name or booking.participant_2_email}"
+            
+            body = f"""Hi {booking.participant_1_name or 'there'},
+
+{booking.facilitator.get_full_name() or booking.facilitator.username} has initiated a meeting between you and {booking.participant_2_name or booking.participant_2_email}.
+
+You're invited to:
+1. Choose the meeting duration
+2. Select the meeting location type
+3. Propose several time options
+
+Please click the link below to configure the meeting:
+{config_url}
+
+This link expires on {booking.expires_at.strftime('%B %d, %Y at %I:%M %p')}.
+
+Once you've made your selections, {booking.participant_2_name or booking.participant_2_email} will receive a link to choose from your proposed times.
+
+Best regards,
+{booking.facilitator.get_full_name() or booking.facilitator.username}"""
+            
+            # Send the actual email
+            from django.core.mail import send_mail
+            
+            send_mail(
+                subject=subject,
+                message=body,
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                recipient_list=[booking.participant_1_email],
+                fail_silently=False,
+            )
+            
+            logger.info(f"Sent P1 invitation email to {booking.participant_1_email}")
+            logger.info(f"Configuration URL: {config_url}")
+            
+    except Exception as e:
+        logger.error(f"Failed to send participant 1 invitation: {e}")
+        raise self.retry(exc=e, countdown=60)
+
+
+@shared_task(bind=True)
+def send_facilitator_p2_invitation(self, booking_id: str, tenant_schema: str = None):
+    """
+    Send invitation email to Participant 2 with booking link
+    
+    Args:
+        booking_id: UUID of the FacilitatorBooking
+        tenant_schema: Tenant schema name
+    """
+    try:
+        # Get tenant schema from task headers if not provided
+        from django_tenants.utils import schema_context
+        
+        if not tenant_schema:
+            if hasattr(self.request, 'headers') and self.request.headers:
+                tenant_schema = self.request.headers.get('tenant_schema')
+            if not tenant_schema:
+                tenant_schema = getattr(self.request, 'tenant_schema', None)
+        
+        if not tenant_schema or tenant_schema == 'public':
+            logger.error(f"No tenant schema found for task {self.request.id}")
+            raise ValueError("Tenant schema required for participant invitation")
+        
+        # Execute in tenant context
+        with schema_context(tenant_schema):
+            from .models import FacilitatorBooking
+            booking = FacilitatorBooking.objects.select_related(
+                'meeting_type',
+                'facilitator'
+            ).get(id=booking_id)
+            
+            # Format the email content
+            facilitator_settings = booking.meeting_type.facilitator_settings or {}
+            location_display = {
+                'google_meet': 'Google Meet',
+                'teams': 'Microsoft Teams',
+                'zoom': 'Zoom',
+                'phone': 'Phone Call',
+                'in_person': 'In Person',
+                'custom': 'Custom Location'
+            }.get(booking.selected_location_type, booking.selected_location_type)
+            
+            # Format time slots
+            slots_text = "\n".join([
+                f"• {slot['start']} - {slot['end']}"
+                for slot in booking.selected_slots
+            ])
+            
+            # Email content
+            subject = f"Select a meeting time with {booking.participant_1_name}"
+            
+            body = f"""Hi {booking.participant_2_name or 'there'},
+
+{booking.participant_1_name} has proposed a meeting with the following details:
+
+📅 Duration: {booking.selected_duration_minutes} minutes
+📍 Location: {location_display}
+{f'📍 Address: {booking.selected_location_details.get("address")}' if booking.selected_location_type == 'in_person' else ''}
+{f'💬 Message: {booking.participant_1_message}' if booking.participant_1_message else ''}
+
+Please select from these time options:
+{slots_text}
+
+Click here to select a time: {booking.get_shareable_link()}
+
+This link expires on {booking.expires_at.strftime('%B %d, %Y at %I:%M %p')}.
+
+Best regards,
+{booking.facilitator.get_full_name() or booking.facilitator.username}
+"""
+            
+            # Send the actual email
+            from django.core.mail import send_mail
+            
+            send_mail(
+                subject=subject,
+                message=body,
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                recipient_list=[booking.participant_2_email],
+                fail_silently=False,
+            )
+            
+            logger.info(f"Sent P2 invitation email to {booking.participant_2_email}")
+            logger.info(f"Booking link: {booking.get_shareable_link()}")
+            
+    except Exception as e:
+        logger.error(f"Failed to send participant 2 invitation: {e}")
+        raise self.retry(exc=e, countdown=60)
+
+
+@shared_task(bind=True)
+def send_facilitator_confirmations(self, meeting_id: str, tenant_schema: str = None):
+    """
+    Send confirmation emails to all parties after successful facilitator booking
+    
+    Args:
+        meeting_id: UUID of the ScheduledMeeting
+        tenant_schema: Tenant schema name
+    """
+    try:
+        # Get tenant schema from task headers if not provided
+        from django_tenants.utils import schema_context
+        
+        if not tenant_schema:
+            if hasattr(self.request, 'headers') and self.request.headers:
+                tenant_schema = self.request.headers.get('tenant_schema')
+            if not tenant_schema:
+                tenant_schema = getattr(self.request, 'tenant_schema', None)
+        
+        if not tenant_schema or tenant_schema == 'public':
+            logger.error(f"No tenant schema found for task {self.request.id}")
+            raise ValueError("Tenant schema required for confirmations")
+        
+        # Execute in tenant context
+        with schema_context(tenant_schema):
+            from .models import ScheduledMeeting, FacilitatorBooking
+            meeting = ScheduledMeeting.objects.select_related(
+                'meeting_type',
+                'host'
+            ).get(id=meeting_id)
+            
+            # Get the facilitator booking
+            booking_id = meeting.booking_data.get('facilitator_booking_id')
+            if booking_id:
+                booking = FacilitatorBooking.objects.get(id=booking_id)
+                
+                # Send to Participant 1
+                subject_p1 = "✅ Meeting Confirmed"
+                body_p1 = f"""Your meeting with {booking.participant_2_name} is scheduled for:
+{meeting.start_time.strftime('%B %d, %Y at %I:%M %p')} - {meeting.end_time.strftime('%I:%M %p')}
+Location: {booking.selected_location_type}
+
+The calendar invitation has been sent to your email."""
+                
+                # Send to Participant 2
+                subject_p2 = "✅ Meeting Confirmed"
+                body_p2 = f"""Your meeting with {booking.participant_1_name} is scheduled for:
+{meeting.start_time.strftime('%B %d, %Y at %I:%M %p')} - {meeting.end_time.strftime('%I:%M %p')}
+Location: {booking.selected_location_type}
+
+The calendar invitation has been sent to your email."""
+                
+                # Send to Facilitator
+                subject_facilitator = "✅ Meeting Successfully Scheduled"
+                body_facilitator = f"""You've facilitated a meeting between:
+- {booking.participant_1_name} ({booking.participant_1_email})
+- {booking.participant_2_name} ({booking.participant_2_email})
+
+Time: {meeting.start_time.strftime('%B %d, %Y at %I:%M %p')} - {meeting.end_time.strftime('%I:%M %p')}
+Location: {booking.selected_location_type}
+
+{'You are included in this meeting.' if booking.meeting_type.facilitator_settings.get('include_facilitator', True) else 'You are not included in this meeting.'}"""
+                
+                # TODO: Implement actual email sending
+                logger.info(f"Would send confirmation emails")
+                logger.info(f"P1: {booking.participant_1_email} - {subject_p1}")
+                logger.info(f"P2: {booking.participant_2_email} - {subject_p2}")
+                logger.info(f"Facilitator: {booking.facilitator.email} - {subject_facilitator}")
+            
+    except Exception as e:
+        logger.error(f"Failed to send facilitator confirmations: {e}")
+        raise self.retry(exc=e, countdown=60)
 
 
 @shared_task(bind=True)

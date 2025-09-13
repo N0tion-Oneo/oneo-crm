@@ -21,6 +21,8 @@ if (typeof window !== 'undefined') {
 interface MeetingType {
   name: string
   description: string
+  meeting_mode?: 'direct' | 'facilitator'
+  facilitator_settings?: any
   duration_minutes: number
   location_type: string
   booking_form_config: any
@@ -602,6 +604,24 @@ export default function BookingPage() {
               {error || 'This meeting type is not available.'}
             </p>
           </CardHeader>
+        </Card>
+      </div>
+    )
+  }
+
+  // Facilitator meetings should not be accessed via public booking flow
+  if ('meeting_mode' in meetingData && meetingData.meeting_mode === 'facilitator') {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
+        <Card className="max-w-md">
+          <CardContent className="pt-6">
+            <div className="text-center space-y-2">
+              <h3 className="font-semibold">Facilitator Meeting</h3>
+              <p className="text-sm text-muted-foreground">
+                This is a facilitator meeting type. Meetings must be initiated by the facilitator from the dashboard.
+              </p>
+            </div>
+          </CardContent>
         </Card>
       </div>
     )

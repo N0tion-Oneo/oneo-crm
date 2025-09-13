@@ -13,7 +13,7 @@ from pipelines.serializers import PipelineSerializer
 from communications.serializers import ParticipantSerializer, ConversationListSerializer
 from .models import (
     SchedulingProfile, MeetingType, SchedulingLink,
-    ScheduledMeeting, AvailabilityOverride
+    ScheduledMeeting, AvailabilityOverride, FacilitatorBooking
 )
 
 User = get_user_model()
@@ -135,6 +135,7 @@ class MeetingTypeSerializer(serializers.ModelSerializer):
         model = MeetingType
         fields = [
             'id', 'user', 'name', 'slug', 'description',
+            'meeting_mode', 'facilitator_settings',
             'is_template', 'template_type', 'template_source', 'template_source_name', 'is_synced_to_template',
             'created_for_org', 'last_synced_at',
             'calendar_connection_display', 'calendar_id', 'calendar_name',
@@ -283,6 +284,53 @@ class SchedulingLinkSerializer(serializers.ModelSerializer):
         return value
 
 
+class FacilitatorBookingSerializer(serializers.ModelSerializer):
+    """Serializer for facilitator bookings"""
+    meeting_type = serializers.SerializerMethodField()
+    facilitator = serializers.SerializerMethodField()
+    scheduled_meeting = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = FacilitatorBooking
+        fields = [
+            'id', 'meeting_type', 'facilitator',
+            'participant_1_email', 'participant_1_name', 'participant_1_phone',
+            'participant_1_record_id', 'participant_1_completed_at', 'participant_1_message',
+            'participant_2_email', 'participant_2_name', 'participant_2_phone',
+            'participant_2_record_id', 'participant_2_completed_at',
+            'selected_duration_minutes', 'selected_location_type', 'selected_location_details',
+            'selected_slots', 'final_slot', 'status',
+            'participant_1_token', 'participant_2_token',
+            'expires_at', 'invitation_sent_at', 'invitation_opened_at', 'reminder_sent_at',
+            'scheduled_meeting', 'created_at', 'updated_at'
+        ]
+    
+    def get_meeting_type(self, obj):
+        return {
+            'id': str(obj.meeting_type.id),
+            'name': obj.meeting_type.name
+        }
+    
+    def get_facilitator(self, obj):
+        return {
+            'id': str(obj.facilitator.id),
+            'username': obj.facilitator.username,
+            'email': obj.facilitator.email
+        }
+    
+    def get_scheduled_meeting(self, obj):
+        """Return scheduled meeting details if exists"""
+        if obj.scheduled_meeting:
+            return {
+                'id': str(obj.scheduled_meeting.id),
+                'meeting_url': obj.scheduled_meeting.meeting_url,
+                'meeting_location': obj.scheduled_meeting.meeting_location,
+                'calendar_event_id': obj.scheduled_meeting.calendar_event_id,
+                'status': obj.scheduled_meeting.status
+            }
+        return None
+
+
 class ScheduledMeetingSerializer(serializers.ModelSerializer):
     """Serializer for scheduled meetings"""
     meeting_type_name = serializers.CharField(source='meeting_type.name', read_only=True)
@@ -294,6 +342,8 @@ class ScheduledMeetingSerializer(serializers.ModelSerializer):
     is_past = serializers.BooleanField(read_only=True)
     is_upcoming = serializers.BooleanField(read_only=True)
     is_in_progress = serializers.BooleanField(read_only=True)
+    is_facilitator_meeting = serializers.SerializerMethodField()
+    facilitator_booking = FacilitatorBookingSerializer(read_only=True)
     
     class Meta:
         model = ScheduledMeeting
@@ -309,6 +359,7 @@ class ScheduledMeetingSerializer(serializers.ModelSerializer):
             'rescheduled_to', 'reminder_sent_at',
             'pre_meeting_notes', 'post_meeting_notes',
             'can_cancel', 'can_reschedule', 'is_past', 'is_upcoming', 'is_in_progress',
+            'is_facilitator_meeting', 'facilitator_booking',
             'created_at', 'updated_at'
         ]
         read_only_fields = [
@@ -317,6 +368,10 @@ class ScheduledMeetingSerializer(serializers.ModelSerializer):
             'cancelled_at', 'cancelled_by', 'rescheduled_to',
             'reminder_sent_at', 'created_at', 'updated_at'
         ]
+    
+    def get_is_facilitator_meeting(self, obj):
+        """Check if this is a facilitator meeting"""
+        return hasattr(obj, 'facilitator_booking')
     
     def validate_status(self, value):
         """Validate status transitions"""
@@ -374,7 +429,8 @@ class PublicMeetingTypeSerializer(serializers.ModelSerializer):
     class Meta:
         model = MeetingType
         fields = [
-            'name', 'description', 'duration_minutes', 'location_type',
+            'name', 'description', 'meeting_mode', 'facilitator_settings',
+            'duration_minutes', 'location_type',
             'booking_form_config', 'custom_questions', 'required_fields',
             'allow_rescheduling', 'allow_cancellation', 'cancellation_notice_hours',
             'host', 'booking_url', 'organization'

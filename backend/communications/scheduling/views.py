@@ -26,7 +26,7 @@ from authentication.permissions import SyncPermissionManager
 from communications.models import UserChannelConnection
 from .models import (
     SchedulingProfile, MeetingType, SchedulingLink,
-    ScheduledMeeting, AvailabilityOverride
+    ScheduledMeeting, AvailabilityOverride, FacilitatorBooking
 )
 from .serializers import (
     SchedulingProfileSerializer, MeetingTypeSerializer,
@@ -1123,3 +1123,121 @@ class AvailabilityOverrideViewSet(viewsets.ModelViewSet):
         if profile.user != self.request.user:
             raise permissions.PermissionDenied("Cannot create override for another user's profile")
         serializer.save()
+
+
+class FacilitatorBookingViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet for managing facilitator bookings
+    Handles two-participant meeting coordination
+    """
+    serializer_class = None  # We'll create this serializer
+    permission_classes = [permissions.IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, OrderingFilter, SearchFilter]
+    filterset_fields = ['status', 'meeting_type']
+    ordering_fields = ['created_at', 'expires_at', 'status']
+    ordering = ['-created_at']
+    search_fields = ['participant_1_name', 'participant_1_email', 'participant_2_name', 'participant_2_email']
+    
+    def get_queryset(self):
+        """Filter bookings based on user"""
+        return FacilitatorBooking.objects.filter(
+            facilitator=self.request.user
+        ).select_related('meeting_type', 'facilitator', 'scheduled_meeting')
+    
+    def list(self, request, *args, **kwargs):
+        """List facilitator bookings with serialized data"""
+        queryset = self.filter_queryset(self.get_queryset())
+        
+        # Manually serialize the data for now
+        bookings_data = []
+        for booking in queryset:
+            bookings_data.append({
+                'id': str(booking.id),
+                'meeting_type': {
+                    'id': str(booking.meeting_type.id),
+                    'name': booking.meeting_type.name,
+                },
+                'facilitator': {
+                    'id': str(booking.facilitator.id),
+                    'username': booking.facilitator.username,
+                    'email': booking.facilitator.email,
+                },
+                'participant_1_email': booking.participant_1_email,
+                'participant_1_name': booking.participant_1_name,
+                'participant_1_phone': booking.participant_1_phone,
+                'participant_1_record_id': booking.participant_1_record_id,
+                'participant_1_completed_at': booking.participant_1_completed_at.isoformat() if booking.participant_1_completed_at else None,
+                'participant_1_message': booking.participant_1_message,
+                'participant_1_token': str(booking.participant_1_token),
+                'participant_2_email': booking.participant_2_email,
+                'participant_2_name': booking.participant_2_name,
+                'participant_2_phone': booking.participant_2_phone,
+                'participant_2_record_id': booking.participant_2_record_id,
+                'participant_2_completed_at': booking.participant_2_completed_at.isoformat() if booking.participant_2_completed_at else None,
+                'participant_2_token': str(booking.participant_2_token),
+                'selected_duration_minutes': booking.selected_duration_minutes,
+                'selected_location_type': booking.selected_location_type,
+                'selected_location_details': booking.selected_location_details,
+                'selected_slots': booking.selected_slots,
+                'final_slot': booking.final_slot,
+                'status': booking.status,
+                'expires_at': booking.expires_at.isoformat() if booking.expires_at else None,
+                'invitation_sent_at': booking.invitation_sent_at.isoformat() if booking.invitation_sent_at else None,
+                'invitation_opened_at': booking.invitation_opened_at.isoformat() if booking.invitation_opened_at else None,
+                'reminder_sent_at': booking.reminder_sent_at.isoformat() if booking.reminder_sent_at else None,
+                'scheduled_meeting': str(booking.scheduled_meeting.id) if booking.scheduled_meeting else None,
+                'created_at': booking.created_at.isoformat(),
+                'updated_at': booking.updated_at.isoformat(),
+            })
+        
+        page = self.paginate_queryset(bookings_data)
+        if page is not None:
+            return self.get_paginated_response(page)
+        
+        return Response(bookings_data)
+    
+    @action(detail=True, methods=['post'])
+    def resend_invitation(self, request, pk=None):
+        """Resend invitation email to participant"""
+        booking = self.get_object()
+        participant = request.data.get('participant', 1)
+        
+        if participant == 1 and booking.status == 'pending_p1':
+            # Resend to participant 1
+            from .tasks import send_facilitator_p1_invitation
+            send_facilitator_p1_invitation.delay(
+                str(booking.id),
+                request.user.tenant.schema_name if hasattr(request.user, 'tenant') else None
+            )
+            return Response({'message': f'Invitation resent to {booking.participant_1_email}'})
+        elif participant == 2 and booking.status == 'pending_p2':
+            # Resend to participant 2
+            from .tasks import send_facilitator_p2_invitation
+            send_facilitator_p2_invitation.delay(
+                str(booking.id),
+                request.user.tenant.schema_name if hasattr(request.user, 'tenant') else None
+            )
+            return Response({'message': f'Invitation resent to {booking.participant_2_email}'})
+        else:
+            return Response(
+                {'error': 'Cannot resend invitation in current status'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+    
+    @action(detail=True, methods=['post'])
+    def cancel(self, request, pk=None):
+        """Cancel a facilitator booking"""
+        booking = self.get_object()
+        
+        if booking.status in ['completed', 'cancelled']:
+            return Response(
+                {'error': 'Cannot cancel booking in current status'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        booking.status = 'cancelled'
+        booking.save()
+        
+        # TODO: Send cancellation notifications
+        
+        return Response({'message': 'Booking cancelled successfully'})

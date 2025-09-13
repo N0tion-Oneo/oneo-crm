@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone as dt_timezone
 from typing import Dict, List, Any, Optional, Tuple
 from django.utils import timezone
 from django.db import transaction
-from asgiref.sync import sync_to_async
+from asgiref.sync import sync_to_async, async_to_sync
 
 from communications.models import (
     Channel, Conversation, Participant, Message, ChannelType, 
@@ -1002,7 +1002,8 @@ class BookingProcessor:
         description: Optional[str] = None,
         location: Optional[str] = None,
         attendees: Optional[List[str]] = None,
-        conference_provider: Optional[str] = None
+        conference_provider: Optional[str] = None,
+        calendar_id: Optional[str] = None
     ) -> Optional[Dict[str, Any]]:
         """
         Unified method to create calendar events via UniPile.
@@ -1012,17 +1013,20 @@ class BookingProcessor:
             Dict with 'event_id' and optionally 'meeting_url' if conference was created
         """
         try:
+            logger.info(f"_create_unipile_calendar_event called for account: {account_id}")
             from django.db import connection
             from django.conf import settings
             
             # Initialize UniPile client
             tenant = connection.tenant
-            if hasattr(tenant, 'unipile_config') and tenant.unipile_config.is_configured():
+            if hasattr(tenant, 'unipile_config') and tenant.unipile_config and tenant.unipile_config.is_configured():
+                logger.info("Using tenant UniPile configuration")
                 client = UnipileClient(tenant.unipile_config.dsn, tenant.unipile_config.get_access_token())
             else:
                 if not hasattr(settings, 'UNIPILE_DSN'):
-                    logger.warning("UniPile not configured")
+                    logger.warning("UniPile not configured - no DSN in settings")
                     return None
+                logger.info("Using global UniPile configuration from settings")
                 client = UnipileClient(settings.UNIPILE_DSN, settings.UNIPILE_API_KEY)
             
             calendar_client = UnipileCalendarClient(client)
@@ -1039,22 +1043,26 @@ class BookingProcessor:
                 logger.error("No calendars found")
                 return None
             
-            # Find primary calendar
-            primary_calendar = None
-            for calendar in calendars:
-                # Handle both field names (is_primary/primary)
-                if calendar.get('is_primary') or calendar.get('primary'):
-                    primary_calendar = calendar['id']
-                    break
+            # Use provided calendar_id or find primary calendar
+            target_calendar = calendar_id
+            if not target_calendar:
+                # Find primary calendar as fallback
+                for calendar in calendars:
+                    # Handle both field names (is_primary/primary)
+                    if calendar.get('is_primary') or calendar.get('primary'):
+                        target_calendar = calendar['id']
+                        break
+                
+                # If no primary, use first calendar
+                if not target_calendar:
+                    target_calendar = calendars[0]['id']
             
-            # If no primary, use first calendar
-            if not primary_calendar:
-                primary_calendar = calendars[0]['id']
+            logger.info(f"Using calendar ID: {target_calendar}")
             
             # Create the event
             event_response = await calendar_client.create_event(
                 account_id=account_id,
-                calendar_id=primary_calendar,
+                calendar_id=target_calendar,
                 title=title,
                 start_time=start_time.isoformat(),
                 end_time=end_time.isoformat(),
@@ -1067,6 +1075,9 @@ class BookingProcessor:
             if not event_response:
                 logger.error("No response from calendar event creation")
                 return None
+            
+            # Log the full response to debug meeting URL extraction
+            logger.info(f"UniPile calendar event response: {event_response}")
             
             # Extract event ID and meeting URL
             result = {}
@@ -1122,7 +1133,7 @@ class BookingProcessor:
             elif self.meeting_type.location_type == 'zoom':
                 conference_provider = 'zoom'
             
-            # Use unified method to create event
+            # Use unified method to create event with meeting type's calendar
             result = await self._create_unipile_calendar_event(
                 account_id=account_id,
                 title=title,
@@ -1131,7 +1142,8 @@ class BookingProcessor:
                 description=description,
                 location=meeting.meeting_location or meeting.meeting_url,
                 attendees=[meeting.participant.email] if meeting.participant.email else None,
-                conference_provider=conference_provider
+                conference_provider=conference_provider,
+                calendar_id=self.meeting_type.calendar_id  # Use meeting type's specified calendar
             )
             
             # Update meeting with results
@@ -1457,6 +1469,312 @@ class BookingProcessor:
             logger.error(f"Failed to create manual event: {e}")
             raise
     
+
+
+class FacilitatorBookingProcessor(BookingProcessor):
+    """Service for handling facilitator meeting bookings"""
+    
+    def __init__(self, meeting_type):
+        # Initialize parent BookingProcessor with meeting_type
+        super().__init__(meeting_type=meeting_type)
+        self.facilitator = meeting_type.user
+    
+    async def process_facilitator_step1(self, participant_data, meeting_params, selected_slots):
+        """
+        Process Participant 1's selections for a facilitator meeting
+        
+        Args:
+            participant_data: P1's info (name, email, phone, etc.)
+            meeting_params: Selected duration, location type, location details
+            selected_slots: List of selected time slots
+        
+        Returns:
+            FacilitatorBooking instance
+        """
+        from .models import FacilitatorBooking
+        from datetime import timedelta
+        
+        try:
+            # Validate selected slots against current availability
+            for slot in selected_slots:
+                # TODO: Validate each slot is still available
+                pass
+            
+            # Get expiry time from settings or default to 72 hours
+            facilitator_settings = self.meeting_type.facilitator_settings or {}
+            expiry_hours = facilitator_settings.get('link_expiry_hours', 72)
+            
+            # Create FacilitatorBooking record
+            booking = await sync_to_async(FacilitatorBooking.objects.create)(
+                meeting_type=self.meeting_type,
+                facilitator=self.facilitator,
+                
+                # Participant 1 info
+                participant_1_email=participant_data['email'],
+                participant_1_name=participant_data.get('name', ''),
+                participant_1_phone=participant_data.get('phone', ''),
+                participant_1_data=participant_data,
+                participant_1_message=participant_data.get('message', ''),
+                
+                # Participant 2 email (required)
+                participant_2_email=participant_data['participant_2_email'],
+                participant_2_name=participant_data.get('participant_2_name', ''),
+                
+                # Meeting parameters
+                selected_duration_minutes=meeting_params['duration'],
+                selected_location_type=meeting_params['location_type'],
+                selected_location_details=meeting_params.get('location_details', {}),
+                
+                # Slots and timing
+                selected_slots=selected_slots,
+                participant_1_completed_at=timezone.now(),
+                expires_at=timezone.now() + timedelta(hours=expiry_hours),
+                
+                status='pending_p2'
+            )
+            
+            # Send email to Participant 2
+            from .tasks import send_facilitator_p2_invitation
+            await sync_to_async(send_facilitator_p2_invitation.delay)(
+                str(booking.id),
+                self.facilitator.tenant.schema_name if hasattr(self.facilitator, 'tenant') else None
+            )
+            
+            booking.invitation_sent_at = timezone.now()
+            await sync_to_async(booking.save)(update_fields=['invitation_sent_at'])
+            
+            return booking
+            
+        except Exception as e:
+            logger.error(f"Failed to process facilitator step 1: {e}")
+            raise
+    
+    async def process_facilitator_step2(self, booking, participant_data, selected_slot):
+        """
+        Process Participant 2's final selection for a facilitator meeting
+        
+        Args:
+            booking: FacilitatorBooking instance
+            participant_data: P2's info (name, phone, etc.)
+            selected_slot: The chosen time slot
+        
+        Returns:
+            ScheduledMeeting instance
+        """
+        from .models import ScheduledMeeting
+        from communications.models import Participant
+        
+        try:
+            # Validate the booking is still valid
+            if booking.is_expired():
+                raise ValueError("This booking link has expired")
+            
+            if booking.status != 'pending_p2':
+                raise ValueError("This booking has already been completed")
+            
+            # Validate selected slot is one of the options
+            slot_found = False
+            for slot in booking.selected_slots:
+                if slot['start'] == selected_slot['start'] and slot['end'] == selected_slot['end']:
+                    slot_found = True
+                    break
+            
+            if not slot_found:
+                raise ValueError("Invalid slot selection")
+            
+            # Parse slot times
+            slot_start = datetime.fromisoformat(selected_slot['start'])
+            slot_end = datetime.fromisoformat(selected_slot['end'])
+            
+            # Only check for conflicts if facilitator will be a participant in the meeting
+            # If they're just coordinating (not attending), they can schedule multiple meetings at the same time
+            include_facilitator = self.meeting_type.facilitator_settings.get('include_facilitator', True)
+            
+            if include_facilitator:
+                conflicts = await sync_to_async(ScheduledMeeting.objects.filter(
+                    meeting_type=self.meeting_type,
+                    start_time__lt=slot_end,
+                    end_time__gt=slot_start,
+                    status__in=['scheduled', 'confirmed', 'reminder_sent', 'in_progress']
+                ).exists)()
+                
+                if conflicts:
+                    raise ValueError("Selected time slot is no longer available")
+            
+            # Update booking with P2 info
+            booking.participant_2_name = participant_data.get('name', booking.participant_2_name)
+            booking.participant_2_phone = participant_data.get('phone', '')
+            booking.participant_2_data = participant_data
+            booking.final_slot = selected_slot
+            booking.participant_2_completed_at = timezone.now()
+            booking.status = 'completed'
+            
+            # Create or get participants
+            participant_1 = await sync_to_async(Participant.objects.get_or_create)(
+                email=booking.participant_1_email,
+                defaults={
+                    'name': booking.participant_1_name,
+                    'phone': booking.participant_1_phone
+                }
+            )
+            participant_1 = participant_1[0] if isinstance(participant_1, tuple) else participant_1
+            
+            participant_2 = await sync_to_async(Participant.objects.get_or_create)(
+                email=booking.participant_2_email,
+                defaults={
+                    'name': booking.participant_2_name,
+                    'phone': booking.participant_2_phone
+                }
+            )
+            participant_2 = participant_2[0] if isinstance(participant_2, tuple) else participant_2
+            
+            # Determine meeting location
+            meeting_url = ''
+            meeting_location = ''
+            
+            if booking.selected_location_type == 'in_person':
+                meeting_location = booking.selected_location_details.get('address', '')
+            elif booking.selected_location_type in ['google_meet', 'teams', 'zoom']:
+                # Will be auto-generated during calendar event creation
+                pass
+            
+            # Get or create scheduling channel for the facilitator
+            from communications.models import Conversation, ConversationParticipant, Channel, ChannelType
+            channel = await sync_to_async(
+                Channel.objects.filter(
+                    channel_type=ChannelType.CALENDAR,
+                    created_by=self.facilitator
+                ).first
+            )()
+            
+            if not channel:
+                channel = await sync_to_async(Channel.objects.create)(
+                    name=f"{self.facilitator.username} - Calendar",
+                    channel_type=ChannelType.CALENDAR,
+                    unipile_account_id=f"calendar_{self.facilitator.id}",
+                    auth_status='authenticated',
+                    created_by=self.facilitator
+                )
+            
+            # Create conversation for the meeting with unique external_thread_id
+            import uuid
+            conversation = await sync_to_async(Conversation.objects.create)(
+                channel=channel,
+                external_thread_id=f"facilitator_meeting_{booking.id}",
+                subject=f"{self.meeting_type.name} - {booking.participant_1_name} & {booking.participant_2_name}",
+                conversation_type='meeting',
+                metadata={
+                    'meeting_type_id': str(self.meeting_type.id),
+                    'facilitator_booking_id': str(booking.id),
+                    'participants': [
+                        {'name': booking.participant_1_name, 'email': booking.participant_1_email},
+                        {'name': booking.participant_2_name, 'email': booking.participant_2_email}
+                    ]
+                }
+            )
+            
+            # Add participants to conversation
+            await sync_to_async(ConversationParticipant.objects.create)(
+                conversation=conversation,
+                participant=participant_1,
+                role='primary'
+            )
+            await sync_to_async(ConversationParticipant.objects.create)(
+                conversation=conversation,
+                participant=participant_2,
+                role='secondary'
+            )
+            
+            # Create the scheduled meeting
+            meeting = await sync_to_async(ScheduledMeeting.objects.create)(
+                meeting_type=self.meeting_type,
+                host=self.facilitator,
+                participant=participant_1,  # Primary participant
+                conversation=conversation,
+                start_time=slot_start,
+                end_time=slot_end,
+                timezone=participant_data.get('timezone', 'UTC'),
+                meeting_url=meeting_url,
+                meeting_location=meeting_location,
+                booking_data={
+                    'facilitator_booking_id': str(booking.id),
+                    'participant_1': {
+                        'name': booking.participant_1_name,
+                        'email': booking.participant_1_email,
+                        'phone': booking.participant_1_phone
+                    },
+                    'participant_2': {
+                        'name': booking.participant_2_name,
+                        'email': booking.participant_2_email,
+                        'phone': booking.participant_2_phone
+                    },
+                    'selected_duration': booking.selected_duration_minutes,
+                    'selected_location': booking.selected_location_type
+                },
+                status='scheduled'
+            )
+            
+            # Link meeting to booking
+            booking.scheduled_meeting = meeting
+            await sync_to_async(booking.save)(update_fields=['status', 'participant_2_name', 'participant_2_phone', 
+                                                             'participant_2_data', 'final_slot', 
+                                                             'participant_2_completed_at', 'scheduled_meeting'])
+            
+            # Store attendees info in booking_data for the Celery task to use
+            attendees = [
+                booking.participant_1_email,
+                booking.participant_2_email
+            ]
+            
+            # Include facilitator if configured
+            facilitator_settings = self.meeting_type.facilitator_settings or {}
+            if facilitator_settings.get('include_facilitator', True):
+                attendees.append(self.facilitator.email)
+            
+            meeting.booking_data['attendees'] = attendees
+            meeting.booking_data['conference_provider'] = booking.selected_location_type
+            meeting.booking_data['facilitator_booking_id'] = str(booking.id)
+            await sync_to_async(meeting.save)(update_fields=['booking_data'])
+            
+            # Queue calendar invite creation via Celery (same as direct bookings)
+            from .tasks import send_calendar_invite, send_facilitator_confirmations
+            from django.db import connection
+            
+            # Get tenant schema for queue routing
+            tenant_schema = await sync_to_async(lambda: connection.schema_name)()
+            queue_name = f'{tenant_schema}_communications' if tenant_schema != 'public' else 'celery'
+            
+            logger.info(f"📅 Queueing calendar invite for facilitator meeting {meeting.id}")
+            logger.info(f"Tenant schema: {tenant_schema}, Queue: {queue_name}")
+            
+            # Queue calendar creation task
+            result = await sync_to_async(send_calendar_invite.apply_async)(
+                args=[str(meeting.id)], 
+                queue=queue_name,
+                headers={'tenant_schema': tenant_schema}
+            )
+            logger.info(f"✅ Queued calendar invite task - Task ID: {result.id}")
+            
+            # Send confirmation emails to all parties
+            await sync_to_async(send_facilitator_confirmations.delay)(
+                str(meeting.id),
+                self.facilitator.tenant.schema_name if hasattr(self.facilitator, 'tenant') else None
+            )
+            
+            return meeting
+            
+        except Exception as e:
+            logger.error(f"Failed to process facilitator step 2: {e}")
+            raise
+    
+    # Synchronous wrapper methods for use in views
+    def process_facilitator_step1_sync(self, participant_data, meeting_params, selected_slots):
+        """Synchronous wrapper for process_facilitator_step1"""
+        return async_to_sync(self.process_facilitator_step1)(participant_data, meeting_params, selected_slots)
+    
+    def process_facilitator_step2_sync(self, booking, participant_data, selected_slot):
+        """Synchronous wrapper for process_facilitator_step2"""
+        return async_to_sync(self.process_facilitator_step2)(booking, participant_data, selected_slot)
 
 
 class MeetingReminderService:

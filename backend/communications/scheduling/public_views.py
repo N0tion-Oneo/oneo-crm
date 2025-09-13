@@ -38,13 +38,49 @@ logger = logging.getLogger(__name__)
 def get_user_by_slug(username_slug):
     """
     Get user by username slug.
-    Simplified to only use usernames for consistent URL handling.
+    Handles both username format (Josh_Cowan) and slug format (josh-cowan).
     """
-    # Simply look up by username (case-insensitive)
-    user = get_object_or_404(User, username__iexact=username_slug)
-    logger.info(f"Found user: {user.username} for slug: {username_slug}")
+    from django.http import Http404
     
-    return user
+    # First try direct username lookup (case-insensitive)
+    try:
+        user = User.objects.get(username__iexact=username_slug)
+        logger.info(f"Found user by username: {user.username} for slug: {username_slug}")
+        return user
+    except User.DoesNotExist:
+        pass
+    
+    # If not found, try converting hyphenated format to underscore format
+    # e.g., "josh-cowan" -> "Josh_Cowan"
+    if '-' in username_slug:
+        # Split by hyphen and capitalize each part
+        parts = username_slug.split('-')
+        potential_username = '_'.join(part.capitalize() for part in parts)
+        
+        try:
+            user = User.objects.get(username__iexact=potential_username)
+            logger.info(f"Found user by converted username: {user.username} for slug: {username_slug}")
+            return user
+        except User.DoesNotExist:
+            pass
+    
+    # If still not found, try by first_name-last_name pattern
+    if '-' in username_slug:
+        parts = username_slug.split('-')
+        if len(parts) == 2:
+            first_name, last_name = parts
+            try:
+                user = User.objects.get(
+                    first_name__iexact=first_name,
+                    last_name__iexact=last_name
+                )
+                logger.info(f"Found user by name: {user.username} for slug: {username_slug}")
+                return user
+            except (User.DoesNotExist, User.MultipleObjectsReturned):
+                pass
+    
+    # If no user found, raise 404
+    raise Http404(f"User not found for slug: {username_slug}")
 
 
 class PublicSchedulingLinkView(APIView):

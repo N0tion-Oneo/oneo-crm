@@ -724,6 +724,16 @@ SECURITY_MIDDLEWARE_ENABLED = True
 SUSPICIOUS_PATTERN_DETECTION = True
 MAX_SECURITY_VIOLATIONS_PER_HOUR = 10
 
+# Email Configuration
+EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'  # For development - prints to console
+DEFAULT_FROM_EMAIL = 'noreply@oneo.com'
+EMAIL_HOST = config('EMAIL_HOST', default='localhost')
+EMAIL_PORT = config('EMAIL_PORT', default=25, cast=int)
+EMAIL_HOST_USER = config('EMAIL_HOST_USER', default='')
+EMAIL_HOST_PASSWORD = config('EMAIL_HOST_PASSWORD', default='')
+EMAIL_USE_TLS = config('EMAIL_USE_TLS', default=False, cast=bool)
+EMAIL_USE_SSL = config('EMAIL_USE_SSL', default=False, cast=bool)
+
 # Celery Configuration (for future use)
 CELERY_BROKER_URL = config('REDIS_URL', default='redis://127.0.0.1:6379/1')
 CELERY_RESULT_BACKEND = config('REDIS_URL', default='redis://127.0.0.1:6379/1')

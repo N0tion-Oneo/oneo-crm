@@ -20,14 +20,15 @@ export default function SchedulingPage() {
   const canManageAll = hasPermission('communication_settings', 'scheduling_all')
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight">Scheduling</h1>
-        <p className="text-muted-foreground">
-          Manage your availability and meeting types with calendar integration
-        </p>
-      </div>
+    <div className="p-6">
+      <div className="max-w-5xl mx-auto space-y-6">
+        {/* Header */}
+        <div className="mb-6">
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Scheduling</h1>
+          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+            Manage your availability and meeting types with calendar integration
+          </p>
+        </div>
 
       {/* Quick Stats */}
       <div className="grid gap-4 md:grid-cols-3">
@@ -81,17 +82,7 @@ export default function SchedulingPage() {
         </TabsList>
 
         <TabsContent value="availability" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>Availability Settings</CardTitle>
-              <CardDescription>
-                Configure your working hours and calendar sync preferences
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              {activeTab === 'availability' && <AvailabilitySettings canManageAll={canManageAll} />}
-            </CardContent>
-          </Card>
+          {activeTab === 'availability' && <AvailabilitySettings canManageAll={canManageAll} />}
         </TabsContent>
 
         <TabsContent value="meeting-types" className="space-y-4">
@@ -99,19 +90,10 @@ export default function SchedulingPage() {
         </TabsContent>
 
         <TabsContent value="meetings" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>Scheduled Meetings</CardTitle>
-              <CardDescription>
-                View and manage all your scheduled and facilitator meetings
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              {activeTab === 'meetings' && <ScheduledMeetings canManageAll={canManageAll} />}
-            </CardContent>
-          </Card>
+          {activeTab === 'meetings' && <ScheduledMeetings canManageAll={canManageAll} />}
         </TabsContent>
       </Tabs>
+      </div>
     </div>
   )
 }

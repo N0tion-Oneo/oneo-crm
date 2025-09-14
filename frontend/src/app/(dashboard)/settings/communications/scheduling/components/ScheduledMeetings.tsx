@@ -39,6 +39,9 @@ import {
   Copy,
   Send,
   Eye,
+  Search,
+  Filter,
+  X,
 } from 'lucide-react'
 import {
   DropdownMenu,
@@ -223,6 +226,8 @@ export default function ScheduledMeetings({ canManageAll = false }: ScheduledMee
   const [filters, setFilters] = useState({
     status: 'all',
     dateRange: 'all',
+    meetingType: 'all',
+    searchQuery: '',
   })
 
   useEffect(() => {
@@ -321,6 +326,37 @@ export default function ScheduledMeetings({ canManageAll = false }: ScheduledMee
   const filterMeetings = (meetings: ScheduledMeeting[]) => {
     let filtered = [...meetings]
 
+    // Filter by search query
+    if (filters.searchQuery.trim()) {
+      const query = filters.searchQuery.toLowerCase()
+      filtered = filtered.filter((m) => {
+        const participantName = m.participant_detail?.name || m.participant?.name || ''
+        const participantEmail = m.participant_detail?.email || m.participant?.email || ''
+        const meetingTypeName = m.meeting_type?.name || m.meeting_type_name || ''
+        const hostName = m.host_name || ''
+        
+        // For facilitator meetings, also search facilitator participants
+        let facilitatorSearch = ''
+        if (m.facilitator_booking) {
+          facilitatorSearch = [
+            m.facilitator_booking.participant_1_name,
+            m.facilitator_booking.participant_1_email,
+            m.facilitator_booking.participant_2_name,
+            m.facilitator_booking.participant_2_email,
+            m.facilitator_booking.facilitator?.username,
+          ].filter(Boolean).join(' ').toLowerCase()
+        }
+        
+        return (
+          participantName.toLowerCase().includes(query) ||
+          participantEmail.toLowerCase().includes(query) ||
+          meetingTypeName.toLowerCase().includes(query) ||
+          hostName.toLowerCase().includes(query) ||
+          facilitatorSearch.includes(query)
+        )
+      })
+    }
+
     // Filter by tab
     const now = new Date()
     if (activeTab === 'upcoming') {
@@ -357,6 +393,46 @@ export default function ScheduledMeetings({ canManageAll = false }: ScheduledMee
       filtered = filtered.filter((m) => m.status === filters.status)
     }
 
+    // Filter by meeting type
+    if (filters.meetingType !== 'all') {
+      if (filters.meetingType === 'facilitator') {
+        filtered = filtered.filter((m) => m.is_facilitator_meeting)
+      } else if (filters.meetingType === 'standard') {
+        filtered = filtered.filter((m) => !m.is_facilitator_meeting)
+      }
+    }
+
+    // Filter by date range
+    if (filters.dateRange !== 'all' && filters.dateRange !== '') {
+      const now = new Date()
+      const startOfToday = startOfDay(now)
+      const endOfToday = endOfDay(now)
+      
+      filtered = filtered.filter((m) => {
+        if (!m.start_time) return false
+        try {
+          const meetingDate = parseISO(m.start_time)
+          
+          switch (filters.dateRange) {
+            case 'today':
+              return isAfter(meetingDate, startOfToday) && isBefore(meetingDate, endOfToday)
+            case 'week':
+              const weekFromNow = new Date(now)
+              weekFromNow.setDate(weekFromNow.getDate() + 7)
+              return isAfter(meetingDate, now) && isBefore(meetingDate, weekFromNow)
+            case 'month':
+              const monthFromNow = new Date(now)
+              monthFromNow.setMonth(monthFromNow.getMonth() + 1)
+              return isAfter(meetingDate, now) && isBefore(meetingDate, monthFromNow)
+            default:
+              return true
+          }
+        } catch {
+          return false
+        }
+      })
+    }
+
     // Sort by start time
     filtered.sort((a, b) => {
       if (!a.start_time || !b.start_time) {
@@ -377,7 +453,7 @@ export default function ScheduledMeetings({ canManageAll = false }: ScheduledMee
   }
 
   // Memoize filtered meetings to avoid recalculating on every render
-  const filteredMeetings = useMemo(() => filterMeetings(meetings), [meetings, activeTab, filters.status])
+  const filteredMeetings = useMemo(() => filterMeetings(meetings), [meetings, activeTab, filters])
   
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1)
@@ -407,37 +483,124 @@ export default function ScheduledMeetings({ canManageAll = false }: ScheduledMee
 
   return (
     <div className="space-y-4">
-      <div className="flex justify-between items-center">
+      <div className="space-y-3">
         <div>
           <p className="text-sm text-muted-foreground">
             View and manage your scheduled meetings
           </p>
         </div>
-        <div className="flex gap-2">
+        
+        {/* Inline Search Bar and Filters */}
+        <div className="flex flex-wrap gap-2 items-center">
+          {/* Search Bar */}
+          <div className="relative flex-1 min-w-[200px] max-w-md">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              type="text"
+              placeholder="Search meetings..."
+              value={filters.searchQuery}
+              onChange={(e) => setFilters({ ...filters, searchQuery: e.target.value })}
+              className="pl-9 pr-9 h-9"
+            />
+            {filters.searchQuery && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7 p-0"
+                onClick={() => setFilters({ ...filters, searchQuery: '' })}
+              >
+                <X className="h-3.5 w-3.5" />
+              </Button>
+            )}
+          </div>
+
+          {/* Filters */}
           <Select
             value={filters.status}
             onValueChange={(value) => setFilters({ ...filters, status: value })}
           >
-            <SelectTrigger className="w-[150px]">
-              <SelectValue placeholder="All statuses" />
+            <SelectTrigger className="w-[130px] h-9">
+              <SelectValue placeholder="Status" />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All Statuses</SelectItem>
               <SelectItem value="pending">Pending</SelectItem>
+              <SelectItem value="scheduled">Scheduled</SelectItem>
               <SelectItem value="confirmed">Confirmed</SelectItem>
               <SelectItem value="completed">Completed</SelectItem>
               <SelectItem value="cancelled">Cancelled</SelectItem>
+              <SelectItem value="no_show">No Show</SelectItem>
             </SelectContent>
           </Select>
+
+          <Select
+            value={filters.meetingType}
+            onValueChange={(value) => setFilters({ ...filters, meetingType: value })}
+          >
+            <SelectTrigger className="w-[120px] h-9">
+              <SelectValue placeholder="Type" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Types</SelectItem>
+              <SelectItem value="standard">Standard</SelectItem>
+              <SelectItem value="facilitator">Facilitator</SelectItem>
+            </SelectContent>
+          </Select>
+
+          <Select
+            value={filters.dateRange}
+            onValueChange={(value) => setFilters({ ...filters, dateRange: value })}
+          >
+            <SelectTrigger className="w-[130px] h-9">
+              <SelectValue placeholder="Date" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Dates</SelectItem>
+              <SelectItem value="today">Today</SelectItem>
+              <SelectItem value="week">Next 7 Days</SelectItem>
+              <SelectItem value="month">Next 30 Days</SelectItem>
+            </SelectContent>
+          </Select>
+
+          {/* Clear filters button */}
+          {(filters.status !== 'all' || filters.meetingType !== 'all' || filters.dateRange !== 'all' || filters.searchQuery) && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-9 gap-1"
+              onClick={() => setFilters({
+                status: 'all',
+                dateRange: 'all',
+                meetingType: 'all',
+                searchQuery: '',
+              })}
+            >
+              <X className="h-3.5 w-3.5" />
+              Clear
+            </Button>
+          )}
         </div>
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-3">
-          <TabsTrigger value="upcoming">Upcoming</TabsTrigger>
-          <TabsTrigger value="past">Past</TabsTrigger>
-          <TabsTrigger value="cancelled">Cancelled</TabsTrigger>
-        </TabsList>
+        <div className="flex justify-between items-center mb-4">
+          <TabsList className="grid w-full grid-cols-3 max-w-[400px]">
+            <TabsTrigger value="upcoming">Upcoming</TabsTrigger>
+            <TabsTrigger value="past">Past</TabsTrigger>
+            <TabsTrigger value="cancelled">Cancelled</TabsTrigger>
+          </TabsList>
+          
+          {/* Results count */}
+          <div className="text-sm text-muted-foreground">
+            {filteredMeetings.length > 0 && (
+              <span>
+                Showing {Math.min((currentPage - 1) * itemsPerPage + 1, filteredMeetings.length)}-
+                {Math.min(currentPage * itemsPerPage, filteredMeetings.length)} of{' '}
+              </span>
+            )}
+            <span className="font-medium">{filteredMeetings.length}</span> meeting{filteredMeetings.length !== 1 ? 's' : ''}
+          </div>
+        </div>
 
         <TabsContent value={activeTab} className="space-y-4 mt-4">
           {filteredMeetings.length === 0 ? (
@@ -445,14 +608,22 @@ export default function ScheduledMeetings({ canManageAll = false }: ScheduledMee
               <CardContent className="flex flex-col items-center justify-center py-12">
                 <Calendar className="h-12 w-12 text-muted-foreground mb-4" />
                 <h3 className="text-lg font-medium mb-2">
-                  No {activeTab} meetings
+                  {filters.searchQuery || filters.status !== 'all' || filters.meetingType !== 'all' || filters.dateRange !== 'all' 
+                    ? 'No meetings found' 
+                    : `No ${activeTab} meetings`}
                 </h3>
-                <p className="text-sm text-muted-foreground">
-                  {activeTab === 'upcoming'
-                    ? 'No upcoming meetings scheduled'
-                    : activeTab === 'past'
-                    ? 'No past meetings to show'
-                    : 'No cancelled meetings'}
+                <p className="text-sm text-muted-foreground text-center">
+                  {filters.searchQuery || filters.status !== 'all' || filters.meetingType !== 'all' || filters.dateRange !== 'all' ? (
+                    <>Try adjusting your filters or search query</>
+                  ) : (
+                    <>
+                      {activeTab === 'upcoming'
+                        ? 'No upcoming meetings scheduled'
+                        : activeTab === 'past'
+                        ? 'No past meetings to show'
+                        : 'No cancelled meetings'}
+                    </>
+                  )}
                 </p>
               </CardContent>
             </Card>

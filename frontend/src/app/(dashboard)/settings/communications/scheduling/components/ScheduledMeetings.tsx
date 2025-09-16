@@ -72,11 +72,13 @@ interface FacilitatorBooking {
   participant_1_record_id?: string
   participant_1_completed_at?: string
   participant_1_message?: string
+  participant_1_link?: string
   participant_2_email: string
   participant_2_name: string
   participant_2_phone?: string
   participant_2_record_id?: string
   participant_2_completed_at?: string
+  participant_2_link?: string
   selected_duration_minutes?: number
   selected_location_type?: string
   selected_location_details?: any
@@ -216,8 +218,9 @@ export default function ScheduledMeetings({ canManageAll = false }: ScheduledMee
   const { user } = useAuth()
   const { toast } = useToast()
   const [meetings, setMeetings] = useState<ScheduledMeeting[]>([])
+  const [incompleteBookings, setIncompleteBookings] = useState<FacilitatorBooking[]>([])
   const [isLoading, setIsLoading] = useState(false)
-  const [activeTab, setActiveTab] = useState('upcoming')
+  const [activeTab, setActiveTab] = useState('upcoming') // Will be updated after fetching data
   const [selectedMeeting, setSelectedMeeting] = useState<ScheduledMeeting | null>(null)
   const [isDetailsOpen, setIsDetailsOpen] = useState(false)
   const [isFacilitatorModalOpen, setIsFacilitatorModalOpen] = useState(false)
@@ -232,6 +235,7 @@ export default function ScheduledMeetings({ canManageAll = false }: ScheduledMee
 
   useEffect(() => {
     fetchMeetings()
+    fetchIncompleteBookings()
   }, [])
 
   const fetchMeetings = async () => {
@@ -252,6 +256,23 @@ export default function ScheduledMeetings({ canManageAll = false }: ScheduledMee
       })
     } finally {
       setIsLoading(false)
+    }
+  }
+
+  const fetchIncompleteBookings = async () => {
+    try {
+      const response = await api.get('/api/v1/communications/scheduling/facilitator-bookings/incomplete/')
+      const bookingsData = response.data.results || []
+      console.log('Fetched incomplete facilitator bookings:', bookingsData)
+      setIncompleteBookings(Array.isArray(bookingsData) ? bookingsData : [])
+
+      // If there are incomplete bookings, default to showing that tab
+      if (bookingsData && bookingsData.length > 0) {
+        setActiveTab('incomplete')
+      }
+    } catch (error) {
+      console.error('Failed to fetch incomplete bookings:', error)
+      // Don't show error toast as this is a supplementary fetch
     }
   }
 
@@ -324,6 +345,11 @@ export default function ScheduledMeetings({ canManageAll = false }: ScheduledMee
   }
 
   const filterMeetings = (meetings: ScheduledMeeting[]) => {
+    // If we're on the incomplete tab, don't filter regular meetings
+    if (activeTab === 'incomplete') {
+      return []
+    }
+
     let filtered = [...meetings]
 
     // Filter by search query
@@ -584,26 +610,210 @@ export default function ScheduledMeetings({ canManageAll = false }: ScheduledMee
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
         <div className="flex justify-between items-center mb-4">
-          <TabsList className="grid w-full grid-cols-3 max-w-[400px]">
+          <TabsList className="grid w-full grid-cols-4 max-w-[500px]">
+            <TabsTrigger value="incomplete">
+              Incomplete
+              {incompleteBookings.length > 0 && (
+                <span className="ml-1.5 px-1.5 py-0.5 text-xs bg-orange-500 text-white rounded-full">
+                  {incompleteBookings.length}
+                </span>
+              )}
+            </TabsTrigger>
             <TabsTrigger value="upcoming">Upcoming</TabsTrigger>
             <TabsTrigger value="past">Past</TabsTrigger>
             <TabsTrigger value="cancelled">Cancelled</TabsTrigger>
           </TabsList>
-          
+
           {/* Results count */}
           <div className="text-sm text-muted-foreground">
-            {filteredMeetings.length > 0 && (
-              <span>
-                Showing {Math.min((currentPage - 1) * itemsPerPage + 1, filteredMeetings.length)}-
-                {Math.min(currentPage * itemsPerPage, filteredMeetings.length)} of{' '}
-              </span>
+            {activeTab === 'incomplete' ? (
+              <>
+                <span className="font-medium">{incompleteBookings.length}</span> incomplete booking{incompleteBookings.length !== 1 ? 's' : ''}
+              </>
+            ) : (
+              <>
+                {filteredMeetings.length > 0 && (
+                  <span>
+                    Showing {Math.min((currentPage - 1) * itemsPerPage + 1, filteredMeetings.length)}-
+                    {Math.min(currentPage * itemsPerPage, filteredMeetings.length)} of{' '}
+                  </span>
+                )}
+                <span className="font-medium">{filteredMeetings.length}</span> meeting{filteredMeetings.length !== 1 ? 's' : ''}
+              </>
             )}
-            <span className="font-medium">{filteredMeetings.length}</span> meeting{filteredMeetings.length !== 1 ? 's' : ''}
           </div>
         </div>
 
         <TabsContent value={activeTab} className="space-y-4 mt-4">
-          {filteredMeetings.length === 0 ? (
+          {activeTab === 'incomplete' ? (
+            // Incomplete facilitator bookings tab content
+            incompleteBookings.length === 0 ? (
+              <Card>
+                <CardContent className="flex flex-col items-center justify-center py-12">
+                  <Clock className="h-12 w-12 text-muted-foreground mb-4" />
+                  <h3 className="text-lg font-medium mb-2">No incomplete bookings</h3>
+                  <p className="text-sm text-muted-foreground text-center">
+                    All facilitator meetings have been scheduled successfully
+                  </p>
+                </CardContent>
+              </Card>
+            ) : (
+              <div className="space-y-3">
+                {incompleteBookings.map((booking) => {
+                  const statusConfig = FACILITATOR_STATUS_CONFIG[booking.status]
+                  const StatusIcon = statusConfig.icon
+
+                  return (
+                    <Card key={booking.id} className="border-l-4 border-l-orange-500">
+                      <CardContent className="p-4">
+                        <div className="space-y-3">
+                          {/* Header */}
+                          <div className="flex items-start justify-between">
+                            <div className="flex items-center gap-2">
+                              <Users className="h-4 w-4 text-purple-600 dark:text-purple-400" />
+                              <span className="font-medium">{booking.meeting_type.name}</span>
+                              <Badge variant={statusConfig.variant}>
+                                <StatusIcon className="h-3 w-3 mr-1" />
+                                {statusConfig.label}
+                              </Badge>
+                            </div>
+                            <div className="text-xs text-muted-foreground">
+                              Created {format(parseISO(booking.created_at), 'MMM d, yyyy')}
+                            </div>
+                          </div>
+
+                          {/* Participants */}
+                          <div className="grid grid-cols-2 gap-4">
+                            <div className="space-y-2">
+                              <div className="text-xs font-medium text-muted-foreground">Participant 1</div>
+                              <div>
+                                <p className="text-sm font-medium">{booking.participant_1_name}</p>
+                                <p className="text-xs text-muted-foreground">{booking.participant_1_email}</p>
+                              </div>
+                              {booking.status === 'pending_p1' && (
+                                <div className="flex items-center gap-2">
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="h-7 text-xs"
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      const link = booking.participant_1_link ||
+                                        `${window.location.origin}/book/facilitator/${booking.participant_1_token}/participant1`
+                                      navigator.clipboard.writeText(link)
+                                      toast({
+                                        title: 'Link copied!',
+                                        description: 'Participant 1 booking link copied to clipboard',
+                                      })
+                                    }}
+                                  >
+                                    <Copy className="h-3 w-3 mr-1" />
+                                    Copy Link
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="h-7 text-xs"
+                                    onClick={async (e) => {
+                                      e.stopPropagation()
+                                      await resendInvitation(booking)
+                                    }}
+                                  >
+                                    <Send className="h-3 w-3 mr-1" />
+                                    Resend
+                                  </Button>
+                                </div>
+                              )}
+                              {booking.participant_1_completed_at && (
+                                <Badge variant="outline" className="text-xs">
+                                  <CheckCircle className="h-3 w-3 mr-1 text-green-600" />
+                                  Completed
+                                </Badge>
+                              )}
+                            </div>
+
+                            <div className="space-y-2">
+                              <div className="text-xs font-medium text-muted-foreground">Participant 2</div>
+                              <div>
+                                <p className="text-sm font-medium">{booking.participant_2_name}</p>
+                                <p className="text-xs text-muted-foreground">{booking.participant_2_email}</p>
+                              </div>
+                              {booking.status === 'pending_p2' && (
+                                <div className="flex items-center gap-2">
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="h-7 text-xs"
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      const link = booking.participant_2_link ||
+                                        `${window.location.origin}/book/facilitator/${booking.participant_2_token}`
+                                      navigator.clipboard.writeText(link)
+                                      toast({
+                                        title: 'Link copied!',
+                                        description: 'Participant 2 booking link copied to clipboard',
+                                      })
+                                    }}
+                                  >
+                                    <Copy className="h-3 w-3 mr-1" />
+                                    Copy Link
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="h-7 text-xs"
+                                    onClick={async (e) => {
+                                      e.stopPropagation()
+                                      await resendInvitation(booking)
+                                    }}
+                                  >
+                                    <Send className="h-3 w-3 mr-1" />
+                                    Resend
+                                  </Button>
+                                </div>
+                              )}
+                              {booking.participant_2_completed_at && (
+                                <Badge variant="outline" className="text-xs">
+                                  <CheckCircle className="h-3 w-3 mr-1 text-green-600" />
+                                  Confirmed
+                                </Badge>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Progress Bar */}
+                          <div className="flex items-center gap-3">
+                            <div className="flex-1">
+                              <div className="flex items-center justify-between text-xs mb-1">
+                                <span>Progress</span>
+                                <span className="text-muted-foreground">
+                                  {booking.status === 'pending_p1' ? 'Step 1 of 2' : 'Step 2 of 2'}
+                                </span>
+                              </div>
+                              <div className="h-1.5 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+                                <div
+                                  className="h-full bg-orange-500 rounded-full transition-all"
+                                  style={{ width: booking.status === 'pending_p1' ? '33%' : '66%' }}
+                                />
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Expiry Warning */}
+                          {booking.expires_at && (
+                            <div className="text-xs text-muted-foreground flex items-center gap-1">
+                              <AlertCircle className="h-3 w-3" />
+                              Expires {format(parseISO(booking.expires_at), 'MMM d, yyyy')}
+                            </div>
+                          )}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  )
+                })}
+              </div>
+            )
+          ) : filteredMeetings.length === 0 ? (
             <Card>
               <CardContent className="flex flex-col items-center justify-center py-12">
                 <Calendar className="h-12 w-12 text-muted-foreground mb-4" />
@@ -1164,7 +1374,7 @@ export default function ScheduledMeetings({ canManageAll = false }: ScheduledMee
               )}
             </DialogTitle>
             <DialogDescription>
-              Facilitated by {selectedFacilitatorBooking?.facilitator?.username || selectedFacilitatorBooking?.facilitator_username || 'Unknown'}
+              Facilitated by {selectedFacilitatorBooking?.facilitator?.username || 'Unknown'}
             </DialogDescription>
           </DialogHeader>
           

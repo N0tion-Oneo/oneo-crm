@@ -409,10 +409,10 @@ export default function TasksPage() {
                           {/* Comments/Attachments */}
                           {(task.comments_count || task.attachments_count) && (
                             <div className="flex items-center gap-2">
-                              {task.comments_count > 0 && (
+                              {task.comments_count && task.comments_count > 0 && (
                                 <span>{task.comments_count} comments</span>
                               )}
-                              {task.attachments_count > 0 && (
+                              {task.attachments_count && task.attachments_count > 0 && (
                                 <span>{task.attachments_count} files</span>
                               )}
                             </div>

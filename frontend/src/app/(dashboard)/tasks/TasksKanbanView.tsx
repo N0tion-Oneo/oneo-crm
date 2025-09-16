@@ -182,12 +182,12 @@ function SortableTaskCard({
               )}
             </div>
 
-            {(task.comments_count > 0 || task.attachments_count > 0) && (
+            {((task.comments_count && task.comments_count > 0) || (task.attachments_count && task.attachments_count > 0)) && (
               <div className="flex items-center gap-2">
-                {task.comments_count > 0 && (
+                {task.comments_count && task.comments_count > 0 && (
                   <span className="text-xs">{task.comments_count} 💬</span>
                 )}
-                {task.attachments_count > 0 && (
+                {task.attachments_count && task.attachments_count > 0 && (
                   <span className="text-xs">{task.attachments_count} 📎</span>
                 )}
               </div>

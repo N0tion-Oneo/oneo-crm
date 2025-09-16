@@ -2,6 +2,7 @@
 Communication Analysis Node Processors - Analyze communications and score engagement
 """
 import logging
+from datetime import datetime, timedelta
 from typing import Dict, Any, Optional, List
 from django.utils import timezone
 from asgiref.sync import sync_to_async

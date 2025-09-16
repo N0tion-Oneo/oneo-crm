@@ -33,6 +33,10 @@ class SMSProcessor(AsyncNodeProcessor):
         # Optional parameters
         sequence_metadata = node_data.get('sequence_metadata', {})
         sender_id = node_data.get('sender_id', '')  # Custom sender ID if supported
+
+        # Thread/reply parameters (SMS has limited threading support)
+        conversation_id = node_data.get('conversation_id') or context.get('conversation_id')
+        thread_id = node_data.get('thread_id') or context.get('external_thread_id')
         
         # Validate required fields
         if not all([user_id, recipient_phone, message_content]):
@@ -72,7 +76,9 @@ class SMSProcessor(AsyncNodeProcessor):
                 recipient=recipient_phone,
                 content=message_content,
                 sender_id=sender_id,
-                metadata=sequence_metadata
+                metadata=sequence_metadata,
+                conversation_id=conversation_id,
+                thread_id=thread_id
             )
             
             if result['success']:
@@ -84,14 +90,28 @@ class SMSProcessor(AsyncNodeProcessor):
                     message_id=result.get('message_id'),
                     metadata=sequence_metadata
                 )
-                
+
                 # Calculate SMS segments
                 segments = self._calculate_sms_segments(message_content)
-                
+
+                message_id = result.get('message_id')
+                conversation_id = result.get('conversation_id')
+                thread_id = result.get('thread_id')  # SMS conversation thread
+
+                # Update context with message and conversation info for downstream nodes
+                if message_id:
+                    context['last_sent_message_id'] = message_id
+                if conversation_id:
+                    context['conversation_id'] = conversation_id
+                if thread_id:
+                    context['external_thread_id'] = thread_id
+
                 return {
                     'success': True,
-                    'message_id': result.get('message_id'),
+                    'message_id': message_id,
                     'external_message_id': result.get('external_message_id'),
+                    'conversation_id': conversation_id,
+                    'thread_id': thread_id,
                     'recipient': recipient_phone,
                     'content': message_content,
                     'channel': user_channel.name,
@@ -118,7 +138,9 @@ class SMSProcessor(AsyncNodeProcessor):
         recipient: str,
         content: str,
         sender_id: str = '',
-        metadata: dict = None
+        metadata: dict = None,
+        conversation_id: str = None,
+        thread_id: str = None
     ) -> Dict[str, Any]:
         """Send SMS via UniPile SDK"""
         
@@ -130,6 +152,10 @@ class SMSProcessor(AsyncNodeProcessor):
                 extra_params['sender_id'] = sender_id
             if metadata:
                 extra_params['metadata'] = metadata
+            if conversation_id:
+                extra_params['conversation_id'] = conversation_id
+            if thread_id:
+                extra_params['thread_id'] = thread_id
             
             result = await unipile_service.send_message(
                 user_channel_connection=user_channel,

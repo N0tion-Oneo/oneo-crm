@@ -34,6 +34,12 @@ class EmailProcessor(AsyncNodeProcessor):
         tracking_enabled = node_data.get('tracking_enabled', True)
         sequence_metadata = node_data.get('sequence_metadata', {})
         attachments = node_data.get('attachments', [])
+
+        # Thread/reply parameters
+        reply_to_message_id = node_data.get('reply_to_message_id') or context.get('parent_message_id')
+        thread_id = node_data.get('thread_id') or context.get('external_thread_id')
+        conversation_id = node_data.get('conversation_id') or context.get('conversation_id')
+        is_reply = node_data.get('is_reply', False) or bool(reply_to_message_id)
         
         # Validate required fields
         if not all([user_id, recipient_email, subject, content]):
@@ -67,7 +73,11 @@ class EmailProcessor(AsyncNodeProcessor):
                 content=content,
                 attachments=attachments,
                 tracking_enabled=tracking_enabled,
-                metadata=sequence_metadata
+                metadata=sequence_metadata,
+                reply_to_message_id=reply_to_message_id,
+                thread_id=thread_id,
+                conversation_id=conversation_id,
+                is_reply=is_reply
             )
             
             if result['success']:
@@ -79,11 +89,25 @@ class EmailProcessor(AsyncNodeProcessor):
                     message_id=result.get('message_id'),
                     metadata=sequence_metadata
                 )
-                
+
+                message_id = result.get('message_id')
+                conversation_id = result.get('conversation_id')
+                thread_id = result.get('thread_id')
+
+                # Update context with message and conversation info for downstream nodes
+                if message_id:
+                    context['last_sent_message_id'] = message_id
+                if conversation_id:
+                    context['conversation_id'] = conversation_id
+                if thread_id:
+                    context['external_thread_id'] = thread_id
+
                 return {
                     'success': True,
-                    'message_id': result.get('message_id'),
+                    'message_id': message_id,
                     'external_message_id': result.get('external_message_id'),
+                    'conversation_id': conversation_id,
+                    'thread_id': thread_id,
                     'recipient': recipient_email,
                     'subject': subject,
                     'channel': user_channel.name,
@@ -110,7 +134,11 @@ class EmailProcessor(AsyncNodeProcessor):
         content: str,
         attachments: list = None,
         tracking_enabled: bool = True,
-        metadata: dict = None
+        metadata: dict = None,
+        reply_to_message_id: str = None,
+        thread_id: str = None,
+        conversation_id: str = None,
+        is_reply: bool = False
     ) -> Dict[str, Any]:
         """Send email via UniPile SDK"""
         
@@ -123,13 +151,29 @@ class EmailProcessor(AsyncNodeProcessor):
             # Add tracking pixels if enabled
             if tracking_enabled:
                 formatted_content = await self._add_tracking_pixels(formatted_content, metadata)
-            
+
+            # Build extra params for threading
+            extra_params = {}
+            if reply_to_message_id:
+                extra_params['in_reply_to'] = reply_to_message_id
+            if thread_id:
+                extra_params['thread_id'] = thread_id
+            if conversation_id:
+                extra_params['conversation_id'] = conversation_id
+            if is_reply:
+                extra_params['is_reply'] = True
+                # For email replies, we might want to prefix the subject
+                if not subject.startswith('Re:'):
+                    subject = f'Re: {subject}'
+                    formatted_content = f"Subject: {subject}\n\n{content}"
+
             result = await unipile_service.send_message(
                 user_channel_connection=user_channel,
                 recipient=recipient,
                 content=formatted_content,
                 message_type='email',
-                attachments=attachments
+                attachments=attachments,
+                extra_params=extra_params
             )
             
             return result

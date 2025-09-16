@@ -324,5 +324,100 @@ class RecordFindProcessor(AsyncNodeProcessor):
             'limit': node_data.get('limit', 10),
             'return_first_only': node_data.get('return_first_only', False)
         })
-        
+
+        return checkpoint
+
+
+class RecordDeleteProcessor(AsyncNodeProcessor):
+    """Process record deletion nodes"""
+
+    def __init__(self):
+        super().__init__()
+        self.node_type = "RECORD_DELETE"
+        self.supports_replay = True
+        self.supports_checkpoints = True
+
+    async def process(self, node_config: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
+        """Process record deletion node"""
+
+        node_data = node_config.get('data', {})
+        record_id_source = node_data.get('record_id_source', '')
+        soft_delete = node_data.get('soft_delete', True)
+
+        # Get record ID from context
+        record_id = self._get_nested_value(context, record_id_source)
+        if not record_id:
+            # Try to get from direct value
+            record_id = node_data.get('record_id')
+
+        if not record_id:
+            raise ValueError("Record delete node requires record_id")
+
+        try:
+            from pipelines.models import Record
+            from django_tenants.utils import schema_context
+
+            tenant_schema = context.get('tenant_schema')
+
+            with schema_context(tenant_schema):
+                record = await sync_to_async(Record.objects.get)(id=record_id)
+
+                if soft_delete:
+                    # Soft delete - mark as deleted
+                    record.is_deleted = True
+                    await sync_to_async(record.save)()
+                    action = "soft_deleted"
+                else:
+                    # Hard delete - remove from database
+                    await sync_to_async(record.delete)()
+                    action = "hard_deleted"
+
+                return {
+                    'success': True,
+                    'record_id': str(record_id),
+                    'action': action,
+                    'soft_delete': soft_delete
+                }
+
+        except Record.DoesNotExist:
+            return {
+                'success': False,
+                'error': f"Record with ID {record_id} not found",
+                'record_id': str(record_id)
+            }
+        except Exception as e:
+            logger.error(f"Record deletion failed: {e}")
+            return {
+                'success': False,
+                'error': str(e),
+                'record_id': str(record_id)
+            }
+
+    async def validate_inputs(self, node_config: Dict[str, Any], context: Dict[str, Any]) -> bool:
+        """Validate record deletion node inputs"""
+        node_data = node_config.get('data', {})
+
+        # Check for record ID source or direct ID
+        record_id_source = node_data.get('record_id_source', '')
+        record_id = node_data.get('record_id')
+
+        if not record_id_source and not record_id:
+            return False
+
+        return True
+
+    async def create_checkpoint(self, node_config: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
+        """Create checkpoint for record deletion node"""
+        checkpoint = await super().create_checkpoint(node_config, context)
+
+        node_data = node_config.get('data', {})
+        record_id_source = node_data.get('record_id_source', '')
+
+        checkpoint.update({
+            'record_id_source': record_id_source,
+            'record_id': node_data.get('record_id'),
+            'soft_delete': node_data.get('soft_delete', True),
+            'resolved_record_id': self._get_nested_value(context, record_id_source) if record_id_source else node_data.get('record_id')
+        })
+
         return checkpoint

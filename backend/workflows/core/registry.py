@@ -44,15 +44,18 @@ class NodeRegistry:
             # AI processors
             'workflows.nodes.ai.prompt',
             'workflows.nodes.ai.analysis',
-            
-            # Data processors  
+            'workflows.nodes.ai.message_generator',
+            'workflows.nodes.ai.response_evaluator',
+
+            # Data processors
             'workflows.nodes.data.record_ops',
             'workflows.nodes.data.merge',
-            
+
             # Control flow processors
             'workflows.nodes.control.condition',
             'workflows.nodes.control.for_each',
-            
+            'workflows.nodes.control.workflow_loop',
+
             # Communication processors
             'workflows.nodes.communication.email',
             'workflows.nodes.communication.linkedin',
@@ -61,23 +64,26 @@ class NodeRegistry:
             'workflows.nodes.communication.sync',
             'workflows.nodes.communication.logging',
             'workflows.nodes.communication.analysis',
-            
+            'workflows.nodes.communication.ai_conversation_loop',
+
             # External integration processors
             'workflows.nodes.external.http',
             'workflows.nodes.external.webhook',
-            
+
             # Workflow management processors
             'workflows.nodes.workflow.approval',
             'workflows.nodes.workflow.sub_workflow',
             'workflows.nodes.workflow.reusable',
-            
+
             # CRM processors
             'workflows.nodes.crm.contact',
             'workflows.nodes.crm.status_update',
-            
+
             # Utility processors
             'workflows.nodes.utility.wait',
+            'workflows.nodes.utility.wait_advanced',
             'workflows.nodes.utility.notification',
+            'workflows.nodes.utility.conversation_state',
         ]
         
         for module_name in processor_modules:

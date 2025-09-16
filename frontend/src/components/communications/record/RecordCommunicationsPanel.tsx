@@ -304,7 +304,7 @@ export function RecordCommunicationsPanel({
                           }}
                           defaultParticipant={{
                             email: profile?.communication_identifiers?.email?.[0],
-                            name: profile?.name,
+                            name: undefined,
                             phone: profile?.communication_identifiers?.phone?.[0]
                           }}
                         />
@@ -323,7 +323,7 @@ export function RecordCommunicationsPanel({
                           }}
                           defaultParticipant={{
                             email: profile?.communication_identifiers?.email?.[0],
-                            name: profile?.name,
+                            name: undefined,
                             phone: profile?.communication_identifiers?.phone?.[0]
                           }}
                         />

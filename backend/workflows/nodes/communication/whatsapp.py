@@ -33,6 +33,12 @@ class WhatsAppProcessor(AsyncNodeProcessor):
         sequence_metadata = node_data.get('sequence_metadata', {})
         attachments = node_data.get('attachments', [])
         message_type = node_data.get('message_type', 'text')  # text, image, document, etc.
+
+        # Thread/reply parameters
+        reply_to_message_id = node_data.get('reply_to_message_id') or context.get('parent_message_id')
+        chat_id = node_data.get('chat_id') or context.get('external_thread_id')
+        conversation_id = node_data.get('conversation_id') or context.get('conversation_id')
+        is_reply = node_data.get('is_reply', False) or bool(reply_to_message_id)
         
         # Validate required fields
         if not all([user_id, recipient_phone, message_content]):
@@ -69,7 +75,11 @@ class WhatsAppProcessor(AsyncNodeProcessor):
                 content=message_content,
                 attachments=attachments,
                 message_type=message_type,
-                metadata=sequence_metadata
+                metadata=sequence_metadata,
+                reply_to_message_id=reply_to_message_id,
+                chat_id=chat_id,
+                conversation_id=conversation_id,
+                is_reply=is_reply
             )
             
             if result['success']:
@@ -81,11 +91,25 @@ class WhatsAppProcessor(AsyncNodeProcessor):
                     message_id=result.get('message_id'),
                     metadata=sequence_metadata
                 )
-                
+
+                message_id = result.get('message_id')
+                conversation_id = result.get('conversation_id')
+                chat_id = result.get('chat_id')  # WhatsApp uses chat_id instead of thread_id
+
+                # Update context with message and conversation info for downstream nodes
+                if message_id:
+                    context['last_sent_message_id'] = message_id
+                if conversation_id:
+                    context['conversation_id'] = conversation_id
+                if chat_id:
+                    context['external_thread_id'] = chat_id  # Store chat_id as external_thread_id
+
                 return {
                     'success': True,
-                    'message_id': result.get('message_id'),
+                    'message_id': message_id,
                     'external_message_id': result.get('external_message_id'),
+                    'conversation_id': conversation_id,
+                    'chat_id': chat_id,
                     'recipient': recipient_phone,
                     'content': message_content,
                     'channel': user_channel.name,
@@ -112,23 +136,39 @@ class WhatsAppProcessor(AsyncNodeProcessor):
         content: str,
         attachments: list = None,
         message_type: str = 'text',
-        metadata: dict = None
+        metadata: dict = None,
+        reply_to_message_id: str = None,
+        chat_id: str = None,
+        conversation_id: str = None,
+        is_reply: bool = False
     ) -> Dict[str, Any]:
         """Send WhatsApp message via UniPile SDK"""
         
         try:
             from communications.unipile_sdk import unipile_service
             
+            # Build extra params for threading and WhatsApp-specific options
+            extra_params = {
+                'whatsapp_message_type': message_type,
+                'metadata': metadata
+            }
+
+            if reply_to_message_id:
+                extra_params['reply_to'] = reply_to_message_id
+            if chat_id:
+                extra_params['chat_id'] = chat_id
+            if conversation_id:
+                extra_params['conversation_id'] = conversation_id
+            if is_reply:
+                extra_params['is_reply'] = True
+
             result = await unipile_service.send_message(
                 user_channel_connection=user_channel,
                 recipient=recipient,
                 content=content,
                 message_type='whatsapp',
                 attachments=attachments,
-                extra_params={
-                    'whatsapp_message_type': message_type,
-                    'metadata': metadata
-                }
+                extra_params=extra_params
             )
             
             return result

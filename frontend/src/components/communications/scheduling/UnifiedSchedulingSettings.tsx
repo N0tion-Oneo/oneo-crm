@@ -344,7 +344,7 @@ export function UnifiedSchedulingSettings({ canManageAll = false }: UnifiedSched
       name: meeting.name,
       description: meeting.description || '',
       meeting_mode: meeting.meeting_mode || 'direct',
-      facilitator_settings: meeting.facilitator_settings || {
+      facilitator_settings: {
         max_time_options: 3,
         participant_1_label: 'First Participant',
         participant_2_label: 'Second Participant',
@@ -353,7 +353,8 @@ export function UnifiedSchedulingSettings({ canManageAll = false }: UnifiedSched
         duration_options: [30, 60, 90],
         allow_location_selection: true,
         location_options: ['google_meet', 'teams', 'in_person'],
-        link_expiry_hours: 72
+        link_expiry_hours: 72,
+        ...(meeting.facilitator_settings || {})
       },
       duration_minutes: meeting.duration_minutes,
       location_type: meeting.location_type,
@@ -1165,7 +1166,7 @@ export function UnifiedSchedulingSettings({ canManageAll = false }: UnifiedSched
                         <div className="flex items-center gap-1 text-sm">
                           <span className="font-medium text-muted-foreground">Link:</span>
                           <button
-                            onClick={() => copyToClipboard(item.booking_url)}
+                            onClick={() => copyToClipboard(item.booking_url!)}
                             className="text-blue-600 dark:text-blue-400 hover:underline truncate max-w-md"
                             title="Click to copy"
                           >
@@ -1174,7 +1175,7 @@ export function UnifiedSchedulingSettings({ canManageAll = false }: UnifiedSched
                           <Button
                             size="sm"
                             variant="ghost"
-                            onClick={() => copyToClipboard(item.booking_url)}
+                            onClick={() => copyToClipboard(item.booking_url!)}
                             className="h-6 w-6 p-0"
                           >
                             <Copy className="h-3 w-3" />
@@ -1268,7 +1269,7 @@ export function UnifiedSchedulingSettings({ canManageAll = false }: UnifiedSched
         {facilitatorMeetingType && (
           <FacilitatorMeetingInitiator
             meetingTypeId={facilitatorMeetingType.id}
-            pipelineId={facilitatorMeetingType.pipeline}
+            pipelineId={facilitatorMeetingType.pipeline || ''}
             meetingType={facilitatorMeetingType}
             onClose={() => {
               setShowFacilitatorDialog(false)

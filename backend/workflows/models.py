@@ -9,6 +9,7 @@ import json
 import uuid
 from enum import Enum
 from typing import Dict, Any, List, Optional
+from tenants.models import Tenant
 
 User = get_user_model()
 
@@ -27,7 +28,7 @@ class WorkflowTriggerType(models.TextChoices):
     RECORD_CREATED = 'record_created', 'Record Created'
     RECORD_UPDATED = 'record_updated', 'Record Updated'
     RECORD_DELETED = 'record_deleted', 'Record Deleted'
-    FIELD_CHANGED = 'field_changed', 'Field Changed'
+    # FIELD_CHANGED = 'field_changed', 'Field Changed'  # Deprecated - use RECORD_UPDATED with specific_fields
     SCHEDULED = 'scheduled', 'Scheduled'
     WEBHOOK = 'webhook', 'Webhook'
     
@@ -36,7 +37,9 @@ class WorkflowTriggerType(models.TextChoices):
     FORM_SUBMITTED = 'form_submitted', 'Form Submitted'
     EMAIL_RECEIVED = 'email_received', 'Email Received'
     MESSAGE_RECEIVED = 'message_received', 'Message Received'
-    STATUS_CHANGED = 'status_changed', 'Status Changed'
+    LINKEDIN_MESSAGE = 'linkedin_message', 'LinkedIn Message'
+    WHATSAPP_MESSAGE = 'whatsapp_message', 'WhatsApp Message'
+    # STATUS_CHANGED = 'status_changed', 'Status Changed'  # Deprecated - use RECORD_UPDATED with update_type
     DATE_REACHED = 'date_reached', 'Date Reached'
     CONDITION_MET = 'condition_met', 'Condition Met'
     PIPELINE_STAGE_CHANGED = 'pipeline_stage_changed', 'Pipeline Stage Changed'
@@ -49,7 +52,8 @@ class WorkflowNodeType(models.TextChoices):
     # AI Actions (use ai.integrations.AIIntegrationManager)
     AI_PROMPT = 'ai_prompt', 'AI Prompt'
     AI_ANALYSIS = 'ai_analysis', 'AI Analysis'
-    AI_CLASSIFICATION = 'ai_classification', 'AI Classification'
+    AI_CLASSIFICATION = 'ai_classification', 'AI Classification'  # Deprecated - use AI_ANALYSIS
+    AI_CONVERSATION_LOOP = 'ai_conversation_loop', 'AI Conversation Loop'
     
     # Record Operations
     RECORD_CREATE = 'record_create', 'Create Record'
@@ -61,6 +65,9 @@ class WorkflowNodeType(models.TextChoices):
     CONDITION = 'condition', 'Condition (If/Else)'
     FOR_EACH = 'for_each', 'For Each (Loop)'
     WAIT_DELAY = 'wait_delay', 'Wait/Delay'
+    WAIT_FOR_RESPONSE = 'wait_for_response', 'Wait for Response'
+    WAIT_FOR_RECORD_EVENT = 'wait_for_record_event', 'Wait for Record Event'
+    WAIT_FOR_CONDITION = 'wait_for_condition', 'Wait for Condition'
     
     # External Integration
     HTTP_REQUEST = 'http_request', 'HTTP Request'
@@ -72,7 +79,7 @@ class WorkflowNodeType(models.TextChoices):
     
     # Advanced
     SUB_WORKFLOW = 'sub_workflow', 'Sub-workflow Call'
-    REUSABLE_WORKFLOW = 'reusable_workflow', 'Reusable Workflow'
+    REUSABLE_WORKFLOW = 'reusable_workflow', 'Reusable Workflow'  # Deprecated - use SUB_WORKFLOW
     MERGE_DATA = 'merge_data', 'Merge Data'
     
     # Communication Nodes (UniPile Integration)
@@ -124,9 +131,10 @@ class WorkflowCategory(models.TextChoices):
 class Workflow(models.Model):
     """Main workflow definition with reusable workflow support"""
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name='workflows')
     name = models.CharField(max_length=255)
     description = models.TextField(blank=True)
-    
+
     # Ownership and access
     created_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name='created_workflows')
     created_at = models.DateTimeField(auto_now_add=True)
@@ -198,7 +206,10 @@ class Workflow(models.Model):
     def get_reusable_workflow_nodes(self) -> List[Dict[str, Any]]:
         """Get all reusable workflow nodes from definition"""
         nodes = self.get_nodes()
-        return [node for node in nodes if node.get('type') == 'REUSABLE_WORKFLOW']
+        # Check for both SUB_WORKFLOW with is_reusable flag and legacy REUSABLE_WORKFLOW
+        return [node for node in nodes if
+                node.get('type') == 'SUB_WORKFLOW' and node.get('data', {}).get('is_reusable', False) or
+                node.get('type') == 'REUSABLE_WORKFLOW']  # Legacy support
     
     def extract_reusable_workflow_dependencies(self) -> List[str]:
         """Extract reusable workflow dependencies from workflow definition"""
@@ -233,8 +244,11 @@ class Workflow(models.Model):
             return True
         
         if self.visibility == WorkflowVisibility.INTERNAL:
-            # TODO: Check if user is in same organization/tenant
-            return True
+            # Check if user is in same tenant
+            from django.db import connection
+            if hasattr(connection, 'tenant') and connection.tenant == self.tenant:
+                return True
+            return False
         
         return self.allowed_users.filter(id=user.id).exists()
     
@@ -267,6 +281,7 @@ class Workflow(models.Model):
 class WorkflowExecution(models.Model):
     """Individual workflow execution instance"""
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name='workflow_executions')
     workflow = models.ForeignKey(Workflow, on_delete=models.CASCADE, related_name='executions')
     
     # Execution metadata
@@ -312,6 +327,7 @@ class WorkflowExecution(models.Model):
 class WorkflowExecutionLog(models.Model):
     """Detailed execution logs for each node"""
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name='workflow_execution_logs')
     execution = models.ForeignKey(WorkflowExecution, on_delete=models.CASCADE, related_name='logs')
     
     # Node identification
@@ -358,6 +374,7 @@ class ApprovalStatus(models.TextChoices):
 class WorkflowApproval(models.Model):
     """Human approval requests for workflow nodes"""
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name='workflow_approvals')
     execution = models.ForeignKey(WorkflowExecution, on_delete=models.CASCADE, related_name='approvals')
     
     # Approval metadata
@@ -407,6 +424,7 @@ class WorkflowApproval(models.Model):
 class WorkflowSchedule(models.Model):
     """Scheduled workflow executions"""
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name='workflow_schedules')
     workflow = models.ForeignKey(Workflow, on_delete=models.CASCADE, related_name='schedules')
     
     # Schedule configuration
@@ -436,6 +454,7 @@ class WorkflowSchedule(models.Model):
 class WorkflowTemplate(models.Model):
     """Predefined workflow templates for quick setup"""
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name='workflow_templates', null=True, blank=True, help_text="Null for system templates")
     name = models.CharField(max_length=255)
     description = models.TextField()
     
@@ -475,6 +494,7 @@ class WorkflowTemplate(models.Model):
 class WorkflowVersion(models.Model):
     """Version history for workflows"""
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name='workflow_versions')
     workflow = models.ForeignKey(Workflow, on_delete=models.CASCADE, related_name='versions')
     
     # Version metadata
@@ -503,6 +523,7 @@ class WorkflowVersion(models.Model):
 class WorkflowTrigger(models.Model):
     """Enhanced trigger management for workflows"""
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name='workflow_triggers')
     workflow = models.ForeignKey(Workflow, on_delete=models.CASCADE, related_name='triggers')
     
     # Trigger configuration
@@ -540,6 +561,7 @@ class WorkflowTrigger(models.Model):
 class WorkflowAnalytics(models.Model):
     """Analytics and performance metrics for workflows"""
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name='workflow_analytics')
     workflow = models.ForeignKey(Workflow, on_delete=models.CASCADE, related_name='analytics')
     
     # Time period
@@ -577,6 +599,7 @@ class WorkflowAnalytics(models.Model):
 class WorkflowEvent(models.Model):
     """Event log for workflow lifecycle events"""
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name='workflow_events')
     workflow = models.ForeignKey(Workflow, on_delete=models.CASCADE, related_name='events')
     execution = models.ForeignKey(WorkflowExecution, on_delete=models.CASCADE, null=True, blank=True, related_name='events')
     

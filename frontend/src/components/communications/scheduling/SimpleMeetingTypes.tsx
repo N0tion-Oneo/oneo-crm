@@ -172,7 +172,7 @@ export default function SimpleMeetingTypes() {
         await axios.post(`/api/v1/communications/scheduling/meeting-types/${selectedTemplate.id}/copy_from_template/`, {
           name: formData.name,
           calendar_id: formData.calendar_connection,
-          calendar_name: calendar?.name || ''
+          calendar_name: calendar?.account_name || ''
         })
         toast({
           title: 'Success',
@@ -260,7 +260,9 @@ export default function SimpleMeetingTypes() {
       calendar_connection: calendars[0]?.id || '',
       pipeline: template.pipeline || '',
       pipeline_stage: template.pipeline_stage || '',
-      booking_form_config: template.booking_form_config || { selected_fields: [] },
+      booking_form_config: {
+        selected_fields: template.booking_form_config?.selected_fields || []
+      },
       required_fields: template.required_fields || []
     })
     

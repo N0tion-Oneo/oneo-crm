@@ -143,28 +143,45 @@ class WorkflowTemplateManager:
         ]
     
     def create_workflow_from_template(
-        self, 
-        template_id: str, 
+        self,
+        template_id: str,
         name: str,
         description: str,
         created_by: User,
         customizations: Dict[str, Any] = None
     ) -> Workflow:
         """Create a new workflow from a template"""
-        
+
         if template_id not in self.templates:
             raise ValueError(f"Template {template_id} not found")
-        
+
         # Get template definition
         template_func = self.templates[template_id]
         template_definition = template_func()
-        
+
         # Apply customizations if provided
         if customizations:
             template_definition = self._apply_customizations(template_definition, customizations)
-        
+
+        # Get tenant from current connection
+        from django.db import connection
+        from tenants.models import Tenant
+
+        # Get current tenant
+        tenant = None
+        if hasattr(connection, 'tenant'):
+            # Get the actual tenant object, not the FakeTenant
+            schema_name = connection.schema_name
+            if schema_name and schema_name != 'public':
+                tenant = Tenant.objects.filter(schema_name=schema_name).first()
+
+        if not tenant:
+            # Fallback to first tenant for development
+            tenant = Tenant.objects.exclude(schema_name='public').first()
+
         # Create workflow
         workflow = Workflow.objects.create(
+            tenant=tenant,
             name=name,
             description=description or template_definition.get('description', ''),
             created_by=created_by,
@@ -173,7 +190,19 @@ class WorkflowTemplateManager:
             workflow_definition=template_definition.get('workflow_definition', {}),
             status=WorkflowStatus.DRAFT
         )
-        
+
+        # Create associated trigger
+        from .models import WorkflowTrigger
+        trigger = WorkflowTrigger.objects.create(
+            tenant=tenant,
+            workflow=workflow,
+            trigger_type=template_definition.get('trigger_type', WorkflowTriggerType.MANUAL),
+            name=f"{workflow.name} - Primary Trigger",
+            description=f"Auto-generated trigger for {workflow.name}",
+            trigger_config=template_definition.get('trigger_config', {}),
+            is_active=True
+        )
+
         return workflow
     
     def _apply_customizations(self, template_definition: Dict[str, Any], customizations: Dict[str, Any]) -> Dict[str, Any]:

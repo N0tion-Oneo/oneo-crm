@@ -196,15 +196,15 @@ export default function FacilitatorMeetingInitiator({ meetingTypeId, pipelineId,
       
       // Fetch all pages of records
       while (nextUrl) {
-        const response = await api.get(nextUrl)
+        const response: any = await api.get(nextUrl)
         const data = response.data
-        
+
         // Add records from this page
         const pageRecords = data.results || data || []
         allRecords = [...allRecords, ...pageRecords]
-        
+
         console.log(`Fetched page with ${pageRecords.length} records. Total so far: ${allRecords.length}`)
-        
+
         // Check if there's a next page
         if (data.next) {
           // Extract the path and query from the next URL

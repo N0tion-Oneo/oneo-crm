@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Field Options Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; }
+        .field { margin: 20px 0; padding: 15px; border: 1px solid #ddd; }
+        .success { color: green; }
+        .error { color: red; }
+        .info { color: blue; }
+    </style>
+</head>
+<body>
+    <h1>Field Options Test</h1>
+
+    <div class="field">
+        <h3>Test 1: Field data structures</h3>
+        <p>Different field data structures from API:</p>
+        <pre id="test1"></pre>
+    </div>
+
+    <div class="field">
+        <h3>Test 2: Option extraction logic</h3>
+        <pre id="test2"></pre>
+    </div>
+
+    <script>
+        // Test different field data structures
+        const fieldDataVariations = [
+            {
+                name: 'status',
+                slug: 'status',
+                field_type: 'select',
+                field_config: {
+                    options: ['lead', 'prospect', 'customer']
+                }
+            },
+            {
+                name: 'priority',
+                slug: 'priority',
+                fieldType: 'select',  // camelCase
+                fieldConfig: {  // camelCase
+                    options: ['low', 'medium', 'high']
+                }
+            },
+            {
+                name: 'category',
+                slug: 'category',
+                field_type: 'multiselect',
+                options: ['sales', 'support', 'billing']  // Direct options
+            },
+            {
+                name: 'type',
+                slug: 'type',
+                field_type: 'text',  // Not a select field
+                field_config: {}
+            }
+        ];
+
+        // Test option extraction logic
+        function extractOptions(fieldData) {
+            const fieldOptions =
+                fieldData?.field_config?.options ||
+                fieldData?.fieldConfig?.options ||
+                fieldData?.options ||
+                [];
+
+            const isSelectField =
+                fieldData?.field_type === 'select' ||
+                fieldData?.field_type === 'multiselect' ||
+                fieldData?.fieldType === 'select' ||
+                fieldData?.fieldType === 'multiselect';
+
+            return {
+                fieldName: fieldData.name,
+                isSelectField,
+                hasOptions: fieldOptions.length > 0,
+                options: fieldOptions,
+                showFieldOption: isSelectField && fieldOptions.length > 0
+            };
+        }
+
+        // Run tests
+        document.getElementById('test1').textContent = JSON.stringify(fieldDataVariations, null, 2);
+
+        const results = fieldDataVariations.map(extractOptions);
+        document.getElementById('test2').textContent = JSON.stringify(results, null, 2);
+
+        // Add color coding
+        results.forEach(result => {
+            const element = document.createElement('div');
+            element.className = result.showFieldOption ? 'success' : (result.isSelectField ? 'error' : 'info');
+            element.textContent = `${result.fieldName}: ${result.showFieldOption ? '✓ Field Option available' : (result.isSelectField ? '✗ No options found' : '- Not a select field')}`;
+            document.body.appendChild(element);
+        });
+    </script>
+</body>
+</html>

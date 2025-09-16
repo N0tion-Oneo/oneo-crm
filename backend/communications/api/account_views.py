@@ -45,7 +45,12 @@ class CommunicationConnectionViewSet(ModelViewSet):
     permission_classes = [CommunicationAccountsPermission]
     
     def get_queryset(self):
-        """Filter connections to current user"""
+        """Filter connections to current user or all for admins"""
+        # For admin users or users with workflow permissions, show all connections
+        # This allows workflow builders to select any available connection
+        if self.request.user.is_superuser or self.request.user.user_type.name == 'Admin':
+            return UserChannelConnection.objects.filter(account_status='active')
+        # Regular users only see their own connections
         return UserChannelConnection.objects.filter(user=self.request.user)
     
     def perform_create(self, serializer):

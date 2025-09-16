@@ -24,6 +24,7 @@ try:
     from api.routing import websocket_urlpatterns as api_websocket_patterns
     from realtime.routing import websocket_urlpatterns as realtime_websocket_patterns
     from communications.routing import websocket_urlpatterns as communications_websocket_patterns
+    from workflows.routing import websocket_urlpatterns as workflows_websocket_patterns
     from api.middleware import (
         WebSocketTenantMiddleware,
         JWTWebSocketAuthMiddleware,
@@ -34,9 +35,10 @@ try:
     
     # Combine WebSocket URL patterns
     websocket_urlpatterns = (
-        api_websocket_patterns + 
-        realtime_websocket_patterns + 
-        communications_websocket_patterns
+        api_websocket_patterns +
+        realtime_websocket_patterns +
+        communications_websocket_patterns +
+        workflows_websocket_patterns
     )
     websocket_enabled = True
 except ImportError as e:

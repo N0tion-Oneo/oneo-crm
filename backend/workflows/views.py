@@ -16,8 +16,8 @@ import json
 import logging
 
 from .models import (
-    Workflow, WorkflowExecution, WorkflowExecutionLog, 
-    WorkflowApproval, WorkflowSchedule
+    Workflow, WorkflowExecution, WorkflowExecutionLog,
+    WorkflowApproval, WorkflowSchedule, WorkflowTrigger
 )
 from .serializers import (
     WorkflowSerializer, WorkflowExecutionSerializer,
@@ -51,8 +51,37 @@ class WorkflowViewSet(viewsets.ModelViewSet):
         ).distinct()
     
     def perform_create(self, serializer):
-        """Set workflow creator"""
-        serializer.save(created_by=self.request.user)
+        """Set workflow creator and create default trigger"""
+        # Get tenant from connection
+        from django.db import connection
+        from tenants.models import Tenant
+
+        if hasattr(connection, 'tenant'):
+            tenant = connection.tenant
+        else:
+            # Fallback to first tenant for development
+            tenant = Tenant.objects.exclude(schema_name='public').first()
+
+        # Create workflow
+        workflow = serializer.save(
+            created_by=self.request.user,
+            tenant=tenant
+        )
+
+        # Create default trigger if not exists
+        if not WorkflowTrigger.objects.filter(workflow=workflow).exists():
+            trigger_type = self.request.data.get('trigger_type', 'manual')
+            trigger_config = self.request.data.get('trigger_config', {})
+
+            WorkflowTrigger.objects.create(
+                tenant=tenant,
+                workflow=workflow,
+                trigger_type=trigger_type,
+                name=f"{workflow.name} - Primary Trigger",
+                description=f"Auto-generated trigger for {workflow.name}",
+                trigger_config=trigger_config,
+                is_active=True
+            )
     
     @action(detail=True, methods=['post'])
     def trigger(self, request, pk=None):
@@ -104,9 +133,19 @@ class WorkflowViewSet(viewsets.ModelViewSet):
     def duplicate(self, request, pk=None):
         """Duplicate a workflow"""
         workflow = self.get_object()
-        
+
+        # Get tenant
+        from django.db import connection
+        from tenants.models import Tenant
+
+        if hasattr(connection, 'tenant'):
+            tenant = connection.tenant
+        else:
+            tenant = Tenant.objects.exclude(schema_name='public').first()
+
         # Create duplicate
         duplicate = Workflow.objects.create(
+            tenant=tenant,
             name=f"{workflow.name} (Copy)",
             description=workflow.description,
             created_by=request.user,
@@ -118,7 +157,20 @@ class WorkflowViewSet(viewsets.ModelViewSet):
             retry_count=workflow.retry_count,
             status='draft'  # Always create duplicates as draft
         )
-        
+
+        # Duplicate triggers
+        for trigger in workflow.triggers.all():
+            WorkflowTrigger.objects.create(
+                tenant=tenant,
+                workflow=duplicate,
+                trigger_type=trigger.trigger_type,
+                name=f"{trigger.name} (Copy)",
+                description=trigger.description,
+                trigger_config=trigger.trigger_config,
+                conditions=trigger.conditions,
+                is_active=False  # Start as inactive
+            )
+
         serializer = self.get_serializer(duplicate)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
     
@@ -280,6 +332,111 @@ class WorkflowViewSet(viewsets.ModelViewSet):
                 'error': str(e)
             }, status=status.HTTP_400_BAD_REQUEST)
     
+    @action(detail=True, methods=['get'])
+    def triggers(self, request, pk=None):
+        """Get workflow triggers"""
+        workflow = self.get_object()
+        triggers = WorkflowTrigger.objects.filter(workflow=workflow)
+
+        # Serialize manually for now
+        trigger_data = []
+        for trigger in triggers:
+            trigger_data.append({
+                'id': str(trigger.id),
+                'name': trigger.name,
+                'description': trigger.description,
+                'trigger_type': trigger.trigger_type,
+                'is_active': trigger.is_active,
+                'trigger_config': trigger.trigger_config,
+                'conditions': trigger.conditions,
+                'execution_count': trigger.execution_count,
+                'last_triggered_at': trigger.last_triggered_at.isoformat() if trigger.last_triggered_at else None,
+                'created_at': trigger.created_at.isoformat()
+            })
+
+        return Response(trigger_data)
+
+    @action(detail=True, methods=['post'])
+    def create_trigger(self, request, pk=None):
+        """Create a new trigger for the workflow"""
+        workflow = self.get_object()
+
+        # Get tenant
+        from django.db import connection
+        from tenants.models import Tenant
+
+        if hasattr(connection, 'tenant'):
+            schema_name = connection.schema_name
+            if schema_name and schema_name != 'public':
+                tenant = Tenant.objects.filter(schema_name=schema_name).first()
+            else:
+                tenant = Tenant.objects.exclude(schema_name='public').first()
+        else:
+            tenant = Tenant.objects.exclude(schema_name='public').first()
+
+        trigger = WorkflowTrigger.objects.create(
+            tenant=tenant,
+            workflow=workflow,
+            name=request.data.get('name', f'{workflow.name} Trigger'),
+            description=request.data.get('description', ''),
+            trigger_type=request.data.get('trigger_type', 'manual'),
+            trigger_config=request.data.get('trigger_config', {}),
+            conditions=request.data.get('conditions', []),
+            is_active=request.data.get('is_active', True)
+        )
+
+        return Response({
+            'id': str(trigger.id),
+            'name': trigger.name,
+            'trigger_type': trigger.trigger_type,
+            'is_active': trigger.is_active
+        }, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['patch'], url_path='triggers/(?P<trigger_id>[^/.]+)')
+    def update_trigger(self, request, pk=None, trigger_id=None):
+        """Update a trigger"""
+        workflow = self.get_object()
+
+        try:
+            trigger = WorkflowTrigger.objects.get(id=trigger_id, workflow=workflow)
+
+            # Update fields
+            if 'name' in request.data:
+                trigger.name = request.data['name']
+            if 'description' in request.data:
+                trigger.description = request.data['description']
+            if 'trigger_type' in request.data:
+                trigger.trigger_type = request.data['trigger_type']
+            if 'trigger_config' in request.data:
+                trigger.trigger_config = request.data['trigger_config']
+            if 'conditions' in request.data:
+                trigger.conditions = request.data['conditions']
+            if 'is_active' in request.data:
+                trigger.is_active = request.data['is_active']
+
+            trigger.save()
+
+            return Response({
+                'id': str(trigger.id),
+                'name': trigger.name,
+                'trigger_type': trigger.trigger_type,
+                'is_active': trigger.is_active
+            })
+        except WorkflowTrigger.DoesNotExist:
+            return Response({'error': 'Trigger not found'}, status=status.HTTP_404_NOT_FOUND)
+
+    @action(detail=True, methods=['delete'], url_path='triggers/(?P<trigger_id>[^/.]+)')
+    def delete_trigger(self, request, pk=None, trigger_id=None):
+        """Delete a trigger"""
+        workflow = self.get_object()
+
+        try:
+            trigger = WorkflowTrigger.objects.get(id=trigger_id, workflow=workflow)
+            trigger.delete()
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        except WorkflowTrigger.DoesNotExist:
+            return Response({'error': 'Trigger not found'}, status=status.HTTP_404_NOT_FOUND)
+
     @action(detail=False, methods=['get'])
     def statistics(self, request):
         """Get workflow statistics"""
@@ -569,71 +726,144 @@ class WorkflowScheduleViewSet(viewsets.ModelViewSet):
 
 
 @csrf_exempt
-@require_http_methods(["POST"])
+@require_http_methods(["POST", "GET", "PUT"])
 def webhook_endpoint(request, workflow_id):
-    """Webhook endpoint for triggering workflows"""
+    """
+    Enhanced webhook endpoint for triggering workflows
+
+    Supports:
+    - Secret token validation for security
+    - Multiple HTTP methods (GET, POST, PUT)
+    - JSON payload parsing
+    - Automatic workflow triggering via workflow engine
+    """
+    import hashlib
+    import hmac
+    from django.contrib.auth import get_user_model
+    from asgiref.sync import async_to_sync
+
+    User = get_user_model()
+
     try:
-        # Parse request data
-        if request.content_type == 'application/json':
-            data = json.loads(request.body)
-        else:
-            data = dict(request.POST)
-        
-        # Get request headers
-        headers = {
-            key: value for key, value in request.META.items()
-            if key.startswith('HTTP_')
+        # Get the workflow
+        workflow = Workflow.objects.get(id=workflow_id)
+
+        # Find webhook trigger configuration
+        webhook_trigger = None
+        if hasattr(workflow, 'triggers') and workflow.triggers:
+            for trigger in workflow.triggers:
+                if trigger.get('type') == 'webhook':
+                    webhook_trigger = trigger
+                    break
+
+        if not webhook_trigger:
+            logger.warning(f"Workflow {workflow_id} doesn't have webhook trigger configured")
+            return JsonResponse({
+                "error": "Webhook trigger not configured for this workflow"
+            }, status=404)
+
+        # Validate secret token if configured
+        if webhook_trigger.get('config', {}).get('secret'):
+            expected_secret = webhook_trigger['config']['secret']
+
+            # Check for secret in headers
+            provided_secret = request.headers.get('X-Webhook-Secret', '')
+
+            # Also check for signature-based validation (GitHub/Stripe style)
+            signature = request.headers.get('X-Webhook-Signature', '')
+            if signature and request.body:
+                expected_signature = hmac.new(
+                    expected_secret.encode(),
+                    request.body,
+                    hashlib.sha256
+                ).hexdigest()
+
+                if not hmac.compare_digest(signature, expected_signature):
+                    logger.warning(f"Invalid webhook signature for workflow {workflow_id}")
+                    return JsonResponse({
+                        "error": "Invalid webhook signature"
+                    }, status=401)
+            elif provided_secret != expected_secret:
+                logger.warning(f"Invalid webhook secret for workflow {workflow_id}")
+                return JsonResponse({
+                    "error": "Invalid webhook secret"
+                }, status=401)
+
+        # Check if method matches configuration
+        configured_method = webhook_trigger.get('config', {}).get('method', 'POST')
+        if request.method != configured_method:
+            return JsonResponse({
+                "error": f"Method {request.method} not allowed. Expected {configured_method}"
+            }, status=405)
+
+        # Parse webhook payload
+        webhook_data = {
+            "webhook_headers": dict(request.headers),
+            "webhook_method": request.method,
+            "webhook_path": request.path,
+            "webhook_query_params": dict(request.GET),
         }
-        
-        # Handle webhook asynchronously
-        import asyncio
-        
-        async def handle_webhook_async():
-            return await trigger_manager.process_webhook(
-                workflow_id=workflow_id,
-                payload=data,
-                headers=headers
+
+        # Add body data
+        if request.method in ['POST', 'PUT']:
+            try:
+                if request.content_type == 'application/json':
+                    webhook_data["webhook_body"] = json.loads(request.body)
+                else:
+                    webhook_data["webhook_body"] = dict(request.POST)
+            except:
+                webhook_data["webhook_body"] = {}
+
+        # Get system user for webhook triggers
+        system_user = User.objects.filter(email='system@oneo.com').first()
+        if not system_user:
+            # Create system user if it doesn't exist
+            system_user = User.objects.create(
+                email='system@oneo.com',
+                username='system',
+                first_name='System',
+                last_name='User',
+                is_active=True
             )
-        
-        # Run webhook handler
+
+        # Trigger the workflow using workflow engine
         try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # Create a new event loop for this webhook
-                import threading
-                import concurrent.futures
-                
-                def run_webhook():
-                    new_loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(new_loop)
-                    try:
-                        return new_loop.run_until_complete(handle_webhook_async())
-                    finally:
-                        new_loop.close()
-                
-                with concurrent.futures.ThreadPoolExecutor() as executor:
-                    future = executor.submit(run_webhook)
-                    result = future.result(timeout=30)
-            else:
-                result = asyncio.run(handle_webhook_async())
-        except Exception as webhook_error:
-            logger.error(f"Webhook processing error: {webhook_error}")
-            result = {
-                'status': 'error',
-                'message': str(webhook_error),
-                'workflow_id': workflow_id
-            }
-        
-        if result['status'] == 'success':
-            return JsonResponse(result, status=200)
-        else:
-            return JsonResponse(result, status=400)
-            
+            from workflows.engine import workflow_engine
+
+            execution = async_to_sync(workflow_engine.execute_workflow)(
+                workflow=workflow,
+                trigger_data=webhook_data,
+                triggered_by=system_user,
+                tenant=workflow.tenant
+            )
+
+            logger.info(f"Workflow {workflow_id} triggered via webhook, execution ID: {execution.id}")
+
+            return JsonResponse({
+                "success": True,
+                "message": "Workflow triggered successfully",
+                "execution_id": str(execution.id),
+                "workflow_id": str(workflow.id),
+                "workflow_name": workflow.name
+            }, status=200)
+
+        except Exception as e:
+            logger.error(f"Failed to trigger workflow {workflow_id} via webhook: {str(e)}")
+            return JsonResponse({
+                "error": "Failed to trigger workflow",
+                "details": str(e)
+            }, status=500)
+
+    except Workflow.DoesNotExist:
+        logger.warning(f"Webhook received for non-existent workflow {workflow_id}")
+        return JsonResponse({
+            "error": "Workflow not found"
+        }, status=404)
     except Exception as e:
         logger.error(f"Webhook endpoint error: {e}")
         return JsonResponse({
-            'status': 'error',
-            'message': str(e)
+            'error': 'Internal server error',
+            'details': str(e) if request.user.is_authenticated else 'An error occurred'
         }, status=500)
 
 

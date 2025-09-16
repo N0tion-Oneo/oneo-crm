@@ -255,11 +255,12 @@ class ForEachProcessor(AsyncNodeProcessor):
                 'current_index': index
             }
             
-            # Prepare reusable workflow configuration
+            # Prepare sub-workflow configuration
             reusable_config = {
-                'type': 'REUSABLE_WORKFLOW',
+                'type': 'SUB_WORKFLOW',
                 'data': {
                     'workflow_name': workflow_name,
+                    'is_reusable': True,
                     'inputs': node_data.get('item_inputs', {}),
                     **node_data.get('reusable_workflow_config', {})
                 }

@@ -292,36 +292,54 @@ Notes: {meeting.booking_data.get('notes', 'No additional notes')}
             # Update meeting with calendar event ID
             meeting.calendar_event_id = event_id  # Save to the actual field
             meeting.booking_data['calendar_event_id'] = event_id  # Also save to booking_data for reference
-            
-            # If we created a conference, fetch the event to get the conference URL
-            if conference_provider:
-                logger.info(f"Fetching event details to get conference URL...")
+
+            # If we created a conference and didn't get URL immediately, fetch it
+            if conference_provider and not meeting.meeting_url:
+                logger.info(f"Conference provider {conference_provider} was requested but no URL received. Fetching event details...")
                 try:
                     # Get events from the calendar to find our newly created event
                     from datetime import timedelta
                     start_date = (meeting.start_time - timedelta(minutes=1)).isoformat()
                     end_date = (meeting.end_time + timedelta(minutes=1)).isoformat()
-                    
+
                     events_response = await calendar_client.get_events(
                         account_id=account_id,
-                        calendar_id=primary_calendar,
+                        calendar_id=target_calendar,
                         start_date=start_date,
                         end_date=end_date,
                         limit=10
                     )
-                    
+
+                    logger.info(f"Events response for conference URL lookup: {events_response}")
+
                     if events_response and 'data' in events_response:
                         # Find our event by ID
                         for event in events_response['data']:
                             if event.get('id') == event_id:
+                                logger.info(f"Found our event: {event}")
+
+                                # Check different possible fields for conference URL
+                                conference_url = None
                                 if 'conference' in event and 'url' in event['conference']:
                                     conference_url = event['conference']['url']
+                                elif 'hangoutLink' in event:
+                                    conference_url = event['hangoutLink']
+                                elif 'onlineMeetingUrl' in event:
+                                    conference_url = event['onlineMeetingUrl']
+
+                                if conference_url:
                                     meeting.meeting_url = conference_url
                                     meeting.booking_data['conference_url'] = conference_url
                                     logger.info(f"📹 Conference URL retrieved: {conference_url}")
+                                else:
+                                    logger.warning(f"Event found but no conference URL in response: {event}")
                                 break
+                        else:
+                            logger.warning(f"Could not find event with ID {event_id} in calendar events")
+                    else:
+                        logger.warning(f"No events data in response or empty response")
                 except Exception as e:
-                    logger.warning(f"Could not fetch conference URL: {e}")
+                    logger.error(f"Error fetching conference URL: {e}")
             
             from asgiref.sync import sync_to_async
             await sync_to_async(meeting.save)(update_fields=['booking_data', 'meeting_url', 'calendar_event_id'])

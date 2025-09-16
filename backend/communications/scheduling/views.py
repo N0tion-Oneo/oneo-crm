@@ -1357,16 +1357,75 @@ class FacilitatorBookingViewSet(viewsets.ModelViewSet):
     def cancel(self, request, pk=None):
         """Cancel a facilitator booking"""
         booking = self.get_object()
-        
+
         if booking.status in ['completed', 'cancelled']:
             return Response(
                 {'error': 'Cannot cancel booking in current status'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
+
         booking.status = 'cancelled'
         booking.save()
-        
+
         # TODO: Send cancellation notifications
-        
+
         return Response({'message': 'Booking cancelled successfully'})
+
+    @action(detail=False, methods=['get'])
+    def incomplete(self, request):
+        """Get incomplete facilitator bookings (pending_p1 or pending_p2)"""
+        bookings = self.get_queryset().filter(
+            status__in=['pending_p1', 'pending_p2']
+        ).order_by('-created_at')
+
+        # Manually serialize with links
+        bookings_data = []
+        for booking in bookings:
+            base_url = request.build_absolute_uri('/').rstrip('/')
+            # Remove port 8000 and use port 3000 for frontend
+            if ':8000' in base_url:
+                base_url = base_url.replace(':8000', ':3000')
+
+            booking_data = {
+                'id': str(booking.id),
+                'meeting_type': {
+                    'id': str(booking.meeting_type.id),
+                    'name': booking.meeting_type.name,
+                },
+                'facilitator': {
+                    'id': str(booking.facilitator.id),
+                    'username': booking.facilitator.username,
+                    'email': booking.facilitator.email,
+                },
+                'participant_1_email': booking.participant_1_email,
+                'participant_1_name': booking.participant_1_name,
+                'participant_1_phone': booking.participant_1_phone,
+                'participant_1_record_id': booking.participant_1_record_id,
+                'participant_1_completed_at': booking.participant_1_completed_at.isoformat() if booking.participant_1_completed_at else None,
+                'participant_1_message': booking.participant_1_message,
+                'participant_1_token': str(booking.participant_1_token),
+                'participant_1_link': f"{base_url}/book/facilitator/{booking.participant_1_token}/participant1",
+                'participant_2_email': booking.participant_2_email,
+                'participant_2_name': booking.participant_2_name,
+                'participant_2_phone': booking.participant_2_phone,
+                'participant_2_record_id': booking.participant_2_record_id,
+                'participant_2_completed_at': booking.participant_2_completed_at.isoformat() if booking.participant_2_completed_at else None,
+                'participant_2_token': str(booking.participant_2_token),
+                'participant_2_link': f"{base_url}/book/facilitator/{booking.participant_2_token}",
+                'selected_duration_minutes': booking.selected_duration_minutes,
+                'selected_location_type': booking.selected_location_type,
+                'selected_location_details': booking.selected_location_details,
+                'selected_slots': booking.selected_slots,
+                'final_slot': booking.final_slot,
+                'status': booking.status,
+                'expires_at': booking.expires_at.isoformat() if booking.expires_at else None,
+                'invitation_sent_at': booking.invitation_sent_at.isoformat() if booking.invitation_sent_at else None,
+                'invitation_opened_at': booking.invitation_opened_at.isoformat() if booking.invitation_opened_at else None,
+                'reminder_sent_at': booking.reminder_sent_at.isoformat() if booking.reminder_sent_at else None,
+                'scheduled_meeting': str(booking.scheduled_meeting.id) if booking.scheduled_meeting else None,
+                'created_at': booking.created_at.isoformat(),
+                'updated_at': booking.updated_at.isoformat(),
+            }
+            bookings_data.append(booking_data)
+
+        return Response({'results': bookings_data, 'count': len(bookings_data)})

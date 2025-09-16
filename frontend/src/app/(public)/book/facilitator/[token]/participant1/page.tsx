@@ -445,48 +445,22 @@ export default function FacilitatorParticipant1Page() {
                   <h3 className="font-medium mb-3">Booking Progress</h3>
                   <div className="space-y-3">
                     <div className="flex items-center gap-3">
-                      <div className={cn(
-                        "w-7 h-7 rounded-full flex items-center justify-center text-xs font-medium",
-                        currentStep === 'config' 
-                          ? "bg-blue-600 text-white" 
-                          : "bg-green-600 text-white"
-                      )}>
-                        {currentStep === 'config' ? '1' : '✓'}
+                      <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-medium bg-blue-600 text-white">
+                        1
                       </div>
-                      <span className={cn(
-                        "text-sm",
-                        currentStep === 'config' ? "font-medium text-gray-900 dark:text-white" : "text-gray-500 dark:text-gray-400"
-                      )}>Configure Meeting</span>
+                      <span className="text-sm font-medium text-gray-900 dark:text-white">Configure Meeting</span>
                     </div>
                     <div className="flex items-center gap-3">
-                      <div className={cn(
-                        "w-7 h-7 rounded-full flex items-center justify-center text-xs font-medium",
-                        currentStep === 'slots' 
-                          ? "bg-blue-600 text-white" 
-                          : currentStep === 'review' 
-                          ? "bg-green-600 text-white" 
-                          : "bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400"
-                      )}>
-                        {currentStep === 'review' ? '✓' : '2'}
+                      <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-medium bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400">
+                        2
                       </div>
-                      <span className={cn(
-                        "text-sm",
-                        currentStep === 'slots' ? "font-medium text-gray-900 dark:text-white" : "text-gray-500 dark:text-gray-400"
-                      )}>Select Time Slots</span>
+                      <span className="text-sm text-gray-500 dark:text-gray-400">Select Time Slots</span>
                     </div>
                     <div className="flex items-center gap-3">
-                      <div className={cn(
-                        "w-7 h-7 rounded-full flex items-center justify-center text-xs font-medium",
-                        currentStep === 'review' 
-                          ? "bg-blue-600 text-white" 
-                          : "bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400"
-                      )}>
+                      <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-medium bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400">
                         3
                       </div>
-                      <span className={cn(
-                        "text-sm",
-                        currentStep === 'review' ? "font-medium text-gray-900 dark:text-white" : "text-gray-500 dark:text-gray-400"
-                      )}>Review & Confirm</span>
+                      <span className="text-sm text-gray-500 dark:text-gray-400">Review & Confirm</span>
                     </div>
                   </div>
                 </div>

@@ -33,6 +33,12 @@ class LinkedInProcessor(AsyncNodeProcessor):
         # Optional parameters
         sequence_metadata = node_data.get('sequence_metadata', {})
         send_connection_request = node_data.get('send_connection_request', False)
+
+        # Thread/reply parameters
+        reply_to_message_id = node_data.get('reply_to_message_id') or context.get('parent_message_id')
+        thread_id = node_data.get('thread_id') or context.get('external_thread_id')
+        conversation_id = node_data.get('conversation_id') or context.get('conversation_id')
+        is_reply = node_data.get('is_reply', False) or bool(reply_to_message_id)
         
         # Validate required fields
         if not all([user_id, recipient_profile, message_content]):
@@ -49,7 +55,7 @@ class LinkedInProcessor(AsyncNodeProcessor):
                     is_active=True,
                     auth_status='connected'
                 ).first
-            )()\n            
+            )()
             if not user_channel:
                 raise ValueError('No active LinkedIn channel found for user')
             
@@ -72,7 +78,11 @@ class LinkedInProcessor(AsyncNodeProcessor):
                 user_channel=user_channel,
                 recipient=recipient_profile,
                 content=message_content,
-                metadata=sequence_metadata
+                metadata=sequence_metadata,
+                reply_to_message_id=reply_to_message_id,
+                thread_id=thread_id,
+                conversation_id=conversation_id,
+                is_reply=is_reply
             )
             
             if result['success']:
@@ -84,11 +94,25 @@ class LinkedInProcessor(AsyncNodeProcessor):
                     message_id=result.get('message_id'),
                     metadata=sequence_metadata
                 )
-                
+
+                message_id = result.get('message_id')
+                conversation_id = result.get('conversation_id')
+                thread_id = result.get('thread_id')  # LinkedIn thread ID
+
+                # Update context with message and conversation info for downstream nodes
+                if message_id:
+                    context['last_sent_message_id'] = message_id
+                if conversation_id:
+                    context['conversation_id'] = conversation_id
+                if thread_id:
+                    context['external_thread_id'] = thread_id
+
                 return {
                     'success': True,
-                    'message_id': result.get('message_id'),
+                    'message_id': message_id,
                     'external_message_id': result.get('external_message_id'),
+                    'conversation_id': conversation_id,
+                    'thread_id': thread_id,
                     'recipient': recipient_profile,
                     'content': message_content,
                     'channel': user_channel.name,
@@ -113,18 +137,37 @@ class LinkedInProcessor(AsyncNodeProcessor):
         user_channel,
         recipient: str,
         content: str,
-        metadata: dict = None
+        metadata: dict = None,
+        reply_to_message_id: str = None,
+        thread_id: str = None,
+        conversation_id: str = None,
+        is_reply: bool = False
     ) -> Dict[str, Any]:
         """Send LinkedIn message via UniPile SDK"""
         
         try:
             from communications.unipile_sdk import unipile_service
             
+            # Build extra params for threading
+            extra_params = {}
+            if metadata:
+                extra_params['metadata'] = metadata
+            if reply_to_message_id:
+                extra_params['in_reply_to'] = reply_to_message_id
+            if thread_id:
+                extra_params['thread_id'] = thread_id
+                extra_params['conversation_urn'] = thread_id  # LinkedIn uses conversation_urn
+            if conversation_id:
+                extra_params['conversation_id'] = conversation_id
+            if is_reply:
+                extra_params['is_reply'] = True
+
             result = await unipile_service.send_message(
                 user_channel_connection=user_channel,
                 recipient=recipient,
                 content=content,
-                message_type='linkedin'
+                message_type='linkedin',
+                extra_params=extra_params if extra_params else None
             )
             
             return result

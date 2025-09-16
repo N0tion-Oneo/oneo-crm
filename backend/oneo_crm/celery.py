@@ -30,24 +30,22 @@ except ImportError:
 
 # Celery Beat schedule for periodic tasks
 app.conf.beat_schedule = {
-    # Process scheduled workflows every minute
-    'process-scheduled-workflows': {
-        'task': 'workflows.tasks.process_scheduled_workflows',
+    # Process scheduled workflow triggers every minute
+    'process-scheduled-triggers': {
+        'task': 'workflows.process_scheduled_triggers',
         'schedule': 60.0,  # Run every 60 seconds
     },
     
-    # Clean up old workflow executions daily at 2 AM
-    'cleanup-old-executions': {
-        'task': 'workflows.tasks.cleanup_old_executions',
+    # Clean up old workflow schedules daily
+    'cleanup-old-schedules': {
+        'task': 'workflows.cleanup_old_schedules',
         'schedule': 60 * 60 * 24,  # Daily
-        'kwargs': {'days_to_keep': 30}
     },
-    
-    # Optional: Regular health check for workflow system
-    'workflow-system-health-check': {
-        'task': 'workflows.tasks.validate_workflow_definition',
-        'schedule': 60 * 60 * 6,  # Every 6 hours
-        'enabled': False  # Disabled by default
+
+    # Validate workflow schedules weekly
+    'validate-workflow-schedules': {
+        'task': 'workflows.validate_workflow_schedules',
+        'schedule': 60 * 60 * 24 * 7,  # Weekly
     },
     
     # Communication system periodic sync (backup to webhooks)

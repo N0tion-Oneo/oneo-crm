@@ -1099,6 +1099,12 @@ class BookingProcessor:
                 result['meeting_url'] = event_data['hangoutLink']
             elif 'onlineMeetingUrl' in event_data:  # Microsoft Teams specific
                 result['meeting_url'] = event_data['onlineMeetingUrl']
+            elif 'html_link' in event_data:  # Google Calendar event link as fallback
+                # If we have a Google Calendar HTML link and requested Google Meet,
+                # we can provide the calendar event link as a fallback
+                if conference_provider == 'google_meet':
+                    result['calendar_html_link'] = event_data['html_link']
+                    logger.info(f"No meeting URL in response, but have calendar link: {event_data['html_link']}")
             
             return result
             
@@ -1132,7 +1138,9 @@ class BookingProcessor:
                 conference_provider = 'teams'
             elif self.meeting_type.location_type == 'zoom':
                 conference_provider = 'zoom'
-            
+
+            logger.info(f"Meeting type location_type: {self.meeting_type.location_type}, conference_provider: {conference_provider}")
+
             # Use unified method to create event with meeting type's calendar
             result = await self._create_unipile_calendar_event(
                 account_id=account_id,
@@ -1148,16 +1156,70 @@ class BookingProcessor:
             
             # Update meeting with results
             if result:
+                logger.info(f"Calendar event creation result: {result}")
                 if result.get('event_id'):
                     meeting.calendar_event_id = result['event_id']
                     meeting.calendar_sync_status = 'synced'
-                
+
                 if result.get('meeting_url'):
                     meeting.meeting_url = result['meeting_url']
-                
+                    logger.info(f"Meeting URL saved: {meeting.meeting_url}")
+                elif conference_provider and result.get('event_id'):
+                    # If no URL was returned but we requested a conference, try to fetch it
+                    logger.warning(f"No meeting URL in result for conference_provider: {conference_provider}, will try to fetch")
+
+                    try:
+                        # Wait a moment for the calendar to process
+                        import asyncio
+                        await asyncio.sleep(2)
+
+                        # Try to fetch the event to get the conference URL
+                        from datetime import timedelta
+                        start_date = (meeting.start_time - timedelta(minutes=1)).isoformat()
+                        end_date = (meeting.end_time + timedelta(minutes=1)).isoformat()
+
+                        # Re-initialize UniPile client for fetching
+                        from django.db import connection
+                        from django.conf import settings
+
+                        tenant = connection.tenant
+                        if hasattr(tenant, 'unipile_config') and tenant.unipile_config and tenant.unipile_config.is_configured():
+                            client = UnipileClient(tenant.unipile_config.dsn, tenant.unipile_config.get_access_token())
+                        else:
+                            if hasattr(settings, 'UNIPILE_DSN'):
+                                client = UnipileClient(settings.UNIPILE_DSN, settings.UNIPILE_API_KEY)
+
+                        calendar_client = UnipileCalendarClient(client)
+                        events_response = await calendar_client.get_events(
+                            account_id=account_id,
+                            calendar_id=self.meeting_type.calendar_id,
+                            start_date=start_date,
+                            end_date=end_date,
+                            limit=10
+                        )
+
+                        if events_response and 'data' in events_response:
+                            for event in events_response['data']:
+                                if event.get('id') == result['event_id']:
+                                    # Check for conference URL in various fields
+                                    if 'conference' in event and 'url' in event['conference']:
+                                        meeting.meeting_url = event['conference']['url']
+                                    elif 'hangoutLink' in event:
+                                        meeting.meeting_url = event['hangoutLink']
+                                    elif 'onlineMeetingUrl' in event:
+                                        meeting.meeting_url = event['onlineMeetingUrl']
+
+                                    if meeting.meeting_url:
+                                        logger.info(f"Conference URL retrieved on second attempt: {meeting.meeting_url}")
+                                    break
+                    except Exception as e:
+                        logger.error(f"Failed to fetch conference URL: {e}")
+
                 await sync_to_async(meeting.save)(
                     update_fields=['calendar_event_id', 'calendar_sync_status', 'meeting_url']
                 )
+            else:
+                logger.warning("No result from calendar event creation - check calendar connection")
             
         except Exception as e:
             logger.error(f"Failed to create calendar event: {e}")

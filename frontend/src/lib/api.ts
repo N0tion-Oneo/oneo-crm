@@ -1077,4 +1077,61 @@ export const savedFiltersApi = {
   }
 }
 
+// Workflows API client functions
+export const workflowsApi = {
+  // Workflow CRUD
+  list: (params?: any) => api.get('/api/v1/workflows/', { params }),
+  create: (data: any) => api.post('/api/v1/workflows/', data),
+  get: (id: string) => api.get(`/api/v1/workflows/${id}/`),
+  update: (id: string, data: any) => api.patch(`/api/v1/workflows/${id}/`, data),
+  delete: (id: string) => api.delete(`/api/v1/workflows/${id}/`),
+
+  // Workflow actions
+  trigger: (id: string, data?: any) =>
+    api.post(`/api/v1/workflows/${id}/trigger/`, data || {}),
+
+  activate: (id: string) =>
+    api.post(`/api/v1/workflows/${id}/activate/`),
+
+  deactivate: (id: string) =>
+    api.post(`/api/v1/workflows/${id}/deactivate/`),
+
+  duplicate: (id: string) =>
+    api.post(`/api/v1/workflows/${id}/duplicate/`),
+
+  // Workflow executions
+  getExecutions: (workflowId: string, params?: any) =>
+    api.get(`/api/v1/workflows/${workflowId}/executions/`, { params }),
+
+  getExecution: (workflowId: string, executionId: string) =>
+    api.get(`/api/v1/workflows/${workflowId}/executions/${executionId}/`),
+
+  // Workflow templates
+  getTemplates: (params?: any) =>
+    api.get('/api/v1/workflows/templates/', { params }),
+
+  createFromTemplate: (templateId: string, data: any) =>
+    api.post(`/api/v1/workflows/templates/${templateId}/`, data),
+
+  // Workflow statistics
+  getStats: (workflowId: string) =>
+    api.get(`/api/v1/workflows/${workflowId}/stats/`),
+
+  // Workflow triggers
+  getTriggers: (workflowId: string) =>
+    api.get(`/api/v1/workflows/${workflowId}/triggers/`),
+
+  createTrigger: (workflowId: string, data: any) =>
+    api.post(`/api/v1/workflows/${workflowId}/triggers/`, data),
+
+  updateTrigger: (workflowId: string, triggerId: string, data: any) =>
+    api.patch(`/api/v1/workflows/${workflowId}/triggers/${triggerId}/`, data),
+
+  deleteTrigger: (workflowId: string, triggerId: string) =>
+    api.delete(`/api/v1/workflows/${workflowId}/triggers/${triggerId}/`),
+
+  toggleTrigger: (workflowId: string, triggerId: string, enabled: boolean) =>
+    api.post(`/api/v1/workflows/${workflowId}/triggers/${triggerId}/toggle/`, { enabled })
+}
+
 export default api

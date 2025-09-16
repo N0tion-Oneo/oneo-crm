@@ -108,25 +108,26 @@ class TriggerRegistry:
             processor_class="RecordEventProcessor"
         ))
         
-        self.register(TriggerDefinition(
-            trigger_type=WorkflowTriggerType.FIELD_CHANGED,
-            display_name="Field Changed",
-            description="Trigger when specific record fields change values",
-            category=TriggerCategory.DATA_EVENTS,
-            config_schema={
-                "type": "object",
-                "properties": {
-                    "watched_fields": {"type": "array", "items": {"type": "string"}, "minItems": 1},
-                    "change_types": {"type": "array", "items": {"type": "string"}, "default": ["any"]},
-                    "value_filters": {"type": "object"},
-                    "change_threshold": {"type": "number"},
-                    "ignore_null_changes": {"type": "boolean", "default": True}
-                }
-            },
-            required_fields=["watched_fields"],
-            handler_class="FieldChangeHandler",
-            processor_class="FieldChangeProcessor"
-        ))
+        # DEPRECATED - Use RECORD_UPDATED with specific_fields instead
+        # self.register(TriggerDefinition(
+        #     trigger_type=WorkflowTriggerType.FIELD_CHANGED,
+        #     display_name="Field Changed",
+        #     description="Trigger when specific record fields change values",
+        #     category=TriggerCategory.DATA_EVENTS,
+        #     config_schema={
+        #         "type": "object",
+        #         "properties": {
+        #             "watched_fields": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+        #             "change_types": {"type": "array", "items": {"type": "string"}, "default": ["any"]},
+        #             "value_filters": {"type": "object"},
+        #             "change_threshold": {"type": "number"},
+        #             "ignore_null_changes": {"type": "boolean", "default": True}
+        #         }
+        #     },
+        #     required_fields=["watched_fields"],
+        #     handler_class="FieldChangeHandler",
+        #     processor_class="FieldChangeProcessor"
+        # ))
         
         # Time-based triggers
         self.register(TriggerDefinition(
@@ -339,26 +340,27 @@ class TriggerRegistry:
         ))
         
         # Status and stage change triggers
-        self.register(TriggerDefinition(
-            trigger_type=WorkflowTriggerType.STATUS_CHANGED,
-            display_name="Status Changed",
-            description="Trigger when record status transitions between specific values",
-            category=TriggerCategory.DATA_EVENTS,
-            config_schema={
-                "type": "object",
-                "properties": {
-                    "from_statuses": {"type": "array", "items": {"type": "string"}},
-                    "to_statuses": {"type": "array", "items": {"type": "string"}},
-                    "pipeline_ids": {"type": "array", "items": {"type": "string"}},
-                    "status_fields": {"type": "array", "items": {"type": "string"}, "default": ["status"]},
-                    "track_duration": {"type": "boolean", "default": True},
-                    "minimum_duration_hours": {"type": "integer", "default": 0}
-                }
-            },
-            required_fields=["to_statuses"],
-            handler_class="StatusChangeHandler",
-            processor_class="StatusChangeProcessor"
-        ))
+        # DEPRECATED - Use RECORD_UPDATED with update_type='status_only' instead
+        # self.register(TriggerDefinition(
+        #     trigger_type=WorkflowTriggerType.STATUS_CHANGED,
+        #     display_name="Status Changed",
+        #     description="Trigger when record status transitions between specific values",
+        #     category=TriggerCategory.DATA_EVENTS,
+        #     config_schema={
+        #         "type": "object",
+        #         "properties": {
+        #             "from_statuses": {"type": "array", "items": {"type": "string"}},
+        #             "to_statuses": {"type": "array", "items": {"type": "string"}},
+        #             "pipeline_ids": {"type": "array", "items": {"type": "string"}},
+        #             "status_fields": {"type": "array", "items": {"type": "string"}, "default": ["status"]},
+        #             "track_duration": {"type": "boolean", "default": True},
+        #             "minimum_duration_hours": {"type": "integer", "default": 0}
+        #         }
+        #     },
+        #     required_fields=["to_statuses"],
+        #     handler_class="StatusChangeHandler",
+        #     processor_class="StatusChangeProcessor"
+        # ))
         
         self.register(TriggerDefinition(
             trigger_type=WorkflowTriggerType.PIPELINE_STAGE_CHANGED,

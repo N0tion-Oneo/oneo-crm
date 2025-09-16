@@ -42,7 +42,7 @@ def create_email_nurture_sequence_template(
     contact_validation_id = get_next_node_id()
     nodes.append({
         "id": contact_validation_id,
-        "type": "REUSABLE_WORKFLOW",
+        "type": "SUB_WORKFLOW",
         "position": {"x": 100, "y": 200},
         "data": {
             "name": "Validate & Enrich Contact",
@@ -70,7 +70,7 @@ def create_email_nurture_sequence_template(
         lead_scoring_id = get_next_node_id()
         nodes.append({
             "id": lead_scoring_id,
-            "type": "REUSABLE_WORKFLOW",
+            "type": "SUB_WORKFLOW",
             "position": {"x": 100, "y": 300},
             "data": {
                 "name": "Score Lead Quality",
@@ -303,7 +303,7 @@ def create_multichannel_outreach_template(
     enrichment_node_id = get_next_node_id()
     nodes.append({
         "id": enrichment_node_id,
-        "type": "REUSABLE_WORKFLOW",
+        "type": "SUB_WORKFLOW",
         "position": {"x": 100, "y": 200},
         "data": {
             "name": "Enrich Contact & Check Channels",
@@ -331,7 +331,7 @@ def create_multichannel_outreach_template(
     scoring_node_id = get_next_node_id()
     nodes.append({
         "id": scoring_node_id,
-        "type": "REUSABLE_WORKFLOW",
+        "type": "SUB_WORKFLOW",
         "position": {"x": 100, "y": 300},
         "data": {
             "name": "Score Lead for Personalization",

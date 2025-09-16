@@ -25,14 +25,14 @@ class TriggerValidatorFactory:
             WorkflowTriggerType.RECORD_CREATED,
             WorkflowTriggerType.RECORD_UPDATED,
             WorkflowTriggerType.RECORD_DELETED,
-            WorkflowTriggerType.FIELD_CHANGED,
+            # WorkflowTriggerType.FIELD_CHANGED,  # Deprecated - use RECORD_UPDATED
             WorkflowTriggerType.SCHEDULED,
             WorkflowTriggerType.WEBHOOK,
             WorkflowTriggerType.API_ENDPOINT,
             WorkflowTriggerType.FORM_SUBMITTED,
             WorkflowTriggerType.EMAIL_RECEIVED,
             WorkflowTriggerType.MESSAGE_RECEIVED,
-            WorkflowTriggerType.STATUS_CHANGED,
+            # WorkflowTriggerType.STATUS_CHANGED,  # Deprecated - use RECORD_UPDATED
             WorkflowTriggerType.DATE_REACHED,
             WorkflowTriggerType.CONDITION_MET,
             WorkflowTriggerType.PIPELINE_STAGE_CHANGED,

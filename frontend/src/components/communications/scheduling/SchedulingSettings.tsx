@@ -360,11 +360,11 @@ export function SchedulingSettings({ canManageAll = false }: SchedulingSettingsP
       },
       required_fields: meeting.required_fields || [],
       is_active: meeting.is_active,
-      allow_rescheduling: meeting.allow_rescheduling ?? true,
-      allow_cancellation: meeting.allow_cancellation ?? true,
-      cancellation_notice_hours: meeting.cancellation_notice_hours ?? 24,
-      send_reminders: meeting.send_reminders ?? true,
-      reminder_hours: meeting.reminder_hours ?? 24
+      allow_rescheduling: true,
+      allow_cancellation: true,
+      cancellation_notice_hours: 24,
+      send_reminders: true,
+      reminder_hours: 24
     })
     
     // Set selected pipeline

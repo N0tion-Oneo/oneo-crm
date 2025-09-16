@@ -92,9 +92,19 @@ export default function WorkflowDetailPageRedesigned() {
         workflowsApi.get(workflowId),
         workflowsApi.getTriggers(workflowId)
       ]);
-      setWorkflow(workflowResponse.data);
-      setWorkflowName(workflowResponse.data.name);
-      setWorkflowDescription(workflowResponse.data.description);
+
+      // Map backend field name to frontend field name
+      const workflowData = {
+        ...workflowResponse.data,
+        definition: workflowResponse.data.workflow_definition || {
+          nodes: [],
+          edges: []
+        }
+      };
+
+      setWorkflow(workflowData);
+      setWorkflowName(workflowData.name);
+      setWorkflowDescription(workflowData.description);
       setTriggers(triggersResponse.data || []);
     } catch (error) {
       console.error('Failed to fetch workflow:', error);
@@ -114,9 +124,13 @@ export default function WorkflowDetailPageRedesigned() {
         name: workflowName,
         description: workflowDescription,
         status: workflow.status,
-        trigger_type: workflow.trigger_type,
-        definition: workflow.definition
+        trigger_type: workflow.trigger_type || 'manual',  // Default to manual since triggers are now handled by nodes
+        workflow_definition: workflow.definition
       };
+
+      console.log('Saving workflow with payload:', payload);
+      console.log('Definition nodes:', payload.workflow_definition?.nodes);
+      console.log('Definition edges:', payload.workflow_definition?.edges);
 
       if (isNew) {
         const response = await workflowsApi.create(payload);
@@ -297,7 +311,7 @@ export default function WorkflowDetailPageRedesigned() {
                 variant="outline"
                 size="sm"
                 onClick={testWorkflow}
-                disabled={testRunning || !workflow?.definition.nodes.length}
+                disabled={testRunning || !workflow?.definition?.nodes?.length}
                 className="gap-2"
               >
                 {testRunning ? (
@@ -382,7 +396,7 @@ export default function WorkflowDetailPageRedesigned() {
               <div className="flex items-center gap-4 text-sm text-muted-foreground">
                 <div className="flex items-center gap-1">
                   <Zap className="h-3.5 w-3.5" />
-                  <span>{workflow?.definition.nodes.length || 0} nodes</span>
+                  <span>{workflow?.definition?.nodes?.length || 0} nodes</span>
                 </div>
                 <div className="flex items-center gap-1">
                   <Clock className="h-3.5 w-3.5" />
@@ -402,6 +416,7 @@ export default function WorkflowDetailPageRedesigned() {
                 setWorkflow({ ...workflow, definition });
                 setHasUnsavedChanges(true);
               }}
+              workflowId={workflow.id || workflowId}
               showSidebar={showSidebar}
               showDebugPanel={showDebugPanel}
               showHistory={showHistory}

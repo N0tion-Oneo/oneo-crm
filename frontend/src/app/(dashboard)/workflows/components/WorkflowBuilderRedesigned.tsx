@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useMemo, useState, useRef } from 'react';
+import { workflowsApi } from '@/lib/api';
 import ReactFlow, {
   Node,
   Edge,
@@ -49,6 +50,7 @@ import { WorkflowDebugPanel } from './WorkflowDebugPanel';
 interface WorkflowBuilderRedesignedProps {
   definition: WorkflowDefinition;
   onChange: (definition: WorkflowDefinition) => void;
+  workflowId?: string;
   showSidebar?: boolean;
   showDebugPanel?: boolean;
   showHistory?: boolean;
@@ -73,7 +75,7 @@ function WorkflowCanvas({
   const [reactFlowInstance, setReactFlowInstance] = useState<ReactFlowInstance | null>(null);
 
   const [nodes, setNodes] = useState<Node[]>(
-    definition.nodes.map(node => ({
+    (definition?.nodes || []).map(node => ({
       id: node.id,
       type: 'workflow',
       position: node.position,
@@ -82,7 +84,7 @@ function WorkflowCanvas({
   );
 
   const [edges, setEdges] = useState<Edge[]>(
-    definition.edges.map(edge => ({
+    (definition?.edges || []).map(edge => ({
       id: edge.id,
       source: edge.source,
       target: edge.target,
@@ -373,6 +375,7 @@ function WorkflowCanvas({
 export function WorkflowBuilderRedesigned({
   definition,
   onChange,
+  workflowId,
   showSidebar = true,
   showDebugPanel = false,
   showHistory = false,
@@ -389,7 +392,7 @@ export function WorkflowBuilderRedesigned({
 
   const handleNodeUpdate = (nodeId: string, data: any) => {
     // Update the node in the definition
-    const updatedNodes = definition.nodes.map(node =>
+    const updatedNodes = (definition?.nodes || []).map(node =>
       node.id === nodeId ? { ...node, data: { ...node.data, ...data } } : node
     );
     onChange({ ...definition, nodes: updatedNodes });
@@ -397,16 +400,44 @@ export function WorkflowBuilderRedesigned({
   };
 
   const handleTestNode = async (nodeId: string) => {
-    // Placeholder for node testing
-    // This would call an API to test the node configuration
-    return new Promise((resolve) => {
-      setTimeout(() => {
-        resolve([
-          { id: 1, name: 'Sample Item 1', value: 100 },
-          { id: 2, name: 'Sample Item 2', value: 200 }
-        ]);
-      }, 1000);
-    });
+    console.log('Testing node:', nodeId);
+    console.log('Node data:', selectedNodeData);
+
+    try {
+      // Find the node in the definition
+      const node = definition?.nodes?.find(n => n.id === nodeId);
+      if (!node) {
+        throw new Error('Node not found');
+      }
+
+      // Call the backend API to test the node
+      const response = await workflowsApi.testNode(workflowId || 'new', {
+        node_id: nodeId,
+        node_type: node.type,
+        node_config: node.data,
+        // Include any context or input data needed for testing
+        test_context: {
+          pipeline_id: node.data?.pipeline_id,
+          form_mode: node.data?.form_mode,
+          stage_field: node.data?.stage_field,
+          stage: node.data?.stage
+        }
+      });
+
+      return response.data;
+    } catch (error: any) {
+      console.error('Failed to test node:', error);
+      console.error('Error response:', error.response?.data);
+      console.error('Error status:', error.response?.status);
+
+      // If we got a response from the backend, throw the real error
+      if (error.response) {
+        throw new Error(error.response.data?.error || error.response.data?.detail || 'Node test failed');
+      }
+
+      // Only return dummy data for network errors (no backend connection)
+      throw new Error('Failed to connect to test endpoint');
+    }
   };
 
   return (
@@ -472,6 +503,7 @@ export function WorkflowBuilderRedesigned({
             availableVariables={[]} // TODO: Calculate from nodes
             onUpdate={handleNodeUpdate}
             onClose={() => handleNodeSelect(null)}
+            onTest={handleTestNode}
           />
         )}
 

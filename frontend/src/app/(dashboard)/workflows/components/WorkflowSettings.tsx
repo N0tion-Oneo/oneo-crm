@@ -55,27 +55,6 @@ export function WorkflowSettings({ workflow, onChange }: WorkflowSettingsProps) 
               </SelectContent>
             </Select>
           </div>
-
-          <div>
-            <Label htmlFor="trigger">Trigger Type</Label>
-            <Select
-              value={workflow.trigger_type}
-              onValueChange={(value) => onChange({ trigger_type: value })}
-            >
-              <SelectTrigger id="trigger">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="manual">Manual</SelectItem>
-                <SelectItem value="schedule">Schedule</SelectItem>
-                <SelectItem value="webhook">Webhook</SelectItem>
-                <SelectItem value="event">Event</SelectItem>
-                <SelectItem value="record_created">Record Created</SelectItem>
-                <SelectItem value="record_updated">Record Updated</SelectItem>
-                <SelectItem value="form_submitted">Form Submitted</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
         </div>
       </Card>
 

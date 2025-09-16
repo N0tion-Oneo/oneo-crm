@@ -332,6 +332,153 @@ class WorkflowViewSet(viewsets.ModelViewSet):
                 'error': str(e)
             }, status=status.HTTP_400_BAD_REQUEST)
     
+    @action(detail=True, methods=['post'], url_path='test-node')
+    def test_node(self, request, pk=None):
+        """Test a single workflow node"""
+        workflow = self.get_object()
+
+        # Get node configuration from request
+        node_id = request.data.get('node_id')
+        node_type = request.data.get('node_type')
+        node_config = request.data.get('node_config', {})
+        test_context = request.data.get('test_context', {})
+
+        if not node_id or not node_type:
+            return Response({
+                'success': False,
+                'error': 'node_id and node_type are required'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            # Import the node processor based on node type
+            from workflows.processors import get_node_processor
+            import time
+
+            # For trigger nodes, we'll return configuration validation
+            if 'trigger' in node_type.lower():
+                # Validate trigger configuration
+                validation_errors = []
+
+                # Initialize form_url outside the if block
+                form_url = None
+
+                if node_type == 'trigger_form_submitted':
+                    if not test_context.get('pipeline_id'):
+                        validation_errors.append('Pipeline ID is required')
+                    if not test_context.get('form_mode'):
+                        validation_errors.append('Form mode is required')
+
+                    # Generate the form URL based on configuration
+                    if test_context.get('pipeline_id'):
+                        pipeline_id = test_context['pipeline_id']
+                        form_mode = test_context.get('form_mode', 'public_filtered')
+
+                        if form_mode == 'internal_full':
+                            form_url = f"/forms/internal/{pipeline_id}"
+                        elif form_mode == 'public_filtered':
+                            form_url = f"/forms/{pipeline_id}"
+                        elif form_mode == 'stage_internal' and test_context.get('stage'):
+                            form_url = f"/forms/internal/{pipeline_id}?stage={test_context['stage']}"
+                        elif form_mode == 'stage_public' and test_context.get('stage'):
+                            form_url = f"/forms/{pipeline_id}/stage/{test_context['stage']}"
+                        else:
+                            form_url = f"/forms/{pipeline_id}"
+
+                if validation_errors:
+                    return Response({
+                        'status': 'error',
+                        'message': 'Trigger configuration has errors',
+                        'output': {
+                            'data': {
+                                'validation_errors': validation_errors,
+                                'config': node_config,
+                                'test_context': test_context
+                            },
+                            'metadata': {
+                                'executionTime': '0ms',
+                                'node_id': node_id,
+                                'timestamp': timezone.now().isoformat()
+                            }
+                        }
+                    })
+
+                return Response({
+                    'status': 'success',
+                    'message': f'Trigger node "{node_type}" configured successfully',
+                    'output': {
+                        'data': {
+                            'trigger_type': node_type,
+                            'config': node_config,
+                            'test_context': test_context,
+                            'form_url': form_url,
+                            'validation': 'All required fields are configured'
+                        },
+                        'metadata': {
+                            'executionTime': '0ms',
+                            'node_id': node_id,
+                            'timestamp': timezone.now().isoformat()
+                        }
+                    }
+                })
+
+            # Get the appropriate processor for this node type
+            processor = get_node_processor(node_type)
+
+            if not processor:
+                return Response({
+                    'success': False,
+                    'error': f'No processor found for node type: {node_type}'
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            # Test the node with sample data
+            start_time = time.time()
+
+            try:
+                # Execute the processor with test data
+                result = processor.process(node_config, test_context)
+                execution_time = (time.time() - start_time) * 1000
+
+                return Response({
+                    'status': 'success',
+                    'message': f'Node tested successfully',
+                    'output': {
+                        'data': result.get('output', {}),
+                        'metadata': {
+                            'executionTime': f'{execution_time:.2f}ms',
+                            'node_id': node_id,
+                            'processor': processor.__class__.__name__,
+                            'timestamp': timezone.now().isoformat()
+                        }
+                    }
+                })
+
+            except Exception as proc_error:
+                execution_time = (time.time() - start_time) * 1000
+                return Response({
+                    'status': 'error',
+                    'message': f'Node execution failed',
+                    'output': {
+                        'data': {
+                            'error': str(proc_error),
+                            'node_type': node_type,
+                            'config': node_config
+                        },
+                        'metadata': {
+                            'executionTime': f'{execution_time:.2f}ms',
+                            'node_id': node_id,
+                            'processor': processor.__class__.__name__ if processor else None,
+                            'timestamp': timezone.now().isoformat()
+                        }
+                    }
+                })
+
+        except Exception as e:
+            logger.error(f"Node test failed: {e}", exc_info=True)
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
     @action(detail=True, methods=['get'])
     def triggers(self, request, pk=None):
         """Get workflow triggers"""

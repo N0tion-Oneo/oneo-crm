@@ -19,30 +19,30 @@ class WorkflowPermission(permissions.BasePermission):
             return permission_manager.has_permission('action', 'workflows', 'read')
         elif view.action == 'create':
             return permission_manager.has_permission('action', 'workflows', 'create')
-        elif view.action in ['retrieve', 'analytics', 'export', 'clone']:
+        elif view.action in ['retrieve', 'analytics', 'export', 'clone', 'triggers']:
             return True  # Object-level check in has_object_permission
-        elif view.action in ['update', 'partial_update']:
+        elif view.action in ['update', 'partial_update', 'update_trigger', 'delete_trigger', 'test_node']:
             return True  # Object-level check in has_object_permission
         elif view.action == 'destroy':
             return True  # Object-level check in has_object_permission
         elif view.action in ['execute', 'test_run']:
             return True  # Object-level check in has_object_permission
-        
+
         return False
     
     def has_object_permission(self, request, view, obj):
         """Check object-level permissions"""
         permission_manager = SyncPermissionManager(request.user)
-        
-        if view.action in ['retrieve', 'analytics', 'export', 'clone']:
+
+        if view.action in ['retrieve', 'analytics', 'export', 'clone', 'triggers']:
             return permission_manager.has_permission('action', 'workflows', 'read', str(obj.id))
-        elif view.action in ['update', 'partial_update']:
+        elif view.action in ['update', 'partial_update', 'update_trigger', 'delete_trigger', 'test_node']:
             return permission_manager.has_permission('action', 'workflows', 'update', str(obj.id))
         elif view.action == 'destroy':
             return permission_manager.has_permission('action', 'workflows', 'delete', str(obj.id))
         elif view.action in ['execute', 'test_run']:
             return permission_manager.has_permission('action', 'workflows', 'execute', str(obj.id))
-        
+
         return False
 
 

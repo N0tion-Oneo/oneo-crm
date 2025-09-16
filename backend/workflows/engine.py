@@ -48,6 +48,14 @@ from .nodes.workflow.approval import ApprovalProcessor
 from .nodes.workflow.sub_workflow import SubWorkflowProcessor
 # Removed ReusableWorkflowProcessor - merged into SubWorkflowProcessor
 from .nodes.utility.notification import TaskNotificationProcessor
+# Import trigger node processors
+from .nodes.triggers import (
+    TriggerFormSubmittedProcessor,
+    TriggerScheduleProcessor,
+    TriggerWebhookProcessor,
+    TriggerRecordEventProcessor,
+    TriggerEmailReceivedProcessor
+)
 
 User = get_user_model()
 logger = logging.getLogger(__name__)
@@ -71,6 +79,15 @@ class WorkflowEngine:
     def _register_node_processors(self) -> Dict[str, Any]:
         """Register all node type processors with their actual classes"""
         return {
+            # Trigger Processors
+            'trigger_form_submitted': TriggerFormSubmittedProcessor(),
+            'trigger_schedule': TriggerScheduleProcessor(),
+            'trigger_webhook': TriggerWebhookProcessor(),
+            'trigger_record_created': TriggerRecordEventProcessor(),
+            'trigger_record_updated': TriggerRecordEventProcessor(),
+            'trigger_record_deleted': TriggerRecordEventProcessor(),
+            'trigger_email_received': TriggerEmailReceivedProcessor(),
+
             # AI Processors
             WorkflowNodeType.AI_PROMPT: AIPromptProcessor(),
             WorkflowNodeType.AI_ANALYSIS: AIAnalysisProcessor(),
@@ -128,7 +145,8 @@ class WorkflowEngine:
         workflow: Workflow,
         trigger_data: Dict[str, Any],
         triggered_by: User,
-        tenant: Optional[Tenant] = None
+        tenant: Optional[Tenant] = None,
+        start_node_id: Optional[str] = None
     ) -> WorkflowExecution:
         """Execute a workflow with given trigger data and tenant context"""
 
@@ -173,7 +191,7 @@ class WorkflowEngine:
                 }
 
                 # Execute nodes in dependency order
-                await self._execute_nodes(execution, execution_graph, context)
+                await self._execute_nodes(execution, execution_graph, context, start_node_id)
 
                 # Mark execution as successful
                 execution.status = ExecutionStatus.SUCCESS
@@ -215,17 +233,25 @@ class WorkflowEngine:
         self,
         execution: WorkflowExecution,
         execution_graph: Dict[str, Any],
-        context: Dict[str, Any]
+        context: Dict[str, Any],
+        start_node_id: Optional[str] = None
     ):
         """Execute nodes in dependency order"""
 
         executed_nodes = set()
 
-        # Find start nodes (no dependencies)
-        start_nodes = [
-            node_id for node_id, node_data in execution_graph.items()
-            if not node_data.get('dependencies', [])
-        ]
+        # Determine starting point
+        if start_node_id:
+            # Start from specified node (e.g., trigger node)
+            start_nodes = [start_node_id] if start_node_id in execution_graph else []
+            if not start_nodes:
+                logger.warning(f"Start node {start_node_id} not found in workflow definition")
+        else:
+            # Find start nodes (no dependencies)
+            start_nodes = [
+                node_id for node_id, node_data in execution_graph.items()
+                if not node_data.get('dependencies', [])
+            ]
 
         # Execute using breadth-first approach
         queue = start_nodes.copy()

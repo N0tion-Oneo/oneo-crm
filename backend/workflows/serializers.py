@@ -31,7 +31,7 @@ class WorkflowSerializer(serializers.ModelSerializer):
         model = Workflow
         fields = [
             'id', 'name', 'description', 'status', 'version', 'category',
-            'trigger_type', 'trigger_config', 'workflow_definition',
+            'workflow_definition',  # Removed trigger_type and trigger_config
             'max_executions_per_hour', 'timeout_minutes', 'retry_count',
             'visibility', 'created_by', 'allowed_users', 'allowed_teams',
             'created_at', 'updated_at', 'execution_count'
@@ -77,12 +77,7 @@ class WorkflowSerializer(serializers.ModelSerializer):
         
         return value
     
-    def validate_trigger_config(self, value):
-        """Validate trigger configuration"""
-        if not isinstance(value, dict):
-            raise serializers.ValidationError("Trigger config must be a dictionary")
-        
-        return value
+    # Removed validate_trigger_config - triggers are now handled via nodes
 
 
 class WorkflowExecutionSerializer(serializers.ModelSerializer):

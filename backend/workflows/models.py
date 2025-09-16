@@ -145,9 +145,9 @@ class Workflow(models.Model):
     version = models.PositiveIntegerField(default=1)
     category = models.CharField(max_length=20, choices=WorkflowCategory.choices, default=WorkflowCategory.CUSTOM)
     
-    # Trigger configuration
-    trigger_type = models.CharField(max_length=30, choices=WorkflowTriggerType.choices)
-    trigger_config = models.JSONField(default=dict, help_text="Trigger-specific configuration")
+    # Legacy trigger fields - deprecated, use trigger nodes instead
+    # trigger_type = models.CharField(max_length=30, choices=WorkflowTriggerType.choices)
+    # trigger_config = models.JSONField(default=dict, help_text="Trigger-specific configuration")
     
     # Enhanced execution settings
     max_executions_per_hour = models.PositiveIntegerField(default=100)
@@ -181,7 +181,7 @@ class Workflow(models.Model):
     class Meta:
         db_table = 'workflows_workflow'
         indexes = [
-            models.Index(fields=['status', 'trigger_type']),
+            models.Index(fields=['status']),  # Removed trigger_type from index
             models.Index(fields=['created_by', 'status']),
             models.Index(fields=['category', 'visibility']),
             models.Index(fields=['uses_reusable_workflows']),
@@ -515,47 +515,9 @@ class WorkflowVersion(models.Model):
             models.Index(fields=['created_at']),
         ]
         ordering = ['-version_number']
-    
+
     def __str__(self):
         return f"{self.workflow.name} v{self.version_number}"
-
-
-class WorkflowTrigger(models.Model):
-    """Enhanced trigger management for workflows"""
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name='workflow_triggers')
-    workflow = models.ForeignKey(Workflow, on_delete=models.CASCADE, related_name='triggers')
-    
-    # Trigger configuration
-    trigger_type = models.CharField(max_length=30, choices=WorkflowTriggerType.choices)
-    name = models.CharField(max_length=255, help_text="Human-readable trigger name")
-    description = models.TextField(blank=True)
-    
-    # Trigger settings
-    is_active = models.BooleanField(default=True)
-    trigger_config = models.JSONField(default=dict, help_text="Trigger-specific configuration")
-    conditions = models.JSONField(default=list, help_text="Conditions that must be met")
-    
-    # Rate limiting
-    max_executions_per_minute = models.PositiveIntegerField(default=10)
-    max_executions_per_hour = models.PositiveIntegerField(default=100)
-    max_executions_per_day = models.PositiveIntegerField(default=1000)
-    
-    # Execution tracking
-    created_at = models.DateTimeField(auto_now_add=True)
-    last_triggered_at = models.DateTimeField(null=True, blank=True)
-    execution_count = models.PositiveIntegerField(default=0)
-    
-    class Meta:
-        db_table = 'workflows_trigger'
-        indexes = [
-            models.Index(fields=['workflow', 'is_active']),
-            models.Index(fields=['trigger_type', 'is_active']),
-            models.Index(fields=['last_triggered_at']),
-        ]
-    
-    def __str__(self):
-        return f"{self.name} ({self.trigger_type})"
 
 
 class WorkflowAnalytics(models.Model):

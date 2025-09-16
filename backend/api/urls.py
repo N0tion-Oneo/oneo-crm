@@ -35,6 +35,12 @@ from workflows.recovery.views import (
     WorkflowRecoveryLogViewSet, WorkflowReplaySessionViewSet,
     RecoveryConfigurationViewSet, RecoveryAnalyticsViewSet
 )
+# Import workflow trigger event views
+from workflows.views import (
+    FormSubmissionTriggerView,
+    WebhookTriggerView,
+    EmailReceivedTriggerView
+)
 from workflows.content.views import (
     ContentLibraryViewSet, ContentAssetViewSet, ContentTagViewSet,
     ContentUsageViewSet, ContentApprovalViewSet
@@ -197,7 +203,12 @@ api_patterns = [
     # Workflow endpoints (non-ViewSet)
     path('workflows/webhook/<uuid:workflow_id>/', webhook_endpoint, name='workflow-webhook'),
     path('workflows/status/<uuid:execution_id>/', workflow_status, name='workflow-status'),
-    
+
+    # Workflow trigger event endpoints
+    path('workflows/triggers/form-submission/', FormSubmissionTriggerView.as_view(), name='trigger-form-submission'),
+    path('workflows/triggers/webhook/<str:webhook_path>/', WebhookTriggerView.as_view(), name='trigger-webhook'),
+    path('workflows/triggers/email-received/', EmailReceivedTriggerView.as_view(), name='trigger-email-received'),
+
     # Workflow content management and recovery routes now registered as ViewSets above
     
     # Communication tracking analytics endpoints

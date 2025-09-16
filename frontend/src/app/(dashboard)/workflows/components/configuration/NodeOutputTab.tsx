@@ -255,7 +255,7 @@ export function NodeOutputTab({
 
         <TabsContent value="json" className="mt-4">
           <ScrollArea className="h-[300px] border rounded-lg">
-            <pre className="p-3 text-xs font-mono">
+            <pre className="p-3 text-xs font-mono whitespace-pre-wrap break-words overflow-wrap-anywhere">
               {JSON.stringify(output, null, 2)}
             </pre>
           </ScrollArea>

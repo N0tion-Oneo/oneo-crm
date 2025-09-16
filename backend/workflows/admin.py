@@ -8,33 +8,21 @@ from django.utils.safestring import mark_safe
 import json
 from .models import (
     Workflow, WorkflowExecution, WorkflowExecutionLog,
-    WorkflowApproval, WorkflowSchedule, WorkflowTrigger
+    WorkflowApproval, WorkflowSchedule
 )
-
-
-class WorkflowTriggerInline(admin.TabularInline):
-    """Inline admin for workflow triggers"""
-    model = WorkflowTrigger
-    extra = 0
-    fields = ['name', 'trigger_type', 'is_active', 'execution_count', 'last_triggered_at']
-    readonly_fields = ['execution_count', 'last_triggered_at']
-    can_delete = True
 
 
 @admin.register(Workflow)
 class WorkflowAdmin(admin.ModelAdmin):
-    list_display = ['name', 'status', 'trigger_type', 'created_by', 'created_at', 'execution_count', 'action_buttons']
-    list_filter = ['status', 'trigger_type', 'created_at']
+    list_display = ['name', 'status', 'created_by', 'created_at', 'execution_count', 'action_buttons']
+    list_filter = ['status', 'created_at']
     search_fields = ['name', 'description', 'created_by__email']
     readonly_fields = ['id', 'created_at', 'updated_at', 'workflow_definition_display']
-    inlines = [WorkflowTriggerInline]
+    inlines = []
 
     fieldsets = (
         ('Basic Information', {
             'fields': ('id', 'name', 'description', 'status', 'version')
-        }),
-        ('Trigger Configuration', {
-            'fields': ('trigger_type', 'trigger_config_display')
         }),
         ('Execution Settings', {
             'fields': ('max_executions_per_hour', 'timeout_minutes', 'retry_count')
@@ -94,16 +82,6 @@ class WorkflowAdmin(admin.ModelAdmin):
             )
         return 'No definition'
     workflow_definition_display.short_description = 'Workflow Definition'
-    
-    def trigger_config_display(self, obj):
-        """Display formatted trigger configuration"""
-        if obj.trigger_config:
-            return format_html(
-                '<pre style="white-space: pre-wrap;">{}</pre>',
-                json.dumps(obj.trigger_config, indent=2)
-            )
-        return 'No configuration'
-    trigger_config_display.short_description = 'Trigger Configuration'
     
     class Media:
         js = ('admin/js/workflow_admin.js',)
@@ -220,41 +198,6 @@ class WorkflowExecutionAdmin(admin.ModelAdmin):
             )
         return 'No context'
     execution_context_display.short_description = 'Execution Context'
-
-
-@admin.register(WorkflowTrigger)
-class WorkflowTriggerAdmin(admin.ModelAdmin):
-    """Admin interface for workflow triggers"""
-    list_display = ['name', 'workflow', 'trigger_type', 'is_active', 'execution_count', 'last_triggered_at']
-    list_filter = ['trigger_type', 'is_active', 'created_at']
-    search_fields = ['name', 'workflow__name', 'description']
-    readonly_fields = ['id', 'created_at', 'last_triggered_at', 'execution_count', 'trigger_config_display']
-
-    fieldsets = (
-        ('Basic Information', {
-            'fields': ('id', 'workflow', 'name', 'description', 'trigger_type')
-        }),
-        ('Configuration', {
-            'fields': ('is_active', 'trigger_config_display', 'conditions')
-        }),
-        ('Rate Limiting', {
-            'fields': ('max_executions_per_minute', 'max_executions_per_hour', 'max_executions_per_day')
-        }),
-        ('Statistics', {
-            'fields': ('execution_count', 'last_triggered_at', 'created_at'),
-            'classes': ('collapse',)
-        })
-    )
-
-    def trigger_config_display(self, obj):
-        """Display formatted trigger configuration"""
-        if obj.trigger_config:
-            return format_html(
-                '<pre style="white-space: pre-wrap;">{}</pre>',
-                json.dumps(obj.trigger_config, indent=2)
-            )
-        return 'No configuration'
-    trigger_config_display.short_description = 'Trigger Configuration'
 
 
 @admin.register(WorkflowExecutionLog)

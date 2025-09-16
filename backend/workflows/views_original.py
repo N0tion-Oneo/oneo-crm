@@ -17,7 +17,7 @@ import logging
 
 from .models import (
     Workflow, WorkflowExecution, WorkflowExecutionLog,
-    WorkflowApproval, WorkflowSchedule, WorkflowTrigger
+    WorkflowApproval, WorkflowSchedule
 )
 from .serializers import (
     WorkflowSerializer, WorkflowExecutionSerializer,
@@ -25,14 +25,11 @@ from .serializers import (
     WorkflowScheduleSerializer
 )
 from .engine import workflow_engine
-from .triggers.manager import TriggerManager
 from .tasks import execute_workflow_async, validate_workflow_definition
+from .trigger_registry import trigger_registry
 
 User = get_user_model()
 logger = logging.getLogger(__name__)
-
-# Initialize trigger manager
-trigger_manager = TriggerManager()
 
 
 class WorkflowViewSet(viewsets.ModelViewSet):
@@ -51,7 +48,7 @@ class WorkflowViewSet(viewsets.ModelViewSet):
         ).distinct()
     
     def perform_create(self, serializer):
-        """Set workflow creator and create default trigger"""
+        """Set workflow creator and register triggers"""
         # Get tenant from connection
         from django.db import connection
         from tenants.models import Tenant
@@ -68,21 +65,24 @@ class WorkflowViewSet(viewsets.ModelViewSet):
             tenant=tenant
         )
 
-        # Create default trigger if not exists
-        if not WorkflowTrigger.objects.filter(workflow=workflow).exists():
-            trigger_type = self.request.data.get('trigger_type', 'manual')
-            trigger_config = self.request.data.get('trigger_config', {})
+        # Register workflow with trigger registry for node-based triggers
+        try:
+            trigger_registry.register_workflow(workflow)
+            logger.info(f"Registered workflow {workflow.name} with trigger registry")
+        except Exception as e:
+            logger.error(f"Failed to register workflow triggers: {e}")
 
-            WorkflowTrigger.objects.create(
-                tenant=tenant,
-                workflow=workflow,
-                trigger_type=trigger_type,
-                name=f"{workflow.name} - Primary Trigger",
-                description=f"Auto-generated trigger for {workflow.name}",
-                trigger_config=trigger_config,
-                is_active=True
-            )
-    
+    def perform_update(self, serializer):
+        """Update workflow and re-register triggers"""
+        workflow = serializer.save()
+
+        # Re-register workflow with trigger registry for node-based triggers
+        try:
+            trigger_registry.register_workflow(workflow)
+            logger.info(f"Re-registered workflow {workflow.name} with trigger registry")
+        except Exception as e:
+            logger.error(f"Failed to re-register workflow triggers: {e}")
+
     @action(detail=True, methods=['post'])
     def trigger(self, request, pk=None):
         """Manually trigger a workflow"""
@@ -93,18 +93,19 @@ class WorkflowViewSet(viewsets.ModelViewSet):
             import asyncio
             
             async def trigger_async():
-                return await trigger_manager.trigger_manual(
-                    workflow_id=str(workflow.id),
-                    user_id=str(request.user.id),
-                    data=manual_data
+                return await workflow_engine.execute_workflow(
+                    workflow=workflow,
+                    trigger_data={'manual': True, **manual_data},
+                    triggered_by=request.user,
+                    tenant=workflow.tenant
                 )
-            
-            result = asyncio.run(trigger_async())
-            
+
+            execution = asyncio.run(trigger_async())
+
             return Response({
                 'success': True,
-                'task_id': result.get('task_id'),
-                'workflow_id': result.get('workflow_id'),
+                'execution_id': str(execution.id),
+                'workflow_id': str(workflow.id),
                 'message': f'Workflow {workflow.name} triggered successfully'
             })
             
@@ -481,108 +482,106 @@ class WorkflowViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['get'])
     def triggers(self, request, pk=None):
-        """Get workflow triggers"""
-        workflow = self.get_object()
-        triggers = WorkflowTrigger.objects.filter(workflow=workflow)
-
-        # Serialize manually for now
-        trigger_data = []
-        for trigger in triggers:
-            trigger_data.append({
-                'id': str(trigger.id),
-                'name': trigger.name,
-                'description': trigger.description,
-                'trigger_type': trigger.trigger_type,
-                'is_active': trigger.is_active,
-                'trigger_config': trigger.trigger_config,
-                'conditions': trigger.conditions,
-                'execution_count': trigger.execution_count,
-                'last_triggered_at': trigger.last_triggered_at.isoformat() if trigger.last_triggered_at else None,
-                'created_at': trigger.created_at.isoformat()
-            })
-
-        return Response(trigger_data)
-
-    @action(detail=True, methods=['post'])
-    def create_trigger(self, request, pk=None):
-        """Create a new trigger for the workflow"""
+        """Get workflow trigger nodes from the workflow definition"""
         workflow = self.get_object()
 
-        # Get tenant
-        from django.db import connection
-        from tenants.models import Tenant
+        # Extract trigger nodes from workflow definition
+        trigger_nodes = []
+        if workflow.workflow_definition:
+            nodes = workflow.workflow_definition.get('nodes', [])
+            for node in nodes:
+                if 'trigger' in node.get('type', '').lower():
+                    trigger_nodes.append({
+                        'id': node.get('id'),
+                        'type': node.get('type'),
+                        'label': node.get('data', {}).get('label', 'Trigger'),
+                        'config': node.get('data', {}).get('config', {}),
+                        'position': node.get('position'),
+                        'is_active': workflow.status == 'active'
+                    })
 
-        if hasattr(connection, 'tenant'):
-            schema_name = connection.schema_name
-            if schema_name and schema_name != 'public':
-                tenant = Tenant.objects.filter(schema_name=schema_name).first()
-            else:
-                tenant = Tenant.objects.exclude(schema_name='public').first()
-        else:
-            tenant = Tenant.objects.exclude(schema_name='public').first()
+        return Response(trigger_nodes)
 
-        trigger = WorkflowTrigger.objects.create(
-            tenant=tenant,
-            workflow=workflow,
-            name=request.data.get('name', f'{workflow.name} Trigger'),
-            description=request.data.get('description', ''),
-            trigger_type=request.data.get('trigger_type', 'manual'),
-            trigger_config=request.data.get('trigger_config', {}),
-            conditions=request.data.get('conditions', []),
-            is_active=request.data.get('is_active', True)
-        )
-
-        return Response({
-            'id': str(trigger.id),
-            'name': trigger.name,
-            'trigger_type': trigger.trigger_type,
-            'is_active': trigger.is_active
-        }, status=status.HTTP_201_CREATED)
-
-    @action(detail=True, methods=['patch'], url_path='triggers/(?P<trigger_id>[^/.]+)')
-    def update_trigger(self, request, pk=None, trigger_id=None):
-        """Update a trigger"""
-        workflow = self.get_object()
-
-        try:
-            trigger = WorkflowTrigger.objects.get(id=trigger_id, workflow=workflow)
-
-            # Update fields
-            if 'name' in request.data:
-                trigger.name = request.data['name']
-            if 'description' in request.data:
-                trigger.description = request.data['description']
-            if 'trigger_type' in request.data:
-                trigger.trigger_type = request.data['trigger_type']
-            if 'trigger_config' in request.data:
-                trigger.trigger_config = request.data['trigger_config']
-            if 'conditions' in request.data:
-                trigger.conditions = request.data['conditions']
-            if 'is_active' in request.data:
-                trigger.is_active = request.data['is_active']
-
-            trigger.save()
-
-            return Response({
-                'id': str(trigger.id),
-                'name': trigger.name,
-                'trigger_type': trigger.trigger_type,
-                'is_active': trigger.is_active
-            })
-        except WorkflowTrigger.DoesNotExist:
-            return Response({'error': 'Trigger not found'}, status=status.HTTP_404_NOT_FOUND)
-
-    @action(detail=True, methods=['delete'], url_path='triggers/(?P<trigger_id>[^/.]+)')
-    def delete_trigger(self, request, pk=None, trigger_id=None):
-        """Delete a trigger"""
-        workflow = self.get_object()
-
-        try:
-            trigger = WorkflowTrigger.objects.get(id=trigger_id, workflow=workflow)
-            trigger.delete()
-            return Response(status=status.HTTP_204_NO_CONTENT)
-        except WorkflowTrigger.DoesNotExist:
-            return Response({'error': 'Trigger not found'}, status=status.HTTP_404_NOT_FOUND)
+#     @action(detail=True, methods=['post'])
+#     def create_trigger(self, request, pk=None):
+#         """Create a new trigger for the workflow"""
+#         workflow = self.get_object()
+# 
+#         # Get tenant
+#         from django.db import connection
+#         from tenants.models import Tenant
+# 
+#         if hasattr(connection, 'tenant'):
+#             schema_name = connection.schema_name
+#             if schema_name and schema_name != 'public':
+#                 tenant = Tenant.objects.filter(schema_name=schema_name).first()
+#             else:
+#                 tenant = Tenant.objects.exclude(schema_name='public').first()
+#         else:
+#             tenant = Tenant.objects.exclude(schema_name='public').first()
+# 
+#         trigger = WorkflowTrigger.objects.create(
+#             tenant=tenant,
+#             workflow=workflow,
+#             name=request.data.get('name', f'{workflow.name} Trigger'),
+#             description=request.data.get('description', ''),
+#             trigger_type=request.data.get('trigger_type', 'manual'),
+#             trigger_config=request.data.get('trigger_config', {}),
+#             conditions=request.data.get('conditions', []),
+#             is_active=request.data.get('is_active', True)
+#         )
+# 
+#         return Response({
+#             'id': str(trigger.id),
+#             'name': trigger.name,
+#             'trigger_type': trigger.trigger_type,
+#             'is_active': trigger.is_active
+#         }, status=status.HTTP_201_CREATED)
+# 
+#     @action(detail=True, methods=['patch'], url_path='triggers/(?P<trigger_id>[^/.]+)')
+#     def update_trigger(self, request, pk=None, trigger_id=None):
+#         """Update a trigger"""
+#         workflow = self.get_object()
+# 
+#         try:
+#             trigger = WorkflowTrigger.objects.get(id=trigger_id, workflow=workflow)
+# 
+#             # Update fields
+#             if 'name' in request.data:
+#                 trigger.name = request.data['name']
+#             if 'description' in request.data:
+#                 trigger.description = request.data['description']
+#             if 'trigger_type' in request.data:
+#                 trigger.trigger_type = request.data['trigger_type']
+#             if 'trigger_config' in request.data:
+#                 trigger.trigger_config = request.data['trigger_config']
+#             if 'conditions' in request.data:
+#                 trigger.conditions = request.data['conditions']
+#             if 'is_active' in request.data:
+#                 trigger.is_active = request.data['is_active']
+# 
+#             trigger.save()
+# 
+#             return Response({
+#                 'id': str(trigger.id),
+#                 'name': trigger.name,
+#                 'trigger_type': trigger.trigger_type,
+#                 'is_active': trigger.is_active
+#             })
+#         except WorkflowTrigger.DoesNotExist:
+#             return Response({'error': 'Trigger not found'}, status=status.HTTP_404_NOT_FOUND)
+# 
+#     @action(detail=True, methods=['delete'], url_path='triggers/(?P<trigger_id>[^/.]+)')
+#     def delete_trigger(self, request, pk=None, trigger_id=None):
+#         """Delete a trigger"""
+#         workflow = self.get_object()
+# 
+#         try:
+#             trigger = WorkflowTrigger.objects.get(id=trigger_id, workflow=workflow)
+#             trigger.delete()
+#             return Response(status=status.HTTP_204_NO_CONTENT)
+#         except WorkflowTrigger.DoesNotExist:
+#             return Response({'error': 'Trigger not found'}, status=status.HTTP_404_NOT_FOUND)
 
     @action(detail=False, methods=['get'])
     def statistics(self, request):

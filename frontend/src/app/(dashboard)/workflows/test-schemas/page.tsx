@@ -154,56 +154,13 @@ export default function TestSchemasPage() {
   };
 
   return (
-    <div className="container mx-auto p-6 max-w-7xl">
+    <div className="container mx-auto p-6 max-w-full">
       <div className="mb-6">
         <h1 className="text-3xl font-bold mb-2">Backend Schema Test Page</h1>
         <p className="text-muted-foreground">
           Test and verify that backend schemas are correctly fetched and transformed for the frontend.
         </p>
       </div>
-
-      {/* Node Type Selector */}
-      <Card className="mb-6">
-        <CardHeader>
-          <CardTitle>Select Node Type</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {/* Group nodes by category */}
-          <div className="space-y-4">
-            {['Triggers', 'Data', 'AI', 'Communication', 'Control', 'External', 'CRM'].map(category => {
-              const categoryNodes = TEST_NODE_TYPES.filter(n => n.category === category);
-              if (categoryNodes.length === 0) return null;
-
-              return (
-                <div key={category}>
-                  <h4 className="text-sm font-semibold text-muted-foreground mb-2">{category}</h4>
-                  <div className="flex flex-wrap gap-2">
-                    {categoryNodes.map((node) => (
-                      <Button
-                        key={node.type}
-                        variant={selectedNode.type === node.type ? 'default' : 'outline'}
-                        size="sm"
-                        onClick={() => setSelectedNode(node)}
-                      >
-                        {node.label}
-                      </Button>
-                    ))}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-          <Button
-            onClick={handleRefresh}
-            variant="ghost"
-            size="sm"
-            className="mt-4"
-          >
-            <RefreshCw className="h-4 w-4 mr-2" />
-            Clear Cache & Refresh
-          </Button>
-        </CardContent>
-      </Card>
 
       {/* Error Display */}
       {error && (
@@ -213,22 +170,69 @@ export default function TestSchemasPage() {
         </Alert>
       )}
 
-      {/* Loading State */}
-      {loading && (
-        <div className="flex items-center justify-center p-8">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
-          <span className="ml-2">Loading schemas...</span>
-        </div>
-      )}
+      {/* Main content area with three-column layout */}
+      <div className="flex flex-col xl:flex-row gap-6">
+        {/* Left sidebar - Node Type Selector */}
+        <Card className="w-full xl:w-72 h-fit flex-shrink-0">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-lg">Select Node Type</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {/* Group nodes by category */}
+            <div className="space-y-3">
+              {['Triggers', 'Data', 'AI', 'Communication', 'Control', 'External', 'CRM'].map(category => {
+                const categoryNodes = TEST_NODE_TYPES.filter(n => n.category === category);
+                if (categoryNodes.length === 0) return null;
 
-      {/* Schema Information Tabs */}
-      {!loading && (
-        <Tabs defaultValue="overview" className="space-y-4">
+                return (
+                  <div key={category}>
+                    <h4 className="text-xs font-semibold text-muted-foreground mb-1">{category}</h4>
+                    <div className="flex flex-col gap-0.5">
+                      {categoryNodes.map((node) => (
+                        <Button
+                          key={node.type}
+                          variant={selectedNode.type === node.type ? 'default' : 'ghost'}
+                          size="sm"
+                          className="justify-start text-sm h-8"
+                          onClick={() => setSelectedNode(node)}
+                        >
+                          {node.label}
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <Button
+              onClick={handleRefresh}
+              variant="outline"
+              size="sm"
+              className="mt-4 w-full"
+            >
+              <RefreshCw className="h-4 w-4 mr-2" />
+              Clear Cache & Refresh
+            </Button>
+          </CardContent>
+        </Card>
+
+        {/* Middle content area - Tabs */}
+        <div className="flex-1 min-w-0">
+          {/* Loading State */}
+          {loading && (
+            <div className="flex items-center justify-center p-8">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+              <span className="ml-2">Loading schemas...</span>
+            </div>
+          )}
+
+          {/* Schema Information Tabs */}
+          {!loading && (
+            <Tabs defaultValue="overview" className="space-y-4">
           <TabsList>
             <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="raw">Raw Backend Schema</TabsTrigger>
             <TabsTrigger value="transformed">Transformed Config</TabsTrigger>
-            <TabsTrigger value="preview">Form Preview</TabsTrigger>
             <TabsTrigger value="validation">Validation Test</TabsTrigger>
             <TabsTrigger value="batch">Test All Nodes</TabsTrigger>
           </TabsList>
@@ -361,105 +365,6 @@ export default function TestSchemasPage() {
             </Card>
           </TabsContent>
 
-          <TabsContent value="preview">
-            <Card>
-              <CardHeader>
-                <CardTitle>Form Preview</CardTitle>
-                <p className="text-sm text-muted-foreground mt-1">
-                  This shows how the configuration form will look using the backend schema
-                </p>
-              </CardHeader>
-              <CardContent>
-                {transformedConfig ? (
-                  <>
-                    {/* Show loading state for data */}
-                    {(dataLoading.pipelines || dataLoading.users || dataLoading.userTypes) && (
-                      <Alert className="mb-4">
-                        <AlertCircle className="h-4 w-4" />
-                        <AlertDescription>
-                          Loading data: {dataLoading.pipelines && 'pipelines...'} {dataLoading.users && 'users...'} {dataLoading.userTypes && 'user types...'}
-                        </AlertDescription>
-                      </Alert>
-                    )}
-
-                    {/* Show data errors if any */}
-                    {(dataError.pipelines || dataError.users || dataError.userTypes) && (
-                      <Alert variant="destructive" className="mb-4">
-                        <AlertCircle className="h-4 w-4" />
-                        <AlertDescription>
-                          {dataError.pipelines && <div>Pipelines: {dataError.pipelines}</div>}
-                          {dataError.users && <div>Users: {dataError.users}</div>}
-                          {dataError.userTypes && <div>User Types: {dataError.userTypes}</div>}
-                        </AlertDescription>
-                      </Alert>
-                    )}
-
-                    {/* Data summary */}
-                    <div className="mb-4 flex gap-2">
-                      <Badge variant="outline">Pipelines: {pipelines.length}</Badge>
-                      <Badge variant="outline">Users: {users.length}</Badge>
-                      <Badge variant="outline">User Types: {userTypes.length}</Badge>
-                    </div>
-
-                    <UnifiedConfigRenderer
-                      nodeConfig={transformedConfig}
-                      config={testConfig}
-                      onChange={(newConfig) => {
-                        setTestConfig(newConfig);
-
-                        // Auto-fetch pipeline fields when a pipeline is selected (single)
-                        if (newConfig.pipeline_id && newConfig.pipeline_id !== testConfig.pipeline_id) {
-                          fetchPipelineFields(newConfig.pipeline_id);
-                        }
-
-                        // Auto-fetch pipeline fields when pipelines are selected (multi)
-                        if (newConfig.pipeline_ids && Array.isArray(newConfig.pipeline_ids)) {
-                          const previousIds = testConfig.pipeline_ids || [];
-                          const newIds = newConfig.pipeline_ids.filter((id: string) => !previousIds.includes(id));
-                          // Fetch fields for newly selected pipelines
-                          newIds.forEach((id: string) => fetchPipelineFields(id));
-                        }
-                      }}
-                      availableVariables={[
-                        { nodeId: 'trigger', label: 'Trigger', outputs: ['data', 'timestamp'] },
-                        { nodeId: 'previous', label: 'Previous Node', outputs: ['result', 'status'] }
-                      ]}
-                      pipelines={pipelines}
-                      pipelineFields={(() => {
-                        // For single pipeline selection
-                        if (testConfig.pipeline_id) {
-                          return pipelineFields[testConfig.pipeline_id];
-                        }
-                        // For multiple pipeline selection, aggregate all fields
-                        if (testConfig.pipeline_ids && Array.isArray(testConfig.pipeline_ids)) {
-                          const allFields: any[] = [];
-                          testConfig.pipeline_ids.forEach((id: string) => {
-                            if (pipelineFields[id]) {
-                              allFields.push(...pipelineFields[id]);
-                            }
-                          });
-                          // Remove duplicates based on field name/slug
-                          const uniqueFields = allFields.filter((field, index, self) =>
-                            index === self.findIndex((f) =>
-                              (f.slug === field.slug && f.slug) ||
-                              (f.name === field.name)
-                            )
-                          );
-                          return uniqueFields.length > 0 ? uniqueFields : undefined;
-                        }
-                        return undefined;
-                      })()}
-                      users={users}
-                      userTypes={userTypes}
-                      errors={validationErrors}
-                    />
-                  </>
-                ) : (
-                  <p className="text-muted-foreground">No config to preview</p>
-                )}
-              </CardContent>
-            </Card>
-          </TabsContent>
 
           <TabsContent value="validation">
             <Card>
@@ -506,7 +411,113 @@ export default function TestSchemasPage() {
             <BatchTestAllNodes />
           </TabsContent>
         </Tabs>
-      )}
+          )}
+        </div>
+
+        {/* Right panel - Form Preview */}
+        <Card className="w-full xl:w-96 h-fit flex-shrink-0">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-lg">Form Preview</CardTitle>
+            <p className="text-sm text-muted-foreground mt-1">
+              Live preview of the configuration form
+            </p>
+          </CardHeader>
+          <CardContent>
+            {loading ? (
+              <div className="flex items-center justify-center p-8">
+                <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary"></div>
+                <span className="ml-2 text-sm">Loading...</span>
+              </div>
+            ) : transformedConfig ? (
+              <>
+                {/* Show loading state for data */}
+                {(dataLoading.pipelines || dataLoading.users || dataLoading.userTypes) && (
+                  <Alert className="mb-4">
+                    <AlertCircle className="h-4 w-4" />
+                    <AlertDescription className="text-xs">
+                      Loading: {dataLoading.pipelines && 'pipelines'} {dataLoading.users && 'users'} {dataLoading.userTypes && 'types'}
+                    </AlertDescription>
+                  </Alert>
+                )}
+
+                {/* Show data errors if any */}
+                {(dataError.pipelines || dataError.users || dataError.userTypes) && (
+                  <Alert variant="destructive" className="mb-4">
+                    <AlertCircle className="h-4 w-4" />
+                    <AlertDescription className="text-xs">
+                      {dataError.pipelines && <div>Pipelines: {dataError.pipelines}</div>}
+                      {dataError.users && <div>Users: {dataError.users}</div>}
+                      {dataError.userTypes && <div>User Types: {dataError.userTypes}</div>}
+                    </AlertDescription>
+                  </Alert>
+                )}
+
+                {/* Data summary */}
+                <div className="mb-4 flex gap-1 flex-wrap">
+                  <Badge variant="outline" className="text-xs">Pipelines: {pipelines.length}</Badge>
+                  <Badge variant="outline" className="text-xs">Users: {users.length}</Badge>
+                  <Badge variant="outline" className="text-xs">Types: {userTypes.length}</Badge>
+                </div>
+
+                <UnifiedConfigRenderer
+                  nodeConfig={transformedConfig}
+                  config={testConfig}
+                  onChange={(newConfig) => {
+                    setTestConfig(newConfig);
+
+                    // Auto-fetch pipeline fields when a pipeline is selected (single)
+                    if (newConfig.pipeline_id && newConfig.pipeline_id !== testConfig.pipeline_id) {
+                      fetchPipelineFields(newConfig.pipeline_id);
+                    }
+
+                    // Auto-fetch pipeline fields when pipelines are selected (multi)
+                    if (newConfig.pipeline_ids && Array.isArray(newConfig.pipeline_ids)) {
+                      const previousIds = testConfig.pipeline_ids || [];
+                      const newIds = newConfig.pipeline_ids.filter((id: string) => !previousIds.includes(id));
+                      // Fetch fields for newly selected pipelines
+                      newIds.forEach((id: string) => fetchPipelineFields(id));
+                    }
+                  }}
+                  availableVariables={[
+                    { nodeId: 'trigger', label: 'Trigger', outputs: ['data', 'timestamp'] },
+                    { nodeId: 'previous', label: 'Previous Node', outputs: ['result', 'status'] }
+                  ]}
+                  pipelines={pipelines}
+                  pipelineFields={(() => {
+                    // For single pipeline selection
+                    if (testConfig.pipeline_id) {
+                      return pipelineFields[testConfig.pipeline_id];
+                    }
+                    // For multiple pipeline selection, aggregate all fields
+                    if (testConfig.pipeline_ids && Array.isArray(testConfig.pipeline_ids)) {
+                      const allFields: any[] = [];
+                      testConfig.pipeline_ids.forEach((id: string) => {
+                        if (pipelineFields[id]) {
+                          allFields.push(...pipelineFields[id]);
+                        }
+                      });
+                      // Remove duplicates based on field name/slug
+                      const uniqueFields = allFields.filter((field, index, self) =>
+                        index === self.findIndex((f) =>
+                          (f.slug === field.slug && f.slug) ||
+                          (f.name === field.name)
+                        )
+                      );
+                      return uniqueFields.length > 0 ? uniqueFields : undefined;
+                    }
+                    return undefined;
+                  })()}
+                  users={users}
+                  userTypes={userTypes}
+                  errors={validationErrors}
+                />
+              </>
+            ) : (
+              <p className="text-muted-foreground text-sm">No config to preview</p>
+            )}
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
 }

@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
-import { Menu, X, Bell, Search, Settings, LogOut, User, Users, Database, Workflow, ChevronDown, ChevronRight, Settings2, CheckSquare, GitBranch } from 'lucide-react'
+import { Menu, X, Bell, Search, Settings, LogOut, User, Users, Database, Workflow, ChevronDown, ChevronRight, ChevronLeft, Settings2, CheckSquare, GitBranch, PanelLeftClose, PanelLeft } from 'lucide-react'
 import Link from 'next/link'
 import { useAuth } from '@/features/auth/context'
 import { useWebSocket } from '@/contexts/websocket-context'
@@ -23,6 +23,14 @@ interface NavItem {
 
 export function AppShell({ children }: AppShellProps) {
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    // Load collapsed state from localStorage
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('sidebar-collapsed')
+      return saved === 'true'
+    }
+    return false
+  })
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const [pipelinesExpanded, setPipelinesExpanded] = useState(false)
   const [pipelines, setPipelines] = useState<any[]>([])
@@ -34,6 +42,17 @@ export function AppShell({ children }: AppShellProps) {
   
   // Check if user can update pipelines (for showing settings button)
   const canUpdatePipelines = hasPermission('pipelines', 'update')
+
+  // Toggle sidebar collapsed state
+  const toggleSidebarCollapsed = () => {
+    const newState = !sidebarCollapsed
+    setSidebarCollapsed(newState)
+    localStorage.setItem('sidebar-collapsed', newState.toString())
+    // Close pipelines if collapsing
+    if (newState) {
+      setPipelinesExpanded(false)
+    }
+  }
 
   // Pipeline type icons mapping
   const PIPELINE_TYPE_ICONS: Record<string, string> = {
@@ -223,44 +242,64 @@ export function AppShell({ children }: AppShellProps) {
 
       {/* Sidebar */}
       <div className={cn(
-        "fixed inset-y-0 left-0 z-50 w-64 bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 transform transition-transform duration-300 ease-in-out lg:translate-x-0 lg:static lg:inset-0",
+        "fixed inset-y-0 left-0 z-50 bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 transform transition-all duration-300 ease-in-out lg:translate-x-0 lg:static lg:inset-0",
+        sidebarCollapsed ? "w-16" : "w-64",
         sidebarOpen ? "translate-x-0" : "-translate-x-full"
       )}>
         <div className="flex flex-col h-full">
           {/* Sidebar header */}
           <div className="flex items-center justify-between h-16 px-4 border-b border-gray-200 dark:border-gray-700">
-            <div className="flex items-center">
+            <div className={cn("flex items-center", sidebarCollapsed && "justify-center")}>
               <div className="flex-shrink-0">
                 <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
                   <span className="text-primary-foreground font-bold text-lg">O</span>
                 </div>
               </div>
-              <div className="ml-3">
-                <h1 className="text-sm font-semibold text-gray-900 dark:text-white">
-                  Oneo CRM
-                </h1>
-                {tenant && (
-                  <p className="text-xs text-gray-500 dark:text-gray-400 capitalize">
-                    {tenant.name}
-                  </p>
-                )}
-              </div>
+              {!sidebarCollapsed && (
+                <div className="ml-3">
+                  <h1 className="text-sm font-semibold text-gray-900 dark:text-white">
+                    Oneo CRM
+                  </h1>
+                  {tenant && (
+                    <p className="text-xs text-gray-500 dark:text-gray-400 capitalize">
+                      {tenant.name}
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
             <button
-              className="lg:hidden p-2 rounded-md text-gray-400 hover:text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700"
+              className={cn(
+                "lg:hidden p-2 rounded-md text-gray-400 hover:text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700",
+                sidebarCollapsed && "hidden"
+              )}
               onClick={() => setSidebarOpen(false)}
             >
               <X className="w-5 h-5" />
             </button>
+            {/* Desktop collapse toggle */}
+            <button
+              className="hidden lg:block p-1.5 rounded-md text-gray-400 hover:text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700"
+              onClick={toggleSidebarCollapsed}
+              title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+            >
+              {sidebarCollapsed ? (
+                <PanelLeft className="w-4 h-4" />
+              ) : (
+                <PanelLeftClose className="w-4 h-4" />
+              )}
+            </button>
           </div>
 
           {/* WebSocket Status (for debugging) */}
-          <div className="px-4 py-2 text-xs">
-            <div className={`flex items-center ${isConnected ? 'text-green-500' : 'text-red-500'}`}>
-              <div className={`w-2 h-2 rounded-full mr-2 ${isConnected ? 'bg-green-500' : 'bg-red-500'}`}></div>
-              WebSocket: {isConnected ? 'Connected' : 'Disconnected'}
+          {!sidebarCollapsed && (
+            <div className="px-4 py-2 text-xs">
+              <div className={`flex items-center ${isConnected ? 'text-green-500' : 'text-red-500'}`}>
+                <div className={`w-2 h-2 rounded-full mr-2 ${isConnected ? 'bg-green-500' : 'bg-red-500'}`}></div>
+                WebSocket: {isConnected ? 'Connected' : 'Disconnected'}
+              </div>
             </div>
-          </div>
+          )}
 
           {/* Navigation */}
           <nav className="flex-1 px-2 py-4 space-y-1 overflow-y-auto">
@@ -273,48 +312,73 @@ export function AppShell({ children }: AppShellProps) {
                     {/* Main Pipelines button */}
                     <div
                       className={cn(
-                        "group flex items-center px-2 py-2 text-sm font-medium rounded-md transition-colors cursor-pointer",
+                        "group flex items-center px-2 py-2 text-sm font-medium rounded-md transition-colors",
+                        sidebarCollapsed && "justify-center",
                         item.current && !currentPipelineId
                           ? "bg-primary text-primary-foreground"
                           : "text-gray-600 hover:bg-gray-50 hover:text-gray-900 dark:text-gray-300 dark:hover:bg-gray-700 dark:hover:text-white"
                       )}
+                      title={sidebarCollapsed ? item.name : undefined}
                     >
-                      <button
-                        onClick={() => setPipelinesExpanded(!pipelinesExpanded)}
-                        className="p-1 -ml-1 mr-1"
-                      >
-                        {pipelinesExpanded ? (
-                          <ChevronDown className="h-4 w-4" />
-                        ) : (
-                          <ChevronRight className="h-4 w-4" />
-                        )}
-                      </button>
-                      <Link
-                        href={item.href}
-                        className="flex items-center flex-1"
-                      >
-                        <item.icon
-                          className={cn(
-                            "mr-3 flex-shrink-0 h-5 w-5",
-                            item.current && !currentPipelineId
-                              ? "text-primary-foreground"
-                              : "text-gray-400 group-hover:text-gray-500 dark:group-hover:text-gray-300"
+                      {sidebarCollapsed ? (
+                        // In collapsed mode, clicking the icon toggles the pipelines
+                        <button
+                          onClick={() => setPipelinesExpanded(!pipelinesExpanded)}
+                          className="flex items-center justify-center w-full"
+                        >
+                          <item.icon
+                            className={cn(
+                              "flex-shrink-0 h-5 w-5",
+                              item.current && !currentPipelineId
+                                ? "text-primary-foreground"
+                                : "text-gray-400 group-hover:text-gray-500 dark:group-hover:text-gray-300"
+                            )}
+                          />
+                          {pipelinesExpanded && (
+                            <ChevronDown className="h-3 w-3 ml-0.5 -mr-1" />
                           )}
-                        />
-                        <div>
-                          <div>{item.name}</div>
-                          {item.description && (
-                            <div className="text-xs opacity-75 mt-0.5">
-                              {item.description}
+                        </button>
+                      ) : (
+                        // In expanded mode, show expand button and link separately
+                        <>
+                          <button
+                            onClick={() => setPipelinesExpanded(!pipelinesExpanded)}
+                            className="p-1 -ml-1 mr-1"
+                          >
+                            {pipelinesExpanded ? (
+                              <ChevronDown className="h-4 w-4" />
+                            ) : (
+                              <ChevronRight className="h-4 w-4" />
+                            )}
+                          </button>
+                          <Link
+                            href={item.href}
+                            className="flex items-center flex-1"
+                          >
+                            <item.icon
+                              className={cn(
+                                "flex-shrink-0 h-5 w-5 mr-3",
+                                item.current && !currentPipelineId
+                                  ? "text-primary-foreground"
+                                  : "text-gray-400 group-hover:text-gray-500 dark:group-hover:text-gray-300"
+                              )}
+                            />
+                            <div>
+                              <div>{item.name}</div>
+                              {item.description && (
+                                <div className="text-xs opacity-75 mt-0.5">
+                                  {item.description}
+                                </div>
+                              )}
                             </div>
-                          )}
-                        </div>
-                      </Link>
+                          </Link>
+                        </>
+                      )}
                     </div>
 
-                    {/* Expanded pipelines list */}
+                    {/* Show pipelines when expanded in either mode */}
                     {pipelinesExpanded && (
-                      <div className="ml-8 mt-1 space-y-1">
+                      <div className={sidebarCollapsed ? "mt-1 space-y-1" : "ml-8 mt-1 space-y-1"}>
                         {pipelinesLoading ? (
                           <div className="px-3 py-2 text-xs text-gray-500 dark:text-gray-400">
                             Loading pipelines...
@@ -323,16 +387,36 @@ export function AppShell({ children }: AppShellProps) {
                           <>
                             {pipelines.map((pipeline) => {
                               // Use the icon from the database, converting text identifiers to emojis if needed
-                              const pipelineIcon = pipeline.icon 
+                              const pipelineIcon = pipeline.icon
                                 ? getDisplayIcon(pipeline.icon)
                                 : PIPELINE_TYPE_ICONS[pipeline.pipeline_type] || '📊'
                               const isCurrentPipeline = currentPipelineId === pipeline.id.toString()
-                              
+
+                              // Icon-only view for collapsed sidebar
+                              if (sidebarCollapsed) {
+                                return (
+                                  <Link
+                                    key={pipeline.id}
+                                    href={`/pipelines/${pipeline.id}/records`}
+                                    className={cn(
+                                      "flex items-center justify-center px-2 py-2 text-sm rounded-md transition-colors group",
+                                      isCurrentPipeline
+                                        ? "bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300"
+                                        : "text-gray-600 hover:bg-gray-50 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-white"
+                                    )}
+                                    title={pipeline.name}
+                                  >
+                                    <span className="text-lg">{pipelineIcon}</span>
+                                  </Link>
+                                )
+                              }
+
+                              // Full view for expanded sidebar
                               return (
                                 <div
                                   key={pipeline.id}
                                   className={cn(
-                                    "flex items-center px-3 py-1.5 text-sm rounded-md transition-colors group",
+                                    "flex items-center text-sm rounded-md transition-colors group px-3 py-1.5",
                                     isCurrentPipeline
                                       ? "bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300"
                                       : "text-gray-600 hover:bg-gray-50 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-white"
@@ -366,7 +450,7 @@ export function AppShell({ children }: AppShellProps) {
                                 </div>
                               )
                             })}
-                            {pipelines.length >= 10 && (
+                            {pipelines.length >= 10 && !sidebarCollapsed && (
                               <Link
                                 href="/pipelines"
                                 className="flex items-center px-3 py-1.5 text-sm text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300"
@@ -394,27 +478,32 @@ export function AppShell({ children }: AppShellProps) {
                   href={item.href}
                   className={cn(
                     "group flex items-center px-2 py-2 text-sm font-medium rounded-md transition-colors",
+                    sidebarCollapsed && "justify-center",
                     item.current
                       ? "bg-primary text-primary-foreground"
                       : "text-gray-600 hover:bg-gray-50 hover:text-gray-900 dark:text-gray-300 dark:hover:bg-gray-700 dark:hover:text-white"
                   )}
+                  title={sidebarCollapsed ? item.name : undefined}
                 >
                   <item.icon
                     className={cn(
-                      "mr-3 flex-shrink-0 h-5 w-5",
+                      "flex-shrink-0 h-5 w-5",
+                      !sidebarCollapsed && "mr-3",
                       item.current
                         ? "text-primary-foreground"
                         : "text-gray-400 group-hover:text-gray-500 dark:group-hover:text-gray-300"
                     )}
                   />
-                  <div>
-                    <div>{item.name}</div>
-                    {item.description && (
-                      <div className="text-xs opacity-75 mt-0.5">
-                        {item.description}
-                      </div>
-                    )}
-                  </div>
+                  {!sidebarCollapsed && (
+                    <div>
+                      <div>{item.name}</div>
+                      {item.description && (
+                        <div className="text-xs opacity-75 mt-0.5">
+                          {item.description}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </Link>
               )
             })}
@@ -423,25 +512,27 @@ export function AppShell({ children }: AppShellProps) {
           {/* User info */}
           {user && (
             <div className="flex-shrink-0 border-t border-gray-200 dark:border-gray-700 p-4">
-              <div className="flex items-center">
+              <div className={cn("flex items-center", sidebarCollapsed && "justify-center")}>
                 <div className="flex-shrink-0">
                   <div className="w-8 h-8 bg-gray-300 dark:bg-gray-600 rounded-full flex items-center justify-center">
                     <User className="w-4 h-4 text-gray-600 dark:text-gray-300" />
                   </div>
                 </div>
-                <div className="ml-3 min-w-0 flex-1">
-                  <p className="text-sm font-medium text-gray-900 dark:text-white truncate">
-                    {user.firstName && user.lastName 
-                      ? `${user.firstName} ${user.lastName}` 
-                      : user.firstName 
-                        ? user.firstName
-                        : user.email?.split('@')[0] || 'Loading...'
-                    }
-                  </p>
-                  <p className="text-xs text-gray-500 dark:text-gray-400 truncate">
-                    {user.userType?.name || 'User'}
-                  </p>
-                </div>
+                {!sidebarCollapsed && (
+                  <div className="ml-3 min-w-0 flex-1">
+                    <p className="text-sm font-medium text-gray-900 dark:text-white truncate">
+                      {user.firstName && user.lastName
+                        ? `${user.firstName} ${user.lastName}`
+                        : user.firstName
+                          ? user.firstName
+                          : user.email?.split('@')[0] || 'Loading...'
+                      }
+                    </p>
+                    <p className="text-xs text-gray-500 dark:text-gray-400 truncate">
+                      {user.userType?.name || 'User'}
+                    </p>
+                  </div>
+                )}
               </div>
             </div>
           )}

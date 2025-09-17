@@ -240,10 +240,11 @@ export function UnifiedConfigRenderer({
     if (widget === 'condition_builder' || field.type === 'conditions') {
       return (
         <WorkflowConditionBuilder
+          fields={pipelineFields || []}
           value={value}
           onChange={onFieldChange}
-          availableVariables={availableVariables || []}
-          config={currentConfig}
+          supportsChangeOperators={field.uiHints?.supports_change_operators}
+          pipelineId={currentConfig.pipeline_id || currentConfig.pipeline_slug}
         />
       );
     }

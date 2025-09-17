@@ -12,34 +12,168 @@ logger = logging.getLogger(__name__)
 
 class EmailProcessor(AsyncNodeProcessor):
     """Process email sending nodes via UniPile integration"""
-    
+
+    # Configuration schema
+    CONFIG_SCHEMA = {
+        "type": "object",
+        "required": ["recipient_email", "subject", "content"],
+        "properties": {
+            "recipient_email": {
+                "type": "string",
+                "format": "email",
+                "description": "Recipient email address",
+                "ui_hints": {
+                    "widget": "text",
+                    "placeholder": "{{contact.email}} or john@example.com"
+                }
+            },
+            "subject": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200,
+                "description": "Email subject line",
+                "ui_hints": {
+                    "widget": "text",
+                    "placeholder": "Follow-up: {{meeting_topic}}"
+                }
+            },
+            "content": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Email body content",
+                "ui_hints": {
+                    "widget": "rich_text_editor",
+                    "rows": 10,
+                    "placeholder": "Hi {{contact.name}},\n\nThank you for your time..."
+                }
+            },
+            "from_user": {
+                "type": "object",
+                "description": "User and account to send from",
+                "properties": {
+                    "user_id": {"type": "string"},
+                    "account_id": {"type": "string"}
+                },
+                "ui_hints": {
+                    "widget": "user_enriched_select",
+                    "channel_filter": "email",
+                    "multiple": False,
+                    "show_accounts": True,
+                    "allow_variable": True,
+                    "display_format": "user_with_accounts",
+                    "placeholder": "Select user and email account",
+                    "help_text": "Choose which user's email account to send from"
+                }
+            },
+            "cc_recipients": {
+                "type": "array",
+                "items": {"type": "string", "format": "email"},
+                "description": "CC recipients",
+                "ui_hints": {
+                    "widget": "email_list"
+                }
+            },
+            "bcc_recipients": {
+                "type": "array",
+                "items": {"type": "string", "format": "email"},
+                "description": "BCC recipients",
+                "ui_hints": {
+                    "widget": "email_list"
+                }
+            },
+            "tracking_enabled": {
+                "type": "boolean",
+                "default": True,
+                "description": "Enable email tracking"
+            },
+            "attachments": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "url": {"type": "string", "format": "uri"},
+                        "type": {"type": "string"}
+                    }
+                },
+                "description": "File attachments",
+                "ui_hints": {
+                    "widget": "file_upload"
+                }
+            },
+            "is_reply": {
+                "type": "boolean",
+                "default": False,
+                "description": "Is this a reply to existing thread"
+            },
+            "reply_to_message_id": {
+                "type": "string",
+                "description": "Message ID to reply to",
+                "ui_hints": {
+                    "widget": "text",
+                    "placeholder": "{{last_message.id}}",
+                    "show_when": {"is_reply": True}
+                }
+            },
+            "thread_id": {
+                "type": "string",
+                "description": "Thread ID for conversation",
+                "ui_hints": {
+                    "widget": "text",
+                    "placeholder": "{{conversation.thread_id}}",
+                    "show_when": {"is_reply": True}
+                }
+            },
+            "sequence_metadata": {
+                "type": "object",
+                "description": "Metadata for sequence tracking",
+                "ui_hints": {
+                    "widget": "json_editor",
+                    "rows": 4,
+                    "section": "advanced"
+                }
+            }
+        }
+    }
+
     def __init__(self):
         super().__init__()
-        self.node_type = "UNIPILE_SEND_EMAIL"
+        self.node_type = "unipile_send_email"
         self.supports_replay = True
         self.supports_checkpoints = True
     
     async def process(self, node_config: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
         """Process email sending node"""
-        
+
         node_data = node_config.get('data', {})
-        
+        config = node_data.get('config', {})
+
         # Extract configuration with context formatting
-        user_id = self._format_template(node_data.get('user_id', ''), context)
-        recipient_email = self._format_template(node_data.get('recipient_email', ''), context)
-        subject = self._format_template(node_data.get('subject', ''), context)
-        content = self._format_template(node_data.get('content', ''), context)
-        
+        from_user = config.get('from_user', {})
+        if isinstance(from_user, str):
+            # Handle legacy format or variable reference
+            user_id = self._format_template(from_user, context)
+            account_id = None
+        else:
+            user_id = self._format_template(from_user.get('user_id', ''), context)
+            account_id = from_user.get('account_id')
+
+        recipient_email = self._format_template(config.get('recipient_email', ''), context)
+        subject = self._format_template(config.get('subject', ''), context)
+        content = self._format_template(config.get('content', ''), context)
+        cc_recipients = config.get('cc_recipients', [])
+        bcc_recipients = config.get('bcc_recipients', [])
+
         # Optional parameters
-        tracking_enabled = node_data.get('tracking_enabled', True)
-        sequence_metadata = node_data.get('sequence_metadata', {})
-        attachments = node_data.get('attachments', [])
+        tracking_enabled = config.get('tracking_enabled', True)
+        sequence_metadata = config.get('sequence_metadata', {})
+        attachments = config.get('attachments', [])
 
         # Thread/reply parameters
-        reply_to_message_id = node_data.get('reply_to_message_id') or context.get('parent_message_id')
-        thread_id = node_data.get('thread_id') or context.get('external_thread_id')
-        conversation_id = node_data.get('conversation_id') or context.get('conversation_id')
-        is_reply = node_data.get('is_reply', False) or bool(reply_to_message_id)
+        reply_to_message_id = config.get('reply_to_message_id') or context.get('parent_message_id')
+        thread_id = config.get('thread_id') or context.get('external_thread_id')
+        conversation_id = config.get('conversation_id') or context.get('conversation_id')
+        is_reply = config.get('is_reply', False) or bool(reply_to_message_id)
         
         # Validate required fields
         if not all([user_id, recipient_email, subject, content]):
@@ -48,14 +182,21 @@ class EmailProcessor(AsyncNodeProcessor):
         try:
             # Get user's email channel connection
             from communications.models import UserChannelConnection, ChannelType
-            
+
+            # Build the filter
+            channel_filter = {
+                'user_id': user_id,
+                'channel_type__in': [ChannelType.GOOGLE, ChannelType.OUTLOOK, ChannelType.MAIL],
+                'is_active': True,
+                'account_status': 'active'
+            }
+
+            # If specific account ID provided, use it
+            if account_id:
+                channel_filter['id'] = account_id
+
             user_channel = await sync_to_async(
-                UserChannelConnection.objects.filter(
-                    user_id=user_id,
-                    channel_type=ChannelType.EMAIL,
-                    is_active=True,
-                    auth_status='connected'
-                ).first
+                UserChannelConnection.objects.filter(**channel_filter).first
             )()
             
             if not user_channel:

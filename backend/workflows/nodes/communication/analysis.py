@@ -13,24 +13,101 @@ logger = logging.getLogger(__name__)
 
 class CommunicationAnalysisProcessor(AsyncNodeProcessor):
     """Process communication analysis nodes with AI-powered insights"""
-    
+
+    # Configuration schema
+    CONFIG_SCHEMA = {
+        "type": "object",
+        "required": ["data_path", "analysis_type"],
+        "properties": {
+            "data_path": {
+                "type": "string",
+                "description": "Path to communication data in context",
+                "ui_hints": {
+                    "widget": "text",
+                    "placeholder": "last_message.content or conversation.messages"
+                }
+            },
+            "analysis_type": {
+                "type": "string",
+                "enum": ["sentiment", "intent", "engagement", "topic_extraction", "response_suggestion", "language_detection", "custom"],
+                "default": "sentiment",
+                "description": "Type of analysis to perform",
+                "ui_hints": {
+                    "widget": "select"
+                }
+            },
+            "ai_config": {
+                "type": "object",
+                "properties": {
+                    "model": {
+                        "type": "string",
+                        "enum": ["gpt-4", "gpt-3.5-turbo", "claude-3"],
+                        "default": "gpt-4"
+                    },
+                    "temperature": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1,
+                        "default": 0.3
+                    },
+                    "max_tokens": {
+                        "type": "integer",
+                        "minimum": 100,
+                        "maximum": 4000,
+                        "default": 1000
+                    }
+                },
+                "description": "AI model configuration",
+                "ui_hints": {
+                    "section": "advanced"
+                }
+            },
+            "output_format": {
+                "type": "string",
+                "enum": ["structured", "raw"],
+                "default": "structured",
+                "description": "Output format for analysis results"
+            },
+            "intent_categories": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Custom intent categories for intent analysis",
+                "ui_hints": {
+                    "widget": "tag_input",
+                    "show_when": {"analysis_type": "intent"}
+                }
+            },
+            "custom_instructions": {
+                "type": "string",
+                "description": "Custom analysis instructions",
+                "ui_hints": {
+                    "widget": "textarea",
+                    "rows": 4,
+                    "placeholder": "Analyze this communication and provide insights about...",
+                    "show_when": {"analysis_type": "custom"}
+                }
+            }
+        }
+    }
+
     def __init__(self):
         super().__init__()
-        self.node_type = "ANALYZE_COMMUNICATION"
+        self.node_type = "analyze_communication"
         self.supports_replay = True
         self.supports_checkpoints = True
     
     async def process(self, node_config: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
         """Process communication analysis node"""
-        
+
         node_data = node_config.get('data', {})
-        
+        config = node_data.get('config', {})
+
         # Extract configuration
-        analysis_type = node_data.get('analysis_type', 'sentiment')
-        data_path = node_data.get('data_path', '')
+        analysis_type = config.get('analysis_type', 'sentiment')
+        data_path = config.get('data_path', '')
         communication_data = self._get_nested_value(context, data_path) if data_path else None
-        ai_config = node_data.get('ai_config', {})
-        output_format = node_data.get('output_format', 'structured')  # structured, raw
+        ai_config = config.get('ai_config', {})
+        output_format = config.get('output_format', 'structured')  # structured, raw
         
         # Validate required fields
         if not communication_data:
@@ -38,7 +115,7 @@ class CommunicationAnalysisProcessor(AsyncNodeProcessor):
         
         try:
             # Generate analysis prompt based on type
-            prompt = self._generate_analysis_prompt(analysis_type, communication_data, node_data)
+            prompt = self._generate_analysis_prompt(analysis_type, communication_data, config)
             
             # Process with AI
             ai_result = await self._process_with_ai(prompt, ai_config, context)
@@ -88,7 +165,7 @@ Return JSON format:
         
         elif analysis_type == 'intent':
             categories = node_data.get('intent_categories', [
-                'inquiry', 'complaint', 'purchase_intent', 'support_request', 
+                'inquiry', 'complaint', 'purchase_intent', 'support_request',
                 'cancellation', 'upgrade', 'information_request', 'other'
             ])
             
@@ -268,70 +345,133 @@ Provide structured analysis with insights and recommendations."""
     async def validate_inputs(self, node_config: Dict[str, Any], context: Dict[str, Any]) -> bool:
         """Validate communication analysis node inputs"""
         node_data = node_config.get('data', {})
-        
+        config = node_data.get('config', {})
+
         # Check required fields
-        if not node_data.get('data_path'):
+        if not config.get('data_path'):
             return False
-        
+
         # Validate analysis type
-        analysis_type = node_data.get('analysis_type', 'sentiment')
+        analysis_type = config.get('analysis_type', 'sentiment')
         valid_types = [
-            'sentiment', 'intent', 'engagement', 'topic_extraction', 
+            'sentiment', 'intent', 'engagement', 'topic_extraction',
             'response_suggestion', 'language_detection', 'custom'
         ]
         if analysis_type not in valid_types:
             return False
-        
+
         # Validate output format
-        output_format = node_data.get('output_format', 'structured')
+        output_format = config.get('output_format', 'structured')
         if output_format not in ['structured', 'raw']:
             return False
-        
+
         return True
     
     async def create_checkpoint(self, node_config: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
         """Create checkpoint for communication analysis node"""
         checkpoint = await super().create_checkpoint(node_config, context)
-        
+
         node_data = node_config.get('data', {})
-        
+        config = node_data.get('config', {})
+
         # Get communication data size for checkpoint
-        data_path = node_data.get('data_path', '')
+        data_path = config.get('data_path', '')
         communication_data = self._get_nested_value(context, data_path) if data_path else None
-        
+
         checkpoint.update({
             'analysis_config': {
-                'analysis_type': node_data.get('analysis_type', 'sentiment'),
+                'analysis_type': config.get('analysis_type', 'sentiment'),
                 'data_path': data_path,
                 'communication_data_size': len(str(communication_data)) if communication_data else 0,
-                'output_format': node_data.get('output_format', 'structured'),
-                'ai_model': node_data.get('ai_config', {}).get('model', 'gpt-4')
+                'output_format': config.get('output_format', 'structured'),
+                'ai_model': config.get('ai_config', {}).get('model', 'gpt-4')
             }
         })
-        
+
         return checkpoint
 
 
 class EngagementScoringProcessor(AsyncNodeProcessor):
     """Process engagement scoring nodes with comprehensive metrics"""
-    
+
+    # Configuration schema
+    CONFIG_SCHEMA = {
+        "type": "object",
+        "required": ["contact_id_path"],
+        "properties": {
+            "contact_id_path": {
+                "type": "string",
+                "description": "Path to contact ID in context",
+                "ui_hints": {
+                    "widget": "text",
+                    "placeholder": "contact.id or record.contact_id"
+                }
+            },
+            "scoring_method": {
+                "type": "string",
+                "enum": ["simple", "comprehensive", "ai_powered"],
+                "default": "comprehensive",
+                "description": "Scoring calculation method",
+                "ui_hints": {
+                    "widget": "radio"
+                }
+            },
+            "time_window_days": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 365,
+                "default": 30,
+                "description": "Days of history to consider for scoring"
+            },
+            "scoring_criteria": {
+                "type": "object",
+                "properties": {
+                    "weight_email_opens": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1,
+                        "default": 0.2
+                    },
+                    "weight_email_clicks": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1,
+                        "default": 0.3
+                    },
+                    "weight_responses": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1,
+                        "default": 0.5
+                    }
+                },
+                "description": "Custom scoring weights",
+                "ui_hints": {
+                    "section": "advanced",
+                    "show_when": {"scoring_method": ["comprehensive", "simple"]}
+                }
+            }
+        }
+    }
+
     def __init__(self):
         super().__init__()
-        self.node_type = "SCORE_ENGAGEMENT"
+        self.node_type = "score_engagement"
         self.supports_replay = True
         self.supports_checkpoints = True
     
     async def process(self, node_config: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
         """Process engagement scoring node"""
-        
+
         node_data = node_config.get('data', {})
-        
+        config = node_data.get('config', {})
+
         # Extract configuration
-        contact_id_path = node_data.get('contact_id_path', '')
+        contact_id_path = config.get('contact_id_path', '')
         contact_id = self._get_nested_value(context, contact_id_path) if contact_id_path else None
-        scoring_criteria = node_data.get('scoring_criteria', {})
-        scoring_method = node_data.get('scoring_method', 'comprehensive')  # simple, comprehensive, ai_powered
-        time_window_days = node_data.get('time_window_days', 30)
+        scoring_criteria = config.get('scoring_criteria', {})
+        scoring_method = config.get('scoring_method', 'comprehensive')  # simple, comprehensive, ai_powered
+        time_window_days = config.get('time_window_days', 30)
         
         # Validate required fields
         if not contact_id:
@@ -665,42 +805,44 @@ Return JSON format:
     async def validate_inputs(self, node_config: Dict[str, Any], context: Dict[str, Any]) -> bool:
         """Validate engagement scoring node inputs"""
         node_data = node_config.get('data', {})
-        
+        config = node_data.get('config', {})
+
         # Check required fields
-        if not node_data.get('contact_id_path'):
+        if not config.get('contact_id_path'):
             return False
-        
+
         # Validate scoring method
-        scoring_method = node_data.get('scoring_method', 'comprehensive')
+        scoring_method = config.get('scoring_method', 'comprehensive')
         valid_methods = ['simple', 'comprehensive', 'ai_powered']
         if scoring_method not in valid_methods:
             return False
-        
+
         # Validate time window
-        time_window_days = node_data.get('time_window_days', 30)
+        time_window_days = config.get('time_window_days', 30)
         if not isinstance(time_window_days, int) or time_window_days <= 0:
             return False
-        
+
         return True
     
     async def create_checkpoint(self, node_config: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
         """Create checkpoint for engagement scoring node"""
         checkpoint = await super().create_checkpoint(node_config, context)
-        
+
         node_data = node_config.get('data', {})
-        
+        config = node_data.get('config', {})
+
         # Resolve contact ID for checkpoint
-        contact_id_path = node_data.get('contact_id_path', '')
+        contact_id_path = config.get('contact_id_path', '')
         resolved_contact_id = self._get_nested_value(context, contact_id_path) if contact_id_path else None
-        
+
         checkpoint.update({
             'engagement_scoring_config': {
                 'contact_id_path': contact_id_path,
                 'resolved_contact_id': resolved_contact_id,
-                'scoring_method': node_data.get('scoring_method', 'comprehensive'),
-                'time_window_days': node_data.get('time_window_days', 30),
-                'criteria_count': len(node_data.get('scoring_criteria', {}))
+                'scoring_method': config.get('scoring_method', 'comprehensive'),
+                'time_window_days': config.get('time_window_days', 30),
+                'criteria_count': len(config.get('scoring_criteria', {}))
             }
         })
-        
+
         return checkpoint

@@ -40,73 +40,69 @@ export interface WorkflowEdge {
 }
 
 export enum WorkflowNodeType {
-  // Triggers (17 types - added TIME_BASED)
-  TRIGGER_MANUAL = 'TRIGGER_MANUAL',
-  TRIGGER_SCHEDULE = 'TRIGGER_SCHEDULE',
-  TRIGGER_TIME_BASED = 'TRIGGER_TIME_BASED',
-  TRIGGER_WEBHOOK = 'TRIGGER_WEBHOOK',
-  TRIGGER_EVENT = 'TRIGGER_EVENT',
-  TRIGGER_RECORD_CREATED = 'TRIGGER_RECORD_CREATED',
-  TRIGGER_RECORD_UPDATED = 'TRIGGER_RECORD_UPDATED',
-  TRIGGER_RECORD_DELETED = 'TRIGGER_RECORD_DELETED',
-  /** @deprecated Use TRIGGER_RECORD_UPDATED with update_type: 'specific_fields' */
-  TRIGGER_FIELD_CHANGED = 'TRIGGER_FIELD_CHANGED',
-  TRIGGER_API_ENDPOINT = 'TRIGGER_API_ENDPOINT',
-  TRIGGER_FORM_SUBMITTED = 'TRIGGER_FORM_SUBMITTED',
-  TRIGGER_EMAIL_RECEIVED = 'TRIGGER_EMAIL_RECEIVED',
-  TRIGGER_MESSAGE_RECEIVED = 'TRIGGER_MESSAGE_RECEIVED',
-  TRIGGER_LINKEDIN_MESSAGE = 'TRIGGER_LINKEDIN_MESSAGE',
-  TRIGGER_WHATSAPP_MESSAGE = 'TRIGGER_WHATSAPP_MESSAGE',
-  /** @deprecated Use TRIGGER_RECORD_UPDATED with update_type: 'status_only' or 'status_progression' */
-  TRIGGER_STATUS_CHANGED = 'TRIGGER_STATUS_CHANGED',
-  TRIGGER_DATE_REACHED = 'TRIGGER_DATE_REACHED',
-  TRIGGER_CONDITION_MET = 'TRIGGER_CONDITION_MET',
-  TRIGGER_PIPELINE_STAGE_CHANGED = 'TRIGGER_PIPELINE_STAGE_CHANGED',
-  TRIGGER_ENGAGEMENT_THRESHOLD = 'TRIGGER_ENGAGEMENT_THRESHOLD',
-  TRIGGER_WORKFLOW_COMPLETED = 'TRIGGER_WORKFLOW_COMPLETED',
+  // Triggers - using lowercase to match backend Django model
+  TRIGGER_MANUAL = 'trigger_manual',
+  TRIGGER_SCHEDULED = 'trigger_scheduled',
+  TRIGGER_WEBHOOK = 'trigger_webhook',
+  TRIGGER_RECORD_CREATED = 'trigger_record_created',
+  TRIGGER_RECORD_UPDATED = 'trigger_record_updated',
+  TRIGGER_RECORD_DELETED = 'trigger_record_deleted',
+  TRIGGER_FORM_SUBMITTED = 'trigger_form_submitted',
+  TRIGGER_EMAIL_RECEIVED = 'trigger_email_received',
+  TRIGGER_LINKEDIN_MESSAGE = 'trigger_linkedin_message',
+  TRIGGER_WHATSAPP_MESSAGE = 'trigger_whatsapp_message',
+  TRIGGER_DATE_REACHED = 'trigger_date_reached',
+  TRIGGER_CONDITION_MET = 'trigger_condition_met',
+  TRIGGER_PIPELINE_STAGE_CHANGED = 'trigger_pipeline_stage_changed',
+  TRIGGER_WORKFLOW_COMPLETED = 'trigger_workflow_completed',
 
-  // Data Operations
-  RECORD_CREATE = 'RECORD_CREATE',
-  RECORD_UPDATE = 'RECORD_UPDATE',
-  RECORD_FIND = 'RECORD_FIND',
-  RECORD_DELETE = 'RECORD_DELETE',
-  MERGE_DATA = 'MERGE_DATA',
-  RESOLVE_CONTACT = 'RESOLVE_CONTACT',
-  CREATE_FOLLOW_UP_TASK = 'CREATE_FOLLOW_UP_TASK',
+  // Data Operations - matching backend Django model
+  RECORD_CREATE = 'record_create',
+  RECORD_UPDATE = 'record_update',
+  RECORD_FIND = 'record_find',
+  RECORD_DELETE = 'record_delete',
+  MERGE_DATA = 'merge_data',
+  RESOLVE_CONTACT = 'resolve_contact',
+  CREATE_FOLLOW_UP_TASK = 'create_follow_up_task',
+  UPDATE_CONTACT_STATUS = 'update_contact_status',
 
-  // Control Flow
-  CONDITION = 'CONDITION',
-  FOR_EACH = 'FOR_EACH',
-  WORKFLOW_LOOP_CONTROLLER = 'WORKFLOW_LOOP_CONTROLLER',
-  WORKFLOW_LOOP_BREAKER = 'WORKFLOW_LOOP_BREAKER',
-  WAIT_DELAY = 'WAIT_DELAY',
-  WAIT_FOR_RESPONSE = 'WAIT_FOR_RESPONSE',
-  WAIT_FOR_RECORD_EVENT = 'WAIT_FOR_RECORD_EVENT',
-  WAIT_FOR_CONDITION = 'WAIT_FOR_CONDITION',
-  CONVERSATION_STATE = 'CONVERSATION_STATE',
+  // Control Flow - matching backend Django model
+  CONDITION = 'condition',
+  FOR_EACH = 'for_each',
+  WORKFLOW_LOOP_CONTROLLER = 'workflow_loop_controller',
+  WORKFLOW_LOOP_BREAKER = 'workflow_loop_breaker',
+  WAIT_DELAY = 'wait_delay',
+  WAIT_FOR_RESPONSE = 'wait_for_response',
+  WAIT_FOR_RECORD_EVENT = 'wait_for_record_event',
+  WAIT_FOR_CONDITION = 'wait_for_condition',
+  CONVERSATION_STATE = 'conversation_state',
 
-  // Communication
-  UNIPILE_SEND_EMAIL = 'UNIPILE_SEND_EMAIL',
-  UNIPILE_SEND_WHATSAPP = 'UNIPILE_SEND_WHATSAPP',
-  UNIPILE_SEND_LINKEDIN = 'UNIPILE_SEND_LINKEDIN',
-  UNIPILE_SEND_SMS = 'UNIPILE_SEND_SMS',
+  // Communication - matching backend Django model
+  UNIPILE_SEND_EMAIL = 'unipile_send_email',
+  UNIPILE_SEND_WHATSAPP = 'unipile_send_whatsapp',
+  UNIPILE_SEND_LINKEDIN = 'unipile_send_linkedin',
+  UNIPILE_SEND_SMS = 'unipile_send_sms',
+  UNIPILE_SYNC_MESSAGES = 'unipile_sync_messages',
+  LOG_COMMUNICATION = 'log_communication',
+  ANALYZE_COMMUNICATION = 'analyze_communication',
+  SCORE_ENGAGEMENT = 'score_engagement',
 
-  // AI Operations
-  AI_PROMPT = 'AI_PROMPT',
-  AI_ANALYSIS = 'AI_ANALYSIS',
-  AI_CONVERSATION_LOOP = 'AI_CONVERSATION_LOOP',
-  AI_MESSAGE_GENERATOR = 'AI_MESSAGE_GENERATOR',
-  AI_RESPONSE_EVALUATOR = 'AI_RESPONSE_EVALUATOR',
+  // AI Operations - matching backend Django model
+  AI_PROMPT = 'ai_prompt',
+  AI_ANALYSIS = 'ai_analysis',
+  AI_CONVERSATION_LOOP = 'ai_conversation_loop',
+  AI_MESSAGE_GENERATOR = 'ai_message_generator',
+  AI_RESPONSE_EVALUATOR = 'ai_response_evaluator',
 
-  // Utility
-  HTTP_REQUEST = 'HTTP_REQUEST',
-  WEBHOOK_OUT = 'WEBHOOK_OUT',
-  TASK_NOTIFY = 'TASK_NOTIFY',
-  GENERATE_FORM_LINK = 'GENERATE_FORM_LINK',
+  // Utility - matching backend Django model
+  HTTP_REQUEST = 'http_request',
+  WEBHOOK_OUT = 'webhook_out',
+  TASK_NOTIFY = 'task_notify',
+  GENERATE_FORM_LINK = 'generate_form_link',
 
-  // Workflow Control
-  APPROVAL = 'APPROVAL',
-  SUB_WORKFLOW = 'SUB_WORKFLOW',
+  // Workflow Control - matching backend Django model
+  APPROVAL = 'approval',
+  SUB_WORKFLOW = 'sub_workflow',
 }
 
 export interface WorkflowExecution {

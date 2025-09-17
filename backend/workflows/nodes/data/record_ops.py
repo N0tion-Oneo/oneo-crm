@@ -11,19 +11,85 @@ logger = logging.getLogger(__name__)
 
 class RecordCreateProcessor(AsyncNodeProcessor):
     """Process record creation nodes"""
-    
+
+    # Configuration schema
+    CONFIG_SCHEMA = {
+        "type": "object",
+        "required": ["pipeline_id"],
+        "properties": {
+            "pipeline_id": {
+                "type": "string",
+                "description": "The pipeline to create the record in",
+                "ui_hints": {
+                    "widget": "pipeline_select",
+                    "placeholder": "Select target pipeline"
+                }
+            },
+            "field_mapping_type": {
+                "type": "string",
+                "enum": ["manual", "json", "copy"],
+                "default": "json",
+                "description": "How to map field values",
+                "ui_hints": {
+                    "widget": "select"
+                }
+            },
+            "record_data": {
+                "type": "object",
+                "description": "Field values for the new record (when field_mapping_type is 'json')",
+                "default": {},
+                "ui_hints": {
+                    "widget": "json_editor",
+                    "rows": 10,
+                    "placeholder": '{\n  "name": "{{contact_name}}",\n  "email": "{{email}}",\n  "status": "new"\n}'
+                }
+            },
+            "source_record": {
+                "type": "string",
+                "description": "Record to copy field values from (when field_mapping_type is 'copy')",
+                "ui_hints": {
+                    "widget": "text",
+                    "placeholder": "{{trigger.record}}",
+                    "show_when": {"field_mapping_type": "copy"}
+                }
+            },
+            "field_overrides": {
+                "type": "object",
+                "description": "Override specific fields when copying",
+                "ui_hints": {
+                    "widget": "json_editor",
+                    "rows": 6,
+                    "placeholder": '{\n  "status": "copied",\n  "source_id": "{{original.id}}"\n}',
+                    "show_when": {"field_mapping_type": "copy"}
+                }
+            },
+            "skip_validation": {
+                "type": "boolean",
+                "default": False,
+                "description": "Skip field validation rules"
+            }
+        }
+    }
+
     def __init__(self):
         super().__init__()
-        self.node_type = "RECORD_CREATE"
+        self.node_type = "record_create"
         self.supports_replay = True
         self.supports_checkpoints = True
     
     async def process(self, node_config: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
         """Process record creation node"""
-        
+
         node_data = node_config.get('data', {})
-        pipeline_id = node_data.get('pipeline_id')
-        record_data = node_data.get('record_data', {})
+        config = node_data.get('config', {})
+
+        # Get configuration values
+        pipeline_id = config.get('pipeline_id')
+        field_mapping_type = config.get('field_mapping_type', 'json')
+        record_data = config.get('record_data', {})
+        source_record = config.get('source_record')
+        field_overrides = config.get('field_overrides', {})
+        skip_validation = config.get('skip_validation', False)
         
         if not pipeline_id:
             raise ValueError("Record create node requires pipeline_id")
@@ -78,48 +144,81 @@ class RecordCreateProcessor(AsyncNodeProcessor):
             logger.error(f"Template formatting error: {e}")
             return template
     
-    async def validate_inputs(self, node_config: Dict[str, Any], context: Dict[str, Any]) -> bool:
-        """Validate record creation node inputs"""
-        node_data = node_config.get('data', {})
-        
-        # Check required fields
-        if not node_data.get('pipeline_id'):
-            return False
-        
-        record_data = node_data.get('record_data', {})
-        if not isinstance(record_data, dict):
-            return False
-        
-        return True
-    
     async def create_checkpoint(self, node_config: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
         """Create checkpoint for record creation node"""
         checkpoint = await super().create_checkpoint(node_config, context)
-        
+
         node_data = node_config.get('data', {})
+        config = node_data.get('config', {})
         checkpoint.update({
-            'pipeline_id': node_data.get('pipeline_id'),
-            'record_data_template': node_data.get('record_data', {})
+            'pipeline_id': config.get('pipeline_id'),
+            'record_data_template': config.get('record_data', {}),
+            'field_mapping_type': config.get('field_mapping_type', 'json')
         })
-        
+
         return checkpoint
 
 
 class RecordUpdateProcessor(AsyncNodeProcessor):
     """Process record update nodes"""
-    
+
+    # Configuration schema
+    CONFIG_SCHEMA = {
+        "type": "object",
+        "required": ["record_id_source", "update_data"],
+        "properties": {
+            "record_id_source": {
+                "type": "string",
+                "description": "Path to record ID in context (e.g., 'trigger_data.record_id')",
+                "ui_hints": {
+                    "widget": "text",
+                    "placeholder": "{{trigger.record_id}} or trigger_data.record_id"
+                }
+            },
+            "update_data": {
+                "type": "object",
+                "description": "Fields to update on the record",
+                "minProperties": 1,
+                "ui_hints": {
+                    "widget": "json_editor",
+                    "rows": 8,
+                    "placeholder": '{\n  "status": "updated",\n  "last_modified": "{{now}}",\n  "notes": "{{trigger.notes}}"\n}'
+                }
+            },
+            "merge_strategy": {
+                "type": "string",
+                "enum": ["merge", "replace"],
+                "default": "merge",
+                "description": "How to handle existing data (merge adds/updates fields, replace overwrites all)",
+                "ui_hints": {
+                    "widget": "select"
+                }
+            },
+            "skip_validation": {
+                "type": "boolean",
+                "default": False,
+                "description": "Skip field validation rules"
+            }
+        }
+    }
+
     def __init__(self):
         super().__init__()
-        self.node_type = "RECORD_UPDATE"
+        self.node_type = "record_update"
         self.supports_replay = True
         self.supports_checkpoints = True
     
     async def process(self, node_config: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
         """Process record update node"""
-        
+
         node_data = node_config.get('data', {})
-        record_id_source = node_data.get('record_id_source', '')
-        update_data = node_data.get('update_data', {})
+        config = node_data.get('config', {})
+
+        # Get configuration values
+        record_id_source = config.get('record_id_source', '')
+        update_data = config.get('update_data', {})
+        merge_strategy = config.get('merge_strategy', 'merge')
+        skip_validation = config.get('skip_validation', False)
         
         # Get record ID from context
         record_id = self._get_nested_value(context, record_id_source)
@@ -186,34 +285,83 @@ class RecordUpdateProcessor(AsyncNodeProcessor):
     async def create_checkpoint(self, node_config: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
         """Create checkpoint for record update node"""
         checkpoint = await super().create_checkpoint(node_config, context)
-        
+
         node_data = node_config.get('data', {})
+        config = node_data.get('config', {})
         checkpoint.update({
-            'record_id_source': node_data.get('record_id_source'),
-            'update_data_template': node_data.get('update_data', {}),
-            'resolved_record_id': self._get_nested_value(context, node_data.get('record_id_source', ''))
+            'record_id_source': config.get('record_id_source'),
+            'update_data_template': config.get('update_data', {}),
+            'merge_strategy': config.get('merge_strategy', 'merge'),
+            'resolved_record_id': self._get_nested_value(context, config.get('record_id_source', ''))
         })
-        
+
         return checkpoint
 
 
 class RecordFindProcessor(AsyncNodeProcessor):
     """Process record find/search nodes"""
-    
+
+    # Configuration schema
+    CONFIG_SCHEMA = {
+        "type": "object",
+        "required": ["pipeline_id"],
+        "properties": {
+            "pipeline_id": {
+                "type": "string",
+                "description": "The pipeline to search in",
+                "ui_hints": {
+                    "widget": "pipeline_select",
+                    "placeholder": "Select pipeline to search"
+                }
+            },
+            "search_criteria": {
+                "type": "object",
+                "description": "Field values to search for",
+                "default": {},
+                "ui_hints": {
+                    "widget": "json_editor",
+                    "rows": 6,
+                    "placeholder": '{\n  "name": "{{search_name}}",\n  "email": "{{email}}",\n  "status": "active"\n}'
+                }
+            },
+            "exact_match": {
+                "type": "boolean",
+                "default": False,
+                "description": "Use exact match instead of contains search"
+            },
+            "limit": {
+                "type": "integer",
+                "default": 10,
+                "minimum": 1,
+                "maximum": 100,
+                "description": "Maximum number of records to return"
+            },
+            "return_first_only": {
+                "type": "boolean",
+                "default": False,
+                "description": "Return only the first matching record"
+            }
+        }
+    }
+
     def __init__(self):
         super().__init__()
-        self.node_type = "RECORD_FIND"
+        self.node_type = "record_find"
         self.supports_replay = True
         self.supports_checkpoints = True
     
     async def process(self, node_config: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
         """Process record find node"""
-        
+
         node_data = node_config.get('data', {})
-        pipeline_id = node_data.get('pipeline_id')
-        search_criteria = node_data.get('search_criteria', {})
-        limit = node_data.get('limit', 10)
-        return_first_only = node_data.get('return_first_only', False)
+        config = node_data.get('config', {})
+
+        # Get configuration values
+        pipeline_id = config.get('pipeline_id')
+        search_criteria = config.get('search_criteria', {})
+        exact_match = config.get('exact_match', False)
+        limit = config.get('limit', 10)
+        return_first_only = config.get('return_first_only', False)
         
         if not pipeline_id:
             raise ValueError("Record find node requires pipeline_id")
@@ -236,7 +384,7 @@ class RecordFindProcessor(AsyncNodeProcessor):
             for field_name, field_value in formatted_criteria.items():
                 if field_value:  # Only add non-empty criteria
                     # Support both exact match and contains search
-                    if node_data.get('exact_match', False):
+                    if exact_match:
                         query &= Q(**{f'data__{field_name}': field_value})
                     else:
                         query &= Q(**{f'data__{field_name}__icontains': field_value})
@@ -294,35 +442,19 @@ class RecordFindProcessor(AsyncNodeProcessor):
             logger.error(f"Template formatting error: {e}")
             return template
     
-    async def validate_inputs(self, node_config: Dict[str, Any], context: Dict[str, Any]) -> bool:
-        """Validate record find node inputs"""
-        node_data = node_config.get('data', {})
-        
-        # Check required fields
-        if not node_data.get('pipeline_id'):
-            return False
-        
-        search_criteria = node_data.get('search_criteria', {})
-        if not isinstance(search_criteria, dict):
-            return False
-        
-        # Validate limit
-        limit = node_data.get('limit', 10)
-        if not isinstance(limit, int) or limit <= 0:
-            return False
-        
-        return True
     
     async def create_checkpoint(self, node_config: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
         """Create checkpoint for record find node"""
         checkpoint = await super().create_checkpoint(node_config, context)
-        
+
         node_data = node_config.get('data', {})
+        config = node_data.get('config', {})
         checkpoint.update({
-            'pipeline_id': node_data.get('pipeline_id'),
-            'search_criteria_template': node_data.get('search_criteria', {}),
-            'limit': node_data.get('limit', 10),
-            'return_first_only': node_data.get('return_first_only', False)
+            'pipeline_id': config.get('pipeline_id'),
+            'search_criteria_template': config.get('search_criteria', {}),
+            'exact_match': config.get('exact_match', False),
+            'limit': config.get('limit', 10),
+            'return_first_only': config.get('return_first_only', False)
         })
 
         return checkpoint
@@ -331,9 +463,35 @@ class RecordFindProcessor(AsyncNodeProcessor):
 class RecordDeleteProcessor(AsyncNodeProcessor):
     """Process record deletion nodes"""
 
+    # Configuration schema
+    CONFIG_SCHEMA = {
+        "type": "object",
+        "required": ["record_id_source"],
+        "properties": {
+            "record_id_source": {
+                "type": "string",
+                "description": "Path to record ID in context (e.g., 'trigger_data.record_id')",
+                "ui_hints": {
+                    "widget": "text",
+                    "placeholder": "{{trigger.record_id}} or node_123.record_id"
+                }
+            },
+            "soft_delete": {
+                "type": "boolean",
+                "default": True,
+                "description": "Soft delete (mark as deleted) vs hard delete (remove from database)"
+            },
+            "confirm_deletion": {
+                "type": "boolean",
+                "default": False,
+                "description": "Require confirmation before deletion (for critical workflows)"
+            }
+        }
+    }
+
     def __init__(self):
         super().__init__()
-        self.node_type = "RECORD_DELETE"
+        self.node_type = "record_delete"
         self.supports_replay = True
         self.supports_checkpoints = True
 
@@ -341,14 +499,15 @@ class RecordDeleteProcessor(AsyncNodeProcessor):
         """Process record deletion node"""
 
         node_data = node_config.get('data', {})
-        record_id_source = node_data.get('record_id_source', '')
-        soft_delete = node_data.get('soft_delete', True)
+        config = node_data.get('config', {})
+
+        # Get configuration values
+        record_id_source = config.get('record_id_source', '')
+        soft_delete = config.get('soft_delete', True)
+        confirm_deletion = config.get('confirm_deletion', False)
 
         # Get record ID from context
         record_id = self._get_nested_value(context, record_id_source)
-        if not record_id:
-            # Try to get from direct value
-            record_id = node_data.get('record_id')
 
         if not record_id:
             raise ValueError("Record delete node requires record_id")
@@ -393,31 +552,19 @@ class RecordDeleteProcessor(AsyncNodeProcessor):
                 'record_id': str(record_id)
             }
 
-    async def validate_inputs(self, node_config: Dict[str, Any], context: Dict[str, Any]) -> bool:
-        """Validate record deletion node inputs"""
-        node_data = node_config.get('data', {})
-
-        # Check for record ID source or direct ID
-        record_id_source = node_data.get('record_id_source', '')
-        record_id = node_data.get('record_id')
-
-        if not record_id_source and not record_id:
-            return False
-
-        return True
 
     async def create_checkpoint(self, node_config: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
         """Create checkpoint for record deletion node"""
         checkpoint = await super().create_checkpoint(node_config, context)
 
         node_data = node_config.get('data', {})
-        record_id_source = node_data.get('record_id_source', '')
+        config = node_data.get('config', {})
+        record_id_source = config.get('record_id_source', '')
 
         checkpoint.update({
             'record_id_source': record_id_source,
-            'record_id': node_data.get('record_id'),
-            'soft_delete': node_data.get('soft_delete', True),
-            'resolved_record_id': self._get_nested_value(context, record_id_source) if record_id_source else node_data.get('record_id')
+            'soft_delete': config.get('soft_delete', True),
+            'resolved_record_id': self._get_nested_value(context, record_id_source) if record_id_source else None
         })
 
         return checkpoint

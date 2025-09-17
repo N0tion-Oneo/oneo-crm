@@ -22,16 +22,18 @@ interface NodeConfigurationPanelProps {
   nodeId: string | null;
   nodeType: WorkflowNodeType | null;
   nodeData: any;
+  workflowId?: string;
   availableVariables: Array<{ nodeId: string; label: string; outputs: string[] }>;
   onUpdate: (nodeId: string, data: any) => void;
   onClose: () => void;
-  onTest?: (nodeId: string) => Promise<any>;
+  onTest?: (nodeId: string, testRecordId?: string) => Promise<any>;
 }
 
 export function NodeConfigurationPanel({
   nodeId,
   nodeType,
   nodeData,
+  workflowId,
   availableVariables,
   onUpdate,
   onClose,
@@ -55,13 +57,13 @@ export function NodeConfigurationPanel({
     }
   }, [nodeId]);
 
-  const handleTest = async () => {
+  const handleTest = async (testRecordId?: string) => {
     if (!nodeId || !onTest) return;
 
     setTesting(true);
     setTestError(null);
     try {
-      const result = await onTest(nodeId);
+      const result = await onTest(nodeId, testRecordId);
       setTestOutput(result);
       setActiveTab('output'); // Switch to output tab after testing
       toast.success('Node tested successfully');
@@ -139,7 +141,7 @@ export function NodeConfigurationPanel({
             size="sm"
             variant="default"
             className="flex-1"
-            onClick={handleTest}
+            onClick={() => handleTest()}
             disabled={testing || Object.keys(validationErrors).length > 0}
           >
             {testing ? (
@@ -217,6 +219,11 @@ export function NodeConfigurationPanel({
             output={testOutput}
             error={testError}
             loading={testing}
+            nodeId={nodeId}
+            nodeType={nodeType}
+            nodeData={nodeData}
+            workflowId={workflowId}
+            onTest={handleTest}
           />
         </TabsContent>
       </Tabs>

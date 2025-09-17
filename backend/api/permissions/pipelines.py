@@ -78,8 +78,8 @@ class PipelinePermission(permissions.BasePermission):
             else:
                 # restore action - object-level check will handle this
                 return True
-        elif view.action in ['internal_full', 'stage_internal', 'shared_record', 'public_filtered', 'stage_public']:
-            # Form generation actions - require pipeline read access
+        elif view.action in ['internal_full', 'stage_internal', 'shared_record', 'public_filtered', 'stage_public', 'available_forms']:
+            # Form generation and listing actions (including available_forms) - require pipeline read access
             pipeline_id = view.kwargs.get('pipeline_pk')
             if pipeline_id:
                 return permission_manager.has_permission('action', 'pipelines', 'read', pipeline_id)

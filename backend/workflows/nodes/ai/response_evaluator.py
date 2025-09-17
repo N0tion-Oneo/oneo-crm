@@ -14,9 +14,109 @@ logger = logging.getLogger(__name__)
 class AIResponseEvaluatorProcessor(AsyncNodeProcessor):
     """Evaluate responses using AI to determine conversation flow"""
 
+    # Configuration schema
+    CONFIG_SCHEMA = {
+        "type": "object",
+        "required": ["evaluation_type"],
+        "properties": {
+            "evaluation_type": {
+                "type": "string",
+                "enum": ["objective", "sentiment", "intent", "custom"],
+                "default": "objective",
+                "description": "Type of evaluation to perform",
+                "ui_hints": {
+                    "widget": "radio"
+                }
+            },
+            "response_source": {
+                "type": "string",
+                "description": "Path to response in context (e.g., 'last_message')",
+                "ui_hints": {
+                    "widget": "text",
+                    "placeholder": "{{last_message}} or node_123.output"
+                }
+            },
+            "response": {
+                "type": "string",
+                "description": "Direct response to evaluate (if not using response_source)",
+                "ui_hints": {
+                    "widget": "textarea",
+                    "rows": 4,
+                    "placeholder": "Paste response text to evaluate",
+                    "show_when": {"response_source": ""}
+                }
+            },
+            "objective": {
+                "type": "string",
+                "description": "Conversation objective for evaluation",
+                "ui_hints": {
+                    "widget": "textarea",
+                    "rows": 3,
+                    "placeholder": "Get the prospect to schedule a demo call",
+                    "show_when": {"evaluation_type": "objective"}
+                }
+            },
+            "evaluation_criteria": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "description": {"type": "string"}
+                    }
+                },
+                "description": "Custom criteria for evaluation",
+                "ui_hints": {
+                    "widget": "criteria_builder",
+                    "show_when": {"evaluation_type": "custom"}
+                }
+            },
+            "threshold": {
+                "type": "number",
+                "minimum": 0.0,
+                "maximum": 1.0,
+                "default": 0.7,
+                "description": "Score threshold for positive outcome",
+                "ui_hints": {
+                    "widget": "slider",
+                    "step": 0.05
+                }
+            },
+            "use_scoring": {
+                "type": "boolean",
+                "default": False,
+                "description": "Get detailed scoring with JSON response"
+            },
+            "fallback_outcome": {
+                "type": "string",
+                "enum": ["continue", "stop", "escalate"],
+                "default": "continue",
+                "description": "Action if evaluation fails",
+                "ui_hints": {
+                    "widget": "select"
+                }
+            },
+            "branch_mapping": {
+                "type": "object",
+                "properties": {
+                    "success_path": {"type": "string"},
+                    "failure_path": {"type": "string"},
+                    "escalation_path": {"type": "string"},
+                    "recovery_path": {"type": "string"},
+                    "opt_out_path": {"type": "string"}
+                },
+                "description": "Map evaluation outcomes to workflow branches",
+                "ui_hints": {
+                    "widget": "branch_mapper",
+                    "section": "advanced"
+                }
+            }
+        }
+    }
+
     def __init__(self):
         super().__init__()
-        self.node_type = "AI_RESPONSE_EVALUATOR"
+        self.node_type = "ai_response_evaluator"
         self.supports_replay = True
         self.supports_checkpoints = True
 
@@ -24,20 +124,25 @@ class AIResponseEvaluatorProcessor(AsyncNodeProcessor):
         """Process AI response evaluation"""
 
         node_data = node_config.get('data', {})
+        config = node_data.get('config', {})
 
         # Extract configuration
-        evaluation_criteria = node_data.get('evaluation_criteria', [])
-        evaluation_type = node_data.get('evaluation_type', 'objective')  # objective, sentiment, intent, custom
-        threshold = node_data.get('threshold', 0.7)
-        use_scoring = node_data.get('use_scoring', False)
+        evaluation_type = config.get('evaluation_type', 'objective')
+        evaluation_criteria = config.get('evaluation_criteria', [])
+        threshold = config.get('threshold', 0.7)
+        use_scoring = config.get('use_scoring', False)
+        fallback_outcome = config.get('fallback_outcome', 'continue')
+        branch_mapping = config.get('branch_mapping', {})
 
         # Get response to evaluate
-        response_to_evaluate = node_data.get('response') or context.get('last_message', '')
-        if not response_to_evaluate:
-            response_to_evaluate = context.get('response_content', '')
+        response_source = config.get('response_source', '')
+        if response_source:
+            response_to_evaluate = self._get_nested_value(context, response_source) or ''
+        else:
+            response_to_evaluate = config.get('response', '') or context.get('last_message', '') or context.get('response_content', '')
 
         # Context for evaluation
-        conversation_objective = node_data.get('objective') or context.get('conversation_objective', '')
+        conversation_objective = config.get('objective') or context.get('conversation_objective', '')
         conversation_history = context.get('conversation_history', [])
         participant_info = context.get('participant_info', {})
 
@@ -86,7 +191,7 @@ class AIResponseEvaluatorProcessor(AsyncNodeProcessor):
             return {
                 'success': False,
                 'error': str(e),
-                'fallback_outcome': node_data.get('fallback_outcome', 'continue')
+                'fallback_outcome': fallback_outcome
             }
 
     async def _evaluate_response(
@@ -306,27 +411,3 @@ Provide your evaluation in JSON format:
 
         return insights
 
-    async def validate_inputs(self, node_config: Dict[str, Any], context: Dict[str, Any]) -> bool:
-        """Validate node inputs"""
-        node_data = node_config.get('data', {})
-
-        # Check evaluation type
-        valid_types = ['objective', 'sentiment', 'intent', 'custom']
-        if node_data.get('evaluation_type', 'objective') not in valid_types:
-            return False
-
-        # Validate threshold
-        threshold = node_data.get('threshold', 0.7)
-        if threshold < 0 or threshold > 1:
-            return False
-
-        # Check for response to evaluate
-        has_response = (
-            node_data.get('response') or
-            context.get('last_message') or
-            context.get('response_content')
-        )
-        if not has_response:
-            return False
-
-        return True

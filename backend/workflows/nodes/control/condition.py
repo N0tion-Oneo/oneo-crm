@@ -4,57 +4,181 @@ Condition Node Processor - Conditional logic and branching
 import logging
 from typing import Dict, Any, Union
 from workflows.nodes.base import AsyncNodeProcessor
+from workflows.utils.condition_evaluator import condition_evaluator
 
 logger = logging.getLogger(__name__)
 
 
 class ConditionProcessor(AsyncNodeProcessor):
     """Process conditional logic nodes for workflow branching"""
-    
+
+    # Configuration schema
+    CONFIG_SCHEMA = {
+        "type": "object",
+        "properties": {
+            "conditions": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "field": {
+                            "type": "string",
+                            "description": "Field to check"
+                        },
+                        "operator": {
+                            "type": "string",
+                            "enum": [
+                                "equals", "not_equals",
+                                "greater_than", "greater_than_or_equal",
+                                "less_than", "less_than_or_equal",
+                                "contains", "not_contains",
+                                "starts_with", "ends_with",
+                                "is_empty", "is_not_empty",
+                                "is_true", "is_false",
+                                "before", "after", "between"
+                            ],
+                            "description": "Comparison operator"
+                        },
+                        "value": {
+                            "description": "Value to compare against"
+                        },
+                        "value_type": {
+                            "type": "string",
+                            "enum": ["literal", "variable", "expression"],
+                            "default": "literal",
+                            "description": "Type of value"
+                        }
+                    }
+                },
+                "description": "Build your conditions",
+                "ui_hints": {
+                    "widget": "condition_builder",
+                    "help_text": "Set up conditions to control workflow branching"
+                }
+            },
+            "default_output": {
+                "type": "string",
+                "default": "false",
+                "description": "Output when no conditions match",
+                "ui_hints": {
+                    "widget": "text",
+                    "placeholder": "false or default_branch"
+                }
+            },
+            "stop_on_first_match": {
+                "type": "boolean",
+                "default": True,
+                "description": "Stop evaluating after first match (for OR operator)"
+            }
+        }
+    }
+
     def __init__(self):
         super().__init__()
-        self.node_type = "CONDITION"
+        self.node_type = "condition"
         self.supports_replay = True
         self.supports_checkpoints = True
     
     async def process(self, node_config: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
         """Process conditional logic node"""
-        
+
         node_data = node_config.get('data', {})
-        conditions = node_data.get('conditions', [])
-        default_output = node_data.get('default_output', 'false')
-        
+        config = node_data.get('config', {})
+
+        conditions = config.get('conditions', [])
+        logic_operator = config.get('logic_operator', 'AND')
+        default_output = config.get('default_output', 'false')
+        stop_on_first_match = config.get('stop_on_first_match', True)
+
         if not conditions:
             return {
                 'output': default_output,
                 'condition_met': False,
                 'message': 'No conditions defined'
             }
-        
-        # Evaluate each condition
-        for i, condition in enumerate(conditions):
-            try:
-                result = await self._evaluate_single_condition(condition, context)
-                
-                if result:
-                    return {
-                        'output': condition.get('output', 'true'),
-                        'condition_met': True,
-                        'matched_condition_index': i,
-                        'matched_condition': condition,
-                        'evaluation_details': self._get_evaluation_details(condition, context)
-                    }
-                    
-            except Exception as e:
-                logger.error(f"Error evaluating condition {i}: {e}")
-                continue
-        
-        # No conditions matched
-        return {
-            'output': default_output,
-            'condition_met': False,
-            'total_conditions_evaluated': len(conditions)
-        }
+
+        # Check if conditions use the new grouped format
+        has_groups = any(c.get('groupId') is not None for c in conditions)
+
+        if has_groups or all('field' in c for c in conditions):
+            # Use the new GroupedConditionEvaluator for both grouped and simple conditions
+            group_operators = config.get('group_operators', {})
+
+            # Evaluate using the enhanced condition evaluator
+            matches, details = condition_evaluator.evaluate(
+                conditions=conditions,
+                data=context,
+                logic_operator=logic_operator,
+                group_operators=group_operators
+            )
+
+            return {
+                'output': 'true' if matches else default_output,
+                'condition_met': matches,
+                'evaluation_details': details,
+                'total_conditions_evaluated': len(conditions)
+            }
+        else:
+            # Fall back to legacy evaluation for old-style conditions
+            operator = config.get('operator', 'OR')
+
+            # Evaluate conditions based on operator
+            if operator == 'AND':
+                # All conditions must be true
+                all_results = []
+                for i, condition in enumerate(conditions):
+                    try:
+                        result = await self._evaluate_single_condition(condition, context)
+                        all_results.append(result)
+                        if not result:
+                            # Short circuit on first false for AND
+                            return {
+                                'output': default_output,
+                                'condition_met': False,
+                                'failed_condition_index': i,
+                                'total_conditions_evaluated': i + 1
+                            }
+                    except Exception as e:
+                        logger.error(f"Error evaluating condition {i}: {e}")
+                        return {
+                            'output': default_output,
+                            'condition_met': False,
+                            'error': str(e)
+                        }
+
+                # All conditions passed
+                return {
+                    'output': conditions[-1].get('output', 'true') if conditions else 'true',
+                    'condition_met': True,
+                    'all_conditions_met': True,
+                    'total_conditions_evaluated': len(conditions)
+                }
+            else:
+                # OR operator - any condition can be true
+                for i, condition in enumerate(conditions):
+                    try:
+                        result = await self._evaluate_single_condition(condition, context)
+
+                        if result:
+                            if stop_on_first_match:
+                                return {
+                                    'output': condition.get('output', 'true'),
+                                    'condition_met': True,
+                                    'matched_condition_index': i,
+                                    'matched_condition': condition,
+                                    'evaluation_details': self._get_evaluation_details(condition, context)
+                                }
+
+                    except Exception as e:
+                        logger.error(f"Error evaluating condition {i}: {e}")
+                        continue
+
+            # No conditions matched
+            return {
+                'output': default_output,
+                'condition_met': False,
+                'total_conditions_evaluated': len(conditions)
+            }
     
     async def _evaluate_single_condition(self, condition: Dict[str, Any], context: Dict[str, Any]) -> bool:
         """Evaluate a single condition"""
@@ -251,45 +375,17 @@ class ConditionProcessor(AsyncNodeProcessor):
             'expected_output': condition.get('output', 'true')
         }
     
-    async def validate_inputs(self, node_config: Dict[str, Any], context: Dict[str, Any]) -> bool:
-        """Validate condition node inputs"""
-        node_data = node_config.get('data', {})
-        conditions = node_data.get('conditions', [])
-        
-        if not conditions:
-            return False
-        
-        # Validate each condition
-        for condition in conditions:
-            if not isinstance(condition, dict):
-                return False
-            
-            # Check required fields
-            if 'operator' not in condition:
-                return False
-            
-            # Validate operator
-            valid_operators = [
-                '==', '!=', '>', '>=', '<', '<=',
-                'contains', 'not_contains', 'starts_with', 'ends_with',
-                'in', 'not_in', 'exists', 'not_exists',
-                'is_empty', 'is_not_empty', 'regex_match',
-                'length_eq', 'length_gt', 'length_lt'
-            ]
-            
-            if condition['operator'] not in valid_operators:
-                return False
-        
-        return True
     
     async def create_checkpoint(self, node_config: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
         """Create checkpoint for condition node"""
         checkpoint = await super().create_checkpoint(node_config, context)
         
         node_data = node_config.get('data', {})
+        config = node_data.get('config', {})
         checkpoint.update({
-            'conditions_count': len(node_data.get('conditions', [])),
-            'default_output': node_data.get('default_output', 'false'),
+            'conditions_count': len(config.get('conditions', [])),
+            'default_output': config.get('default_output', 'false'),
+            'operator': config.get('operator', 'OR'),
             'context_snapshot_for_evaluation': {
                 key: value for key, value in context.items() 
                 if not key.startswith('_') and isinstance(value, (str, int, float, bool, list, dict))

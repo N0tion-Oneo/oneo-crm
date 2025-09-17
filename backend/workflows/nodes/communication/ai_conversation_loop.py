@@ -31,9 +31,128 @@ class AIConversationLoopProcessor(AsyncNodeProcessor):
     Internally orchestrates sending, waiting, evaluating, and responding.
     """
 
+    # Configuration schema
+    CONFIG_SCHEMA = {
+        "type": "object",
+        "required": ["objective", "initial_message"],
+        "properties": {
+            "objective": {
+                "type": "string",
+                "minLength": 1,
+                "description": "The conversation objective to achieve",
+                "ui_hints": {
+                    "widget": "textarea",
+                    "rows": 3,
+                    "placeholder": "Schedule a demo call with the prospect"
+                }
+            },
+            "initial_message": {
+                "type": "string",
+                "minLength": 1,
+                "description": "The first message to send",
+                "ui_hints": {
+                    "widget": "textarea",
+                    "rows": 6,
+                    "placeholder": "Hi {{contact_name}}, I noticed you viewed our pricing page..."
+                }
+            },
+            "success_criteria": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Criteria to determine success",
+                "ui_hints": {
+                    "widget": "tag_input",
+                    "placeholder": "Add success criteria (e.g., Meeting scheduled, Phone number provided)"
+                }
+            },
+            "max_iterations": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 20,
+                "default": 5,
+                "description": "Maximum conversation turns"
+            },
+            "response_timeout_hours": {
+                "type": "number",
+                "minimum": 0.5,
+                "maximum": 168,
+                "default": 24,
+                "description": "Hours to wait for response"
+            },
+            "channel": {
+                "type": "string",
+                "enum": ["email", "whatsapp", "linkedin", "sms"],
+                "default": "email",
+                "description": "Communication channel",
+                "ui_hints": {
+                    "widget": "select"
+                }
+            },
+            "recipient_source": {
+                "type": "string",
+                "description": "Path to recipient in context",
+                "ui_hints": {
+                    "widget": "text",
+                    "placeholder": "{{record.email}} or trigger.contact"
+                }
+            },
+            "ai_model": {
+                "type": "string",
+                "enum": ["gpt-4", "gpt-3.5-turbo", "claude-3"],
+                "default": "gpt-4",
+                "description": "AI model for evaluation and generation",
+                "ui_hints": {
+                    "widget": "select"
+                }
+            },
+            "temperature": {
+                "type": "number",
+                "minimum": 0.0,
+                "maximum": 1.0,
+                "default": 0.7,
+                "description": "AI creativity level",
+                "ui_hints": {
+                    "widget": "slider",
+                    "step": 0.1
+                }
+            },
+            "enable_handoff": {
+                "type": "boolean",
+                "default": True,
+                "description": "Enable human handoff when needed"
+            },
+            "handoff_criteria": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Triggers for human handoff",
+                "ui_hints": {
+                    "widget": "tag_input",
+                    "placeholder": "Add handoff triggers (e.g., Complaint, Technical question)",
+                    "show_when": {"enable_handoff": True}
+                }
+            },
+            "opt_out_keywords": {
+                "type": "array",
+                "items": {"type": "string"},
+                "default": ["unsubscribe", "stop", "opt out", "remove me"],
+                "description": "Keywords to detect opt-out intent",
+                "ui_hints": {
+                    "widget": "tag_input"
+                }
+            },
+            "follow_up_delay_hours": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 72,
+                "default": 0,
+                "description": "Hours to wait between follow-ups"
+            }
+        }
+    }
+
     def __init__(self):
         super().__init__()
-        self.node_type = "AI_CONVERSATION_LOOP"
+        self.node_type = "ai_conversation_loop"
         self.supports_replay = True
         self.supports_checkpoints = True
         # Communication service will be imported lazily when needed
@@ -103,7 +222,10 @@ class AIConversationLoopProcessor(AsyncNodeProcessor):
                 success_criteria=conversation_state['success_criteria'],
                 conversation_history=conversation_state['messages'],
                 latest_response=response.get('content', ''),
-                ai_config=node_data.get('ai_config', {}),
+                ai_config={
+                    'model': node_data.get('config', {}).get('ai_model', 'gpt-4'),
+                    'temperature': node_data.get('config', {}).get('temperature', 0.7)
+                },
                 participant_info=conversation_state.get('participant_info', {})
             )
 
@@ -194,19 +316,24 @@ class AIConversationLoopProcessor(AsyncNodeProcessor):
             except Record.DoesNotExist:
                 logger.warning(f"Record {record_id} not found")
 
+        # Get configuration
+        config = node_data.get('config', {})
+
         return {
             'conversation_id': None,  # Will be set when first message is sent
             'participant_id': None,   # Will be set when participant is identified
             'participant_info': participant_info,
-            'objective': node_data.get('objective', ''),
-            'success_criteria': node_data.get('success_criteria', []),
+            'objective': config.get('objective', ''),
+            'success_criteria': config.get('success_criteria', []),
             'messages': [],
             'evaluations': [],
             'iteration': 0,
-            'max_iterations': node_data.get('max_iterations', 5),
-            'current_channel': node_data.get('channels', {}).get('primary', 'email'),
+            'max_iterations': config.get('max_iterations', 5),
+            'current_channel': config.get('channel', 'email'),
             'started_at': timezone.now().isoformat(),
-            'last_evaluation': None
+            'last_evaluation': None,
+            'response_timeout_hours': config.get('response_timeout_hours', 24),
+            'opt_out_keywords': config.get('opt_out_keywords', ['unsubscribe', 'stop', 'opt out', 'remove me'])
         }
 
     async def _send_initial_message(
@@ -217,7 +344,8 @@ class AIConversationLoopProcessor(AsyncNodeProcessor):
     ):
         """Send the initial message to start the conversation"""
 
-        initial_message = node_data.get('initial_message_template', '')
+        config = node_data.get('config', {})
+        initial_message = config.get('initial_message', '')
         participant_info = conversation_state.get('participant_info', {})
 
         # Format the message with participant info
@@ -261,7 +389,9 @@ class AIConversationLoopProcessor(AsyncNodeProcessor):
     ) -> Optional[Dict[str, Any]]:
         """Wait for a response from the participant"""
 
-        timeout_minutes = node_data.get('timeout_minutes', 1440)  # 24 hours default
+        config = node_data.get('config', {})
+        timeout_hours = conversation_state.get('response_timeout_hours', config.get('response_timeout_hours', 24))
+        timeout_minutes = int(timeout_hours * 60)
         timeout_time = timezone.now() + timedelta(minutes=timeout_minutes)
 
         # Poll for response (simplified for implementation)

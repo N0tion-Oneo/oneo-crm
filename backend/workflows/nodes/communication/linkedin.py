@@ -12,33 +12,117 @@ logger = logging.getLogger(__name__)
 
 class LinkedInProcessor(AsyncNodeProcessor):
     """Process LinkedIn message sending nodes via UniPile integration"""
-    
+
+    # Configuration schema
+    CONFIG_SCHEMA = {
+        "type": "object",
+        "required": ["recipient_profile", "message_content"],
+        "properties": {
+            "recipient_profile": {
+                "type": "string",
+                "description": "LinkedIn profile URL or username",
+                "ui_hints": {
+                    "widget": "text",
+                    "placeholder": "{{contact.linkedin}} or linkedin.com/in/username"
+                }
+            },
+            "message_content": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 300,
+                "description": "Message content (300 char limit)",
+                "ui_hints": {
+                    "widget": "textarea",
+                    "rows": 4,
+                    "placeholder": "Hi {{contact.name}}, I wanted to connect..."
+                }
+            },
+            "user_id": {
+                "type": "string",
+                "description": "User ID for LinkedIn account",
+                "ui_hints": {
+                    "widget": "user_select",
+                    "placeholder": "{{assigned_user.id}}"
+                }
+            },
+            "send_connection_request": {
+                "type": "boolean",
+                "default": False,
+                "description": "Send connection request first"
+            },
+            "connection_note": {
+                "type": "string",
+                "maxLength": 300,
+                "description": "Connection request note",
+                "ui_hints": {
+                    "widget": "textarea",
+                    "rows": 3,
+                    "placeholder": "I'd like to add you to my professional network",
+                    "show_when": {"send_connection_request": True}
+                }
+            },
+            "is_reply": {
+                "type": "boolean",
+                "default": False,
+                "description": "Is this a reply to existing conversation"
+            },
+            "reply_to_message_id": {
+                "type": "string",
+                "description": "Message ID to reply to",
+                "ui_hints": {
+                    "widget": "text",
+                    "placeholder": "{{last_message.id}}",
+                    "show_when": {"is_reply": True}
+                }
+            },
+            "thread_id": {
+                "type": "string",
+                "description": "LinkedIn conversation thread ID",
+                "ui_hints": {
+                    "widget": "text",
+                    "placeholder": "{{conversation.thread_id}}",
+                    "show_when": {"is_reply": True}
+                }
+            },
+            "sequence_metadata": {
+                "type": "object",
+                "description": "Metadata for sequence tracking",
+                "ui_hints": {
+                    "widget": "json_editor",
+                    "rows": 3,
+                    "section": "advanced"
+                }
+            }
+        }
+    }
+
     def __init__(self):
         super().__init__()
-        self.node_type = "UNIPILE_SEND_LINKEDIN"
+        self.node_type = "unipile_send_linkedin"
         self.supports_replay = True
         self.supports_checkpoints = True
     
     async def process(self, node_config: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
         """Process LinkedIn message sending node"""
-        
+
         node_data = node_config.get('data', {})
-        
+        config = node_data.get('config', {})
+
         # Extract configuration with context formatting
-        user_id = self._format_template(node_data.get('user_id', ''), context)
-        recipient_profile = self._format_template(node_data.get('recipient_profile', ''), context)
-        message_content = self._format_template(node_data.get('message_content', ''), context)
-        connection_note = self._format_template(node_data.get('connection_note', ''), context)
-        
+        user_id = self._format_template(config.get('user_id', ''), context)
+        recipient_profile = self._format_template(config.get('recipient_profile', ''), context)
+        message_content = self._format_template(config.get('message_content', ''), context)
+        connection_note = self._format_template(config.get('connection_note', ''), context)
+
         # Optional parameters
-        sequence_metadata = node_data.get('sequence_metadata', {})
-        send_connection_request = node_data.get('send_connection_request', False)
+        sequence_metadata = config.get('sequence_metadata', {})
+        send_connection_request = config.get('send_connection_request', False)
 
         # Thread/reply parameters
-        reply_to_message_id = node_data.get('reply_to_message_id') or context.get('parent_message_id')
-        thread_id = node_data.get('thread_id') or context.get('external_thread_id')
-        conversation_id = node_data.get('conversation_id') or context.get('conversation_id')
-        is_reply = node_data.get('is_reply', False) or bool(reply_to_message_id)
+        reply_to_message_id = config.get('reply_to_message_id') or context.get('parent_message_id')
+        thread_id = config.get('thread_id') or context.get('external_thread_id')
+        conversation_id = config.get('conversation_id') or context.get('conversation_id')
+        is_reply = config.get('is_reply', False) or bool(reply_to_message_id)
         
         # Validate required fields
         if not all([user_id, recipient_profile, message_content]):
@@ -282,38 +366,34 @@ class LinkedInProcessor(AsyncNodeProcessor):
     async def validate_inputs(self, node_config: Dict[str, Any], context: Dict[str, Any]) -> bool:
         """Validate LinkedIn node inputs"""
         node_data = node_config.get('data', {})
-        
+        config = node_data.get('config', {})
+
         # Check required fields are present
-        required_fields = ['user_id', 'recipient_profile', 'message_content']
+        required_fields = ['recipient_profile', 'message_content']
         for field in required_fields:
-            if not node_data.get(field):
+            if not config.get(field):
                 return False
-        
-        # Validate LinkedIn profile format (basic check)
-        recipient_profile = self._format_template(node_data.get('recipient_profile', ''), context)
-        if not recipient_profile or '@' not in recipient_profile:
-            # LinkedIn profiles should be in format like "john.doe" or contain LinkedIn URL
-            return False
-        
+
         # Validate message content length (LinkedIn has character limits)
-        message_content = self._format_template(node_data.get('message_content', ''), context)
+        message_content = self._format_template(config.get('message_content', ''), context)
         if len(message_content) > 300:  # LinkedIn message limit
             return False
-        
+
         return True
     
     async def create_checkpoint(self, node_config: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
         """Create checkpoint for LinkedIn node"""
         checkpoint = await super().create_checkpoint(node_config, context)
-        
+
         node_data = node_config.get('data', {})
+        config = node_data.get('config', {})
         checkpoint.update({
             'linkedin_config': {
-                'recipient': self._format_template(node_data.get('recipient_profile', ''), context),
-                'message_length': len(self._format_template(node_data.get('message_content', ''), context)),
-                'user_id': self._format_template(node_data.get('user_id', ''), context),
-                'send_connection_request': node_data.get('send_connection_request', False)
+                'recipient': self._format_template(config.get('recipient_profile', ''), context),
+                'message_length': len(self._format_template(config.get('message_content', ''), context)),
+                'user_id': self._format_template(config.get('user_id', ''), context),
+                'send_connection_request': config.get('send_connection_request', False)
             }
         })
-        
+
         return checkpoint

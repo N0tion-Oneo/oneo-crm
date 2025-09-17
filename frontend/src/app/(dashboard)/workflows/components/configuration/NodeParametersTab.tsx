@@ -23,8 +23,8 @@ import { cn } from '@/lib/utils';
 import { WorkflowNodeType } from '../../types';
 import { pipelinesApi, usersApi, permissionsApi, communicationsApi, workflowsApi } from '@/lib/api';
 import { ExpressionEditor } from './ExpressionEditor';
-// Import unified configuration system
-import { getNodeConfig } from '../node-configs/unified/registry';
+// Import unified configuration system with backend schemas
+import { useNodeConfig } from '../node-configs/unified/useNodeConfig';
 import { UnifiedConfigRenderer } from '../node-configs/unified/UnifiedConfigRenderer';
 
 interface NodeParametersTabProps {
@@ -256,8 +256,36 @@ export function NodeParametersTab({
     onUpdate({ ...nodeData, config: newConfig });
   }, [nodeData, onUpdate]);
 
-  // Get the unified configuration for this node
-  const unifiedConfig = getNodeConfig(nodeType);
+  // Get the unified configuration from backend
+  const { config: unifiedConfig, loading: configLoading, error: configError } = useNodeConfig(nodeType);
+
+  console.log('NodeParametersTab render:', {
+    nodeType,
+    unifiedConfig,
+    configLoading,
+    configError,
+    nodeData
+  });
+
+  if (configLoading) {
+    return (
+      <div className="p-8 flex flex-col items-center justify-center">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+        <span className="text-sm text-muted-foreground mt-2">Loading configuration...</span>
+      </div>
+    );
+  }
+
+  if (configError) {
+    return (
+      <div className="p-4 text-center text-muted-foreground">
+        <AlertCircle className="h-8 w-8 mx-auto mb-2 text-destructive" />
+        <p className="text-sm font-medium">Failed to load configuration</p>
+        <p className="text-xs mt-1">{configError}</p>
+        <p className="text-xs mt-1">Node type: {nodeType}</p>
+      </div>
+    );
+  }
 
   if (!unifiedConfig) {
     // No configuration available for this node type

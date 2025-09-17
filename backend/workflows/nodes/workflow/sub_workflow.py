@@ -11,25 +11,81 @@ logger = logging.getLogger(__name__)
 
 class SubWorkflowProcessor(AsyncNodeProcessor):
     """Process sub-workflow execution nodes"""
-    
+
+    # Configuration schema
+    CONFIG_SCHEMA = {
+        "type": "object",
+        "required": ["sub_workflow_id"],
+        "properties": {
+            "sub_workflow_id": {
+                "type": "string",
+                "description": "ID of workflow to execute",
+                "ui_hints": {
+                    "widget": "workflow_select"
+                }
+            },
+            "inherit_context": {
+                "type": "boolean",
+                "default": True,
+                "description": "Inherit parent workflow context"
+            },
+            "wait_for_completion": {
+                "type": "boolean",
+                "default": True,
+                "description": "Wait for sub-workflow to complete"
+            },
+            "timeout_minutes": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1440,
+                "default": 60,
+                "description": "Timeout for sub-workflow execution (minutes)",
+                "ui_hints": {
+                    "show_when": {"wait_for_completion": True}
+                }
+            },
+            "input_mapping": {
+                "type": "object",
+                "description": "Map parent context to sub-workflow inputs",
+                "ui_hints": {
+                    "widget": "json_editor",
+                    "rows": 4,
+                    "placeholder": '{\n  "contact_id": "{{contact.id}}",\n  "status": "{{current_status}}"\n}',
+                    "section": "advanced"
+                }
+            },
+            "output_mapping": {
+                "type": "object",
+                "description": "Map sub-workflow outputs back to parent",
+                "ui_hints": {
+                    "widget": "json_editor",
+                    "rows": 4,
+                    "placeholder": '{\n  "sub_result": "result",\n  "sub_status": "status"\n}',
+                    "section": "advanced"
+                }
+            }
+        }
+    }
+
     def __init__(self):
         super().__init__()
-        self.node_type = "SUB_WORKFLOW"
+        self.node_type = "sub_workflow"
         self.supports_replay = True
         self.supports_checkpoints = True
     
     async def process(self, node_config: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
         """Process sub-workflow call node"""
-        
+
         node_data = node_config.get('data', {})
-        
+        config = node_data.get('config', {})
+
         # Extract configuration
-        sub_workflow_id = node_data.get('sub_workflow_id')
-        input_mapping = node_data.get('input_mapping', {})
-        output_mapping = node_data.get('output_mapping', {})
-        inherit_context = node_data.get('inherit_context', True)
-        wait_for_completion = node_data.get('wait_for_completion', True)
-        timeout_minutes = node_data.get('timeout_minutes', 60)
+        sub_workflow_id = config.get('sub_workflow_id')
+        input_mapping = config.get('input_mapping', {})
+        output_mapping = config.get('output_mapping', {})
+        inherit_context = config.get('inherit_context', True)
+        wait_for_completion = config.get('wait_for_completion', True)
+        timeout_minutes = config.get('timeout_minutes', 60)
         
         # Get execution context
         execution = context.get('execution')

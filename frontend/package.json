@@ -61,6 +61,7 @@
     "axios": "^1.7.2",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "cmdk": "^1.1.1",
     "date-fns": "^3.6.0",
     "framer-motion": "^11.2.10",
     "isomorphic-dompurify": "^2.26.0",

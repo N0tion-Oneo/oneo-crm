@@ -13,7 +13,14 @@ logger = logging.getLogger(__name__)
 
 class BaseNodeProcessor(ABC):
     """Base class for all node processors"""
-    
+
+    # Configuration schema - override in subclasses
+    CONFIG_SCHEMA = {
+        "type": "object",
+        "properties": {},
+        "required": []
+    }
+
     def __init__(self):
         self.node_type = None
         self.supports_replay = True
@@ -23,27 +30,141 @@ class BaseNodeProcessor(ABC):
     async def process(self, node_config: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
         """
         Process a node with given configuration and context
-        
+
         Args:
             node_config: Node configuration from workflow definition
             context: Current execution context
-            
+
         Returns:
             Dict containing node output data
         """
         pass
+
+    @classmethod
+    def get_config_schema(cls) -> Dict[str, Any]:
+        """
+        Get the configuration schema for this node type
+
+        Returns:
+            JSON schema for node configuration
+        """
+        return cls.CONFIG_SCHEMA
+
+    @classmethod
+    def get_required_fields(cls) -> list:
+        """
+        Get list of required fields from schema
+
+        Returns:
+            List of required field names
+        """
+        return cls.CONFIG_SCHEMA.get('required', [])
+
+    @classmethod
+    def get_optional_fields(cls) -> list:
+        """
+        Get list of optional fields from schema
+
+        Returns:
+            List of optional field names
+        """
+        properties = cls.CONFIG_SCHEMA.get('properties', {})
+        required = set(cls.get_required_fields())
+        return [field for field in properties.keys() if field not in required]
     
     async def validate_inputs(self, node_config: Dict[str, Any], context: Dict[str, Any]) -> bool:
         """
-        Validate node inputs before processing
-        
+        Validate node inputs before processing using schema
+
         Args:
             node_config: Node configuration
             context: Execution context
-            
+
         Returns:
             True if inputs are valid, False otherwise
         """
+        try:
+            # Get the node's configuration data
+            config_data = node_config.get('data', {}).get('config', {})
+
+            # Check required fields from schema
+            required_fields = self.get_required_fields()
+            for field in required_fields:
+                if field not in config_data:
+                    logger.warning(f"Required field '{field}' missing in {self.node_type} configuration")
+                    return False
+
+            # Validate field types if specified in schema
+            properties = self.CONFIG_SCHEMA.get('properties', {})
+            for field_name, field_value in config_data.items():
+                if field_name in properties:
+                    field_schema = properties[field_name]
+                    if not self._validate_field_type(field_value, field_schema):
+                        logger.warning(f"Field '{field_name}' validation failed in {self.node_type}")
+                        return False
+
+            return True
+        except Exception as e:
+            logger.error(f"Validation error in {self.node_type}: {e}")
+            return False
+
+    def _validate_field_type(self, value: Any, field_schema: Dict[str, Any]) -> bool:
+        """
+        Validate a field value against its schema
+
+        Args:
+            value: Field value to validate
+            field_schema: Field schema definition
+
+        Returns:
+            True if valid, False otherwise
+        """
+        field_type = field_schema.get('type', 'string')
+
+        # Handle null values
+        if value is None:
+            return field_schema.get('nullable', False)
+
+        # Type validation
+        if field_type == 'string':
+            if not isinstance(value, str):
+                return False
+            # Check string constraints
+            if 'minLength' in field_schema and len(value) < field_schema['minLength']:
+                return False
+            if 'maxLength' in field_schema and len(value) > field_schema['maxLength']:
+                return False
+            if 'enum' in field_schema and value not in field_schema['enum']:
+                return False
+
+        elif field_type == 'number' or field_type == 'integer':
+            if not isinstance(value, (int, float)):
+                return False
+            if field_type == 'integer' and not isinstance(value, int):
+                return False
+            # Check number constraints
+            if 'minimum' in field_schema and value < field_schema['minimum']:
+                return False
+            if 'maximum' in field_schema and value > field_schema['maximum']:
+                return False
+
+        elif field_type == 'boolean':
+            if not isinstance(value, bool):
+                return False
+
+        elif field_type == 'array':
+            if not isinstance(value, list):
+                return False
+            # Check array constraints
+            if 'minItems' in field_schema and len(value) < field_schema['minItems']:
+                return False
+            if 'maxItems' in field_schema and len(value) > field_schema['maxItems']:
+                return False
+
+        elif field_type == 'object':
+            if not isinstance(value, dict):
+                return False
+
         return True
     
     async def prepare_inputs(self, node_config: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:

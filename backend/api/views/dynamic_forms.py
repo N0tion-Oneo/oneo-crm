@@ -209,6 +209,115 @@ class DynamicFormViewSet(viewsets.ViewSet):
             )
     
     @extend_schema(
+        summary="Get available forms for pipeline",
+        description="Get list of all available forms for this pipeline including stage-specific forms",
+        parameters=[
+            OpenApiParameter(
+                name='pipeline_id',
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.PATH,
+                description='Pipeline ID'
+            )
+        ]
+    )
+    @action(detail=False, methods=['get'], url_path='available-forms')
+    def available_forms(self, request, pipeline_pk=None):
+        """Get list of all available forms for this pipeline"""
+        pipeline = get_object_or_404(Pipeline, pk=pipeline_pk)
+
+        try:
+            generator = DynamicFormGenerator(pipeline)
+            available_stages = generator.get_available_stages()
+
+            forms = []
+
+            # Add base forms
+            forms.append({
+                'id': f'{pipeline.id}_internal_full',
+                'label': 'All Fields (Internal)',
+                'mode': 'internal_full',
+                'stage': None,
+                'url': f'/forms/internal/{pipeline.id}',
+                'field_count': pipeline.fields.filter(is_visible_in_detail=True).count(),
+                'description': 'Form with all pipeline fields for internal users'
+            })
+
+            forms.append({
+                'id': f'{pipeline.id}_public_filtered',
+                'label': 'Public Fields Only',
+                'mode': 'public_filtered',
+                'stage': None,
+                'url': f'/forms/{pipeline.slug}',
+                'field_count': pipeline.fields.filter(
+                    is_visible_in_public_forms=True,
+                    is_visible_in_detail=True
+                ).count(),
+                'description': 'Form with only public-visible fields'
+            })
+
+            # Add stage-specific forms
+            for stage in available_stages:
+                # Get fields for this stage
+                stage_internal_schema = generator.generate_form(mode='stage_internal', stage=stage)
+                stage_public_schema = generator.generate_form(mode='stage_public', stage=stage)
+
+                # Internal stage form
+                forms.append({
+                    'id': f'{pipeline.id}_stage_internal_{stage}',
+                    'label': f'{stage} Stage Form (Internal)',
+                    'mode': 'stage_internal',
+                    'stage': stage,
+                    'url': f'/forms/internal/{pipeline.id}?stage={stage}',
+                    'field_count': len(stage_internal_schema.fields),
+                    'required_fields': [f.field_slug for f in stage_internal_schema.fields],
+                    'description': f'Stage-specific form for {stage} (internal use)'
+                })
+
+                # Public stage form
+                if len(stage_public_schema.fields) > 0:
+                    forms.append({
+                        'id': f'{pipeline.id}_stage_public_{stage}',
+                        'label': f'{stage} Stage Form (Public)',
+                        'mode': 'stage_public',
+                        'stage': stage,
+                        'url': f'/forms/{pipeline.slug}/stage/{stage}',
+                        'field_count': len(stage_public_schema.fields),
+                        'required_fields': [f.field_slug for f in stage_public_schema.fields],
+                        'description': f'Stage-specific form for {stage} (public)'
+                    })
+
+            # Get all select fields that could be used as stage fields
+            stage_fields = []
+            for field in pipeline.fields.filter(field_type='select'):
+                field_config = field.field_config or {}
+                options = field_config.get('options', [])
+
+                if options:
+                    stage_fields.append({
+                        'field_slug': field.slug,
+                        'field_name': field.display_name or field.name,
+                        'options': [
+                            option.get('value', option) if isinstance(option, dict) else option
+                            for option in options
+                        ]
+                    })
+
+            return Response({
+                'pipeline_id': pipeline.id,
+                'pipeline_name': pipeline.name,
+                'pipeline_slug': pipeline.slug,
+                'forms': forms,
+                'stage_fields': stage_fields,
+                'total_forms': len(forms)
+            })
+
+        except Exception as e:
+            return Response(
+                {'error': f'Failed to get available forms: {str(e)}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+    @extend_schema(
         summary="Submit form data",
         description="Submit form data to create or update pipeline records",
         request={

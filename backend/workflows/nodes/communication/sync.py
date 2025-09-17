@@ -12,24 +12,74 @@ logger = logging.getLogger(__name__)
 
 class MessageSyncProcessor(AsyncNodeProcessor):
     """Process UniPile message synchronization nodes"""
-    
+
+    # Configuration schema
+    CONFIG_SCHEMA = {
+        "type": "object",
+        "required": ["user_id"],
+        "properties": {
+            "user_id": {
+                "type": "string",
+                "description": "User ID to sync messages for",
+                "ui_hints": {
+                    "widget": "user_select",
+                    "placeholder": "{{user.id}}"
+                }
+            },
+            "channel_types": {
+                "type": "array",
+                "items": {
+                    "type": "string",
+                    "enum": ["email", "whatsapp", "linkedin", "sms"]
+                },
+                "description": "Channel types to sync (empty for all)",
+                "ui_hints": {
+                    "widget": "multiselect",
+                    "placeholder": "Select channels to sync"
+                }
+            },
+            "sync_limit": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1000,
+                "default": 100,
+                "description": "Maximum messages to sync per channel"
+            },
+            "sync_since": {
+                "type": "string",
+                "format": "date-time",
+                "description": "Sync messages since this datetime",
+                "ui_hints": {
+                    "widget": "datetime",
+                    "placeholder": "{{last_sync_time}} or 2024-01-01T00:00:00Z"
+                }
+            },
+            "include_deleted": {
+                "type": "boolean",
+                "default": False,
+                "description": "Include deleted messages in sync"
+            }
+        }
+    }
+
     def __init__(self):
         super().__init__()
-        self.node_type = "UNIPILE_SYNC_MESSAGES"
+        self.node_type = "unipile_sync_messages"
         self.supports_replay = True
         self.supports_checkpoints = True
     
     async def process(self, node_config: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
         """Process UniPile message sync node"""
-        
+
         node_data = node_config.get('data', {})
-        
+        config = node_data.get('config', {})
+
         # Extract configuration with context formatting
-        user_id = self._format_template(node_data.get('user_id', ''), context)
-        channel_types = node_data.get('channel_types', [])
-        sync_limit = node_data.get('sync_limit', 100)
-        sync_since = node_data.get('sync_since', '')  # Optional datetime filter
-        include_deleted = node_data.get('include_deleted', False)
+        user_id = self._format_template(config.get('user_id', ''), context)
+        channel_types = config.get('channel_types', [])
+        sync_limit = config.get('sync_limit', 100)
+        sync_since = config.get('sync_since', '')  # Optional datetime filter
+        include_deleted = config.get('include_deleted', False)
         
         # Validate required fields
         if not user_id:
@@ -232,42 +282,44 @@ class MessageSyncProcessor(AsyncNodeProcessor):
     async def validate_inputs(self, node_config: Dict[str, Any], context: Dict[str, Any]) -> bool:
         """Validate message sync node inputs"""
         node_data = node_config.get('data', {})
-        
+        config = node_data.get('config', {})
+
         # Check required fields
-        if not node_data.get('user_id'):
+        if not config.get('user_id'):
             return False
-        
+
         # Validate sync limit
-        sync_limit = node_data.get('sync_limit', 100)
+        sync_limit = config.get('sync_limit', 100)
         if not isinstance(sync_limit, int) or sync_limit <= 0 or sync_limit > 1000:
             return False
-        
+
         # Validate channel types if specified
-        channel_types = node_data.get('channel_types', [])
+        channel_types = config.get('channel_types', [])
         if not isinstance(channel_types, list):
             return False
-        
+
         # Validate boolean flags
-        include_deleted = node_data.get('include_deleted', False)
+        include_deleted = config.get('include_deleted', False)
         if not isinstance(include_deleted, bool):
             return False
-        
+
         return True
     
     async def create_checkpoint(self, node_config: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
         """Create checkpoint for message sync node"""
         checkpoint = await super().create_checkpoint(node_config, context)
-        
+
         node_data = node_config.get('data', {})
-        
+        config = node_data.get('config', {})
+
         checkpoint.update({
             'sync_config': {
-                'user_id': self._format_template(node_data.get('user_id', ''), context),
-                'channel_types': node_data.get('channel_types', []),
-                'sync_limit': node_data.get('sync_limit', 100),
-                'sync_since': node_data.get('sync_since', ''),
-                'include_deleted': node_data.get('include_deleted', False)
+                'user_id': self._format_template(config.get('user_id', ''), context),
+                'channel_types': config.get('channel_types', []),
+                'sync_limit': config.get('sync_limit', 100),
+                'sync_since': config.get('sync_since', ''),
+                'include_deleted': config.get('include_deleted', False)
             }
         })
-        
+
         return checkpoint

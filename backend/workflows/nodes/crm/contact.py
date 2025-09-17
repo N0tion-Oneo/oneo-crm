@@ -12,29 +12,102 @@ logger = logging.getLogger(__name__)
 
 class ContactResolveProcessor(AsyncNodeProcessor):
     """Process contact resolution/creation nodes"""
-    
+
+    # Configuration schema
+    CONFIG_SCHEMA = {
+        "type": "object",
+        "required": ["pipeline_id"],
+        "properties": {
+            "pipeline_id": {
+                "type": "string",
+                "description": "Pipeline to search/create contact in",
+                "ui_hints": {
+                    "widget": "pipeline_select"
+                }
+            },
+            "email": {
+                "type": "string",
+                "format": "email",
+                "description": "Email address to search for",
+                "ui_hints": {
+                    "widget": "text",
+                    "placeholder": "{{form.email}} or john@example.com"
+                }
+            },
+            "phone": {
+                "type": "string",
+                "description": "Phone number to search for",
+                "ui_hints": {
+                    "widget": "text",
+                    "placeholder": "{{form.phone}} or +1234567890"
+                }
+            },
+            "name": {
+                "type": "string",
+                "description": "Contact name",
+                "ui_hints": {
+                    "widget": "text",
+                    "placeholder": "{{form.name}} or John Doe"
+                }
+            },
+            "linkedin_url": {
+                "type": "string",
+                "format": "uri",
+                "description": "LinkedIn profile URL",
+                "ui_hints": {
+                    "widget": "text",
+                    "placeholder": "linkedin.com/in/johndoe"
+                }
+            },
+            "create_if_not_found": {
+                "type": "boolean",
+                "default": True,
+                "description": "Create new contact if not found"
+            },
+            "merge_strategy": {
+                "type": "string",
+                "enum": ["update_existing", "keep_existing", "merge_fields"],
+                "default": "update_existing",
+                "description": "How to handle existing contacts",
+                "ui_hints": {
+                    "widget": "radio"
+                }
+            },
+            "additional_fields": {
+                "type": "object",
+                "description": "Additional fields for contact",
+                "ui_hints": {
+                    "widget": "json_editor",
+                    "rows": 4,
+                    "section": "advanced"
+                }
+            }
+        }
+    }
+
     def __init__(self):
         super().__init__()
-        self.node_type = "RESOLVE_CONTACT"
+        self.node_type = "resolve_contact"
         self.supports_replay = True
         self.supports_checkpoints = True
     
     async def process(self, node_config: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
         """Process contact resolution/creation node"""
-        
+
         node_data = node_config.get('data', {})
-        
+        config = node_data.get('config', {})
+
         # Extract contact identification fields
-        email = self._format_template(node_data.get('email', ''), context) or self._get_nested_value(context, 'email')
-        phone = self._format_template(node_data.get('phone', ''), context) or self._get_nested_value(context, 'phone')
-        name = self._format_template(node_data.get('name', ''), context) or self._get_nested_value(context, 'name')
-        linkedin_url = self._format_template(node_data.get('linkedin_url', ''), context) or self._get_nested_value(context, 'linkedin_url')
-        
+        email = self._format_template(config.get('email', ''), context) or self._get_nested_value(context, 'email')
+        phone = self._format_template(config.get('phone', ''), context) or self._get_nested_value(context, 'phone')
+        name = self._format_template(config.get('name', ''), context) or self._get_nested_value(context, 'name')
+        linkedin_url = self._format_template(config.get('linkedin_url', ''), context) or self._get_nested_value(context, 'linkedin_url')
+
         # Configuration
-        pipeline_id = node_data.get('pipeline_id')
-        create_if_not_found = node_data.get('create_if_not_found', True)
-        additional_fields = node_data.get('additional_fields', {})
-        merge_strategy = node_data.get('merge_strategy', 'update_existing')  # update_existing, keep_existing, merge_fields
+        pipeline_id = config.get('pipeline_id')
+        create_if_not_found = config.get('create_if_not_found', True)
+        additional_fields = config.get('additional_fields', {})
+        merge_strategy = config.get('merge_strategy', 'update_existing')  # update_existing, keep_existing, merge_fields
         
         # Get execution context
         execution = context.get('execution')

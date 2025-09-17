@@ -13,30 +13,104 @@ logger = logging.getLogger(__name__)
 
 class SMSProcessor(AsyncNodeProcessor):
     """Process SMS message sending nodes via UniPile integration"""
-    
+
+    # Configuration schema
+    CONFIG_SCHEMA = {
+        "type": "object",
+        "required": ["recipient_phone", "message_content"],
+        "properties": {
+            "recipient_phone": {
+                "type": "string",
+                "pattern": "^\\+?[1-9]\\d{1,14}$",
+                "description": "Recipient phone number with country code",
+                "ui_hints": {
+                    "widget": "text",
+                    "placeholder": "{{contact.phone}} or +1234567890"
+                }
+            },
+            "message_content": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1600,
+                "description": "SMS message content (max 1600 chars)",
+                "ui_hints": {
+                    "widget": "textarea",
+                    "rows": 4,
+                    "placeholder": "Your appointment is confirmed for {{appointment.date}}..."
+                }
+            },
+            "user_id": {
+                "type": "string",
+                "description": "User ID for SMS account",
+                "ui_hints": {
+                    "widget": "user_select",
+                    "placeholder": "{{assigned_user.id}}"
+                }
+            },
+            "sender_id": {
+                "type": "string",
+                "pattern": "^[a-zA-Z0-9]{0,11}$",
+                "description": "Custom sender ID (max 11 chars)",
+                "ui_hints": {
+                    "widget": "text",
+                    "placeholder": "COMPANY",
+                    "help_text": "Alphanumeric sender ID if supported by provider"
+                }
+            },
+            "conversation_id": {
+                "type": "string",
+                "description": "Conversation ID for threading",
+                "ui_hints": {
+                    "widget": "text",
+                    "placeholder": "{{conversation.id}}",
+                    "section": "advanced"
+                }
+            },
+            "thread_id": {
+                "type": "string",
+                "description": "SMS thread ID",
+                "ui_hints": {
+                    "widget": "text",
+                    "placeholder": "{{conversation.thread_id}}",
+                    "section": "advanced"
+                }
+            },
+            "sequence_metadata": {
+                "type": "object",
+                "description": "Metadata for sequence tracking",
+                "ui_hints": {
+                    "widget": "json_editor",
+                    "rows": 3,
+                    "section": "advanced"
+                }
+            }
+        }
+    }
+
     def __init__(self):
         super().__init__()
-        self.node_type = "UNIPILE_SEND_SMS"
+        self.node_type = "unipile_send_sms"
         self.supports_replay = True
         self.supports_checkpoints = True
     
     async def process(self, node_config: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
         """Process SMS message sending node"""
-        
+
         node_data = node_config.get('data', {})
-        
+        config = node_data.get('config', {})
+
         # Extract configuration with context formatting
-        user_id = self._format_template(node_data.get('user_id', ''), context)
-        recipient_phone = self._format_template(node_data.get('recipient_phone', ''), context)
-        message_content = self._format_template(node_data.get('message_content', ''), context)
-        
+        user_id = self._format_template(config.get('user_id', ''), context)
+        recipient_phone = self._format_template(config.get('recipient_phone', ''), context)
+        message_content = self._format_template(config.get('message_content', ''), context)
+
         # Optional parameters
-        sequence_metadata = node_data.get('sequence_metadata', {})
-        sender_id = node_data.get('sender_id', '')  # Custom sender ID if supported
+        sequence_metadata = config.get('sequence_metadata', {})
+        sender_id = config.get('sender_id', '')  # Custom sender ID if supported
 
         # Thread/reply parameters (SMS has limited threading support)
-        conversation_id = node_data.get('conversation_id') or context.get('conversation_id')
-        thread_id = node_data.get('thread_id') or context.get('external_thread_id')
+        conversation_id = config.get('conversation_id') or context.get('conversation_id')
+        thread_id = config.get('thread_id') or context.get('external_thread_id')
         
         # Validate required fields
         if not all([user_id, recipient_phone, message_content]):
@@ -276,46 +350,48 @@ class SMSProcessor(AsyncNodeProcessor):
     async def validate_inputs(self, node_config: Dict[str, Any], context: Dict[str, Any]) -> bool:
         """Validate SMS node inputs"""
         node_data = node_config.get('data', {})
-        
+        config = node_data.get('config', {})
+
         # Check required fields are present
-        required_fields = ['user_id', 'recipient_phone', 'message_content']
+        required_fields = ['recipient_phone', 'message_content']
         for field in required_fields:
-            if not node_data.get(field):
+            if not config.get(field):
                 return False
-        
+
         # Validate phone number format
-        recipient_phone = self._format_template(node_data.get('recipient_phone', ''), context)
+        recipient_phone = self._format_template(config.get('recipient_phone', ''), context)
         if not self._validate_phone_number(recipient_phone):
             return False
-        
+
         # Validate message length
-        message_content = self._format_template(node_data.get('message_content', ''), context)
+        message_content = self._format_template(config.get('message_content', ''), context)
         if len(message_content) > 1600:  # Reasonable limit for SMS
             return False
-        
+
         # Validate sender ID if provided (alphanumeric, max 11 chars)
-        sender_id = node_data.get('sender_id', '')
+        sender_id = config.get('sender_id', '')
         if sender_id:
             if len(sender_id) > 11 or not re.match(r'^[a-zA-Z0-9]+$', sender_id):
                 return False
-        
+
         return True
     
     async def create_checkpoint(self, node_config: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
         """Create checkpoint for SMS node"""
         checkpoint = await super().create_checkpoint(node_config, context)
-        
+
         node_data = node_config.get('data', {})
-        message_content = self._format_template(node_data.get('message_content', ''), context)
-        
+        config = node_data.get('config', {})
+        message_content = self._format_template(config.get('message_content', ''), context)
+
         checkpoint.update({
             'sms_config': {
-                'recipient': self._format_template(node_data.get('recipient_phone', ''), context),
+                'recipient': self._format_template(config.get('recipient_phone', ''), context),
                 'message_length': len(message_content),
-                'user_id': self._format_template(node_data.get('user_id', ''), context),
-                'sender_id': node_data.get('sender_id', ''),
+                'user_id': self._format_template(config.get('user_id', ''), context),
+                'sender_id': config.get('sender_id', ''),
                 'segments_count': self._calculate_sms_segments(message_content)
             }
         })
-        
+
         return checkpoint

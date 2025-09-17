@@ -11,23 +11,80 @@ logger = logging.getLogger(__name__)
 
 class WebhookOutProcessor(AsyncNodeProcessor):
     """Process outgoing webhook nodes"""
-    
+
+    # Configuration schema
+    CONFIG_SCHEMA = {
+        "type": "object",
+        "required": ["webhook_url"],
+        "properties": {
+            "webhook_url": {
+                "type": "string",
+                "format": "uri",
+                "description": "Webhook endpoint URL",
+                "ui_hints": {
+                    "widget": "text",
+                    "placeholder": "https://api.example.com/webhook"
+                }
+            },
+            "payload": {
+                "type": "object",
+                "description": "Custom payload data",
+                "ui_hints": {
+                    "widget": "json_editor",
+                    "rows": 8,
+                    "placeholder": '{\n  "event": "workflow_completed",\n  "data": {\n    "contact_id": "{{contact.id}}",\n    "status": "{{status}}"\n  }\n}'
+                }
+            },
+            "headers": {
+                "type": "object",
+                "description": "Additional HTTP headers",
+                "ui_hints": {
+                    "widget": "json_editor",
+                    "rows": 3,
+                    "placeholder": '{\n  "X-Webhook-Secret": "your-secret"\n}',
+                    "section": "advanced"
+                }
+            },
+            "include_context": {
+                "type": "boolean",
+                "default": True,
+                "description": "Include workflow context in payload"
+            },
+            "include_execution_metadata": {
+                "type": "boolean",
+                "default": True,
+                "description": "Include execution metadata"
+            },
+            "timeout": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 60,
+                "default": 30,
+                "description": "Request timeout in seconds",
+                "ui_hints": {
+                    "section": "advanced"
+                }
+            }
+        }
+    }
+
     def __init__(self):
         super().__init__()
-        self.node_type = "WEBHOOK_OUT"
+        self.node_type = "webhook_out"
         self.supports_replay = True
         self.supports_checkpoints = True
     
     async def process(self, node_config: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
         """Process outgoing webhook node"""
-        
+
         node_data = node_config.get('data', {})
-        webhook_url = node_data.get('webhook_url', '')
-        headers = node_data.get('headers', {})
-        payload = node_data.get('payload', {})
-        timeout = node_data.get('timeout', 30)
-        include_context = node_data.get('include_context', True)
-        include_execution_metadata = node_data.get('include_execution_metadata', True)
+        config = node_data.get('config', {})
+        webhook_url = config.get('webhook_url', '')
+        headers = config.get('headers', {})
+        payload = config.get('payload', {})
+        timeout = config.get('timeout', 30)
+        include_context = config.get('include_context', True)
+        include_execution_metadata = config.get('include_execution_metadata', True)
         
         if not webhook_url:
             raise ValueError("Webhook node requires webhook_url")

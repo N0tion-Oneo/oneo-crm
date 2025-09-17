@@ -12,30 +12,113 @@ logger = logging.getLogger(__name__)
 
 class CommunicationLoggingProcessor(AsyncNodeProcessor):
     """Process communication logging nodes for activity tracking"""
-    
+
+    # Configuration schema
+    CONFIG_SCHEMA = {
+        "type": "object",
+        "required": ["activity_type", "description"],
+        "properties": {
+            "activity_type": {
+                "type": "string",
+                "enum": [
+                    "communication", "email", "phone_call", "meeting", "linkedin_message",
+                    "whatsapp_message", "sms", "chat", "video_call", "note", "task",
+                    "follow_up", "proposal", "contract", "demo", "presentation"
+                ],
+                "default": "communication",
+                "description": "Type of activity to log",
+                "ui_hints": {
+                    "widget": "select"
+                }
+            },
+            "description": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Description of the activity",
+                "ui_hints": {
+                    "widget": "textarea",
+                    "rows": 3,
+                    "placeholder": "Sent follow-up email to {{contact.name}} regarding {{opportunity.name}}"
+                }
+            },
+            "contact_id_path": {
+                "type": "string",
+                "description": "Path to contact ID in context",
+                "ui_hints": {
+                    "widget": "text",
+                    "placeholder": "contact.id or record.contact_id"
+                }
+            },
+            "communication_channel": {
+                "type": "string",
+                "enum": ["email", "phone", "whatsapp", "linkedin", "sms", "in_person", "video", "other"],
+                "description": "Communication channel used",
+                "ui_hints": {
+                    "widget": "select"
+                }
+            },
+            "communication_direction": {
+                "type": "string",
+                "enum": ["inbound", "outbound", "internal"],
+                "default": "outbound",
+                "description": "Direction of communication",
+                "ui_hints": {
+                    "widget": "radio"
+                }
+            },
+            "subject": {
+                "type": "string",
+                "description": "Subject or title of communication",
+                "ui_hints": {
+                    "widget": "text",
+                    "placeholder": "{{email.subject}} or Meeting Notes"
+                }
+            },
+            "tags": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Tags for categorization",
+                "ui_hints": {
+                    "widget": "tag_input",
+                    "placeholder": "Add tags..."
+                }
+            },
+            "metadata": {
+                "type": "object",
+                "description": "Additional metadata to log",
+                "ui_hints": {
+                    "widget": "json_editor",
+                    "rows": 4,
+                    "section": "advanced"
+                }
+            }
+        }
+    }
+
     def __init__(self):
         super().__init__()
-        self.node_type = "LOG_COMMUNICATION"
+        self.node_type = "log_communication"
         self.supports_replay = True
         self.supports_checkpoints = True
     
     async def process(self, node_config: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
         """Process communication logging node"""
-        
+
         node_data = node_config.get('data', {})
-        
+        config = node_data.get('config', {})
+
         # Extract configuration with context formatting
-        activity_type = node_data.get('activity_type', 'communication')
-        description = self._format_template(node_data.get('description', ''), context)
-        contact_id_path = node_data.get('contact_id_path', '')
+        activity_type = config.get('activity_type', 'communication')
+        description = self._format_template(config.get('description', ''), context)
+        contact_id_path = config.get('contact_id_path', '')
         contact_id = self._get_nested_value(context, contact_id_path) if contact_id_path else None
-        
+
         # Additional logging fields
-        communication_channel = node_data.get('communication_channel', '')
-        communication_direction = node_data.get('communication_direction', 'outbound')  # inbound, outbound
-        subject = self._format_template(node_data.get('subject', ''), context)
-        metadata = node_data.get('metadata', {})
-        tags = node_data.get('tags', [])
+        communication_channel = config.get('communication_channel', '')
+        communication_direction = config.get('communication_direction', 'outbound')  # inbound, outbound
+        subject = self._format_template(config.get('subject', ''), context)
+        metadata = config.get('metadata', {})
+        tags = config.get('tags', [])
         
         # Get execution context
         execution = context.get('execution')
@@ -207,9 +290,14 @@ class CommunicationLoggingProcessor(AsyncNodeProcessor):
     async def validate_inputs(self, node_config: Dict[str, Any], context: Dict[str, Any]) -> bool:
         """Validate communication logging node inputs"""
         node_data = node_config.get('data', {})
-        
+        config = node_data.get('config', {})
+
+        # Check required fields
+        if not config.get('description'):
+            return False
+
         # Validate activity type
-        activity_type = node_data.get('activity_type', 'communication')
+        activity_type = config.get('activity_type', 'communication')
         valid_activity_types = [
             'communication', 'email', 'phone_call', 'meeting', 'linkedin_message',
             'whatsapp_message', 'sms', 'chat', 'video_call', 'note', 'task',
@@ -217,47 +305,48 @@ class CommunicationLoggingProcessor(AsyncNodeProcessor):
         ]
         if activity_type not in valid_activity_types:
             return False
-        
+
         # Validate communication direction
-        communication_direction = node_data.get('communication_direction', 'outbound')
+        communication_direction = config.get('communication_direction', 'outbound')
         valid_directions = ['inbound', 'outbound', 'internal']
         if communication_direction not in valid_directions:
             return False
-        
+
         # Validate metadata
-        metadata = node_data.get('metadata', {})
+        metadata = config.get('metadata', {})
         if not isinstance(metadata, dict):
             return False
-        
+
         # Validate tags
-        tags = node_data.get('tags', [])
+        tags = config.get('tags', [])
         if not isinstance(tags, list):
             return False
-        
+
         return True
     
     async def create_checkpoint(self, node_config: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
         """Create checkpoint for communication logging node"""
         checkpoint = await super().create_checkpoint(node_config, context)
-        
+
         node_data = node_config.get('data', {})
-        
+        config = node_data.get('config', {})
+
         # Resolve contact ID for checkpoint
-        contact_id_path = node_data.get('contact_id_path', '')
+        contact_id_path = config.get('contact_id_path', '')
         resolved_contact_id = self._get_nested_value(context, contact_id_path) if contact_id_path else None
-        
+
         checkpoint.update({
             'logging_config': {
-                'activity_type': node_data.get('activity_type', 'communication'),
-                'description': self._format_template(node_data.get('description', ''), context),
+                'activity_type': config.get('activity_type', 'communication'),
+                'description': self._format_template(config.get('description', ''), context),
                 'contact_id_path': contact_id_path,
                 'resolved_contact_id': resolved_contact_id,
-                'communication_channel': node_data.get('communication_channel', ''),
-                'communication_direction': node_data.get('communication_direction', 'outbound'),
-                'subject': self._format_template(node_data.get('subject', ''), context),
-                'tags_count': len(node_data.get('tags', [])),
-                'metadata_keys': list(node_data.get('metadata', {}).keys())
+                'communication_channel': config.get('communication_channel', ''),
+                'communication_direction': config.get('communication_direction', 'outbound'),
+                'subject': self._format_template(config.get('subject', ''), context),
+                'tags_count': len(config.get('tags', [])),
+                'metadata_keys': list(config.get('metadata', {}).keys())
             }
         })
-        
+
         return checkpoint

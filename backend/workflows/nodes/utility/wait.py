@@ -13,24 +13,100 @@ logger = logging.getLogger(__name__)
 
 class WaitDelayProcessor(AsyncNodeProcessor):
     """Process wait/delay nodes for workflow timing control"""
-    
+
+    # Configuration schema
+    CONFIG_SCHEMA = {
+        "type": "object",
+        "required": ["schedule_type"],
+        "properties": {
+            "schedule_type": {
+                "type": "string",
+                "enum": ["immediate", "scheduled", "business_hours"],
+                "default": "immediate",
+                "description": "Type of delay scheduling",
+                "ui_hints": {
+                    "widget": "radio"
+                }
+            },
+            "delay_type": {
+                "type": "string",
+                "enum": ["seconds", "minutes", "hours", "days"],
+                "default": "seconds",
+                "description": "Unit of delay time",
+                "ui_hints": {
+                    "widget": "select",
+                    "show_when": {"schedule_type": ["immediate", "business_hours"]}
+                }
+            },
+            "delay_value": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 365,
+                "default": 0,
+                "description": "Amount of delay",
+                "ui_hints": {
+                    "show_when": {"schedule_type": ["immediate", "business_hours"]}
+                }
+            },
+            "schedule_datetime": {
+                "type": "string",
+                "format": "date-time",
+                "description": "Specific datetime to wait until",
+                "ui_hints": {
+                    "widget": "datetime",
+                    "show_when": {"schedule_type": "scheduled"}
+                }
+            },
+            "business_hours_config": {
+                "type": "object",
+                "properties": {
+                    "days": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "default": ["monday", "tuesday", "wednesday", "thursday", "friday"]
+                    },
+                    "start_time": {
+                        "type": "string",
+                        "pattern": "^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$",
+                        "default": "09:00"
+                    },
+                    "end_time": {
+                        "type": "string",
+                        "pattern": "^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$",
+                        "default": "17:00"
+                    },
+                    "timezone": {
+                        "type": "string",
+                        "default": "UTC"
+                    }
+                },
+                "description": "Business hours configuration",
+                "ui_hints": {
+                    "widget": "business_hours",
+                    "show_when": {"schedule_type": "business_hours"}
+                }
+            }
+        }
+    }
+
     def __init__(self):
         super().__init__()
-        self.node_type = "WAIT_DELAY"
+        self.node_type = "wait_delay"
         self.supports_replay = True
         self.supports_checkpoints = True
     
     async def process(self, node_config: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
         """Process wait/delay node"""
-        
+
         node_data = node_config.get('data', {})
-        
-        # Extract configuration  
-        delay_type = node_data.get('delay_type', 'seconds')
-        delay_value = node_data.get('delay_value', 0)
-        schedule_type = node_data.get('schedule_type', 'immediate')  # immediate, scheduled, business_hours
-        schedule_datetime = node_data.get('schedule_datetime', '')
-        business_hours_config = node_data.get('business_hours_config', {})
+        config = node_data.get('config', {})
+
+        # Extract configuration
+        delay_type = config.get('delay_type', 'seconds')
+        delay_value = config.get('delay_value', 0)
+        schedule_type = config.get('schedule_type', 'immediate')
+        schedule_datetime = config.get('schedule_datetime', '')
+        business_hours_config = config.get('business_hours_config', {})
         
         start_time = timezone.now()
         
@@ -242,56 +318,24 @@ class WaitDelayProcessor(AsyncNodeProcessor):
         else:
             raise ValueError(f"Unsupported delay type: {delay_type}")
     
-    async def validate_inputs(self, node_config: Dict[str, Any], context: Dict[str, Any]) -> bool:
-        """Validate wait/delay node inputs"""
-        node_data = node_config.get('data', {})
-        
-        # Validate delay type
-        delay_type = node_data.get('delay_type', 'seconds')
-        valid_delay_types = ['seconds', 'minutes', 'hours', 'days']
-        if delay_type not in valid_delay_types:
-            return False
-        
-        # Validate delay value
-        delay_value = node_data.get('delay_value', 0)
-        if not isinstance(delay_value, (int, float)) or delay_value < 0:
-            return False
-        
-        # Validate schedule type
-        schedule_type = node_data.get('schedule_type', 'immediate')
-        valid_schedule_types = ['immediate', 'scheduled', 'business_hours']
-        if schedule_type not in valid_schedule_types:
-            return False
-        
-        # Schedule type specific validation
-        if schedule_type == 'scheduled':
-            schedule_datetime = node_data.get('schedule_datetime', '')
-            if not schedule_datetime:
-                return False
-        
-        elif schedule_type == 'business_hours':
-            business_hours_config = node_data.get('business_hours_config', {})
-            if not isinstance(business_hours_config, dict):
-                return False
-        
-        return True
     
     async def create_checkpoint(self, node_config: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
         """Create checkpoint for wait/delay node"""
         checkpoint = await super().create_checkpoint(node_config, context)
         
         node_data = node_config.get('data', {})
-        
+        config = node_data.get('config', {})
+
         checkpoint.update({
             'wait_config': {
-                'delay_type': node_data.get('delay_type', 'seconds'),
-                'delay_value': node_data.get('delay_value', 0),
-                'schedule_type': node_data.get('schedule_type', 'immediate'),
-                'schedule_datetime': node_data.get('schedule_datetime', ''),
-                'has_business_hours_config': bool(node_data.get('business_hours_config')),
+                'delay_type': config.get('delay_type', 'seconds'),
+                'delay_value': config.get('delay_value', 0),
+                'schedule_type': config.get('schedule_type', 'immediate'),
+                'schedule_datetime': config.get('schedule_datetime', ''),
+                'has_business_hours_config': bool(config.get('business_hours_config')),
                 'expected_delay_seconds': self._convert_delay_to_seconds(
-                    node_data.get('delay_type', 'seconds'),
-                    node_data.get('delay_value', 0)
+                    config.get('delay_type', 'seconds'),
+                    config.get('delay_value', 0)
                 )
             }
         })

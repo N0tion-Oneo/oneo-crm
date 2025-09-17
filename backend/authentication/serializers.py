@@ -672,3 +672,165 @@ class StaffProfileSummarySerializer(serializers.ModelSerializer):
             'job_title', 'department', 'employment_status'
         ]
         read_only_fields = fields
+
+
+class UserChannelConnectionSerializer(serializers.ModelSerializer):
+    """Serializer for user's connected UniPile accounts"""
+    channel_type_display = serializers.CharField(source='get_channel_type_display', read_only=True)
+    status_info = serializers.SerializerMethodField()
+
+    class Meta:
+        from communications.models import UserChannelConnection
+        model = UserChannelConnection
+        fields = [
+            'id', 'channel_type', 'channel_type_display', 'account_name',
+            'unipile_account_id', 'account_status', 'is_active',
+            'status_info', 'last_sync_at'
+        ]
+        read_only_fields = fields
+
+    def get_status_info(self, obj):
+        """Get detailed status information"""
+        return obj.get_status_display_info()
+
+
+class SchedulingProfileSummarySerializer(serializers.ModelSerializer):
+    """Summary serializer for scheduling profiles"""
+    calendar_account = serializers.CharField(
+        source='calendar_connection.account_name',
+        read_only=True,
+        allow_null=True
+    )
+
+    class Meta:
+        from communications.scheduling.models import SchedulingProfile
+        model = SchedulingProfile
+        fields = [
+            'id', 'timezone', 'buffer_minutes', 'min_notice_hours',
+            'calendar_account', 'is_active'
+        ]
+        read_only_fields = fields
+
+
+class MeetingTypeSummarySerializer(serializers.ModelSerializer):
+    """Summary serializer for meeting types"""
+    booking_url = serializers.SerializerMethodField()
+
+    class Meta:
+        from communications.scheduling.models import MeetingType
+        model = MeetingType
+        fields = [
+            'id', 'name', 'slug', 'description', 'duration_minutes',
+            'meeting_mode', 'is_active', 'booking_url'
+        ]
+        read_only_fields = fields
+
+    def get_booking_url(self, obj):
+        """Generate booking URL for the meeting type"""
+        return f"/book/{obj.user.username}/{obj.slug}"
+
+
+class UserEnrichedSerializer(serializers.ModelSerializer):
+    """
+    Enriched user serializer that includes all related data for workflows:
+    - User basic info
+    - Staff profile
+    - Channel connections (UniPile accounts)
+    - Scheduling profiles
+    - Meeting types
+    """
+
+    # Basic user info
+    full_name = serializers.CharField(source='get_full_name', read_only=True)
+    user_type_name = serializers.CharField(source='user_type.name', read_only=True, allow_null=True)
+
+    # Related data
+    staff_profile = StaffProfilePublicSerializer(read_only=True, allow_null=True)
+    channel_connections = serializers.SerializerMethodField()
+    scheduling_profiles = SchedulingProfileSummarySerializer(many=True, read_only=True)
+    meeting_types = MeetingTypeSummarySerializer(many=True, read_only=True)
+
+    # Summary fields
+    has_email_connection = serializers.SerializerMethodField()
+    has_linkedin_connection = serializers.SerializerMethodField()
+    has_whatsapp_connection = serializers.SerializerMethodField()
+    primary_email_account = serializers.SerializerMethodField()
+
+    class Meta:
+        model = User
+        fields = [
+            'id', 'email', 'username', 'full_name', 'phone',
+            'user_type', 'user_type_name', 'avatar_url',
+            'staff_profile', 'channel_connections',
+            'scheduling_profiles', 'meeting_types',
+            'has_email_connection', 'has_linkedin_connection',
+            'has_whatsapp_connection', 'primary_email_account',
+            'is_active', 'last_activity'
+        ]
+        read_only_fields = fields
+
+    def get_channel_connections(self, obj):
+        """Get channel connections grouped by type"""
+        from communications.models import UserChannelConnection, ChannelType
+
+        connections = UserChannelConnection.objects.filter(
+            user=obj,
+            is_active=True
+        ).select_related('user')
+
+        # Group by channel type
+        grouped = {}
+        for conn in connections:
+            channel_type = conn.channel_type
+            if channel_type not in grouped:
+                grouped[channel_type] = []
+
+            grouped[channel_type].append(UserChannelConnectionSerializer(conn).data)
+
+        return grouped
+
+    def get_has_email_connection(self, obj):
+        """Check if user has any active email connection"""
+        from communications.models import UserChannelConnection, ChannelType
+        return UserChannelConnection.objects.filter(
+            user=obj,
+            channel_type__in=[ChannelType.GOOGLE, ChannelType.OUTLOOK, ChannelType.MAIL],
+            is_active=True,
+            account_status='active'
+        ).exists()
+
+    def get_has_linkedin_connection(self, obj):
+        """Check if user has active LinkedIn connection"""
+        from communications.models import UserChannelConnection, ChannelType
+        return UserChannelConnection.objects.filter(
+            user=obj,
+            channel_type=ChannelType.LINKEDIN,
+            is_active=True,
+            account_status='active'
+        ).exists()
+
+    def get_has_whatsapp_connection(self, obj):
+        """Check if user has active WhatsApp connection"""
+        from communications.models import UserChannelConnection, ChannelType
+        return UserChannelConnection.objects.filter(
+            user=obj,
+            channel_type=ChannelType.WHATSAPP,
+            is_active=True,
+            account_status='active'
+        ).exists()
+
+    def get_primary_email_account(self, obj):
+        """Get primary email account identifier"""
+        from communications.models import UserChannelConnection, ChannelType
+
+        # Try to find primary or first active email connection
+        email_conn = UserChannelConnection.objects.filter(
+            user=obj,
+            channel_type__in=[ChannelType.GOOGLE, ChannelType.OUTLOOK, ChannelType.MAIL],
+            is_active=True,
+            account_status='active'
+        ).first()
+
+        if email_conn:
+            return email_conn.account_name
+        return obj.email  # Fall back to user's email

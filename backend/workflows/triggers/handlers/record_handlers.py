@@ -2,10 +2,11 @@
 Record-specific trigger handlers
 """
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from .base import BaseTriggerHandler
 from ..types import TriggerEvent, TriggerResult
 from ...models import WorkflowTriggerType
+from ...utils.condition_evaluator import condition_evaluator
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +51,31 @@ class RecordCreatedHandler(BaseTriggerHandler):
                     reason="Pipeline not in monitored list"
                 )
             
-            # Apply field filters if configured
+            # Apply field conditions if configured (supports grouped conditions)
+            field_conditions = config.get('field_conditions', [])
+            if field_conditions:
+                # Get condition logic operator
+                condition_logic = config.get('condition_logic', 'AND')
+
+                # Check for group operators if conditions have groups
+                group_operators = config.get('group_operators', {})
+
+                # Evaluate conditions using the enhanced evaluator
+                matches, details = condition_evaluator.evaluate(
+                    conditions=field_conditions,
+                    data=record_data,
+                    logic_operator=condition_logic,
+                    group_operators=group_operators
+                )
+
+                if not matches:
+                    return TriggerResult(
+                        success=False,
+                        should_execute=False,
+                        reason=f"Field conditions not met: {details.get('message', 'Conditions failed')}"
+                    )
+
+            # Legacy support for field_filters (simple key-value)
             field_filters = config.get('field_filters', {})
             if field_filters:
                 for field, expected_value in field_filters.items():
@@ -154,7 +179,36 @@ class RecordUpdatedHandler(BaseTriggerHandler):
                     should_execute=False,
                     reason="No actual field changes detected"
                 )
-            
+
+            # Apply field conditions if configured (supports grouped conditions)
+            field_conditions = config.get('field_conditions', [])
+            if field_conditions:
+                # Get condition logic operator
+                condition_logic = config.get('condition_logic', 'AND')
+
+                # Check for group operators if conditions have groups
+                group_operators = config.get('group_operators', {})
+
+                # For update triggers, we need to prepare data with change tracking
+                eval_data = record_data.copy()
+                eval_data['__changed_fields'] = changed_fields
+                eval_data['__previous_data'] = previous_data
+
+                # Evaluate conditions using the enhanced evaluator
+                matches, details = condition_evaluator.evaluate(
+                    conditions=field_conditions,
+                    data=eval_data,
+                    logic_operator=condition_logic,
+                    group_operators=group_operators
+                )
+
+                if not matches:
+                    return TriggerResult(
+                        success=False,
+                        should_execute=False,
+                        reason=f"Field conditions not met: {details.get('message', 'Conditions failed')}"
+                    )
+
             return TriggerResult(
                 success=True,
                 should_execute=True,
@@ -213,7 +267,35 @@ class RecordDeletedHandler(BaseTriggerHandler):
                     should_execute=False,
                     reason="Pipeline not in monitored list"
                 )
-            
+
+            # Apply field conditions if configured (supports grouped conditions)
+            field_conditions = config.get('field_conditions', [])
+            if not field_conditions:
+                # Also check legacy field_filters
+                field_conditions = config.get('field_filters', [])
+
+            if field_conditions:
+                # Get condition logic operator
+                condition_logic = config.get('condition_logic', 'AND')
+
+                # Check for group operators if conditions have groups
+                group_operators = config.get('group_operators', {})
+
+                # Evaluate conditions using the enhanced evaluator
+                matches, details = condition_evaluator.evaluate(
+                    conditions=field_conditions,
+                    data=record_data,
+                    logic_operator=condition_logic,
+                    group_operators=group_operators
+                )
+
+                if not matches:
+                    return TriggerResult(
+                        success=False,
+                        should_execute=False,
+                        reason=f"Field conditions not met: {details.get('message', 'Conditions failed')}"
+                    )
+
             return TriggerResult(
                 success=True,
                 should_execute=True,

@@ -11,9 +11,120 @@ logger = logging.getLogger(__name__)
 class AIAnalysisProcessor(AsyncNodeProcessor):
     """Process AI analysis and classification nodes"""
 
+    # Configuration schema
+    CONFIG_SCHEMA = {
+        "type": "object",
+        "required": ["analysis_type"],
+        "properties": {
+            "analysis_type": {
+                "type": "string",
+                "enum": ["sentiment", "summary", "classification", "extraction", "question", "general"],
+                "default": "general",
+                "description": "Type of analysis to perform",
+                "ui_hints": {
+                    "widget": "select"
+                }
+            },
+            "data_source": {
+                "type": "string",
+                "description": "Path to data in context (e.g., 'node_123.output')",
+                "ui_hints": {
+                    "widget": "text",
+                    "placeholder": "{{previous_node.output}} or trigger.data.content"
+                }
+            },
+            "content": {
+                "type": "string",
+                "description": "Direct content to analyze (if not using data_source)",
+                "ui_hints": {
+                    "widget": "textarea",
+                    "rows": 6,
+                    "placeholder": "Enter or paste content to analyze",
+                    "show_when": {"data_source": ""}
+                }
+            },
+            "categories": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Categories for classification analysis",
+                "ui_hints": {
+                    "widget": "tag_input",
+                    "placeholder": "Add categories (e.g., Support, Sales, Bug)",
+                    "show_when": {"analysis_type": "classification"}
+                }
+            },
+            "extract_fields": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Fields to extract from content",
+                "ui_hints": {
+                    "widget": "tag_input",
+                    "placeholder": "Add fields to extract (e.g., name, email, date)",
+                    "show_when": {"analysis_type": "extraction"}
+                }
+            },
+            "question": {
+                "type": "string",
+                "description": "Question to answer about the content",
+                "ui_hints": {
+                    "widget": "text",
+                    "placeholder": "What is the main topic discussed?",
+                    "show_when": {"analysis_type": "question"}
+                }
+            },
+            "analysis_prompt": {
+                "type": "string",
+                "description": "Custom analysis prompt for general analysis",
+                "ui_hints": {
+                    "widget": "textarea",
+                    "rows": 4,
+                    "placeholder": "Analyze the key themes and provide insights",
+                    "show_when": {"analysis_type": "general"}
+                }
+            },
+            "max_summary_length": {
+                "type": "integer",
+                "minimum": 10,
+                "maximum": 500,
+                "default": 100,
+                "description": "Maximum words for summary",
+                "ui_hints": {
+                    "show_when": {"analysis_type": "summary"}
+                }
+            },
+            "ai_model": {
+                "type": "string",
+                "enum": ["gpt-4", "gpt-3.5-turbo", "claude-3", "claude-3-haiku"],
+                "default": "gpt-4",
+                "description": "AI model to use for analysis",
+                "ui_hints": {
+                    "widget": "select"
+                }
+            },
+            "temperature": {
+                "type": "number",
+                "minimum": 0.0,
+                "maximum": 1.0,
+                "default": 0.3,
+                "description": "AI creativity level (lower for factual analysis)",
+                "ui_hints": {
+                    "widget": "slider",
+                    "step": 0.1
+                }
+            },
+            "max_tokens": {
+                "type": "integer",
+                "minimum": 50,
+                "maximum": 2000,
+                "default": 500,
+                "description": "Maximum response length"
+            }
+        }
+    }
+
     def __init__(self):
         super().__init__()
-        self.node_type = "AI_ANALYSIS"
+        self.node_type = "ai_analysis"
         self.supports_replay = True
         self.supports_checkpoints = True
 
@@ -21,11 +132,14 @@ class AIAnalysisProcessor(AsyncNodeProcessor):
         """Process AI analysis node"""
 
         node_data = node_config.get('data', {})
-        analysis_type = node_data.get('analysis_type', 'general')
-        data_source = node_data.get('data_source', '')
+        config = node_data.get('config', {})
+
+        # Get configuration values
+        analysis_type = config.get('analysis_type', 'general')
+        data_source = config.get('data_source', '')
 
         # Get data to analyze from context
-        data_to_analyze = self._get_nested_value(context, data_source) if data_source else node_data.get('content', '')
+        data_to_analyze = self._get_nested_value(context, data_source) if data_source else config.get('content', '')
 
         if not data_to_analyze:
             return {
@@ -37,10 +151,10 @@ class AIAnalysisProcessor(AsyncNodeProcessor):
         if analysis_type == 'sentiment':
             prompt = f"Analyze the sentiment of this text and return 'positive', 'negative', or 'neutral': {data_to_analyze}"
         elif analysis_type == 'summary':
-            max_length = node_data.get('max_summary_length', 100)
+            max_length = config.get('max_summary_length', 100)
             prompt = f"Provide a concise summary in {max_length} words or less: {data_to_analyze}"
         elif analysis_type == 'classification':
-            categories = node_data.get('categories', [])
+            categories = config.get('categories', [])
             if not categories:
                 return {
                     'success': False,
@@ -49,15 +163,15 @@ class AIAnalysisProcessor(AsyncNodeProcessor):
             categories_str = ", ".join(categories)
             prompt = f"Classify this content into one of these categories [{categories_str}]: {data_to_analyze}"
         elif analysis_type == 'extraction':
-            extract_fields = node_data.get('extract_fields', [])
+            extract_fields = config.get('extract_fields', [])
             fields_str = ", ".join(extract_fields)
             prompt = f"Extract the following information [{fields_str}] from this text: {data_to_analyze}"
         elif analysis_type == 'question':
-            question = node_data.get('question', '')
+            question = config.get('question', '')
             prompt = f"Answer this question based on the text: {question}\n\nText: {data_to_analyze}"
         else:
             # General analysis
-            analysis_prompt = node_data.get('analysis_prompt', 'Analyze this data')
+            analysis_prompt = config.get('analysis_prompt', 'Analyze this data')
             prompt = f"{analysis_prompt}: {data_to_analyze}"
 
         try:
@@ -83,9 +197,9 @@ class AIAnalysisProcessor(AsyncNodeProcessor):
                     record_data={'analysis_input': data_to_analyze},
                     field_config={
                         'ai_prompt': prompt,
-                        'ai_model': node_data.get('ai_model', 'gpt-4'),
-                        'temperature': node_data.get('temperature', 0.3),  # Lower for analysis
-                        'max_tokens': node_data.get('max_tokens', 500),
+                        'ai_model': config.get('ai_model', 'gpt-4'),
+                        'temperature': config.get('temperature', 0.3),  # Lower for analysis
+                        'max_tokens': config.get('max_tokens', 500),
                     },
                     tenant=tenant,
                     user=None  # TODO: Get user from context
@@ -165,30 +279,3 @@ class AIAnalysisProcessor(AsyncNodeProcessor):
         except Tenant.DoesNotExist:
             return None
 
-    async def validate_inputs(self, node_config: Dict[str, Any], context: Dict[str, Any]) -> bool:
-        """Validate analysis node inputs"""
-        node_data = node_config.get('data', {})
-        analysis_type = node_data.get('analysis_type', 'general')
-
-        # Check for data source or content
-        data_source = node_data.get('data_source', '')
-        content = node_data.get('content', '')
-
-        if not data_source and not content:
-            return False
-
-        # Validate type-specific requirements
-        if analysis_type == 'classification':
-            categories = node_data.get('categories', [])
-            if not categories:
-                return False
-        elif analysis_type == 'extraction':
-            extract_fields = node_data.get('extract_fields', [])
-            if not extract_fields:
-                return False
-        elif analysis_type == 'question':
-            question = node_data.get('question', '')
-            if not question:
-                return False
-
-        return True

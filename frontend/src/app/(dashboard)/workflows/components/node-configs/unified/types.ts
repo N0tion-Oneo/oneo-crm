@@ -108,11 +108,45 @@ export interface ConfigField {
   // Help text
   helpText?: string;
 
+  // UI hints for custom widgets
+  uiHints?: {
+    widget?: string; // Custom widget identifier
+    visual?: boolean; // Use visual mode for JSON builder
+    [key: string]: any; // Other widget-specific hints
+  };
+
+  // Custom widget type override
+  widget?: string;
+
+  // For tag input
+  suggestions?: string[];
+  tagValidation?: (tag: string) => string | null;
+  maxTags?: number;
+  allowDuplicates?: boolean;
+
+  // For JSON builder
+  templates?: Array<{
+    label: string;
+    value: any;
+    description?: string;
+  }>;
+
   // Custom onChange handler
   onChange?: (value: any, config: any, context: any) => any;
 
   // Custom render (for very special cases)
   customRender?: (props: FieldRenderProps) => ReactElement;
+
+  // For dynamic_select widget
+  fetchEndpoint?: string; // API endpoint to fetch options from
+  dependsOn?: string; // Field key that this field depends on
+  valueField?: string; // Field to use as value in fetched data
+  labelField?: string; // Field to use as label in fetched data
+  showFieldCount?: boolean; // Show field count in options
+  groupBy?: string; // Group options by this field
+
+  // For readonly computed fields
+  computedFrom?: string; // Path to value in config (e.g., 'form_metadata.url')
 }
 
 export type FieldType =
@@ -131,6 +165,7 @@ export type FieldType =
   | 'color'
   | 'slider'
   | 'array' // For managing arrays of items
+  | 'tags' // Enhanced tag input
   | 'keyvalue' // For key-value pairs
   | 'json' // JSON editor
   | 'code' // Code editor
@@ -143,6 +178,7 @@ export type FieldType =
   | 'user' // User selector
   | 'team' // Team selector
   | 'workflow' // Workflow selector
+  | 'conditions' // Condition builder for complex logic
   | 'custom'; // Custom component
 
 export interface SelectOption {

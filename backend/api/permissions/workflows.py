@@ -27,6 +27,9 @@ class WorkflowPermission(permissions.BasePermission):
             return True  # Object-level check in has_object_permission
         elif view.action in ['execute', 'test_run']:
             return True  # Object-level check in has_object_permission
+        elif view.action == 'node_schemas':
+            # Allow authenticated users to view node schemas
+            return True
 
         return False
     

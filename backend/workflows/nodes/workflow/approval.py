@@ -17,7 +17,7 @@ class ApprovalProcessor(AsyncNodeProcessor):
     
     def __init__(self):
         super().__init__()
-        self.node_type = "APPROVAL"
+        self.node_type = "approval"
         self.supports_replay = True
         self.supports_checkpoints = True
     
@@ -257,7 +257,7 @@ class ApprovalResponseProcessor(AsyncNodeProcessor):
     
     def __init__(self):
         super().__init__()
-        self.node_type = "APPROVAL_RESPONSE"
+        self.node_type = "approval_response"
         self.supports_replay = False  # Approval responses are one-time events
         self.supports_checkpoints = True
     

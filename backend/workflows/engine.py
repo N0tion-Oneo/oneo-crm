@@ -9,6 +9,7 @@ from typing import Dict, Any, List, Optional
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 from django_tenants.utils import schema_context
+from asgiref.sync import sync_to_async
 from pipelines.models import Pipeline, Record, Field
 from tenants.models import Tenant
 from .models import (
@@ -21,13 +22,15 @@ from channels.layers import get_channel_layer
 # Import all node processors
 from .nodes.ai.prompt import AIPromptProcessor
 from .nodes.ai.analysis import AIAnalysisProcessor
+from .nodes.ai.message_generator import AIMessageGeneratorProcessor
+from .nodes.ai.response_evaluator import AIResponseEvaluatorProcessor
 from .nodes.communication.email import EmailProcessor
 from .nodes.communication.whatsapp import WhatsAppProcessor
 from .nodes.communication.linkedin import LinkedInProcessor
 from .nodes.communication.sms import SMSProcessor
 from .nodes.communication.sync import MessageSyncProcessor
 from .nodes.communication.logging import CommunicationLoggingProcessor
-from .nodes.communication.analysis import CommunicationAnalysisProcessor
+from .nodes.communication.analysis import CommunicationAnalysisProcessor, EngagementScoringProcessor
 from .nodes.communication.ai_conversation_loop import AIConversationLoopProcessor
 from .nodes.crm.contact import ContactResolveProcessor
 from .nodes.crm.status_update import ContactStatusUpdateProcessor
@@ -38,16 +41,19 @@ from .nodes.data.record_ops import (
 from .nodes.data.merge import MergeDataProcessor
 from .nodes.control.condition import ConditionProcessor
 from .nodes.control.for_each import ForEachProcessor
+from .nodes.control.workflow_loop import WorkflowLoopController, WorkflowLoopBreaker
 from .nodes.utility.wait import WaitDelayProcessor
 from .nodes.utility.wait_advanced import (
     WaitForResponseProcessor, WaitForRecordEventProcessor, WaitForConditionProcessor
 )
 from .nodes.external.http import HTTPRequestProcessor
 from .nodes.external.webhook import WebhookOutProcessor
-from .nodes.workflow.approval import ApprovalProcessor
+from .nodes.workflow.approval import ApprovalProcessor, ApprovalResponseProcessor
 from .nodes.workflow.sub_workflow import SubWorkflowProcessor
 # Removed ReusableWorkflowProcessor - merged into SubWorkflowProcessor
 from .nodes.utility.notification import TaskNotificationProcessor
+from .nodes.utility.conversation_state import ConversationStateProcessor
+from .nodes.crm.status_update import FollowUpTaskProcessor
 # Import trigger node processors
 from .nodes.triggers import (
     TriggerFormSubmittedProcessor,
@@ -56,6 +62,12 @@ from .nodes.triggers import (
     TriggerRecordEventProcessor,
     TriggerEmailReceivedProcessor
 )
+from .nodes.triggers.manual import TriggerManualProcessor
+from .nodes.triggers.date_reached import TriggerDateReachedProcessor
+from .nodes.triggers.pipeline_stage import TriggerPipelineStageChangedProcessor
+from .nodes.triggers.workflow_completed import TriggerWorkflowCompletedProcessor
+from .nodes.triggers.condition_met import TriggerConditionMetProcessor
+from .nodes.triggers.message_received import TriggerLinkedInMessageProcessor, TriggerWhatsAppMessageProcessor
 
 User = get_user_model()
 logger = logging.getLogger(__name__)
@@ -87,57 +99,66 @@ class WorkflowEngine:
             'trigger_record_updated': TriggerRecordEventProcessor(),
             'trigger_record_deleted': TriggerRecordEventProcessor(),
             'trigger_email_received': TriggerEmailReceivedProcessor(),
+            'trigger_manual': TriggerManualProcessor(),
+            'trigger_date_reached': TriggerDateReachedProcessor(),
+            'trigger_pipeline_stage_changed': TriggerPipelineStageChangedProcessor(),
+            'trigger_workflow_completed': TriggerWorkflowCompletedProcessor(),
+            'trigger_condition_met': TriggerConditionMetProcessor(),
+            'trigger_linkedin_message': TriggerLinkedInMessageProcessor(),
+            'trigger_whatsapp_message': TriggerWhatsAppMessageProcessor(),
 
             # AI Processors
-            WorkflowNodeType.AI_PROMPT: AIPromptProcessor(),
-            WorkflowNodeType.AI_ANALYSIS: AIAnalysisProcessor(),
-            WorkflowNodeType.AI_CLASSIFICATION: AIAnalysisProcessor(),  # Deprecated - uses AI_ANALYSIS
-            WorkflowNodeType.AI_CONVERSATION_LOOP: AIConversationLoopProcessor(),
+            'ai_prompt': AIPromptProcessor(),
+            'ai_analysis': AIAnalysisProcessor(),
+            'ai_conversation_loop': AIConversationLoopProcessor(),
+            'ai_message_generator': AIMessageGeneratorProcessor(),
+            'ai_response_evaluator': AIResponseEvaluatorProcessor(),
 
             # Record Operations
-            WorkflowNodeType.RECORD_CREATE: RecordCreateProcessor(),
-            WorkflowNodeType.RECORD_UPDATE: RecordUpdateProcessor(),
-            WorkflowNodeType.RECORD_DELETE: RecordDeleteProcessor(),
-            WorkflowNodeType.RECORD_FIND: RecordFindProcessor(),
+            'record_create': RecordCreateProcessor(),
+            'record_update': RecordUpdateProcessor(),
+            'record_delete': RecordDeleteProcessor(),
+            'record_find': RecordFindProcessor(),
 
             # Control Flow
-            WorkflowNodeType.CONDITION: ConditionProcessor(),
-            WorkflowNodeType.FOR_EACH: ForEachProcessor(),
-            WorkflowNodeType.WAIT_DELAY: WaitDelayProcessor(),
-            WorkflowNodeType.WAIT_FOR_RESPONSE: WaitForResponseProcessor(),
-            WorkflowNodeType.WAIT_FOR_RECORD_EVENT: WaitForRecordEventProcessor(),
-            WorkflowNodeType.WAIT_FOR_CONDITION: WaitForConditionProcessor(),
+            'condition': ConditionProcessor(),
+            'for_each': ForEachProcessor(),
+            'wait_delay': WaitDelayProcessor(),
+            'wait_for_response': WaitForResponseProcessor(),
+            'wait_for_record_event': WaitForRecordEventProcessor(),
+            'wait_for_condition': WaitForConditionProcessor(),
+            'workflow_loop_controller': WorkflowLoopController(),
+            'workflow_loop_breaker': WorkflowLoopBreaker(),
+            'conversation_state': ConversationStateProcessor(),
 
             # External Integration
-            WorkflowNodeType.HTTP_REQUEST: HTTPRequestProcessor(),
-            WorkflowNodeType.WEBHOOK_OUT: WebhookOutProcessor(),
+            'http_request': HTTPRequestProcessor(),
+            'webhook_out': WebhookOutProcessor(),
 
             # Workflow Control
-            WorkflowNodeType.APPROVAL: ApprovalProcessor(),
-            WorkflowNodeType.TASK_NOTIFY: TaskNotificationProcessor(),
-            WorkflowNodeType.SUB_WORKFLOW: SubWorkflowProcessor(),
-            # REUSABLE_WORKFLOW merged into SUB_WORKFLOW - map for backward compatibility
-            WorkflowNodeType.REUSABLE_WORKFLOW: SubWorkflowProcessor(),
+            'approval': ApprovalProcessor(),
+            'task_notify': TaskNotificationProcessor(),
+            'sub_workflow': SubWorkflowProcessor(),
 
             # Data Operations
-            WorkflowNodeType.MERGE_DATA: MergeDataProcessor(),
+            'merge_data': MergeDataProcessor(),
 
             # Communication Nodes (UniPile Integration)
-            WorkflowNodeType.UNIPILE_SEND_EMAIL: EmailProcessor(),
-            WorkflowNodeType.UNIPILE_SEND_LINKEDIN: LinkedInProcessor(),
-            WorkflowNodeType.UNIPILE_SEND_WHATSAPP: WhatsAppProcessor(),
-            WorkflowNodeType.UNIPILE_SEND_SMS: SMSProcessor(),
-            WorkflowNodeType.UNIPILE_SYNC_MESSAGES: MessageSyncProcessor(),
+            'unipile_send_email': EmailProcessor(),
+            'unipile_send_linkedin': LinkedInProcessor(),
+            'unipile_send_whatsapp': WhatsAppProcessor(),
+            'unipile_send_sms': SMSProcessor(),
+            'unipile_sync_messages': MessageSyncProcessor(),
 
             # CRM Operations
-            WorkflowNodeType.LOG_COMMUNICATION: CommunicationLoggingProcessor(),
-            WorkflowNodeType.RESOLVE_CONTACT: ContactResolveProcessor(),
-            WorkflowNodeType.UPDATE_CONTACT_STATUS: ContactStatusUpdateProcessor(),
-            WorkflowNodeType.CREATE_FOLLOW_UP_TASK: TaskNotificationProcessor(),  # Reuse notification
+            'log_communication': CommunicationLoggingProcessor(),
+            'resolve_contact': ContactResolveProcessor(),
+            'update_contact_status': ContactStatusUpdateProcessor(),
+            'create_follow_up_task': FollowUpTaskProcessor(),
 
             # Analytics
-            WorkflowNodeType.ANALYZE_COMMUNICATION: CommunicationAnalysisProcessor(),
-            WorkflowNodeType.SCORE_ENGAGEMENT: CommunicationAnalysisProcessor(),  # Reuse analysis
+            'analyze_communication': CommunicationAnalysisProcessor(),
+            'score_engagement': EngagementScoringProcessor(),
         }
 
     async def execute_workflow(
@@ -155,79 +176,109 @@ class WorkflowEngine:
 
         # Get tenant from workflow if not provided
         if not tenant:
-            tenant = workflow.tenant
+            # Use sync_to_async for accessing related field
+            get_tenant = sync_to_async(lambda: workflow.tenant)
+            tenant = await get_tenant()
 
-        # Ensure we're in the right tenant context
-        with schema_context(tenant.schema_name):
-            # Create execution instance
-            execution = WorkflowExecution.objects.create(
-                tenant=tenant,
-                workflow=workflow,
-                trigger_data=trigger_data,
-                triggered_by=triggered_by,
-                status=ExecutionStatus.RUNNING,
-                execution_context={}
-            )
+        # Get tenant schema name
+        tenant_schema = tenant.schema_name if hasattr(tenant, 'schema_name') else str(tenant.schema_name)
 
-            # Broadcast execution started
+        # Create execution instance using sync_to_async
+        @sync_to_async
+        def create_execution():
+            with schema_context(tenant_schema):
+                return WorkflowExecution.objects.create(
+                    tenant=tenant,
+                    workflow=workflow,
+                    trigger_data=trigger_data,
+                    triggered_by=triggered_by,
+                    status=ExecutionStatus.RUNNING,
+                    execution_context={}
+                )
+
+        execution = await create_execution()
+
+        # Broadcast execution started
+        if self.broadcaster:
+            await self.broadcaster.broadcast_execution_started(execution)
+
+        try:
+            # Get workflow definition
+            nodes = workflow.get_nodes()
+            edges = workflow.get_edges()
+
+            # Build execution graph
+            execution_graph = self._build_execution_graph(nodes, edges)
+
+            # Add tenant to context
+            context = {
+                **trigger_data,
+                'tenant_schema': tenant_schema,
+                'tenant_id': str(tenant.id),
+                'execution_id': str(execution.id),
+                'workflow_id': str(workflow.id)
+            }
+
+            # Execute nodes in dependency order
+            await self._execute_nodes(execution, execution_graph, context, start_node_id)
+
+            # Mark execution as successful using sync_to_async
+            @sync_to_async
+            def mark_success():
+                with schema_context(tenant_schema):
+                    execution.status = ExecutionStatus.SUCCESS
+                    execution.completed_at = timezone.now()
+                    execution.save()
+
+            await mark_success()
+
+            # Update workflow metrics
+            @sync_to_async
+            def update_metrics():
+                with schema_context(tenant_schema):
+                    execution.refresh_from_db()
+                    execution_time_ms = int((execution.completed_at - execution.started_at).total_seconds() * 1000)
+                    workflow.update_performance_metrics(execution_time_ms, True)
+                    workflow.save()
+
+            await update_metrics()
+
+            # Broadcast execution completed
             if self.broadcaster:
-                await self.broadcaster.broadcast_execution_started(execution)
+                await self.broadcaster.broadcast_execution_completed(execution)
 
-            try:
-                # Get workflow definition
-                nodes = workflow.get_nodes()
-                edges = workflow.get_edges()
+            logger.info(f"Workflow {workflow.name} executed successfully in tenant {tenant_schema}")
+            return execution
 
-                # Build execution graph
-                execution_graph = self._build_execution_graph(nodes, edges)
+        except Exception as e:
+            # Mark execution as failed using sync_to_async
+            @sync_to_async
+            def mark_failed():
+                with schema_context(tenant_schema):
+                    execution.status = ExecutionStatus.FAILED
+                    execution.error_message = str(e)
+                    execution.completed_at = timezone.now()
+                    execution.save()
 
-                # Add tenant to context
-                context = {
-                    **trigger_data,
-                    'tenant_schema': tenant.schema_name,
-                    'tenant_id': str(tenant.id),
-                    'execution_id': str(execution.id),
-                    'workflow_id': str(workflow.id)
-                }
+            await mark_failed()
 
-                # Execute nodes in dependency order
-                await self._execute_nodes(execution, execution_graph, context, start_node_id)
+            # Update workflow metrics for failure
+            @sync_to_async
+            def update_failure_metrics():
+                with schema_context(tenant_schema):
+                    execution.refresh_from_db()
+                    execution_time_ms = int((execution.completed_at - execution.started_at).total_seconds() * 1000)
+                    workflow.update_performance_metrics(execution_time_ms, False)
+                    workflow.save()
 
-                # Mark execution as successful
-                execution.status = ExecutionStatus.SUCCESS
-                execution.completed_at = timezone.now()
-                execution.save()
+            await update_failure_metrics()
 
-                # Update workflow metrics
-                execution_time_ms = int((execution.completed_at - execution.started_at).total_seconds() * 1000)
-                workflow.update_performance_metrics(execution_time_ms, True)
-                workflow.save()
+            # Broadcast execution completed (with error)
+            if self.broadcaster:
+                await self.broadcaster.broadcast_execution_completed(execution)
 
-                # Broadcast execution completed
-                if self.broadcaster:
-                    await self.broadcaster.broadcast_execution_completed(execution)
-
-                logger.info(f"Workflow {workflow.name} executed successfully in tenant {tenant.schema_name}")
-                return execution
-
-            except Exception as e:
-                # Mark execution as failed
-                execution.status = ExecutionStatus.FAILED
-                execution.error_message = str(e)
-                execution.completed_at = timezone.now()
-                execution.save()
-
-                # Update workflow metrics
-                execution_time_ms = int((execution.completed_at - execution.started_at).total_seconds() * 1000)
-                workflow.update_performance_metrics(execution_time_ms, False)
-                workflow.save()
-
-                # Broadcast execution completed (with error)
-                if self.broadcaster:
-                    await self.broadcaster.broadcast_execution_completed(execution)
-
-                logger.error(f"Workflow {workflow.name} execution failed in tenant {tenant.schema_name}: {e}")
-                raise
+            logger.error(f"Workflow {workflow.name} execution failed in tenant {tenant_schema}: {e}")
+            raise
 
     async def _execute_nodes(
         self,
@@ -315,21 +366,25 @@ class WorkflowEngine:
         # Get tenant from context
         tenant_schema = context.get('tenant_schema')
 
-        # Create execution log
-        with schema_context(tenant_schema):
-            log = WorkflowExecutionLog.objects.create(
-                tenant_id=context.get('tenant_id'),
-                execution=execution,
-                node_id=node_id,
-                node_type=node_type,
-                node_name=node_config.get('name', node_id),
-                status=ExecutionStatus.RUNNING,
-                input_data=self._prepare_node_input(node_config, context)
-            )
+        # Create execution log using sync_to_async
+        @sync_to_async
+        def create_log():
+            with schema_context(tenant_schema):
+                return WorkflowExecutionLog.objects.create(
+                    tenant_id=context.get('tenant_id'),
+                    execution=execution,
+                    node_id=node_id,
+                    node_type=node_type,
+                    node_name=node_config.get('name', node_id),
+                    status=ExecutionStatus.RUNNING,
+                    input_data=self._prepare_node_input(node_config, context)
+                )
+
+        log = await create_log()
 
         # Broadcast node started
         if self.broadcaster:
-            await self.broadcaster.broadcast_node_started(log)
+            await self.broadcaster.broadcast_node_started(execution, node_id, node_type)
 
         start_time = time.time()
 
@@ -346,16 +401,22 @@ class WorkflowEngine:
             # Update log with success
             duration_ms = int((time.time() - start_time) * 1000)
 
-            with schema_context(tenant_schema):
-                log.status = ExecutionStatus.SUCCESS
-                log.output_data = result
-                log.duration_ms = duration_ms
-                log.completed_at = timezone.now()
-                log.save()
+            @sync_to_async
+            def update_log_success():
+                with schema_context(tenant_schema):
+                    log.status = ExecutionStatus.SUCCESS
+                    log.output_data = result
+                    log.duration_ms = duration_ms
+                    log.completed_at = timezone.now()
+                    log.save()
+
+            await update_log_success()
 
             # Broadcast node completed
             if self.broadcaster:
-                await self.broadcaster.broadcast_node_completed(log)
+                await self.broadcaster.broadcast_node_completed(
+                    execution, node_id, ExecutionStatus.SUCCESS, result, None, duration_ms
+                )
 
             return result
 
@@ -363,16 +424,22 @@ class WorkflowEngine:
             # Update log with error
             duration_ms = int((time.time() - start_time) * 1000)
 
-            with schema_context(tenant_schema):
-                log.status = ExecutionStatus.FAILED
-                log.error_details = {'error': str(e), 'type': type(e).__name__}
-                log.duration_ms = duration_ms
-                log.completed_at = timezone.now()
-                log.save()
+            @sync_to_async
+            def update_log_error():
+                with schema_context(tenant_schema):
+                    log.status = ExecutionStatus.FAILED
+                    log.error_details = {'error': str(e), 'type': type(e).__name__}
+                    log.duration_ms = duration_ms
+                    log.completed_at = timezone.now()
+                    log.save()
+
+            await update_log_error()
 
             # Broadcast node completed (with error)
             if self.broadcaster:
-                await self.broadcaster.broadcast_node_completed(log)
+                await self.broadcaster.broadcast_node_completed(
+                    execution, node_id, ExecutionStatus.FAILED, None, str(e), duration_ms
+                )
 
             # Check if we should retry
             retry_config = node_config.get('error_handling', {})

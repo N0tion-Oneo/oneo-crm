@@ -19,7 +19,7 @@ class WaitForResponseProcessor(AsyncNodeProcessor):
 
     def __init__(self):
         super().__init__()
-        self.node_type = "WAIT_FOR_RESPONSE"
+        self.node_type = "wait_for_response"
         self.supports_replay = True
         self.supports_checkpoints = True
 
@@ -137,7 +137,7 @@ class WaitForRecordEventProcessor(AsyncNodeProcessor):
 
     def __init__(self):
         super().__init__()
-        self.node_type = "WAIT_FOR_RECORD_EVENT"
+        self.node_type = "wait_for_record_event"
         self.supports_replay = True
         self.supports_checkpoints = True
 
@@ -147,13 +147,14 @@ class WaitForRecordEventProcessor(AsyncNodeProcessor):
         node_data = node_config.get('data', {})
 
         # Extract configuration
-        event_type = node_data.get('event_type', 'field_changed')  # field_changed, status_changed, record_deleted
-        field_name = node_data.get('field_name', '')
-        expected_value = node_data.get('expected_value')
-        comparison_operator = node_data.get('comparison_operator', 'equals')  # equals, not_equals, contains, greater_than, less_than
-        timeout_minutes = node_data.get('timeout_minutes', 60)
-        timeout_action = node_data.get('timeout_action', 'continue')
-        record_id = node_data.get('record_id') or context.get('record_id')
+        field_name = config.get('field_name', '')
+        expected_value = config.get('expected_value')
+        comparison_operator = config.get('comparison_operator', 'equals')
+        timeout_minutes = config.get('timeout_minutes', 60)
+        timeout_action = config.get('timeout_action', 'continue')
+        poll_interval_seconds = config.get('poll_interval_seconds', 30)
+        record_id_source = config.get('record_id_source', '')
+        record_id = self._get_nested_value(context, record_id_source) if record_id_source else context.get('record_id')
 
         if not record_id:
             raise ValueError("No record ID specified to monitor for events")
@@ -251,9 +252,85 @@ class WaitForRecordEventProcessor(AsyncNodeProcessor):
 class WaitForConditionProcessor(AsyncNodeProcessor):
     """Wait for a complex condition to be met"""
 
+    # Configuration schema
+    CONFIG_SCHEMA = {
+        "type": "object",
+        "required": ["conditions"],
+        "properties": {
+            "conditions": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "field": {
+                            "type": "string",
+                            "description": "Field to check"
+                        },
+                        "operator": {
+                            "type": "string",
+                            "description": "Comparison operator"
+                        },
+                        "value": {
+                            "description": "Value to compare against"
+                        }
+                    }
+                },
+                "description": "Conditions to wait for",
+                "ui_hints": {
+                    "widget": "condition_builder",
+                    "help_text": "Define conditions that must be met before proceeding"
+                }
+            },
+            "check_interval_seconds": {
+                "type": "integer",
+                "minimum": 5,
+                "maximum": 300,
+                "default": 30,
+                "description": "How often to check condition (seconds)"
+            },
+            "timeout_minutes": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 10080,
+                "default": 60,
+                "description": "Timeout in minutes (max 7 days)"
+            },
+            "timeout_action": {
+                "type": "string",
+                "enum": ["continue", "fail", "branch"],
+                "default": "continue",
+                "description": "Action when timeout is reached",
+                "ui_hints": {
+                    "widget": "radio"
+                }
+            },
+            "refresh_context": {
+                "type": "boolean",
+                "default": True,
+                "description": "Refresh context data on each check"
+            },
+            "external_check": {
+                "type": "object",
+                "properties": {
+                    "type": {
+                        "type": "string",
+                        "enum": ["api", "database", "cache"]
+                    },
+                    "endpoint": {"type": "string"},
+                    "query": {"type": "string"}
+                },
+                "description": "External source to check",
+                "ui_hints": {
+                    "widget": "external_check_config",
+                    "section": "advanced"
+                }
+            }
+        }
+    }
+
     def __init__(self):
         super().__init__()
-        self.node_type = "WAIT_FOR_CONDITION"
+        self.node_type = "wait_for_condition"
         self.supports_replay = True
         self.supports_checkpoints = True
 
@@ -261,97 +338,58 @@ class WaitForConditionProcessor(AsyncNodeProcessor):
         """Process wait for condition node"""
 
         node_data = node_config.get('data', {})
+        config = node_data.get('config', {})
 
         # Extract configuration
-        condition_type = node_data.get('condition_type', 'expression')  # expression, record_count, aggregate
-        expression = node_data.get('expression', '')
-        check_interval_seconds = node_data.get('check_interval_seconds', 30)
-        timeout_minutes = node_data.get('timeout_minutes', 60)
-        timeout_action = node_data.get('timeout_action', 'continue')
-
-        # For record_count conditions
-        pipeline_id = node_data.get('pipeline_id')
-        filter_conditions = node_data.get('filter_conditions', {})
-        expected_count = node_data.get('expected_count', 0)
-        count_operator = node_data.get('count_operator', 'greater_than')
-
-        # For aggregate conditions
-        aggregate_field = node_data.get('aggregate_field')
-        aggregate_function = node_data.get('aggregate_function', 'sum')  # sum, avg, min, max, count
-        aggregate_expected = node_data.get('aggregate_expected', 0)
+        conditions = config.get('conditions', [])
+        logic_operator = config.get('logic_operator', 'AND')
+        group_operators = config.get('group_operators', {})
+        check_interval_seconds = config.get('check_interval_seconds', 30)
+        timeout_minutes = config.get('timeout_minutes', 60)
+        timeout_action = config.get('timeout_action', 'continue')
+        refresh_context = config.get('refresh_context', True)
+        external_check = config.get('external_check', {})
 
         start_time = timezone.now()
         timeout_time = start_time + timedelta(minutes=timeout_minutes)
 
         try:
+            from workflows.utils.condition_evaluator import condition_evaluator
+
             # Poll for condition
             condition_met = False
+            evaluation_details = None
+
             while timezone.now() < timeout_time:
+                # Refresh context if needed
+                current_context = context
+                if refresh_context:
+                    # Could refresh from database or external source
+                    current_context = dict(context)  # Create a fresh copy
 
-                if condition_type == 'expression':
-                    # Evaluate expression with context
-                    try:
-                        # Simple expression evaluation (can be enhanced)
-                        result = eval(expression, {"context": context})
-                        if result:
-                            condition_met = True
-                    except Exception as e:
-                        logger.warning(f"Expression evaluation failed: {e}")
+                # Check if we need to make an external API call first
+                if external_check.get('enabled'):
+                    # Make external API call and add result to context
+                    api_url = external_check.get('api_url')
+                    if api_url:
+                        try:
+                            import aiohttp
+                            async with aiohttp.ClientSession() as session:
+                                async with session.get(api_url) as response:
+                                    if response.status == 200:
+                                        api_data = await response.json()
+                                        current_context['external_data'] = api_data
+                        except Exception as e:
+                            logger.warning(f"External API check failed: {e}")
 
-                elif condition_type == 'record_count' and pipeline_id:
-                    # Check record count in pipeline
-                    query = Q(pipeline_id=pipeline_id)
-
-                    # Apply filters
-                    for field, value in filter_conditions.items():
-                        query &= Q(**{f"data__{field}": value})
-
-                    count = await Record.objects.filter(query).acount()
-
-                    if count_operator == 'equals' and count == expected_count:
-                        condition_met = True
-                    elif count_operator == 'greater_than' and count > expected_count:
-                        condition_met = True
-                    elif count_operator == 'less_than' and count < expected_count:
-                        condition_met = True
-                    elif count_operator == 'greater_or_equal' and count >= expected_count:
-                        condition_met = True
-                    elif count_operator == 'less_or_equal' and count <= expected_count:
-                        condition_met = True
-
-                elif condition_type == 'aggregate' and pipeline_id and aggregate_field:
-                    # Calculate aggregate value
-                    records = Record.objects.filter(pipeline_id=pipeline_id)
-
-                    # Apply filters
-                    for field, value in filter_conditions.items():
-                        records = records.filter(**{f"data__{field}": value})
-
-                    values = []
-                    async for record in records:
-                        value = record.data.get(aggregate_field)
-                        if value is not None:
-                            try:
-                                values.append(float(value))
-                            except (TypeError, ValueError):
-                                pass
-
-                    if values:
-                        if aggregate_function == 'sum':
-                            result = sum(values)
-                        elif aggregate_function == 'avg':
-                            result = sum(values) / len(values)
-                        elif aggregate_function == 'min':
-                            result = min(values)
-                        elif aggregate_function == 'max':
-                            result = max(values)
-                        elif aggregate_function == 'count':
-                            result = len(values)
-                        else:
-                            result = 0
-
-                        if result >= aggregate_expected:
-                            condition_met = True
+                # Evaluate conditions using the grouped condition evaluator
+                if conditions:
+                    condition_met, evaluation_details = condition_evaluator.evaluate(
+                        conditions=conditions,
+                        data=current_context,
+                        logic_operator=logic_operator,
+                        group_operators=group_operators
+                    )
 
                 if condition_met:
                     break
@@ -364,7 +402,7 @@ class WaitForConditionProcessor(AsyncNodeProcessor):
                 return {
                     'success': True,
                     'condition_met': True,
-                    'condition_type': condition_type,
+                    'evaluation_details': evaluation_details,
                     'wait_time_seconds': (timezone.now() - start_time).total_seconds()
                 }
             else:
@@ -377,6 +415,7 @@ class WaitForConditionProcessor(AsyncNodeProcessor):
                         'condition_met': False,
                         'timeout_reached': True,
                         'timeout_action': timeout_action,
+                        'evaluation_details': evaluation_details,
                         'wait_time_seconds': timeout_minutes * 60
                     }
 
@@ -384,6 +423,5 @@ class WaitForConditionProcessor(AsyncNodeProcessor):
             logger.error(f"Wait for condition failed: {e}")
             return {
                 'success': False,
-                'error': str(e),
-                'condition_type': condition_type
+                'error': str(e)
             }

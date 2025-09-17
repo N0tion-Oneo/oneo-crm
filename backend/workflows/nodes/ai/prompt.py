@@ -12,20 +12,109 @@ logger = logging.getLogger(__name__)
 
 class AIPromptProcessor(AsyncNodeProcessor):
     """Process AI prompt nodes using ai.integrations.AIIntegrationManager"""
-    
+
+    # Configuration schema
+    CONFIG_SCHEMA = {
+        "type": "object",
+        "required": ["prompt"],
+        "properties": {
+            "prompt": {
+                "type": "string",
+                "minLength": 1,
+                "description": "AI prompt template with context variables",
+                "ui_hints": {
+                    "widget": "textarea",
+                    "rows": 8,
+                    "placeholder": "Generate a summary for {{record.name}}:\n\nDetails: {{record.description}}\n\nFocus on key insights."
+                }
+            },
+            "model": {
+                "type": "string",
+                "enum": ["gpt-4", "gpt-3.5-turbo", "claude-3", "claude-3-haiku"],
+                "default": "gpt-4",
+                "description": "AI model to use for processing",
+                "ui_hints": {
+                    "widget": "select"
+                }
+            },
+            "temperature": {
+                "type": "number",
+                "minimum": 0.0,
+                "maximum": 2.0,
+                "default": 0.7,
+                "description": "Creativity level (0=deterministic, 2=very creative)",
+                "ui_hints": {
+                    "widget": "slider",
+                    "step": 0.1
+                }
+            },
+            "max_tokens": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 4000,
+                "default": 1000,
+                "description": "Maximum response length in tokens"
+            },
+            "system_prompt": {
+                "type": "string",
+                "description": "Optional system prompt to set AI behavior",
+                "ui_hints": {
+                    "widget": "textarea",
+                    "rows": 4,
+                    "placeholder": "You are a helpful assistant that provides concise and accurate information."
+                }
+            },
+            "enable_tools": {
+                "type": "boolean",
+                "default": False,
+                "description": "Enable AI tools (web search, code interpreter, etc.)"
+            },
+            "allowed_tools": {
+                "type": "array",
+                "items": {
+                    "type": "string",
+                    "enum": ["web_search", "code_interpreter", "dalle", "retrieval"]
+                },
+                "description": "Which AI tools to allow when enable_tools is true",
+                "ui_hints": {
+                    "widget": "multiselect",
+                    "show_when": {"enable_tools": True}
+                }
+            },
+            "response_format": {
+                "type": "string",
+                "enum": ["text", "json", "markdown"],
+                "default": "text",
+                "description": "Expected response format",
+                "ui_hints": {
+                    "widget": "radio"
+                }
+            }
+        }
+    }
+
     def __init__(self):
         super().__init__()
-        self.node_type = "AI_PROMPT"
+        self.node_type = "ai_prompt"
         self.supports_replay = True
         self.supports_checkpoints = True
     
     async def process(self, node_config: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
         """Process AI prompt node"""
-        
+
         # Get configuration
         node_data = node_config.get('data', {})
-        prompt_template = node_data.get('prompt', '')
-        ai_config = node_data.get('ai_config', {})
+        config = node_data.get('config', {})
+
+        # Extract configuration values
+        prompt_template = config.get('prompt', '')
+        model = config.get('model', 'gpt-4')
+        temperature = config.get('temperature', 0.7)
+        max_tokens = config.get('max_tokens', 1000)
+        system_prompt = config.get('system_prompt', '')
+        enable_tools = config.get('enable_tools', False)
+        allowed_tools = config.get('allowed_tools', [])
+        response_format = config.get('response_format', 'text')
         input_mapping = node_data.get('input_mapping', {})
         
         # Prepare inputs if mapping specified
@@ -60,11 +149,13 @@ class AIPromptProcessor(AsyncNodeProcessor):
                 record_data=temp_record_data,
                 field_config={
                     'ai_prompt': formatted_prompt,
-                    'ai_model': ai_config.get('model', 'gpt-4'),
-                    'temperature': ai_config.get('temperature', 0.7),
-                    'max_tokens': ai_config.get('max_tokens', 1000),
-                    'enable_tools': ai_config.get('enable_tools', False),
-                    'allowed_tools': ai_config.get('allowed_tools', [])
+                    'ai_model': model,
+                    'temperature': temperature,
+                    'max_tokens': max_tokens,
+                    'enable_tools': enable_tools,
+                    'allowed_tools': allowed_tools,
+                    'system_prompt': system_prompt,
+                    'response_format': response_format
                 },
                 tenant=tenant,
                 user=execution.triggered_by if execution else None
@@ -85,34 +176,6 @@ class AIPromptProcessor(AsyncNodeProcessor):
             logger.error(f"AI prompt processing failed: {e}")
             raise ValueError(f"AI processing failed: {str(e)}")
     
-    async def validate_inputs(self, node_config: Dict[str, Any], context: Dict[str, Any]) -> bool:
-        """Validate AI prompt node inputs"""
-        node_data = node_config.get('data', {})
-        
-        # Check required fields
-        if not node_data.get('prompt'):
-            return False
-        
-        # Validate AI config
-        ai_config = node_data.get('ai_config', {})
-        model = ai_config.get('model', 'gpt-4')
-        
-        # Check if model is supported
-        supported_models = ['gpt-4', 'gpt-3.5-turbo', 'claude-3', 'claude-3-haiku']
-        if model not in supported_models:
-            return False
-        
-        # Check temperature range
-        temperature = ai_config.get('temperature', 0.7)
-        if not (0.0 <= temperature <= 2.0):
-            return False
-        
-        # Check max_tokens
-        max_tokens = ai_config.get('max_tokens', 1000)
-        if not isinstance(max_tokens, int) or max_tokens <= 0:
-            return False
-        
-        return True
     
     async def create_checkpoint(self, node_config: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
         """Create checkpoint for AI prompt node"""
@@ -120,9 +183,14 @@ class AIPromptProcessor(AsyncNodeProcessor):
         
         # Add AI-specific checkpoint data
         node_data = node_config.get('data', {})
+        config = node_data.get('config', {})
         checkpoint.update({
-            'prompt_template': node_data.get('prompt', ''),
-            'ai_config': node_data.get('ai_config', {}),
+            'prompt_template': config.get('prompt', ''),
+            'ai_config': {
+                'model': config.get('model', 'gpt-4'),
+                'temperature': config.get('temperature', 0.7),
+                'max_tokens': config.get('max_tokens', 1000)
+            },
             'input_context': await self.prepare_inputs(node_config, context)
         })
         

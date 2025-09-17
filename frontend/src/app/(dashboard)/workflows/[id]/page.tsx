@@ -199,7 +199,7 @@ export default function WorkflowDetailPageRedesigned() {
 
   return (
     <TooltipProvider>
-      <div className="flex flex-col h-screen bg-background">
+      <div className="flex flex-col h-full bg-background">
         {/* Header Bar */}
         <div className="border-b bg-card">
           <div className="flex items-center justify-between h-16 px-4">

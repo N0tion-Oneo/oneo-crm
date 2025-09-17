@@ -5,6 +5,7 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from api.permissions import WorkflowPermission, WorkflowExecutionPermission, WorkflowApprovalPermission
+from api.permissions.base import TenantMemberPermission
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 from django.db.models import Q
@@ -333,6 +334,83 @@ class WorkflowViewSet(viewsets.ModelViewSet):
                 'error': str(e)
             }, status=status.HTTP_400_BAD_REQUEST)
     
+    @action(detail=False, methods=['get'], url_path='test-records', permission_classes=[TenantMemberPermission])
+    def get_test_records(self, request):
+        """Get recent records for testing workflow nodes"""
+        # For 'new' workflows, we still want to allow fetching test records
+        # based on the pipeline_id, even though the workflow doesn't exist yet
+
+        pipeline_id = request.query_params.get('pipeline_id')
+        node_type = request.query_params.get('node_type')
+
+        logger.info(f"get_test_records called with pipeline_id={pipeline_id}, node_type={node_type}")
+
+        if not pipeline_id:
+            return Response({
+                'records': [],
+                'message': 'No pipeline selected'
+            })
+
+        try:
+            from pipelines.models import Record
+            from django.db import connection
+            from django_tenants.utils import get_tenant_model
+
+            # Get current tenant schema
+            schema_name = connection.schema_name
+            logger.info(f"Fetching test records for pipeline {pipeline_id} in schema {schema_name}")
+
+            # Fetch recent records from the pipeline
+            records = Record.objects.filter(
+                pipeline_id=pipeline_id,
+                is_deleted=False
+            ).order_by('-created_at')[:10]
+
+            logger.info(f"Found {records.count()} records for pipeline {pipeline_id}")
+
+            # Format records for the dropdown
+            formatted_records = []
+            for record in records:
+                # Get a title for the record
+                title = record.get_title() if hasattr(record, 'get_title') else None
+                if not title:
+                    # Try to construct a title from common fields
+                    data = record.data or {}
+                    if data.get('first_name') and data.get('last_name'):
+                        title = f"{data['first_name']} {data['last_name']}"
+                    elif data.get('name'):
+                        title = data['name']
+                    elif data.get('email'):
+                        title = data['email']
+                    else:
+                        title = f"Record {str(record.id)[:8]}"
+
+                formatted_records.append({
+                    'id': str(record.id),
+                    'title': title,
+                    'created_at': record.created_at.isoformat(),
+                    'updated_at': record.updated_at.isoformat(),
+                    'preview': {
+                        k: v for k, v in (record.data or {}).items()
+                        if k in ['first_name', 'last_name', 'email', 'company', 'phone']
+                    }
+                })
+
+            return Response({
+                'records': formatted_records,
+                'total': len(formatted_records)
+            })
+
+        except Exception as e:
+            import traceback
+            logger.error(f"Failed to fetch test records: {e}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            return Response({
+                'records': [],
+                'total': 0,
+                'error': f'Unable to fetch records from pipeline: {str(e)}'
+            })
+
     @action(detail=True, methods=['post'], url_path='test-node')
     def test_node(self, request, pk=None):
         """Test a single workflow node"""
@@ -343,6 +421,10 @@ class WorkflowViewSet(viewsets.ModelViewSet):
         node_type = request.data.get('node_type')
         node_config = request.data.get('node_config', {})
         test_context = request.data.get('test_context', {})
+        test_record_id = request.data.get('test_record_id')  # New parameter for selecting specific record
+
+        logger.info(f"test_node called with node_id={node_id}, test_record_id={test_record_id}")
+        logger.info(f"Full request data: {request.data}")
 
         if not node_id or not node_type:
             return Response({
@@ -355,9 +437,123 @@ class WorkflowViewSet(viewsets.ModelViewSet):
             from workflows.processors import get_node_processor
             import time
 
-            # For trigger nodes, we'll return configuration validation
+            logger.info(f"test_node called with node_type={node_type}, test_record_id={test_record_id}")
+
+            # For trigger nodes, we'll return configuration validation or real data
             if 'trigger' in node_type.lower():
-                # Validate trigger configuration
+                # If a test record is selected, use its actual data
+                if test_record_id:
+                    from pipelines.models import Record
+
+                    try:
+                        record = Record.objects.get(id=test_record_id, is_deleted=False)
+                        logger.info(f"Found record {record.id} with data: {record.data}")
+
+                        # Format the record data based on the trigger type
+                        if node_type.lower() == 'trigger_form_submitted' or node_type == 'TRIGGER_FORM_SUBMITTED':
+                            # Extract form data from the record
+                            form_data = record.data or {}
+                            logger.info(f"Extracted form_data: {form_data}")
+
+                            # Build the output that matches what a real form submission would provide
+                            # Start with all the actual field data from the record
+                            output_data = {}
+
+                            # Add all fields from the record data directly to output
+                            for field_name, field_value in form_data.items():
+                                output_data[field_name] = field_value
+                                logger.info(f"Adding field {field_name} = {field_value} to output")
+
+                            # Add the full form data as nested object
+                            output_data['form_data'] = form_data
+
+                            # Add metadata fields
+                            output_data.update({
+                                'submission_id': f'sub_{record.id}',
+                                'submitted_at': record.created_at.isoformat(),
+                                'pipeline_id': str(record.pipeline_id),
+                                'record_id': str(record.id),
+
+                                # User info (simulated for testing)
+                                'user_info': {
+                                    'ip_address': '192.168.1.100',
+                                    'user_agent': 'Mozilla/5.0 (Testing)',
+                                    'referrer': 'https://example.com/contact'
+                                },
+                                'ip_address': '192.168.1.100',
+                                'referrer_url': 'https://example.com/contact'
+                            })
+
+                            return Response({
+                                'status': 'success',
+                                'message': f'Using actual record data from "{record.get_title() if hasattr(record, "get_title") else record.id}"',
+                                'output': {
+                                    'data': output_data,
+                                    'metadata': {
+                                        'executionTime': '0ms',
+                                        'node_id': node_id,
+                                        'timestamp': timezone.now().isoformat(),
+                                        'source': 'actual_record',
+                                        'record_id': str(record.id)
+                                    }
+                                }
+                            })
+
+                        elif node_type in ['trigger_record_created', 'trigger_record_updated', 'TRIGGER_RECORD_CREATED', 'TRIGGER_RECORD_UPDATED']:
+                            # For record triggers, return the actual record data
+                            # Include all record fields at the top level for easy template variable access
+                            output_data = {}
+
+                            # Add all fields from the record data directly to output
+                            if record.data:
+                                for field_name, field_value in record.data.items():
+                                    output_data[field_name] = field_value
+
+                            # Add record metadata
+                            output_data.update({
+                                'record_id': str(record.id),
+                                'pipeline_id': str(record.pipeline_id),
+                                'created_at': record.created_at.isoformat(),
+                                'updated_at': record.updated_at.isoformat(),
+                                'record': {
+                                    'id': str(record.id),
+                                    'pipeline_id': str(record.pipeline_id),
+                                    'data': record.data,
+                                    'created_at': record.created_at.isoformat(),
+                                    'updated_at': record.updated_at.isoformat()
+                                },
+                                'trigger_type': node_type
+                            })
+
+                            return Response({
+                                'status': 'success',
+                                'message': f'Using actual record data',
+                                'output': {
+                                    'data': output_data,
+                                    'metadata': {
+                                        'executionTime': '0ms',
+                                        'node_id': node_id,
+                                        'timestamp': timezone.now().isoformat(),
+                                        'source': 'actual_record'
+                                    }
+                                }
+                            })
+
+                    except Record.DoesNotExist:
+                        return Response({
+                            'status': 'error',
+                            'message': 'Selected record not found',
+                            'output': {
+                                'data': {'error': 'Record not found'},
+                                'metadata': {
+                                    'executionTime': '0ms',
+                                    'node_id': node_id,
+                                    'timestamp': timezone.now().isoformat()
+                                }
+                            }
+                        })
+
+                # Otherwise, return validation info and sample data
                 validation_errors = []
 
                 # Initialize form_url outside the if block
@@ -403,21 +599,52 @@ class WorkflowViewSet(viewsets.ModelViewSet):
                         }
                     })
 
+                # Generate sample data for triggers without a selected record
+                sample_data = {
+                    'trigger_type': node_type,
+                    'config': node_config,
+                    'test_context': test_context,
+                    'form_url': form_url,
+                    'validation': 'All required fields are configured'
+                }
+
+                # Add sample form data for form submission trigger
+                if node_type == 'trigger_form_submitted':
+                    sample_data.update({
+                        'first_name': 'John',
+                        'last_name': 'Doe',
+                        'email': 'john.doe@example.com',
+                        'phone': '+1 (555) 123-4567',
+                        'company': 'Acme Corporation',
+                        'title': 'Product Manager',
+                        'message': 'I am interested in learning more about your product.',
+                        'form_data': {
+                            'first_name': 'John',
+                            'last_name': 'Doe',
+                            'email': 'john.doe@example.com',
+                            'phone': '+1 (555) 123-4567',
+                            'company': 'Acme Corporation',
+                            'title': 'Product Manager',
+                            'message': 'I am interested in learning more about your product.'
+                        },
+                        'submission_id': 'sub_sample_123',
+                        'submitted_at': timezone.now().isoformat(),
+                        'pipeline_id': test_context.get('pipeline_id', ''),
+                        'record_id': 'rec_sample_456',
+                        'ip_address': '192.168.1.100',
+                        'referrer_url': 'https://example.com/contact'
+                    })
+
                 return Response({
                     'status': 'success',
-                    'message': f'Trigger node "{node_type}" configured successfully',
+                    'message': f'Trigger node "{node_type}" test with sample data',
                     'output': {
-                        'data': {
-                            'trigger_type': node_type,
-                            'config': node_config,
-                            'test_context': test_context,
-                            'form_url': form_url,
-                            'validation': 'All required fields are configured'
-                        },
+                        'data': sample_data,
                         'metadata': {
                             'executionTime': '0ms',
                             'node_id': node_id,
-                            'timestamp': timezone.now().isoformat()
+                            'timestamp': timezone.now().isoformat(),
+                            'source': 'sample_data'
                         }
                     }
                 })
@@ -431,19 +658,43 @@ class WorkflowViewSet(viewsets.ModelViewSet):
                     'error': f'No processor found for node type: {node_type}'
                 }, status=status.HTTP_400_BAD_REQUEST)
 
+            # If a record is selected for testing non-trigger nodes, add its data to context
+            if test_record_id and 'trigger' not in node_type.lower():
+                from pipelines.models import Record
+                try:
+                    record = Record.objects.get(id=test_record_id, is_deleted=False)
+                    # Add record data to the test context
+                    if 'record' not in test_context:
+                        test_context['record'] = {}
+                    test_context['record']['id'] = str(record.id)
+                    test_context['record'].update(record.data or {})
+                    logger.info(f"Added record {record.id} data to test context for non-trigger node")
+                except Record.DoesNotExist:
+                    logger.warning(f"Record {test_record_id} not found, continuing without record data")
+
             # Test the node with sample data
             start_time = time.time()
 
             try:
                 # Execute the processor with test data
-                result = processor.process(node_config, test_context)
+                import asyncio
+                from asgiref.sync import async_to_sync
+
+                # Check if the processor has an async process method
+                if asyncio.iscoroutinefunction(processor.process):
+                    # Handle async processor
+                    result = async_to_sync(processor.process)(node_config, test_context)
+                else:
+                    # Handle sync processor
+                    result = processor.process(node_config, test_context)
+
                 execution_time = (time.time() - start_time) * 1000
 
                 return Response({
                     'status': 'success',
                     'message': f'Node tested successfully',
                     'output': {
-                        'data': result.get('output', {}),
+                        'data': result.get('output', result) if isinstance(result, dict) else {'result': result},
                         'metadata': {
                             'executionTime': f'{execution_time:.2f}ms',
                             'node_id': node_id,
@@ -582,6 +833,46 @@ class WorkflowViewSet(viewsets.ModelViewSet):
 #             return Response(status=status.HTTP_204_NO_CONTENT)
 #         except WorkflowTrigger.DoesNotExist:
 #             return Response({'error': 'Trigger not found'}, status=status.HTTP_404_NOT_FOUND)
+
+    @action(detail=False, methods=['get'])
+    def node_schemas(self, request):
+        """Get configuration schemas for all node types"""
+        from workflows.processors import get_all_node_processors
+
+        schemas = {}
+        processors = get_all_node_processors()
+
+        for node_type, processor_class in processors.items():
+            try:
+                # Instantiate processor to get its schema
+                processor = processor_class()
+                schema_info = {
+                    'node_type': node_type,
+                    'display_name': getattr(processor, 'display_name', node_type.replace('_', ' ').title()),
+                    'description': processor.__class__.__doc__.strip() if processor.__class__.__doc__ else '',
+                    'supports_replay': getattr(processor, 'supports_replay', False),
+                    'supports_checkpoints': getattr(processor, 'supports_checkpoints', False)
+                }
+
+                # Get CONFIG_SCHEMA if it exists
+                if hasattr(processor, 'CONFIG_SCHEMA'):
+                    schema_info['config_schema'] = processor.CONFIG_SCHEMA
+                elif hasattr(processor, 'get_config_schema'):
+                    schema_info['config_schema'] = processor.get_config_schema()
+                else:
+                    schema_info['config_schema'] = None
+
+                schemas[node_type] = schema_info
+
+            except Exception as e:
+                logger.warning(f"Failed to get schema for {node_type}: {e}")
+                schemas[node_type] = {
+                    'node_type': node_type,
+                    'error': str(e),
+                    'config_schema': None
+                }
+
+        return Response(schemas)
 
     @action(detail=False, methods=['get'])
     def statistics(self, request):

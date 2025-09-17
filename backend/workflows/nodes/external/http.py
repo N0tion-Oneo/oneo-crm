@@ -11,26 +11,128 @@ logger = logging.getLogger(__name__)
 
 class HTTPRequestProcessor(AsyncNodeProcessor):
     """Process HTTP request nodes for external API calls"""
-    
+
+    # Configuration schema
+    CONFIG_SCHEMA = {
+        "type": "object",
+        "required": ["url", "method"],
+        "properties": {
+            "url": {
+                "type": "string",
+                "format": "uri",
+                "description": "URL to send request to",
+                "ui_hints": {
+                    "widget": "text",
+                    "placeholder": "https://api.example.com/endpoint/{record.id}"
+                }
+            },
+            "method": {
+                "type": "string",
+                "enum": ["GET", "POST", "PUT", "PATCH", "DELETE"],
+                "default": "GET",
+                "description": "HTTP method",
+                "ui_hints": {
+                    "widget": "select"
+                }
+            },
+            "headers": {
+                "type": "object",
+                "description": "Request headers",
+                "ui_hints": {
+                    "widget": "json_editor",
+                    "rows": 4,
+                    "placeholder": '{\n  "Content-Type": "application/json",\n  "Authorization": "Bearer {{api_key}}"\n}'
+                }
+            },
+            "body": {
+                "type": "object",
+                "description": "Request body (for POST/PUT/PATCH)",
+                "ui_hints": {
+                    "widget": "json_editor",
+                    "rows": 6,
+                    "placeholder": '{\n  "name": "{{contact.name}}",\n  "email": "{{contact.email}}"\n}',
+                    "show_when": {"method": ["POST", "PUT", "PATCH"]}
+                }
+            },
+            "timeout": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 300,
+                "default": 30,
+                "description": "Request timeout in seconds"
+            },
+            "auth": {
+                "type": "object",
+                "properties": {
+                    "type": {
+                        "type": "string",
+                        "enum": ["none", "basic", "bearer", "api_key"],
+                        "default": "none"
+                    },
+                    "username": {"type": "string"},
+                    "password": {"type": "string"},
+                    "token": {"type": "string"},
+                    "api_key": {"type": "string"},
+                    "api_key_header": {"type": "string", "default": "X-API-Key"}
+                },
+                "description": "Authentication configuration",
+                "ui_hints": {
+                    "section": "authentication"
+                }
+            },
+            "retry": {
+                "type": "object",
+                "properties": {
+                    "max_retries": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 10,
+                        "default": 3
+                    },
+                    "delay": {
+                        "type": "number",
+                        "minimum": 0.1,
+                        "maximum": 60,
+                        "default": 1.0
+                    },
+                    "exponential_backoff": {
+                        "type": "boolean",
+                        "default": True
+                    },
+                    "retry_on_status": {
+                        "type": "array",
+                        "items": {"type": "integer"},
+                        "default": [500, 502, 503, 504]
+                    }
+                },
+                "description": "Retry configuration",
+                "ui_hints": {
+                    "section": "advanced"
+                }
+            }
+        }
+    }
+
     def __init__(self):
         super().__init__()
-        self.node_type = "HTTP_REQUEST"
+        self.node_type = "http_request"
         self.supports_replay = True
         self.supports_checkpoints = True
     
     async def process(self, node_config: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
         """Process HTTP request node"""
-        
+
         node_data = node_config.get('data', {})
-        
+        config = node_data.get('config', {})
+
         # Extract configuration
-        method = node_data.get('method', 'GET').upper()
-        url_template = node_data.get('url', '')
-        headers = node_data.get('headers', {})
-        body = node_data.get('body', {})
-        timeout = node_data.get('timeout', 30)
-        auth_config = node_data.get('auth', {})
-        retry_config = node_data.get('retry', {})
+        method = config.get('method', 'GET').upper()
+        url_template = config.get('url', '')
+        headers = config.get('headers', {})
+        body = config.get('body', {})
+        timeout = config.get('timeout', 30)
+        auth_config = config.get('auth', {})
+        retry_config = config.get('retry', {})
         
         # Validate required fields
         if not url_template:

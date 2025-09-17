@@ -46,6 +46,8 @@ import {
 } from '@/components/ui/tooltip';
 import { ExecutionHistory } from './ExecutionHistory';
 import { WorkflowDebugPanel } from './WorkflowDebugPanel';
+import { WorkflowContextPanel } from './WorkflowContextPanel';
+import { getNodeConfig } from './node-configs/unified/registry';
 
 interface WorkflowBuilderRedesignedProps {
   definition: WorkflowDefinition;
@@ -212,8 +214,11 @@ function WorkflowCanvas({
   );
 
   const onNodeClick = useCallback((event: React.MouseEvent, node: Node) => {
-    onNodeSelect(node.id, node.data);
-  }, [onNodeSelect]);
+    // When selecting a node, also fetch its current data from the definition
+    const definitionNode = definition?.nodes?.find(n => n.id === node.id);
+    const nodeData = definitionNode ? definitionNode.data : node.data;
+    onNodeSelect(node.id, nodeData);
+  }, [onNodeSelect, definition]);
 
   const updateNode = (nodeId: string, data: any) => {
     setNodes((nds) =>
@@ -252,6 +257,14 @@ function WorkflowCanvas({
         onDrop={onDrop}
         nodeTypes={nodeTypes}
         fitView
+        fitViewOptions={{
+          padding: 0.2,
+          maxZoom: 1,
+          minZoom: 0.5
+        }}
+        defaultViewport={{ x: 0, y: 0, zoom: 0.75 }}
+        minZoom={0.1}
+        maxZoom={2}
         proOptions={{ hideAttribution: true }}
         defaultEdgeOptions={{
           animated: false,
@@ -275,83 +288,91 @@ function WorkflowCanvas({
           />
         )}
 
-        <Controls showInteractive={false} className="bg-white border rounded-lg shadow-sm">
-          <TooltipProvider>
-            <div className="flex flex-col gap-1 p-1">
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8"
-                    onClick={() => reactFlowInstance?.zoomIn()}
-                  >
-                    <ZoomIn className="h-4 w-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent side="left">Zoom in</TooltipContent>
-              </Tooltip>
+        <Controls
+          showZoom={false}
+          showInteractive={false}
+          className="bg-white border rounded-lg shadow-sm"
+        />
 
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8"
-                    onClick={() => reactFlowInstance?.zoomOut()}
-                  >
-                    <ZoomOut className="h-4 w-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent side="left">Zoom out</TooltipContent>
-              </Tooltip>
+        <Panel position="bottom-left" className="!m-3">
+          <div className="bg-white border rounded-lg shadow-sm">
+            <TooltipProvider>
+              <div className="flex flex-col gap-1 p-1">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8"
+                      onClick={() => reactFlowInstance?.zoomIn()}
+                    >
+                      <ZoomIn className="h-4 w-4" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="right">Zoom in</TooltipContent>
+                </Tooltip>
 
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8"
-                    onClick={fitView}
-                  >
-                    <Maximize className="h-4 w-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent side="left">Fit to view</TooltipContent>
-              </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8"
+                      onClick={() => reactFlowInstance?.zoomOut()}
+                    >
+                      <ZoomOut className="h-4 w-4" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="right">Zoom out</TooltipContent>
+                </Tooltip>
 
-              <Separator className="my-1" />
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8"
+                      onClick={fitView}
+                    >
+                      <Maximize className="h-4 w-4" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="right">Fit to view</TooltipContent>
+                </Tooltip>
 
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant={showGrid ? "secondary" : "ghost"}
-                    size="icon"
-                    className="h-8 w-8"
-                    onClick={() => setShowGrid(!showGrid)}
-                  >
-                    <Grid3x3 className="h-4 w-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent side="left">Toggle grid</TooltipContent>
-              </Tooltip>
+                <Separator className="my-1" />
 
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant={showMinimap ? "secondary" : "ghost"}
-                    size="icon"
-                    className="h-8 w-8"
-                    onClick={() => setShowMinimap(!showMinimap)}
-                  >
-                    <Layers className="h-4 w-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent side="left">Toggle minimap</TooltipContent>
-              </Tooltip>
-            </div>
-          </TooltipProvider>
-        </Controls>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant={showGrid ? "secondary" : "ghost"}
+                      size="icon"
+                      className="h-8 w-8"
+                      onClick={() => setShowGrid(!showGrid)}
+                    >
+                      <Grid3x3 className="h-4 w-4" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="right">Toggle grid</TooltipContent>
+                </Tooltip>
+
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant={showMinimap ? "secondary" : "ghost"}
+                      size="icon"
+                      className="h-8 w-8"
+                      onClick={() => setShowMinimap(!showMinimap)}
+                    >
+                      <Layers className="h-4 w-4" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="right">Toggle minimap</TooltipContent>
+                </Tooltip>
+              </div>
+            </TooltipProvider>
+          </div>
+        </Panel>
 
         {/* Canvas Status Panel */}
         <Panel position="top-center" className="bg-white/90 backdrop-blur border rounded-lg px-3 py-1.5 shadow-sm">
@@ -384,6 +405,8 @@ export function WorkflowBuilderRedesigned({
   const [selectedCategory, setSelectedCategory] = useState('triggers');
   const [selectedNode, setSelectedNode] = useState<string | null>(null);
   const [selectedNodeData, setSelectedNodeData] = useState<any>(null);
+  const [executionContext, setExecutionContext] = useState<Record<string, any>>({ nodes: {} });
+  const [showContextPanel, setShowContextPanel] = useState(true);
 
   const handleNodeSelect = (nodeId: string | null, nodeData?: any) => {
     setSelectedNode(nodeId);
@@ -396,12 +419,18 @@ export function WorkflowBuilderRedesigned({
       node.id === nodeId ? { ...node, data: { ...node.data, ...data } } : node
     );
     onChange({ ...definition, nodes: updatedNodes });
-    setSelectedNodeData(data);
+
+    // Merge the new data with existing selectedNodeData
+    setSelectedNodeData(prevData => ({
+      ...prevData,
+      ...data
+    }));
   };
 
-  const handleTestNode = async (nodeId: string) => {
+  const handleTestNode = async (nodeId: string, testRecordId?: string) => {
     console.log('Testing node:', nodeId);
     console.log('Node data:', selectedNodeData);
+    console.log('Test record ID:', testRecordId);
 
     try {
       // Find the node in the definition
@@ -410,19 +439,106 @@ export function WorkflowBuilderRedesigned({
         throw new Error('Node not found');
       }
 
-      // Call the backend API to test the node
+      // Build context with ACTUAL outputs from predecessor nodes
+      const nodeOutputs: Record<string, any> = {};
+
+      // Get all predecessor nodes in topological order
+      const executionOrder: string[] = [];
+      const visited = new Set<string>();
+
+      const buildExecutionOrder = (targetId: string) => {
+        const incomingEdges = definition?.edges?.filter((edge: WorkflowEdge) => edge.target === targetId) || [];
+
+        for (const edge of incomingEdges) {
+          if (!visited.has(edge.source)) {
+            visited.add(edge.source);
+            // Recursively process predecessors first
+            buildExecutionOrder(edge.source);
+            // Then add this node to execution order
+            executionOrder.push(edge.source);
+          }
+        }
+      };
+
+      // Build the execution order
+      buildExecutionOrder(nodeId);
+
+      // Execute each predecessor node to get actual outputs
+      for (const predecessorId of executionOrder) {
+        const predecessorNode = definition?.nodes?.find((n: WorkflowNode) => n.id === predecessorId);
+        if (predecessorNode) {
+          console.log(`Executing predecessor node: ${predecessorId} (${predecessorNode.type})`);
+
+          try {
+            // Execute the predecessor node to get its actual output
+            const predecessorResponse = await workflowsApi.testNode(workflowId || 'new', {
+              node_id: predecessorId,
+              node_type: predecessorNode.type,
+              node_config: predecessorNode.data,
+              test_record_id: testRecordId,
+              test_context: {
+                pipeline_id: predecessorNode.data?.pipeline_id,
+                form_mode: predecessorNode.data?.form_mode,
+                stage_field: predecessorNode.data?.stage_field,
+                stage: predecessorNode.data?.stage,
+                nodes: nodeOutputs // Pass already executed node outputs
+              }
+            });
+
+            // Store the actual output from this node
+            if (predecessorResponse.data?.output?.data) {
+              nodeOutputs[predecessorId] = predecessorResponse.data.output.data;
+              console.log(`Stored output for node ${predecessorId}:`, nodeOutputs[predecessorId]);
+            }
+          } catch (error) {
+            console.error(`Failed to execute predecessor node ${predecessorId}:`, error);
+            // Store error state but continue with other nodes
+            nodeOutputs[predecessorId] = {
+              error: `Failed to execute: ${error instanceof Error ? error.message : 'Unknown error'}`
+            };
+          }
+        }
+      }
+
+      // Now execute the target node with all predecessor outputs
+      console.log('Executing target node with predecessor outputs:', nodeOutputs);
+
+      // Store the context for display
+      setExecutionContext({
+        nodes: nodeOutputs,
+        pipeline_id: node.data?.pipeline_id,
+        test_record_id: testRecordId
+      });
+
+      // Show the context panel
+      setShowContextPanel(true);
+
+      // Call the backend API to test the target node
       const response = await workflowsApi.testNode(workflowId || 'new', {
         node_id: nodeId,
         node_type: node.type,
         node_config: node.data,
-        // Include any context or input data needed for testing
+        test_record_id: testRecordId, // Pass the selected record ID
+        // Include context with actual node outputs
         test_context: {
           pipeline_id: node.data?.pipeline_id,
           form_mode: node.data?.form_mode,
           stage_field: node.data?.stage_field,
-          stage: node.data?.stage
+          stage: node.data?.stage,
+          nodes: nodeOutputs // Add ACTUAL node outputs for template variable resolution
         }
       });
+
+      // Update context with the current node's output
+      if (response.data?.output) {
+        setExecutionContext(prev => ({
+          ...prev,
+          nodes: {
+            ...prev.nodes,
+            [nodeId]: response.data.output.data
+          }
+        }));
+      }
 
       return response.data;
     } catch (error: any) {
@@ -439,6 +555,63 @@ export function WorkflowBuilderRedesigned({
       throw new Error('Failed to connect to test endpoint');
     }
   };
+
+  // Calculate available variables from predecessor nodes
+  const calculateAvailableVariables = useCallback((nodeId: string | null) => {
+    if (!nodeId || !definition?.nodes || !definition?.edges) {
+      return [];
+    }
+
+    const availableVars: Array<{ nodeId: string; label: string; outputs: string[] }> = [];
+    const visited = new Set<string>();
+
+    // Helper function to get all predecessor nodes recursively
+    const getPredecessors = (targetId: string) => {
+      // Find all edges that have this node as target
+      const incomingEdges = definition.edges.filter((edge: WorkflowEdge) => edge.target === targetId);
+
+      for (const edge of incomingEdges) {
+        if (!visited.has(edge.source)) {
+          visited.add(edge.source);
+
+          // Find the source node
+          const sourceNode = definition.nodes.find((n: WorkflowNode) => n.id === edge.source);
+
+          if (sourceNode) {
+            // Get the node configuration to extract outputs
+            const nodeConfig = getNodeConfig(sourceNode.type as WorkflowNodeType);
+
+            if (nodeConfig && nodeConfig.outputs) {
+              let outputs = nodeConfig.outputs;
+
+              // If outputs is a function, call it with the node's config data
+              if (typeof outputs === 'function') {
+                // Pass the node config and any dependencies if needed
+                outputs = outputs(sourceNode.data || {}, {});
+              }
+
+              // Extract output keys from the configuration
+              const outputKeys = outputs.map((output: any) =>
+                typeof output === 'string' ? output : output.key || output.name
+              );
+
+              availableVars.push({
+                nodeId: sourceNode.id,
+                label: sourceNode.data?.label || sourceNode.type || sourceNode.id,
+                outputs: outputKeys
+              });
+            }
+          }
+
+          // Recursively get predecessors of this node
+          getPredecessors(edge.source);
+        }
+      }
+    };
+
+    getPredecessors(nodeId);
+    return availableVars;
+  }, [definition]);
 
   return (
     <ReactFlowProvider>
@@ -500,21 +673,30 @@ export function WorkflowBuilderRedesigned({
             nodeId={selectedNode}
             nodeType={selectedNodeData?.nodeType}
             nodeData={selectedNodeData}
-            availableVariables={[]} // TODO: Calculate from nodes
+            workflowId={workflowId}
+            availableVariables={calculateAvailableVariables(selectedNode)}
             onUpdate={handleNodeUpdate}
             onClose={() => handleNodeSelect(null)}
             onTest={handleTestNode}
           />
         )}
 
-        {/* Right Panel - Debug/History */}
-        {!selectedNode && (showDebugPanel || showHistory) && (
+        {/* Right Panel - Debug/History/Context */}
+        {!selectedNode && (showDebugPanel || showHistory || showContextPanel) && (
           <div className="w-96 border-l bg-card">
-            <Tabs defaultValue={showDebugPanel ? "debug" : "history"} className="h-full flex flex-col">
-              <TabsList className="grid w-full grid-cols-2 p-1 m-4" style={{ width: 'calc(100% - 2rem)' }}>
+            <Tabs defaultValue={showContextPanel ? "context" : (showDebugPanel ? "debug" : "history")} className="h-full flex flex-col">
+              <TabsList className="grid w-full grid-cols-3 p-1 m-4" style={{ width: 'calc(100% - 2rem)' }}>
+                <TabsTrigger value="context">Context</TabsTrigger>
                 <TabsTrigger value="debug">Debug</TabsTrigger>
                 <TabsTrigger value="history">History</TabsTrigger>
               </TabsList>
+
+              <TabsContent value="context" className="flex-1 overflow-hidden p-0">
+                <WorkflowContextPanel
+                  context={executionContext}
+                  isLoading={false}
+                />
+              </TabsContent>
 
               <TabsContent value="debug" className="flex-1 overflow-auto p-4 pt-0">
                 <WorkflowDebugPanel data={debugData} />

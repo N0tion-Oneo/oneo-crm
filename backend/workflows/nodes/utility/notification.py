@@ -14,26 +14,112 @@ User = get_user_model()
 
 class TaskNotificationProcessor(AsyncNodeProcessor):
     """Process task notification nodes for alerts and messaging"""
-    
+
+    # Configuration schema
+    CONFIG_SCHEMA = {
+        "type": "object",
+        "required": ["message"],
+        "properties": {
+            "message": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Notification message",
+                "ui_hints": {
+                    "widget": "textarea",
+                    "rows": 4,
+                    "placeholder": "Task completed for {{contact.name}}"
+                }
+            },
+            "title": {
+                "type": "string",
+                "default": "Workflow Notification",
+                "description": "Notification title",
+                "ui_hints": {
+                    "widget": "text",
+                    "placeholder": "Task Update"
+                }
+            },
+            "type": {
+                "type": "string",
+                "enum": ["info", "success", "warning", "error"],
+                "default": "info",
+                "description": "Notification type",
+                "ui_hints": {
+                    "widget": "select"
+                }
+            },
+            "channels": {
+                "type": "array",
+                "items": {
+                    "type": "string",
+                    "enum": ["in_app", "email", "slack", "webhook"]
+                },
+                "default": ["in_app"],
+                "description": "Notification channels",
+                "ui_hints": {
+                    "widget": "multiselect"
+                }
+            },
+            "recipients": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Recipient user IDs or emails",
+                "ui_hints": {
+                    "widget": "user_multiselect",
+                    "placeholder": "Select users to notify"
+                }
+            },
+            "priority": {
+                "type": "string",
+                "enum": ["low", "normal", "high", "urgent"],
+                "default": "normal",
+                "description": "Notification priority",
+                "ui_hints": {
+                    "widget": "radio"
+                }
+            },
+            "webhook_url": {
+                "type": "string",
+                "format": "uri",
+                "description": "Webhook URL for notifications",
+                "ui_hints": {
+                    "widget": "text",
+                    "placeholder": "https://hooks.slack.com/services/...",
+                    "show_when": {"channels": ["webhook"]}
+                }
+            },
+            "tags": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Notification tags",
+                "ui_hints": {
+                    "widget": "tag_input",
+                    "section": "advanced"
+                }
+            }
+        }
+    }
+
     def __init__(self):
         super().__init__()
-        self.node_type = "TASK_NOTIFY"
+        self.node_type = "task_notify"
         self.supports_replay = True
         self.supports_checkpoints = True
     
     async def process(self, node_config: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
         """Process task/notification node"""
-        
+
         node_data = node_config.get('data', {})
-        
+        config = node_data.get('config', {})
+
         # Extract configuration with context formatting
-        notification_type = node_data.get('type', 'info')
-        message = self._format_template(node_data.get('message', ''), context)
-        title = self._format_template(node_data.get('title', 'Workflow Notification'), context)
-        recipients = node_data.get('recipients', [])
-        channels = node_data.get('channels', ['in_app'])  # in_app, email, slack, webhook
-        priority = node_data.get('priority', 'normal')  # low, normal, high, urgent
-        tags = node_data.get('tags', [])
+        notification_type = config.get('type', 'info')
+        message = self._format_template(config.get('message', ''), context)
+        title = self._format_template(config.get('title', 'Workflow Notification'), context)
+        recipients = config.get('recipients', [])
+        channels = config.get('channels', ['in_app'])  # in_app, email, slack, webhook
+        priority = config.get('priority', 'normal')  # low, normal, high, urgent
+        tags = config.get('tags', [])
         
         # Get execution context
         execution = context.get('execution')
@@ -65,7 +151,7 @@ class TaskNotificationProcessor(AsyncNodeProcessor):
                     sent_notifications.append({'channel': 'slack', **result})
                 
                 elif channel == 'webhook':
-                    webhook_url = node_data.get('webhook_url', '')
+                    webhook_url = config.get('webhook_url', '')
                     result = await self._send_webhook_notification(
                         webhook_url, title, message, notification_type, context, execution
                     )

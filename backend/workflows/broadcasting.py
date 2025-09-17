@@ -24,7 +24,9 @@ class WorkflowExecutionBroadcaster:
         Broadcast that a workflow execution has started
         """
         try:
-            tenant_schema = execution.tenant.schema_name
+            from asgiref.sync import sync_to_async
+            get_tenant_schema = sync_to_async(lambda: execution.tenant.schema_name)
+            tenant_schema = await get_tenant_schema()
             
             # Send to workflow-specific group
             await self.channel_layer.group_send(
@@ -60,7 +62,9 @@ class WorkflowExecutionBroadcaster:
         Broadcast that a node has started executing
         """
         try:
-            tenant_schema = execution.tenant.schema_name
+            from asgiref.sync import sync_to_async
+            get_tenant_schema = sync_to_async(lambda: execution.tenant.schema_name)
+            tenant_schema = await get_tenant_schema()
             
             message = {
                 'type': 'execution_node_started',
@@ -94,7 +98,9 @@ class WorkflowExecutionBroadcaster:
         Broadcast that a node has completed executing
         """
         try:
-            tenant_schema = execution.tenant.schema_name
+            from asgiref.sync import sync_to_async
+            get_tenant_schema = sync_to_async(lambda: execution.tenant.schema_name)
+            tenant_schema = await get_tenant_schema()
             
             message = {
                 'type': 'execution_node_completed',
@@ -123,7 +129,9 @@ class WorkflowExecutionBroadcaster:
         Broadcast that a workflow execution has completed
         """
         try:
-            tenant_schema = execution.tenant.schema_name
+            from asgiref.sync import sync_to_async
+            get_tenant_schema = sync_to_async(lambda: execution.tenant.schema_name)
+            tenant_schema = await get_tenant_schema()
             duration_ms = None
             
             if execution.completed_at and execution.started_at:

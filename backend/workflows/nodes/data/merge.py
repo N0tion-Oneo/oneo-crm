@@ -10,20 +10,75 @@ logger = logging.getLogger(__name__)
 
 class MergeDataProcessor(AsyncNodeProcessor):
     """Process data merge nodes with configurable strategies"""
-    
+
+    # Configuration schema
+    CONFIG_SCHEMA = {
+        "type": "object",
+        "required": ["merge_sources"],
+        "properties": {
+            "merge_sources": {
+                "type": "array",
+                "minItems": 2,
+                "items": {
+                    "oneOf": [
+                        {
+                            "type": "string",
+                            "description": "Context path to data source"
+                        },
+                        {
+                            "type": "object",
+                            "properties": {
+                                "context_path": {"type": "string"},
+                                "transformations": {"type": "array"},
+                                "literal": {},
+                                "template": {"type": "string"}
+                            }
+                        }
+                    ]
+                },
+                "description": "Data sources to merge",
+                "ui_hints": {
+                    "widget": "json_editor",
+                    "rows": 6,
+                    "placeholder": '[\n  "node_1.data",\n  {"context_path": "node_2.result"},\n  {"literal": {"status": "active"}}\n]'
+                }
+            },
+            "merge_strategy": {
+                "type": "string",
+                "enum": ["combine", "override", "append", "deep_merge"],
+                "default": "combine",
+                "description": "How to merge the data sources",
+                "ui_hints": {
+                    "widget": "radio",
+                    "help_text": "combine: merge all into single object, override: later sources override earlier, append: create array of all sources, deep_merge: recursive merge"
+                }
+            },
+            "output_key": {
+                "type": "string",
+                "default": "merged_data",
+                "description": "Key to store merged result in context",
+                "ui_hints": {
+                    "widget": "text",
+                    "placeholder": "merged_data"
+                }
+            }
+        }
+    }
+
     def __init__(self):
         super().__init__()
-        self.node_type = "MERGE_DATA"
+        self.node_type = "merge_data"
         self.supports_replay = True
         self.supports_checkpoints = True
     
     async def process(self, node_config: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
         """Process data merge node"""
-        
+
         node_data = node_config.get('data', {})
-        merge_sources = node_data.get('merge_sources', [])
-        merge_strategy = node_data.get('merge_strategy', 'combine')
-        output_key = node_data.get('output_key', 'merged_data')
+        config = node_data.get('config', {})
+        merge_sources = config.get('merge_sources', [])
+        merge_strategy = config.get('merge_strategy', 'combine')
+        output_key = config.get('output_key', 'merged_data')
         
         if not merge_sources:
             raise ValueError("Merge data node requires merge_sources")

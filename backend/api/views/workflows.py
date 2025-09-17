@@ -1,9 +1,9 @@
 """
 Workflow API views - imported from workflows app
 """
-from workflows.views import (
+from workflows.views_original import (
     WorkflowViewSet,
-    WorkflowExecutionViewSet, 
+    WorkflowExecutionViewSet,
     WorkflowApprovalViewSet,
     WorkflowScheduleViewSet,
     webhook_endpoint,

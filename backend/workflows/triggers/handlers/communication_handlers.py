@@ -25,11 +25,29 @@ class EmailReceivedHandler(BaseTriggerHandler):
 
         trigger_config = trigger.configuration or {}
 
-        # Check if monitoring specific accounts
-        monitor_accounts = trigger_config.get('monitor_accounts', [])
-        if monitor_accounts:
-            recipient_email = event.event_data.get('recipient', '')
-            if recipient_email not in monitor_accounts:
+        # Check if monitoring specific users
+        monitor_users = trigger_config.get('monitor_users', [])
+        if monitor_users and monitor_users != 'all':
+            # Get the user ID and account ID from the event
+            event_user_id = event.event_data.get('user_id')
+            event_account_id = event.event_data.get('account_id')
+
+            # Check if this event matches any of the monitored users/accounts
+            match_found = False
+            for monitor_item in monitor_users:
+                if isinstance(monitor_item, str):
+                    # Just a user ID
+                    if event_user_id == monitor_item:
+                        match_found = True
+                        break
+                elif isinstance(monitor_item, dict):
+                    # User + specific account
+                    if (event_user_id == monitor_item.get('user_id') and
+                        (not monitor_item.get('account_id') or event_account_id == monitor_item.get('account_id'))):
+                        match_found = True
+                        break
+
+            if not match_found:
                 return False
 
         # Check if monitoring specific threads
@@ -75,7 +93,10 @@ class EmailReceivedHandler(BaseTriggerHandler):
             'parent_message_id': parent_message_id,
             'conversation_id': event_data.get('conversation_id'),
             'channel_account': event_data.get('channel_account', ''),
-            'headers': event_data.get('headers', {})
+            'headers': event_data.get('headers', {}),
+            'user_id': event_data.get('user_id'),
+            'account_id': event_data.get('account_id'),
+            'account_name': event_data.get('account_name')
         }
 
     def get_supported_trigger_type(self) -> str:
@@ -132,21 +153,29 @@ class MessageReceivedHandler(BaseTriggerHandler):
             if message_channel not in [ch.lower() for ch in monitor_channels]:
                 return False
 
-        # Check if monitoring specific accounts/numbers
-        monitor_accounts = trigger_config.get('monitor_accounts', [])
-        if monitor_accounts:
-            # Different channels use different identifiers
-            channel = event_data.get('channel', '').lower()
-            identifier = None
+        # Check if monitoring specific users
+        monitor_users = trigger_config.get('monitor_users', [])
+        if monitor_users and monitor_users != 'all':
+            # Get the user ID and account ID from the event
+            event_user_id = event_data.get('user_id')
+            event_account_id = event_data.get('account_id')
 
-            if channel == 'whatsapp':
-                identifier = event_data.get('recipient_phone') or event_data.get('to_number')
-            elif channel == 'linkedin':
-                identifier = event_data.get('recipient_profile') or event_data.get('account_id')
-            elif channel == 'sms':
-                identifier = event_data.get('recipient_phone') or event_data.get('to_number')
+            # Check if this event matches any of the monitored users/accounts
+            match_found = False
+            for monitor_item in monitor_users:
+                if isinstance(monitor_item, str):
+                    # Just a user ID
+                    if event_user_id == monitor_item:
+                        match_found = True
+                        break
+                elif isinstance(monitor_item, dict):
+                    # User + specific account
+                    if (event_user_id == monitor_item.get('user_id') and
+                        (not monitor_item.get('account_id') or event_account_id == monitor_item.get('account_id'))):
+                        match_found = True
+                        break
 
-            if identifier and identifier not in monitor_accounts:
+            if not match_found:
                 return False
 
         # Check if monitoring specific conversation/chat

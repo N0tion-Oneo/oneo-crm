@@ -14,9 +14,94 @@ logger = logging.getLogger(__name__)
 class ConversationStateProcessor(AsyncNodeProcessor):
     """Manage conversation state and context across workflow nodes"""
 
+    # Configuration schema
+    CONFIG_SCHEMA = {
+        "type": "object",
+        "required": ["action"],
+        "properties": {
+            "action": {
+                "type": "string",
+                "enum": ["update", "reset", "merge", "checkpoint"],
+                "default": "update",
+                "description": "State management action",
+                "ui_hints": {
+                    "widget": "radio"
+                }
+            },
+            "state_key": {
+                "type": "string",
+                "default": "conversation_state",
+                "description": "Key for state storage in context",
+                "ui_hints": {
+                    "widget": "text",
+                    "placeholder": "conversation_state or custom_state"
+                }
+            },
+            "max_history_size": {
+                "type": "integer",
+                "minimum": 5,
+                "maximum": 100,
+                "default": 20,
+                "description": "Maximum conversation history entries"
+            },
+            "custom_fields": {
+                "type": "object",
+                "description": "Custom fields to track from context",
+                "ui_hints": {
+                    "widget": "json_editor",
+                    "rows": 4,
+                    "placeholder": '{\n  "intent": "detected_intent",\n  "sentiment": "sentiment_score"\n}'
+                }
+            },
+            "track_metrics": {
+                "type": "boolean",
+                "default": True,
+                "description": "Track conversation metrics"
+            },
+            "track_flags": {
+                "type": "array",
+                "items": {
+                    "type": "string",
+                    "enum": ["needs_escalation", "conversation_complete", "opt_out_detected", "objective_achieved"]
+                },
+                "description": "Flags to automatically track",
+                "ui_hints": {
+                    "widget": "multiselect"
+                }
+            },
+            "merge_strategy": {
+                "type": "string",
+                "enum": ["overwrite", "deep_merge", "append"],
+                "default": "deep_merge",
+                "description": "How to merge states",
+                "ui_hints": {
+                    "widget": "select",
+                    "show_when": {"action": "merge"}
+                }
+            },
+            "checkpoint_name": {
+                "type": "string",
+                "description": "Name for state checkpoint",
+                "ui_hints": {
+                    "widget": "text",
+                    "placeholder": "before_escalation",
+                    "show_when": {"action": "checkpoint"}
+                }
+            },
+            "persist_to_storage": {
+                "type": "boolean",
+                "default": False,
+                "description": "Persist state to external storage",
+                "ui_hints": {
+                    "section": "advanced"
+                }
+            }
+        }
+    }
+
     def __init__(self):
         super().__init__()
-        self.node_type = "CONVERSATION_STATE"
+        self.node_type = "conversation_state"
         self.supports_replay = True
         self.supports_checkpoints = True
 
@@ -24,10 +109,11 @@ class ConversationStateProcessor(AsyncNodeProcessor):
         """Process conversation state management"""
 
         node_data = node_config.get('data', {})
+        config = node_data.get('config', {})
 
         # Extract configuration
-        action = node_data.get('action', 'update')  # update, reset, merge, checkpoint
-        state_key = node_data.get('state_key', 'conversation_state')
+        action = config.get('action', 'update')
+        state_key = config.get('state_key', 'conversation_state')
 
         # State operations
         if action == 'update':
@@ -89,7 +175,7 @@ class ConversationStateProcessor(AsyncNodeProcessor):
             current_state['conversation_history'].append(new_entry)
 
             # Limit history size
-            max_history = node_data.get('max_history_size', 20)
+            max_history = node_data.get('config', {}).get('max_history_size', 20)
             if len(current_state['conversation_history']) > max_history:
                 current_state['conversation_history'] = current_state['conversation_history'][-max_history:]
 
@@ -105,7 +191,7 @@ class ConversationStateProcessor(AsyncNodeProcessor):
             })
 
         # Store custom fields
-        custom_fields = node_data.get('custom_fields', {})
+        custom_fields = node_data.get('config', {}).get('custom_fields', {})
         for field_name, field_source in custom_fields.items():
             if field_source in context:
                 current_state[field_name] = context[field_source]

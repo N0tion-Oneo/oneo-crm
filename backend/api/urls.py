@@ -13,6 +13,7 @@ from .views.auth import AuthViewSet
 from .views.field_types import FieldTypeViewSet
 from .views.global_options import GlobalOptionsViewSet
 from .views.users import UserViewSet
+from .views.users_enriched import UserEnrichedViewSet
 from .views.staff_profiles import StaffProfileViewSet
 from tenants.views import TenantSettingsViewSet
 
@@ -85,6 +86,7 @@ router.register(r'auth', AuthViewSet, basename='auth')
 router.register(r'field-types', FieldTypeViewSet, basename='field-types')
 router.register(r'global-options', GlobalOptionsViewSet, basename='global-options')
 router.register(r'users', UserViewSet, basename='users')
+router.register(r'users-enriched', UserEnrichedViewSet, basename='users-enriched')
 router.register(r'staff-profiles', StaffProfileViewSet, basename='staff-profiles')
 
 # Tenant settings endpoints - singleton resource

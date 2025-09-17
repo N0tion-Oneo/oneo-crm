@@ -54,6 +54,8 @@ class WorkflowNodeType(models.TextChoices):
     AI_ANALYSIS = 'ai_analysis', 'AI Analysis'
     AI_CLASSIFICATION = 'ai_classification', 'AI Classification'  # Deprecated - use AI_ANALYSIS
     AI_CONVERSATION_LOOP = 'ai_conversation_loop', 'AI Conversation Loop'
+    AI_MESSAGE_GENERATOR = 'ai_message_generator', 'AI Message Generator'
+    AI_RESPONSE_EVALUATOR = 'ai_response_evaluator', 'AI Response Evaluator'
     
     # Record Operations
     RECORD_CREATE = 'record_create', 'Create Record'
@@ -68,6 +70,9 @@ class WorkflowNodeType(models.TextChoices):
     WAIT_FOR_RESPONSE = 'wait_for_response', 'Wait for Response'
     WAIT_FOR_RECORD_EVENT = 'wait_for_record_event', 'Wait for Record Event'
     WAIT_FOR_CONDITION = 'wait_for_condition', 'Wait for Condition'
+    WORKFLOW_LOOP_CONTROLLER = 'workflow_loop_controller', 'Workflow Loop Controller'
+    WORKFLOW_LOOP_BREAKER = 'workflow_loop_breaker', 'Workflow Loop Breaker'
+    CONVERSATION_STATE = 'conversation_state', 'Conversation State Manager'
     
     # External Integration
     HTTP_REQUEST = 'http_request', 'HTTP Request'

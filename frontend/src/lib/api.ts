@@ -1103,6 +1103,10 @@ export const workflowsApi = {
   testNode: (workflowId: string, data: any) =>
     api.post(`/api/v1/workflows/${workflowId}/test-node/`, data),
 
+  // Get test records for a workflow node
+  getTestRecords: (workflowId: string, params: { pipeline_id?: string; node_type?: string }) =>
+    api.get(`/api/v1/workflows/test-records/`, { params }),
+
   // Workflow executions
   getExecutions: (workflowId: string, params?: any) =>
     api.get(`/api/v1/workflows/${workflowId}/executions/`, { params }),

@@ -12,33 +12,127 @@ logger = logging.getLogger(__name__)
 
 class WhatsAppProcessor(AsyncNodeProcessor):
     """Process WhatsApp message sending nodes via UniPile integration"""
-    
+
+    # Configuration schema
+    CONFIG_SCHEMA = {
+        "type": "object",
+        "required": ["recipient_phone", "message_content"],
+        "properties": {
+            "recipient_phone": {
+                "type": "string",
+                "pattern": "^\\+?[1-9]\\d{1,14}$",
+                "description": "Recipient phone number with country code",
+                "ui_hints": {
+                    "widget": "text",
+                    "placeholder": "{{contact.phone}} or +1234567890"
+                }
+            },
+            "message_content": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096,
+                "description": "Message content to send",
+                "ui_hints": {
+                    "widget": "textarea",
+                    "rows": 5,
+                    "placeholder": "Hi {{contact.name}}, your appointment is confirmed..."
+                }
+            },
+            "user_id": {
+                "type": "string",
+                "description": "User ID for WhatsApp account",
+                "ui_hints": {
+                    "widget": "user_select",
+                    "placeholder": "{{assigned_user.id}}"
+                }
+            },
+            "message_type": {
+                "type": "string",
+                "enum": ["text", "image", "document", "audio", "video", "location", "contact"],
+                "default": "text",
+                "description": "Type of WhatsApp message",
+                "ui_hints": {
+                    "widget": "select"
+                }
+            },
+            "attachments": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "url": {"type": "string", "format": "uri"},
+                        "type": {"type": "string"}
+                    }
+                },
+                "description": "File attachments",
+                "ui_hints": {
+                    "widget": "file_upload",
+                    "show_when": {"message_type": ["image", "document", "audio", "video"]}
+                }
+            },
+            "is_reply": {
+                "type": "boolean",
+                "default": False,
+                "description": "Is this a reply to existing chat"
+            },
+            "reply_to_message_id": {
+                "type": "string",
+                "description": "Message ID to reply to",
+                "ui_hints": {
+                    "widget": "text",
+                    "placeholder": "{{last_message.id}}",
+                    "show_when": {"is_reply": True}
+                }
+            },
+            "chat_id": {
+                "type": "string",
+                "description": "WhatsApp chat ID",
+                "ui_hints": {
+                    "widget": "text",
+                    "placeholder": "{{conversation.chat_id}}",
+                    "show_when": {"is_reply": True}
+                }
+            },
+            "sequence_metadata": {
+                "type": "object",
+                "description": "Metadata for sequence tracking",
+                "ui_hints": {
+                    "widget": "json_editor",
+                    "rows": 3,
+                    "section": "advanced"
+                }
+            }
+        }
+    }
+
     def __init__(self):
         super().__init__()
-        self.node_type = "UNIPILE_SEND_WHATSAPP"
+        self.node_type = "unipile_send_whatsapp"
         self.supports_replay = True
         self.supports_checkpoints = True
     
     async def process(self, node_config: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
         """Process WhatsApp message sending node"""
-        
+
         node_data = node_config.get('data', {})
-        
+        config = node_data.get('config', {})
+
         # Extract configuration with context formatting
-        user_id = self._format_template(node_data.get('user_id', ''), context)
-        recipient_phone = self._format_template(node_data.get('recipient_phone', ''), context)
-        message_content = self._format_template(node_data.get('message_content', ''), context)
-        
+        user_id = self._format_template(config.get('user_id', ''), context)
+        recipient_phone = self._format_template(config.get('recipient_phone', ''), context)
+        message_content = self._format_template(config.get('message_content', ''), context)
+
         # Optional parameters
-        sequence_metadata = node_data.get('sequence_metadata', {})
-        attachments = node_data.get('attachments', [])
-        message_type = node_data.get('message_type', 'text')  # text, image, document, etc.
+        sequence_metadata = config.get('sequence_metadata', {})
+        attachments = config.get('attachments', [])
+        message_type = config.get('message_type', 'text')  # text, image, document, etc.
 
         # Thread/reply parameters
-        reply_to_message_id = node_data.get('reply_to_message_id') or context.get('parent_message_id')
-        chat_id = node_data.get('chat_id') or context.get('external_thread_id')
-        conversation_id = node_data.get('conversation_id') or context.get('conversation_id')
-        is_reply = node_data.get('is_reply', False) or bool(reply_to_message_id)
+        reply_to_message_id = config.get('reply_to_message_id') or context.get('parent_message_id')
+        chat_id = config.get('chat_id') or context.get('external_thread_id')
+        conversation_id = config.get('conversation_id') or context.get('conversation_id')
+        is_reply = config.get('is_reply', False) or bool(reply_to_message_id)
         
         # Validate required fields
         if not all([user_id, recipient_phone, message_content]):
@@ -257,44 +351,46 @@ class WhatsAppProcessor(AsyncNodeProcessor):
     async def validate_inputs(self, node_config: Dict[str, Any], context: Dict[str, Any]) -> bool:
         """Validate WhatsApp node inputs"""
         node_data = node_config.get('data', {})
-        
+        config = node_data.get('config', {})
+
         # Check required fields are present
-        required_fields = ['user_id', 'recipient_phone', 'message_content']
+        required_fields = ['recipient_phone', 'message_content']
         for field in required_fields:
-            if not node_data.get(field):
+            if not config.get(field):
                 return False
-        
+
         # Validate phone number format
-        recipient_phone = self._format_template(node_data.get('recipient_phone', ''), context)
+        recipient_phone = self._format_template(config.get('recipient_phone', ''), context)
         if not self._validate_phone_number(recipient_phone):
             return False
-        
+
         # Validate message type
-        message_type = node_data.get('message_type', 'text')
+        message_type = config.get('message_type', 'text')
         valid_types = ['text', 'image', 'document', 'audio', 'video', 'location', 'contact']
         if message_type not in valid_types:
             return False
-        
+
         # Validate attachments if present
-        attachments = node_data.get('attachments', [])
+        attachments = config.get('attachments', [])
         if not isinstance(attachments, list):
             return False
-        
+
         return True
     
     async def create_checkpoint(self, node_config: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
         """Create checkpoint for WhatsApp node"""
         checkpoint = await super().create_checkpoint(node_config, context)
-        
+
         node_data = node_config.get('data', {})
+        config = node_data.get('config', {})
         checkpoint.update({
             'whatsapp_config': {
-                'recipient': self._format_template(node_data.get('recipient_phone', ''), context),
-                'message_length': len(self._format_template(node_data.get('message_content', ''), context)),
-                'user_id': self._format_template(node_data.get('user_id', ''), context),
-                'message_type': node_data.get('message_type', 'text'),
-                'attachments_count': len(node_data.get('attachments', []))
+                'recipient': self._format_template(config.get('recipient_phone', ''), context),
+                'message_length': len(self._format_template(config.get('message_content', ''), context)),
+                'user_id': self._format_template(config.get('user_id', ''), context),
+                'message_type': config.get('message_type', 'text'),
+                'attachments_count': len(config.get('attachments', []))
             }
         })
-        
+
         return checkpoint

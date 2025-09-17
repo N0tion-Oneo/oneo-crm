@@ -15,7 +15,7 @@ class WorkflowLoopController(AsyncNodeProcessor):
 
     def __init__(self):
         super().__init__()
-        self.node_type = "WORKFLOW_LOOP_CONTROLLER"
+        self.node_type = "workflow_loop_controller"
         self.supports_replay = True
         self.supports_checkpoints = True
 
@@ -113,13 +113,13 @@ class WorkflowLoopController(AsyncNodeProcessor):
         # Check loop type specific conditions
         if loop_type == 'count_based':
             # Simple count-based loop
-            target_count = node_data.get('target_count', max_iterations)
+            target_count = node_data.get('config', {}).get('target_count', max_iterations)
             if loop_state['current_iteration'] >= target_count:
                 return False, 'target_count_reached'
 
         elif loop_type == 'time_based':
             # Time-based loop
-            max_duration_minutes = node_data.get('max_duration_minutes', 60)
+            max_duration_minutes = node_data.get('config', {}).get('max_duration_minutes', 60)
             start_time = datetime.fromisoformat(loop_state['start_time'].replace('Z', '+00:00'))
             elapsed = (timezone.now() - start_time).total_seconds() / 60
             if elapsed >= max_duration_minutes:
@@ -264,33 +264,54 @@ class WorkflowLoopBreaker(AsyncNodeProcessor):
 
     def __init__(self):
         super().__init__()
-        self.node_type = "WORKFLOW_LOOP_BREAKER"
+        self.node_type = "workflow_loop_breaker"
         self.supports_replay = True
 
     async def process(self, node_config: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
         """Process loop break"""
 
         node_data = node_config.get('data', {})
-        loop_key = node_data.get('loop_key', 'default_loop')
-        break_reason = node_data.get('reason', 'manual_break')
+        config = node_data.get('config', {})
+
+        loop_key = config.get('loop_key', 'default_loop')
+        break_reason = config.get('break_reason', 'manual_break')
+        break_all_loops = config.get('break_all_loops', False)
+        set_exit_flag = config.get('set_exit_flag', True)
+        exit_data = config.get('exit_data', {})
 
         # Set loop control flags
-        context['should_loop'] = False
-        context['loop_exit_reason'] = break_reason
+        if set_exit_flag:
+            context['should_loop'] = False
+            context['loop_exit_reason'] = break_reason
+
+        # Add exit data to context if provided
+        if exit_data:
+            context['loop_exit_data'] = exit_data
 
         # Update loop state if exists
-        if 'workflow_loops' in context and loop_key in context['workflow_loops']:
-            loop_state = context['workflow_loops'][loop_key]
-            loop_state['exit_checks'].append({
-                'iteration': loop_state.get('current_iteration', 0),
-                'condition': 'manual_break',
-                'reason': break_reason
-            })
+        if 'workflow_loops' in context:
+            if break_all_loops:
+                # Break all loops
+                for key, loop_state in context['workflow_loops'].items():
+                    loop_state['exit_checks'].append({
+                        'iteration': loop_state.get('current_iteration', 0),
+                        'condition': 'manual_break',
+                        'reason': break_reason
+                    })
+            elif loop_key in context['workflow_loops']:
+                # Break specific loop
+                loop_state = context['workflow_loops'][loop_key]
+                loop_state['exit_checks'].append({
+                    'iteration': loop_state.get('current_iteration', 0),
+                    'condition': 'manual_break',
+                    'reason': break_reason
+                })
 
         return {
             'success': True,
             'action': 'break_loop',
-            'loop_key': loop_key,
+            'loop_key': loop_key if not break_all_loops else 'all',
             'break_reason': break_reason,
-            'next_workflow_path': node_data.get('exit_to', 'loop_exit')
+            'exit_data': exit_data,
+            'next_workflow_path': config.get('exit_to', 'loop_exit')
         }

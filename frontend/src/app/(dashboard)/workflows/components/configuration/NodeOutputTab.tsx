@@ -1,30 +1,153 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Label } from '@/components/ui/label';
+import { Separator } from '@/components/ui/separator';
 import {
   Table as TableIcon, FileJson, Code, Copy, Check,
-  AlertCircle, RefreshCw, PlayCircle, Database
+  AlertCircle, RefreshCw, PlayCircle, Database,
+  FileText, Loader2
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
+import { workflowsApi } from '@/lib/api';
 
 interface NodeOutputTabProps {
   output: any;
   error: string | null;
   loading?: boolean;
+  nodeId?: string;
+  nodeType?: string;
+  nodeData?: any;
+  workflowId?: string;
+  onTest?: (testRecordId?: string) => void;
 }
 
 export function NodeOutputTab({
   output,
   error,
-  loading = false
+  loading = false,
+  nodeId,
+  nodeType,
+  nodeData,
+  workflowId,
+  onTest
 }: NodeOutputTabProps) {
   const [viewMode, setViewMode] = useState<'table' | 'json' | 'schema'>('table');
   const [copied, setCopied] = useState(false);
+  const [testRecords, setTestRecords] = useState<any[]>([]);
+  const [selectedRecordId, setSelectedRecordId] = useState<string>('sample');
+  const [loadingRecords, setLoadingRecords] = useState(false);
+  const [showRecordSelector, setShowRecordSelector] = useState(false);
+
+  // Fetch test records when pipeline changes or when trigger nodes are selected
+  useEffect(() => {
+    // Check for pipeline_id in both locations (config and direct)
+    const pipelineId = nodeData?.config?.pipeline_id || nodeData?.pipeline_id;
+
+    console.log('NodeOutputTab useEffect triggered:', {
+      workflowId,
+      pipeline_id: pipelineId,
+      nodeType,
+      nodeData,
+      fullNodeData: JSON.stringify(nodeData)
+    });
+
+    // Always show selector if we have a workflow (including new workflows)
+    if (workflowId && workflowId !== '') {
+      setShowRecordSelector(true);
+
+      // Fetch records if we have a pipeline_id
+      if (pipelineId) {
+        console.log('Fetching records for pipeline:', pipelineId);
+        fetchTestRecords();
+      } else {
+        console.log('No pipeline_id found in nodeData or nodeData.config');
+      }
+    } else if (workflowId === 'new' || pipelineId) {
+      // For new workflows or when we have a pipeline_id, still show the selector
+      setShowRecordSelector(true);
+
+      if (pipelineId) {
+        console.log('Fetching records for pipeline:', pipelineId);
+        fetchTestRecords();
+      }
+    } else {
+      console.log('No workflowId provided or workflowId is empty');
+    }
+  }, [nodeData?.config?.pipeline_id, nodeData?.pipeline_id, nodeType, workflowId]);
+
+  const fetchTestRecords = async () => {
+    // Check for pipeline_id in both locations
+    const pipelineId = nodeData?.config?.pipeline_id || nodeData?.pipeline_id;
+
+    if (!pipelineId) {
+      console.log('Missing pipeline_id for fetching records');
+      return;
+    }
+
+    // Use 'new' for new workflows, or the actual workflowId
+    const effectiveWorkflowId = (!workflowId || workflowId === '') ? 'new' : workflowId;
+
+    console.log('Fetching test records with:', {
+      effectiveWorkflowId,
+      pipeline_id: pipelineId,
+      node_type: nodeType
+    });
+
+    setLoadingRecords(true);
+    try {
+      const response = await workflowsApi.getTestRecords(effectiveWorkflowId, {
+        pipeline_id: pipelineId,
+        node_type: nodeType
+      });
+
+      console.log('Test records response:', response.data);
+
+      if (response.data?.records) {
+        setTestRecords(response.data.records);
+        console.log(`Loaded ${response.data.records.length} records`);
+
+        // Check if this is sample data
+        if (response.data.is_sample_data) {
+          console.log('Using sample data for testing');
+        }
+
+        // Default to sample data if no record is selected
+        if (!selectedRecordId || selectedRecordId === '') {
+          setSelectedRecordId('sample');
+        }
+      } else {
+        console.log('No records in response');
+        setTestRecords([]);
+      }
+    } catch (error) {
+      console.error('Failed to fetch test records:', error);
+      setTestRecords([]);
+    } finally {
+      setLoadingRecords(false);
+    }
+  };
+
+  const handleTestWithRecord = () => {
+    console.log('handleTestWithRecord called with selectedRecordId:', selectedRecordId);
+    if (onTest) {
+      // Pass the selected record ID, or undefined for sample data
+      const recordId = selectedRecordId === 'sample' ? undefined : selectedRecordId;
+      console.log('Calling onTest with recordId:', recordId);
+      onTest(recordId);
+    }
+  };
+
+  const formatRecordTitle = (record: any) => {
+    const date = new Date(record.created_at).toLocaleDateString();
+    return `${record.title} - ${date}`;
+  };
 
   const copyToClipboard = () => {
     const text = JSON.stringify(output, null, 2);
@@ -153,10 +276,90 @@ export function NodeOutputTab({
 
   if (!output) {
     return (
-      <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
-        <PlayCircle className="h-8 w-8 mb-3 opacity-50" />
-        <p className="text-sm font-medium mb-1">No Output Yet</p>
-        <p className="text-xs">Test the node to see output here</p>
+      <div className="space-y-4">
+        {/* Record Selector Section */}
+        {showRecordSelector && (
+          <div className="space-y-4 p-4 bg-muted/30 rounded-lg">
+            <div className="space-y-2">
+              <Label className="text-sm font-medium">Test Data Source</Label>
+              <Select value={selectedRecordId} onValueChange={setSelectedRecordId}>
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Select a record to use as test data" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="sample">
+                    <div className="flex items-center gap-2">
+                      <FileText className="h-4 w-4" />
+                      <span>Use Sample Data</span>
+                    </div>
+                  </SelectItem>
+                  {loadingRecords && (
+                    <SelectItem value="loading" disabled>
+                      <div className="flex items-center gap-2">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        <span>Loading records...</span>
+                      </div>
+                    </SelectItem>
+                  )}
+                  {!loadingRecords && testRecords.length === 0 && (nodeData?.config?.pipeline_id || nodeData?.pipeline_id) && (
+                    <SelectItem value="no-records" disabled>
+                      <span className="text-muted-foreground">No records found in this pipeline</span>
+                    </SelectItem>
+                  )}
+                  {testRecords.map((record) => (
+                    <SelectItem key={record.id} value={record.id}>
+                      <div className="flex flex-col">
+                        <span className="font-medium">{record.title || `Record ${record.id.slice(-8)}`}</span>
+                        {record.preview && Object.keys(record.preview).length > 0 && (
+                          <span className="text-xs text-muted-foreground">
+                            {Object.entries(record.preview)
+                              .slice(0, 2)
+                              .map(([k, v]) => `${k}: ${v}`)
+                              .join(', ')}
+                          </span>
+                        )}
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                {selectedRecordId === 'sample'
+                  ? 'Using generated sample data for testing'
+                  : 'Using actual record data from your pipeline'}
+              </p>
+            </div>
+
+            <Button
+              onClick={handleTestWithRecord}
+              className="w-full"
+              disabled={loading}
+            >
+              {loading ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Testing...
+                </>
+              ) : (
+                <>
+                  <PlayCircle className="h-4 w-4 mr-2" />
+                  Test with {selectedRecordId === 'sample' ? 'Sample Data' : 'Selected Record'}
+                </>
+              )}
+            </Button>
+          </div>
+        )}
+
+        {/* No output message */}
+        <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+          <PlayCircle className="h-8 w-8 mb-3 opacity-50" />
+          <p className="text-sm font-medium mb-1">No Output Yet</p>
+          <p className="text-xs">
+            {showRecordSelector
+              ? 'Select test data above and click Test to see the output'
+              : 'Test the node to see output here'}
+          </p>
+        </div>
       </div>
     );
   }
@@ -239,7 +442,7 @@ export function NodeOutputTab({
                           <td
                             key={cellIndex}
                             className="text-xs px-3 py-2 border-b max-w-[200px] truncate"
-                            title={cell}
+                            title={String(cell)}
                           >
                             {cell}
                           </td>

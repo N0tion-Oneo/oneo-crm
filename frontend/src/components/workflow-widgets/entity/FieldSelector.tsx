@@ -30,11 +30,12 @@ export const FieldSelector: React.FC<WidgetProps> = (props) => {
     shouldFetch ? pipelineIds : undefined
   );
 
-  const fields = props.pipelineFields || fetchedFields;
+  const fields = props.pipelineFields || fetchedFields || [];
 
   // Apply field filters if specified
   const filteredFields = useMemo(() => {
-    let result = fields;
+    // Ensure fields is always an array
+    let result = Array.isArray(fields) ? fields : [];
 
     // Filter by field type if specified
     if (uiHints.field_types) {
@@ -124,6 +125,8 @@ const FieldMultiSelect: React.FC<WidgetProps & { fields: any[]; isLoading: boole
   isLoading,
   ...props
 }) => {
+  // Ensure fields is always an array
+  const safeFields = Array.isArray(fields) ? fields : [];
   const selectedValues = Array.isArray(value) ? value : [];
   const placeholder = props.placeholder || props.uiHints?.placeholder || 'Select fields';
 
@@ -157,7 +160,7 @@ const FieldMultiSelect: React.FC<WidgetProps & { fields: any[]; isLoading: boole
             )}
           </SelectTrigger>
           <SelectContent>
-            {fields.map((field: any) => {
+            {safeFields.map((field: any) => {
               const fieldKey = field.slug || field.name || field.key || field.id;
               const fieldName = field.label || field.name || fieldKey;
               const isSelected = selectedValues.includes(fieldKey);
@@ -182,7 +185,7 @@ const FieldMultiSelect: React.FC<WidgetProps & { fields: any[]; isLoading: boole
         {selectedValues.length > 0 && (
           <div className="flex flex-wrap gap-2">
             {selectedValues.map((fieldKey) => {
-              const field = fields.find(f =>
+              const field = safeFields.find(f =>
                 (f.slug || f.name || f.key || f.id) === fieldKey
               );
               const fieldName = field?.label || field?.name || fieldKey;

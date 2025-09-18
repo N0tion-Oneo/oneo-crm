@@ -38,7 +38,9 @@ const ConditionRow: React.FC<ConditionRowProps> = ({
   supportsChangeOperators = false,
   pipelineId
 }) => {
-  const selectedField = fields.find(f => f.name === condition.field)
+  // Ensure fields is always an array
+  const safeFields = Array.isArray(fields) ? fields : []
+  const selectedField = safeFields.find(f => f.name === condition.field)
   const [fieldOptions, setFieldOptions] = useState<Array<{value: string, label: string}>>([])
   const [loadingOptions, setLoadingOptions] = useState(false)
 
@@ -538,7 +540,7 @@ const ConditionRow: React.FC<ConditionRowProps> = ({
           className="w-full text-sm border rounded px-2 py-1"
         >
           <option value="">Select field...</option>
-          {fields.map(field => (
+          {safeFields.map(field => (
             <option key={field.name} value={field.name}>
               {field.display_name || field.name} ({field.field_type})
             </option>
@@ -608,6 +610,8 @@ const GroupBuilder: React.FC<GroupBuilderProps> = ({
   supportsChangeOperators = false,
   pipelineId
 }) => {
+  // Ensure fields is always an array
+  const safeFields = Array.isArray(fields) ? fields : []
   const [isCollapsed, setIsCollapsed] = React.useState(false)
 
   const addCondition = () => {
@@ -701,7 +705,7 @@ const GroupBuilder: React.FC<GroupBuilderProps> = ({
               {isConditionGroup(item) ? (
                 <GroupBuilder
                   group={item}
-                  fields={fields}
+                  fields={safeFields}
                   onUpdate={(updated) => updateItem(index, updated)}
                   onRemove={() => removeItem(index)}
                   depth={depth + 1}
@@ -711,7 +715,7 @@ const GroupBuilder: React.FC<GroupBuilderProps> = ({
               ) : (
                 <ConditionRow
                   condition={item}
-                  fields={fields}
+                  fields={safeFields}
                   onUpdate={(updated) => updateItem(index, updated)}
                   onRemove={() => removeItem(index)}
                   supportsChangeOperators={supportsChangeOperators}
@@ -766,6 +770,9 @@ export const WorkflowConditionBuilder: React.FC<WorkflowConditionBuilderProps> =
   supportsChangeOperators = false,
   pipelineId
 }) => {
+  // Ensure fields is always an array
+  const safeFields = Array.isArray(fields) ? fields : []
+
   // Convert flat array to group structure if needed
   const rootGroup = useMemo(() => {
     if (!value) {
@@ -802,7 +809,7 @@ export const WorkflowConditionBuilder: React.FC<WorkflowConditionBuilderProps> =
     <div className="workflow-condition-container">
       <GroupBuilder
         group={rootGroup}
-        fields={fields}
+        fields={safeFields}
         onUpdate={handleUpdate}
         supportsChangeOperators={supportsChangeOperators}
         pipelineId={pipelineId}

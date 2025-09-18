@@ -15,6 +15,7 @@ from django.views.decorators.http import require_http_methods
 from django.utils.decorators import method_decorator
 import json
 import logging
+import traceback
 
 from .models import (
     Workflow, WorkflowExecution, WorkflowExecutionLog,
@@ -410,6 +411,209 @@ class WorkflowViewSet(viewsets.ModelViewSet):
                 'total': 0,
                 'error': f'Unable to fetch records from pipeline: {str(e)}'
             })
+
+    @action(detail=False, methods=['post'], url_path='test-node-standalone', permission_classes=[TenantMemberPermission])
+    def test_node_standalone(self, request):
+        """Test a node without requiring a workflow - for test page"""
+        # Get node configuration from request
+        node_type = request.data.get('node_type')
+        node_config = request.data.get('node_config', {})
+        test_context = request.data.get('test_context', {})
+        test_record_id = request.data.get('test_record_id')
+
+        logger.info(f"test_node_standalone called with node_type={node_type}, test_record_id={test_record_id}")
+
+        if not node_type:
+            return Response({
+                'success': False,
+                'error': 'node_type is required'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            from workflows.processors import get_node_processor
+            import time
+
+            # Track side effects
+            side_effects = []
+
+            # For trigger nodes, return actual or sample data
+            if 'trigger' in node_type.lower():
+                if test_record_id:
+                    from pipelines.models import Record
+                    try:
+                        record = Record.objects.get(id=test_record_id, is_deleted=False)
+
+                        # Format trigger output based on type
+                        if node_type.lower() in ['trigger_form_submitted', 'TRIGGER_FORM_SUBMITTED']:
+                            form_data = record.data or {}
+                            output_data = {
+                                **form_data,  # All fields at top level
+                                'form_data': form_data,  # Nested form data
+                                'submission_id': f'sub_{record.id}',
+                                'submitted_at': record.created_at.isoformat(),
+                                'pipeline_id': str(record.pipeline_id),
+                                'record_id': str(record.id),
+                            }
+
+                            return Response({
+                                'status': 'success',
+                                'message': f'Trigger would fire with data from "{record.data.get("name", record.id)}"',
+                                'duration': 0,
+                                'input': {
+                                    'node_type': node_type,
+                                    'config': node_config,
+                                    'record_id': str(record.id)
+                                },
+                                'output': output_data,
+                                'side_effects': [],
+                                'logs': [
+                                    {'level': 'info', 'message': f'Loaded record {record.id}'},
+                                    {'level': 'info', 'message': 'Formatted trigger data'}
+                                ]
+                            })
+
+                    except Record.DoesNotExist:
+                        return Response({
+                            'status': 'error',
+                            'error': f'Record {test_record_id} not found'
+                        }, status=status.HTTP_404_NOT_FOUND)
+
+                # Return sample data for triggers without record
+                return Response({
+                    'status': 'success',
+                    'message': 'Trigger configuration validated',
+                    'duration': 0,
+                    'input': {'node_type': node_type, 'config': node_config},
+                    'output': {'trigger_type': node_type, 'config': node_config},
+                    'side_effects': [],
+                    'logs': [{'level': 'info', 'message': 'Trigger configured successfully'}]
+                })
+
+            # Get processor for non-trigger nodes
+            processor = get_node_processor(node_type)
+
+            if not processor:
+                return Response({
+                    'status': 'error',
+                    'error': f'No processor found for node type: {node_type}'
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            # Add record data to context if provided
+            if test_record_id:
+                from pipelines.models import Record
+                try:
+                    record = Record.objects.get(id=test_record_id, is_deleted=False)
+                    test_context['record'] = {
+                        'id': str(record.id),
+                        **(record.data or {})
+                    }
+                    logger.info(f"Added record {record.id} to test context")
+                except Record.DoesNotExist:
+                    logger.warning(f"Record {test_record_id} not found")
+
+            # Execute the processor
+            start_time = time.time()
+            logs = []
+
+            # Capture logs during execution
+            import logging
+            class TestLogHandler(logging.Handler):
+                def emit(self, record):
+                    logs.append({
+                        'level': record.levelname.lower(),
+                        'message': record.getMessage(),
+                        'timestamp': time.time()
+                    })
+
+            test_handler = TestLogHandler()
+            test_handler.setLevel(logging.DEBUG)
+            processor_logger = logging.getLogger(processor.__module__)
+            processor_logger.addHandler(test_handler)
+
+            try:
+                # Execute processor
+                import asyncio
+                from asgiref.sync import async_to_sync
+
+                if asyncio.iscoroutinefunction(processor.process):
+                    result = async_to_sync(processor.process)(node_config, test_context)
+                else:
+                    result = processor.process(node_config, test_context)
+
+                execution_time = (time.time() - start_time) * 1000
+
+                # Track side effects based on node type
+                if 'email' in node_type.lower():
+                    side_effects.append({
+                        'type': 'email',
+                        'description': f"Email sent to {node_config.get('to_email', 'configured recipient')}",
+                        'details': result
+                    })
+                elif 'sms' in node_type.lower():
+                    side_effects.append({
+                        'type': 'sms',
+                        'description': f"SMS sent to {node_config.get('to_phone', 'configured number')}",
+                        'details': result
+                    })
+                elif 'create' in node_type.lower() and 'record' in node_type.lower():
+                    side_effects.append({
+                        'type': 'record_created',
+                        'description': 'New record created',
+                        'details': result
+                    })
+                elif 'task' in node_type.lower():
+                    side_effects.append({
+                        'type': 'task_created',
+                        'description': f"Task created: {node_config.get('task_title', 'Task')}",
+                        'details': result
+                    })
+
+                return Response({
+                    'status': 'success',
+                    'message': f'Node executed successfully',
+                    'duration': execution_time,
+                    'input': {
+                        'node_type': node_type,
+                        'config': node_config,
+                        'context': test_context
+                    },
+                    'output': result.get('output', result) if isinstance(result, dict) else {'result': result},
+                    'side_effects': side_effects,
+                    'logs': logs
+                })
+
+            except Exception as proc_error:
+                execution_time = (time.time() - start_time) * 1000
+                return Response({
+                    'status': 'error',
+                    'message': str(proc_error),
+                    'duration': execution_time,
+                    'input': {
+                        'node_type': node_type,
+                        'config': node_config,
+                        'context': test_context
+                    },
+                    'output': None,
+                    'side_effects': side_effects,
+                    'logs': logs,
+                    'error': {
+                        'type': type(proc_error).__name__,
+                        'message': str(proc_error),
+                        'traceback': traceback.format_exc() if request.user.is_staff else None
+                    }
+                })
+            finally:
+                # Remove test log handler
+                processor_logger.removeHandler(test_handler)
+
+        except Exception as e:
+            logger.error(f"Node test failed: {e}", exc_info=True)
+            import traceback
+            return Response({
+                'status': 'error',
+                'error': str(e),
+                'traceback': traceback.format_exc() if request.user.is_staff else None
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     @action(detail=True, methods=['post'], url_path='test-node')
     def test_node(self, request, pk=None):

@@ -1103,6 +1103,15 @@ export const workflowsApi = {
   testNode: (workflowId: string, data: any) =>
     api.post(`/api/v1/workflows/${workflowId}/test-node/`, data),
 
+  // Test a node standalone (without workflow)
+  testNodeStandalone: (data: {
+    node_type: string;
+    node_config: any;
+    test_context?: any;
+    test_record_id?: string;
+  }) =>
+    api.post('/api/v1/workflows/test-node-standalone/', data),
+
   // Get test records for a workflow node
   getTestRecords: (workflowId: string, params: { pipeline_id?: string; node_type?: string }) =>
     api.get(`/api/v1/workflows/test-records/`, { params }),

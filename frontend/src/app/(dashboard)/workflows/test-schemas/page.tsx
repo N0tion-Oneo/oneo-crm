@@ -11,6 +11,7 @@ import { WorkflowNodeType } from '../types';
 import { workflowSchemaService } from '@/services/workflowSchemaService';
 import { UnifiedConfigRenderer } from '../components/node-configs/unified/UnifiedConfigRenderer';
 import { useNodeConfig } from '../components/node-configs/unified/useNodeConfig';
+import { NodeExecutionResults } from './components/NodeExecutionResults';
 import { api } from '@/lib/api';
 import { useWorkflowData } from '../hooks/useWorkflowData';
 
@@ -264,6 +265,7 @@ export default function TestSchemasPage() {
             <TabsTrigger value="raw">Raw Backend Schema</TabsTrigger>
             <TabsTrigger value="transformed">Transformed Config</TabsTrigger>
             <TabsTrigger value="validation">Validation Test</TabsTrigger>
+            <TabsTrigger value="execution">Node Execution</TabsTrigger>
             <TabsTrigger value="batch">Test All Nodes</TabsTrigger>
           </TabsList>
 
@@ -435,6 +437,13 @@ export default function TestSchemasPage() {
                 </div>
               </CardContent>
             </Card>
+          </TabsContent>
+
+          <TabsContent value="execution">
+            <NodeExecutionResults
+              selectedNode={selectedNode}
+              testConfig={testConfig}
+            />
           </TabsContent>
 
           <TabsContent value="batch">

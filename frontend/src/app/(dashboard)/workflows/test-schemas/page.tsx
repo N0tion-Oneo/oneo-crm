@@ -6,7 +6,7 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
-import { CheckCircle, XCircle, AlertCircle, RefreshCw } from 'lucide-react';
+import { CheckCircle, XCircle, AlertCircle, RefreshCw, ChevronRight, ChevronDown } from 'lucide-react';
 import { WorkflowNodeType } from '../types';
 import { workflowSchemaService } from '@/services/workflowSchemaService';
 import { UnifiedConfigRenderer } from '../components/node-configs/unified/UnifiedConfigRenderer';
@@ -68,6 +68,7 @@ export default function TestSchemasPage() {
   const [transformedConfig, setTransformedConfig] = useState<any>(null);
   const [testConfig, setTestConfig] = useState<any>({});
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
+  const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
 
   // Fetch real data using the hook
   const {
@@ -153,6 +154,16 @@ export default function TestSchemasPage() {
     return schema.config_schema.required.length;
   };
 
+  const toggleCategory = (category: string) => {
+    const newCollapsed = new Set(collapsedCategories);
+    if (newCollapsed.has(category)) {
+      newCollapsed.delete(category);
+    } else {
+      newCollapsed.add(category);
+    }
+    setCollapsedCategories(newCollapsed);
+  };
+
   return (
     <div className="container mx-auto p-6 max-w-full">
       <div className="mb-6">
@@ -171,48 +182,67 @@ export default function TestSchemasPage() {
       )}
 
       {/* Main content area with three-column layout */}
-      <div className="flex flex-col xl:flex-row gap-6">
+      <div className="flex flex-col xl:flex-row gap-6 h-[calc(100vh-12rem)]">
         {/* Left sidebar - Node Type Selector */}
-        <Card className="w-full xl:w-72 h-fit flex-shrink-0">
-          <CardHeader className="pb-3">
+        <Card className="w-full xl:w-72 flex-shrink-0 flex flex-col h-full overflow-hidden">
+          <CardHeader className="pb-3 flex-shrink-0">
             <CardTitle className="text-lg">Select Node Type</CardTitle>
           </CardHeader>
-          <CardContent>
-            {/* Group nodes by category */}
-            <div className="space-y-3">
-              {['Triggers', 'Data', 'AI', 'Communication', 'Control', 'External', 'CRM'].map(category => {
-                const categoryNodes = TEST_NODE_TYPES.filter(n => n.category === category);
-                if (categoryNodes.length === 0) return null;
+          <CardContent className="flex-1 flex flex-col p-0 overflow-hidden">
+            {/* Scrollable node list */}
+            <div className="flex-1 min-h-0 overflow-y-auto px-6 py-2">
+              <div className="space-y-2">
+                {['Triggers', 'Data', 'AI', 'Communication', 'Control', 'External', 'CRM'].map(category => {
+                  const categoryNodes = TEST_NODE_TYPES.filter(n => n.category === category);
+                  if (categoryNodes.length === 0) return null;
+                  const isCollapsed = collapsedCategories.has(category);
 
-                return (
-                  <div key={category}>
-                    <h4 className="text-xs font-semibold text-muted-foreground mb-1">{category}</h4>
-                    <div className="flex flex-col gap-0.5">
-                      {categoryNodes.map((node) => (
-                        <Button
-                          key={node.type}
-                          variant={selectedNode.type === node.type ? 'default' : 'ghost'}
-                          size="sm"
-                          className="justify-start text-sm h-8"
-                          onClick={() => setSelectedNode(node)}
-                        >
-                          {node.label}
-                        </Button>
-                      ))}
+                  return (
+                    <div key={category}>
+                      <button
+                        onClick={() => toggleCategory(category)}
+                        className="flex items-center justify-between w-full text-xs font-semibold text-muted-foreground hover:text-foreground mb-1 py-1"
+                      >
+                        <span>{category}</span>
+                        {isCollapsed ? (
+                          <ChevronRight className="h-3 w-3" />
+                        ) : (
+                          <ChevronDown className="h-3 w-3" />
+                        )}
+                      </button>
+                      {!isCollapsed && (
+                        <div className="flex flex-col gap-0.5 mb-2">
+                          {categoryNodes.map((node) => (
+                            <Button
+                              key={node.type}
+                              variant={selectedNode.type === node.type ? 'default' : 'ghost'}
+                              size="sm"
+                              className="justify-start text-sm h-8"
+                              onClick={() => setSelectedNode(node)}
+                            >
+                              {node.label}
+                            </Button>
+                          ))}
+                        </div>
+                      )}
                     </div>
-                  </div>
-                );
-              })}
+                  );
+                })}
+              </div>
             </div>
-            <Button
-              onClick={handleRefresh}
-              variant="outline"
-              size="sm"
-              className="mt-4 w-full"
-            >
-              <RefreshCw className="h-4 w-4 mr-2" />
-              Clear Cache & Refresh
-            </Button>
+            {/* Fixed refresh button at bottom */}
+            <div className="flex-shrink-0 px-6 pb-4 pt-2 border-t bg-background">
+              <Button
+                onClick={handleRefresh}
+                variant="outline"
+                size="sm"
+                className="w-full"
+                disabled={loading}
+              >
+                <RefreshCw className={`h-4 w-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
+                {loading ? 'Refreshing...' : 'Clear Cache & Refresh'}
+              </Button>
+            </div>
           </CardContent>
         </Card>
 

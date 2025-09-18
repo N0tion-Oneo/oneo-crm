@@ -2,6 +2,7 @@
 
 import React, { useState, useCallback, useMemo } from 'react'
 import { Plus, X, Eye, EyeOff, AlertCircle, Layers, ChevronDown, ChevronRight } from 'lucide-react'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 
 // Simple debounce utility
 const debounce = (func: (...args: any[]) => void, delay: number) => {
@@ -106,9 +107,9 @@ const RuleRow: React.FC<{
   }, [rule, onRuleChange])
 
   return (
-    <div className="flex items-center space-x-2 p-3 bg-gray-50 dark:bg-gray-800 rounded-lg">
-      {/* Field Selector */}
-      <div className="flex-1">
+    <div className="relative flex flex-col sm:flex-row sm:items-center gap-2 p-3 bg-gray-50 dark:bg-gray-800 rounded-lg">
+      {/* Field Selector - full width, with padding for delete button on mobile */}
+      <div className="w-full sm:flex-1 pr-8 sm:pr-0">
         <select
           value={rule.field || ''}
           onChange={(e) => handleFieldChange(e.target.value)}
@@ -122,9 +123,9 @@ const RuleRow: React.FC<{
           ))}
         </select>
       </div>
-      
-      {/* Condition Selector */}
-      <div className="flex-1">
+
+      {/* Condition Selector - full width on mobile */}
+      <div className="w-full sm:flex-1">
         <select
           value={rule.condition || ''}
           onChange={(e) => handleConditionChange(e.target.value)}
@@ -138,10 +139,10 @@ const RuleRow: React.FC<{
           ))}
         </select>
       </div>
-      
-      {/* Value Input */}
+
+      {/* Value Input - full width on mobile */}
       {rule.condition && !['is_empty', 'is_not_empty'].includes(rule.condition) && (
-        <div className="flex-1">
+        <div className="w-full sm:flex-1">
           {rule.field === 'user_type' ? (
             // Special dropdown for user_type field
             <select
@@ -168,11 +169,11 @@ const RuleRow: React.FC<{
           )}
         </div>
       )}
-      
-      {/* Remove Button */}
+
+      {/* Remove Button - absolute top-right on mobile, inline on desktop */}
       <button
         onClick={onRemove}
-        className="p-1 text-red-500 hover:bg-red-100 dark:hover:bg-red-900/20 rounded"
+        className="absolute top-3 right-3 sm:relative sm:top-0 sm:right-0 p-1 text-red-500 hover:bg-red-100 dark:hover:bg-red-900/20 rounded"
         title="Remove rule"
       >
         <X className="w-4 h-4" />
@@ -233,35 +234,41 @@ const RuleGroupBuilder: React.FC<{
       depth > 0 ? 'ml-4 bg-gray-50/50 dark:bg-gray-800/50' : 'bg-white dark:bg-gray-800'
     } ${depth > 0 ? 'border-gray-200 dark:border-gray-700' : 'border-gray-300 dark:border-gray-600'}`}>
       {/* Group Header */}
-      <div className="flex items-center justify-between p-3 border-b border-gray-200 dark:border-gray-700">
-        <div className="flex items-center space-x-3">
+      <div className="flex items-center justify-between p-2 sm:p-3 border-b border-gray-200 dark:border-gray-700">
+        <div className="flex items-center space-x-2 sm:space-x-3">
           {/* Collapse Toggle */}
           <button
             onClick={() => setIsCollapsed(!isCollapsed)}
             className="p-1 hover:bg-gray-200 dark:hover:bg-gray-600 rounded"
           >
             {isCollapsed ? (
-              <ChevronRight className="w-4 h-4 text-gray-500" />
+              <ChevronRight className="w-3 h-3 sm:w-4 sm:h-4 text-gray-500" />
             ) : (
-              <ChevronDown className="w-4 h-4 text-gray-500" />
+              <ChevronDown className="w-3 h-3 sm:w-4 sm:h-4 text-gray-500" />
             )}
           </button>
 
           {/* Logic Selector */}
-          <div className="flex items-center space-x-2">
-            <Layers className="w-4 h-4 text-gray-500" />
+          <div className="flex items-center space-x-1 sm:space-x-2">
+            <Layers className="w-3 h-3 sm:w-4 sm:h-4 text-gray-500 hidden sm:block" />
             <select
               value={group.logic}
               onChange={(e) => updateLogic(e.target.value as 'AND' | 'OR')}
-              className={`text-sm font-medium border rounded px-3 py-1 transition-colors ${getLogicColor(group.logic)}`}
+              className={`text-xs sm:text-sm font-medium border rounded px-2 sm:px-3 py-1 transition-colors ${getLogicColor(group.logic)}`}
             >
-              <option value="AND">All conditions must be true (AND)</option>
-              <option value="OR">Any condition can be true (OR)</option>
+              <option value="AND">
+                <span className="sm:hidden">All</span>
+                <span className="hidden sm:inline">All conditions must be true</span> (AND)
+              </option>
+              <option value="OR">
+                <span className="sm:hidden">Any</span>
+                <span className="hidden sm:inline">Any condition can be true</span> (OR)
+              </option>
             </select>
           </div>
 
           {/* Rule Count */}
-          <span className="text-xs text-gray-500 dark:text-gray-400">
+          <span className="text-xs text-gray-500 dark:text-gray-400 hidden sm:inline">
             {group.rules.length} rule{group.rules.length !== 1 ? 's' : ''}
           </span>
         </div>
@@ -273,14 +280,14 @@ const RuleGroupBuilder: React.FC<{
             className="p-1 text-red-500 hover:bg-red-100 dark:hover:bg-red-900/20 rounded transition-colors"
             title="Remove group"
           >
-            <X className="w-4 h-4" />
+            <X className="w-3 h-3 sm:w-4 sm:h-4" />
           </button>
         )}
       </div>
 
       {/* Group Content */}
       {!isCollapsed && (
-        <div className="p-3 space-y-3">
+        <div className="p-2 sm:p-3 space-y-3">
           {/* Rules */}
           {group.rules.map((rule, index) => (
             <div key={index} className="space-y-2">
@@ -291,7 +298,7 @@ const RuleGroupBuilder: React.FC<{
                   </span>
                 </div>
               )}
-              
+
               {isRuleGroup(rule) ? (
                 <RuleGroupBuilder
                   group={rule}
@@ -317,29 +324,31 @@ const RuleGroupBuilder: React.FC<{
 
           {/* Empty State */}
           {group.rules.length === 0 && (
-            <div className="text-center py-6 text-gray-500 dark:text-gray-400">
-              <Layers className="w-8 h-8 mx-auto mb-2 opacity-50" />
-              <p className="text-sm">No conditions added yet</p>
-              <p className="text-xs mt-1">Add conditions or nested groups below</p>
+            <div className="text-center py-4 sm:py-6 text-gray-500 dark:text-gray-400">
+              <Layers className="w-6 h-6 sm:w-8 sm:h-8 mx-auto mb-2 opacity-50" />
+              <p className="text-xs sm:text-sm">No conditions added yet</p>
+              <p className="text-xs mt-1 hidden sm:block">Add conditions or nested groups below</p>
             </div>
           )}
 
-          {/* Add Buttons */}
-          <div className="flex items-center space-x-2 pt-2 border-t border-gray-200 dark:border-gray-700">
+          {/* Add Buttons - stack on mobile */}
+          <div className="flex flex-col sm:flex-row gap-2 pt-2 border-t border-gray-200 dark:border-gray-700">
             <button
               onClick={addRule}
-              className="inline-flex items-center px-3 py-1.5 text-sm font-medium text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-200 hover:bg-blue-50 dark:hover:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-md transition-colors"
+              className="inline-flex items-center justify-center w-full sm:w-auto px-3 py-1.5 text-xs sm:text-sm font-medium text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-200 hover:bg-blue-50 dark:hover:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-md transition-colors"
             >
               <Plus className="w-3 h-3 mr-1" />
-              Add Condition
+              <span className="sm:hidden">Add</span>
+              <span className="hidden sm:inline">Add Condition</span>
             </button>
-            
+
             <button
               onClick={addGroup}
-              className="inline-flex items-center px-3 py-1.5 text-sm font-medium text-green-600 hover:text-green-800 dark:text-green-400 dark:hover:text-green-200 hover:bg-green-50 dark:hover:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-md transition-colors"
+              className="inline-flex items-center justify-center w-full sm:w-auto px-3 py-1.5 text-xs sm:text-sm font-medium text-green-600 hover:text-green-800 dark:text-green-400 dark:hover:text-green-200 hover:bg-green-50 dark:hover:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-md transition-colors"
             >
               <Layers className="w-3 h-3 mr-1" />
-              Add Group
+              <span className="sm:hidden">Group</span>
+              <span className="hidden sm:inline">Add Group</span>
             </button>
           </div>
         </div>
@@ -444,67 +453,135 @@ export const ConditionalRulesBuilder: React.FC<ConditionalRulesBuilderProps> = (
   }
 
   return (
-    <div className="space-y-6">
-      <div className="text-sm text-gray-600 dark:text-gray-400">
+    <div className="space-y-4 sm:space-y-6">
+      <div className="text-xs sm:text-sm text-gray-600 dark:text-gray-400">
         Configure when this field should be shown, hidden, or required based on other field values.
-        Use AND/OR logic to create complex conditional rules.
+        <span className="hidden sm:inline"> Use AND/OR logic to create complex conditional rules.</span>
       </div>
 
-      {/* Show When Rules */}
-      <div className="border border-gray-200 dark:border-gray-700 rounded-lg p-4">
-        <div className="flex items-center space-x-2 mb-3">
-          <Eye className="w-4 h-4 text-green-600" />
-          <h5 className="font-medium text-gray-900 dark:text-white">Show this field when:</h5>
-        </div>
-        <div className="text-xs text-gray-500 dark:text-gray-400 mb-3">
-          Field will only be visible when conditions are met
-        </div>
-        
-        <RuleGroupBuilder
-          group={showWhenGroup}
-          availableFields={enhancedFields}
-          userTypes={userTypes}
-          onGroupChange={handleShowWhenChange}
-          ruleType="show_when"
-        />
+      {/* Tabbed Interface for Mobile */}
+      <div className="block sm:hidden">
+        <Tabs defaultValue="show" className="w-full">
+          <TabsList className="grid w-full grid-cols-3">
+            <TabsTrigger value="show" className="text-xs">
+              <Eye className="w-3 h-3 mr-1" />
+              Show
+            </TabsTrigger>
+            <TabsTrigger value="hide" className="text-xs">
+              <EyeOff className="w-3 h-3 mr-1" />
+              Hide
+            </TabsTrigger>
+            <TabsTrigger value="require" className="text-xs">
+              <AlertCircle className="w-3 h-3 mr-1" />
+              Required
+            </TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="show" className="mt-3">
+            <div className="border border-gray-200 dark:border-gray-700 rounded-lg p-3">
+              <div className="text-xs text-gray-500 dark:text-gray-400 mb-3">
+                Field will only be visible when conditions are met
+              </div>
+              <RuleGroupBuilder
+                group={showWhenGroup}
+                availableFields={enhancedFields}
+                userTypes={userTypes}
+                onGroupChange={handleShowWhenChange}
+                ruleType="show_when"
+              />
+            </div>
+          </TabsContent>
+
+          <TabsContent value="hide" className="mt-3">
+            <div className="border border-gray-200 dark:border-gray-700 rounded-lg p-3">
+              <div className="text-xs text-gray-500 dark:text-gray-400 mb-3">
+                Field will be hidden when conditions are met
+              </div>
+              <RuleGroupBuilder
+                group={hideWhenGroup}
+                availableFields={enhancedFields}
+                userTypes={userTypes}
+                onGroupChange={handleHideWhenChange}
+                ruleType="hide_when"
+              />
+            </div>
+          </TabsContent>
+
+          <TabsContent value="require" className="mt-3">
+            <div className="border border-gray-200 dark:border-gray-700 rounded-lg p-3">
+              <div className="text-xs text-gray-500 dark:text-gray-400 mb-3">
+                Field will be required when conditions are met
+              </div>
+              <RuleGroupBuilder
+                group={requireWhenGroup}
+                availableFields={enhancedFields}
+                userTypes={userTypes}
+                onGroupChange={handleRequireWhenChange}
+                ruleType="require_when"
+              />
+            </div>
+          </TabsContent>
+        </Tabs>
       </div>
 
-      {/* Hide When Rules */}
-      <div className="border border-gray-200 dark:border-gray-700 rounded-lg p-4">
-        <div className="flex items-center space-x-2 mb-3">
-          <EyeOff className="w-4 h-4 text-red-600" />
-          <h5 className="font-medium text-gray-900 dark:text-white">Hide this field when:</h5>
-        </div>
-        <div className="text-xs text-gray-500 dark:text-gray-400 mb-3">
-          Field will be hidden when conditions are met
-        </div>
-        
-        <RuleGroupBuilder
-          group={hideWhenGroup}
-          availableFields={enhancedFields}
-          userTypes={userTypes}
-          onGroupChange={handleHideWhenChange}
-          ruleType="hide_when"
-        />
-      </div>
+      {/* Regular Stacked Layout for Desktop */}
+      <div className="hidden sm:block space-y-6">
+        {/* Show When Rules */}
+        <div className="border border-gray-200 dark:border-gray-700 rounded-lg p-4">
+          <div className="flex items-center space-x-2 mb-3">
+            <Eye className="w-4 h-4 text-green-600" />
+            <h5 className="font-medium text-gray-900 dark:text-white">Show this field when:</h5>
+          </div>
+          <div className="text-xs text-gray-500 dark:text-gray-400 mb-3">
+            Field will only be visible when conditions are met
+          </div>
 
-      {/* Require When Rules */}
-      <div className="border border-gray-200 dark:border-gray-700 rounded-lg p-4">
-        <div className="flex items-center space-x-2 mb-3">
-          <AlertCircle className="w-4 h-4 text-orange-600" />
-          <h5 className="font-medium text-gray-900 dark:text-white">Make this field required when:</h5>
+          <RuleGroupBuilder
+            group={showWhenGroup}
+            availableFields={enhancedFields}
+            userTypes={userTypes}
+            onGroupChange={handleShowWhenChange}
+            ruleType="show_when"
+          />
         </div>
-        <div className="text-xs text-gray-500 dark:text-gray-400 mb-3">
-          Field will be required when conditions are met
+
+        {/* Hide When Rules */}
+        <div className="border border-gray-200 dark:border-gray-700 rounded-lg p-4">
+          <div className="flex items-center space-x-2 mb-3">
+            <EyeOff className="w-4 h-4 text-red-600" />
+            <h5 className="font-medium text-gray-900 dark:text-white">Hide this field when:</h5>
+          </div>
+          <div className="text-xs text-gray-500 dark:text-gray-400 mb-3">
+            Field will be hidden when conditions are met
+          </div>
+
+          <RuleGroupBuilder
+            group={hideWhenGroup}
+            availableFields={enhancedFields}
+            userTypes={userTypes}
+            onGroupChange={handleHideWhenChange}
+            ruleType="hide_when"
+          />
         </div>
-        
-        <RuleGroupBuilder
-          group={requireWhenGroup}
-          availableFields={enhancedFields}
-          userTypes={userTypes}
-          onGroupChange={handleRequireWhenChange}
-          ruleType="require_when"
-        />
+
+        {/* Require When Rules */}
+        <div className="border border-gray-200 dark:border-gray-700 rounded-lg p-4">
+          <div className="flex items-center space-x-2 mb-3">
+            <AlertCircle className="w-4 h-4 text-orange-600" />
+            <h5 className="font-medium text-gray-900 dark:text-white">Make this field required when:</h5>
+          </div>
+          <div className="text-xs text-gray-500 dark:text-gray-400 mb-3">
+            Field will be required when conditions are met
+          </div>
+
+          <RuleGroupBuilder
+            group={requireWhenGroup}
+            availableFields={enhancedFields}
+            userTypes={userTypes}
+            onGroupChange={handleRequireWhenChange}
+            ruleType="require_when"
+          />
+        </div>
       </div>
 
       {/* Summary */}

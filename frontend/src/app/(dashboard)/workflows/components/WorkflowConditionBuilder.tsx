@@ -107,7 +107,7 @@ const ConditionRow: React.FC<ConditionRowProps> = ({
     if (operator === 'between') {
       if (fieldType === 'number' || fieldType === 'decimal') {
         return (
-          <div className="flex space-x-2 flex-1">
+          <div className="flex space-x-2 w-full">
             <input
               type="number"
               value={condition.value || ''}
@@ -126,7 +126,7 @@ const ConditionRow: React.FC<ConditionRowProps> = ({
         )
       } else if (fieldType === 'date' || fieldType === 'datetime') {
         return (
-          <div className="flex space-x-2 flex-1">
+          <div className="flex space-x-2 w-full">
             <input
               type={fieldType === 'datetime' ? 'datetime-local' : 'date'}
               value={condition.value || ''}
@@ -153,7 +153,7 @@ const ConditionRow: React.FC<ConditionRowProps> = ({
           onChange={(e) => onUpdate({ ...condition, value: e.target.value })}
           placeholder="Number of days"
           min="1"
-          className="flex-1 text-sm border rounded px-2 py-1"
+          className="w-full text-sm border rounded px-2 py-1"
         />
       )
     }
@@ -172,7 +172,7 @@ const ConditionRow: React.FC<ConditionRowProps> = ({
               const selectedValues = Array.from(e.target.selectedOptions, option => option.value)
               onUpdate({ ...condition, value: selectedValues })
             }}
-            className="flex-1 text-sm border rounded px-2 py-1"
+            className="w-full text-sm border rounded px-2 py-1"
             size={3}
           >
             {options.map((opt: any) => (
@@ -196,7 +196,7 @@ const ConditionRow: React.FC<ConditionRowProps> = ({
             onChange={(e) => onUpdate({ ...condition, value: e.target.value })}
             placeholder="Value"
             step={fieldType === 'decimal' ? '0.01' : '1'}
-            className="flex-1 text-sm border rounded px-2 py-1"
+            className="w-full text-sm border rounded px-2 py-1"
           />
         )
 
@@ -206,7 +206,7 @@ const ConditionRow: React.FC<ConditionRowProps> = ({
             type="date"
             value={condition.value || ''}
             onChange={(e) => onUpdate({ ...condition, value: e.target.value })}
-            className="flex-1 text-sm border rounded px-2 py-1"
+            className="w-full text-sm border rounded px-2 py-1"
           />
         )
 
@@ -216,7 +216,7 @@ const ConditionRow: React.FC<ConditionRowProps> = ({
             type="datetime-local"
             value={condition.value || ''}
             onChange={(e) => onUpdate({ ...condition, value: e.target.value })}
-            className="flex-1 text-sm border rounded px-2 py-1"
+            className="w-full text-sm border rounded px-2 py-1"
           />
         )
 
@@ -228,7 +228,7 @@ const ConditionRow: React.FC<ConditionRowProps> = ({
             <select
               value={condition.value || ''}
               onChange={(e) => onUpdate({ ...condition, value: e.target.value })}
-              className="flex-1 text-sm border rounded px-2 py-1"
+              className="w-full text-sm border rounded px-2 py-1"
             >
               <option value="">Select...</option>
               {selectOptions.map((opt: any) => (
@@ -246,7 +246,7 @@ const ConditionRow: React.FC<ConditionRowProps> = ({
             value={condition.value || ''}
             onChange={(e) => onUpdate({ ...condition, value: e.target.value })}
             placeholder="Enter value"
-            className="flex-1 text-sm border rounded px-2 py-1"
+            className="w-full text-sm border rounded px-2 py-1"
           />
         )
 
@@ -257,7 +257,7 @@ const ConditionRow: React.FC<ConditionRowProps> = ({
           <select
             value={condition.value || ''}
             onChange={(e) => onUpdate({ ...condition, value: e.target.value === 'true' })}
-            className="flex-1 text-sm border rounded px-2 py-1"
+            className="w-full text-sm border rounded px-2 py-1"
           >
             <option value="">Select...</option>
             <option value="true">True</option>
@@ -269,7 +269,7 @@ const ConditionRow: React.FC<ConditionRowProps> = ({
         // Show dropdown of actual users
         if (loadingOptions) {
           return (
-            <div className="flex-1 flex items-center justify-center">
+            <div className="w-full flex items-center justify-center">
               <Loader2 className="h-4 w-4 animate-spin" />
             </div>
           )
@@ -285,7 +285,7 @@ const ConditionRow: React.FC<ConditionRowProps> = ({
                 const selectedValues = Array.from(e.target.selectedOptions, option => option.value)
                 onUpdate({ ...condition, value: selectedValues })
               }}
-              className="flex-1 text-sm border rounded px-2 py-1"
+              className="w-full text-sm border rounded px-2 py-1"
               size={3}
             >
               {fieldOptions.map(option => (
@@ -301,7 +301,7 @@ const ConditionRow: React.FC<ConditionRowProps> = ({
           <select
             value={condition.value || ''}
             onChange={(e) => onUpdate({ ...condition, value: e.target.value })}
-            className="flex-1 text-sm border rounded px-2 py-1"
+            className="w-full text-sm border rounded px-2 py-1"
           >
             <option value="">Select user...</option>
             {fieldOptions.map(option => (
@@ -316,7 +316,7 @@ const ConditionRow: React.FC<ConditionRowProps> = ({
         // Show dropdown of related records
         if (loadingOptions) {
           return (
-            <div className="flex-1 flex items-center justify-center">
+            <div className="w-full flex items-center justify-center">
               <Loader2 className="h-4 w-4 animate-spin" />
             </div>
           )
@@ -332,7 +332,7 @@ const ConditionRow: React.FC<ConditionRowProps> = ({
                 const selectedValues = Array.from(e.target.selectedOptions, option => option.value)
                 onUpdate({ ...condition, value: selectedValues })
               }}
-              className="flex-1 text-sm border rounded px-2 py-1"
+              className="w-full text-sm border rounded px-2 py-1"
               size={3}
             >
               {fieldOptions.map(option => (
@@ -348,7 +348,7 @@ const ConditionRow: React.FC<ConditionRowProps> = ({
           <select
             value={condition.value || ''}
             onChange={(e) => onUpdate({ ...condition, value: e.target.value })}
-            className="flex-1 text-sm border rounded px-2 py-1"
+            className="w-full text-sm border rounded px-2 py-1"
           >
             <option value="">Select record...</option>
             {fieldOptions.map(option => (
@@ -363,7 +363,7 @@ const ConditionRow: React.FC<ConditionRowProps> = ({
         // Show dropdown of existing tags
         if (loadingOptions) {
           return (
-            <div className="flex-1 flex items-center justify-center">
+            <div className="w-full flex items-center justify-center">
               <Loader2 className="h-4 w-4 animate-spin" />
             </div>
           )
@@ -400,7 +400,7 @@ const ConditionRow: React.FC<ConditionRowProps> = ({
             value={condition.value || ''}
             onChange={(e) => onUpdate({ ...condition, value: e.target.value })}
             placeholder={fieldType === 'email' ? 'email@example.com' : 'Value'}
-            className="flex-1 text-sm border rounded px-2 py-1"
+            className="w-full text-sm border rounded px-2 py-1"
           />
         )
     }
@@ -412,7 +412,7 @@ const ConditionRow: React.FC<ConditionRowProps> = ({
         value={condition.value || ''}
         onChange={(e) => onUpdate({ ...condition, value: e.target.value })}
         placeholder="Value"
-        className="flex-1 text-sm border rounded px-2 py-1"
+        className="w-full text-sm border rounded px-2 py-1"
       />
     )
   }
@@ -504,62 +504,84 @@ const ConditionRow: React.FC<ConditionRowProps> = ({
     return [...commonOperators, ...typeOperators]
   }
 
+  // Check if we're in a narrow container by looking for a parent with specific class
+  const [isNarrow, setIsNarrow] = useState(false)
+
+  useEffect(() => {
+    // Check if parent container has w-96 or similar narrow width class
+    const checkWidth = () => {
+      const element = document.querySelector('.workflow-condition-container')
+      if (element) {
+        const width = element.offsetWidth
+        setIsNarrow(width < 500) // Trigger narrow mode under 500px
+      }
+    }
+
+    checkWidth()
+    window.addEventListener('resize', checkWidth)
+    return () => window.removeEventListener('resize', checkWidth)
+  }, [])
+
   return (
-    <div className="flex items-center space-x-2 p-3 bg-gray-50 dark:bg-gray-800 rounded-lg">
-      {/* Field Selector */}
-      <select
-        value={condition.field || ''}
-        onChange={(e) => onUpdate({
-          ...condition,
-          field: e.target.value,
-          operator: '', // Reset operator when field changes
-          value: '',    // Reset value when field changes
-          value_to: undefined // Reset value_to when field changes
-        })}
-        className="flex-1 text-sm border rounded px-2 py-1"
-      >
-        <option value="">Select field...</option>
-        {fields.map(field => (
-          <option key={field.name} value={field.name}>
-            {field.display_name || field.name} ({field.field_type})
-          </option>
-        ))}
-      </select>
+    <div className={`relative flex ${isNarrow ? 'flex-col' : 'flex-row items-center'} gap-2 p-3 bg-gray-50 dark:bg-gray-800 rounded-lg`}>
+      {/* Field Selector - full width when narrow */}
+      <div className={isNarrow ? 'w-full' : 'flex-1'}>
+        <select
+          value={condition.field || ''}
+          onChange={(e) => onUpdate({
+            ...condition,
+            field: e.target.value,
+            operator: '', // Reset operator when field changes
+            value: '',    // Reset value when field changes
+            value_to: undefined // Reset value_to when field changes
+          })}
+          className="w-full text-sm border rounded px-2 py-1"
+        >
+          <option value="">Select field...</option>
+          {fields.map(field => (
+            <option key={field.name} value={field.name}>
+              {field.display_name || field.name} ({field.field_type})
+            </option>
+          ))}
+        </select>
+      </div>
 
-      {/* Operator Selector */}
-      <select
-        value={condition.operator || ''}
-        onChange={(e) => {
-          const newOperator = e.target.value
-          // Reset value if switching to/from operators that don't need values
-          const noValueOps = ['is_empty', 'is_not_empty', 'changed', 'is_true', 'is_false']
-          if (noValueOps.includes(newOperator) || noValueOps.includes(condition.operator)) {
-            onUpdate({ ...condition, operator: newOperator, value: '', value_to: undefined })
-          } else {
-            onUpdate({ ...condition, operator: newOperator })
-          }
-        }}
-        className="flex-1 text-sm border rounded px-2 py-1"
-      >
-        <option value="">Select operator...</option>
-        {getOperators().map(op => (
-          <option key={op.value} value={op.value}>
-            {op.label}
-          </option>
-        ))}
-      </select>
+      {/* Operator Selector - full width when narrow */}
+      <div className={isNarrow ? 'w-full' : 'flex-1'}>
+        <select
+          value={condition.operator || ''}
+          onChange={(e) => {
+            const newOperator = e.target.value
+            // Reset value if switching to/from operators that don't need values
+            const noValueOps = ['is_empty', 'is_not_empty', 'changed', 'is_true', 'is_false']
+            if (noValueOps.includes(newOperator) || noValueOps.includes(condition.operator)) {
+              onUpdate({ ...condition, operator: newOperator, value: '', value_to: undefined })
+            } else {
+              onUpdate({ ...condition, operator: newOperator })
+            }
+          }}
+          className="w-full text-sm border rounded px-2 py-1"
+        >
+          <option value="">Select operator...</option>
+          {getOperators().map(op => (
+            <option key={op.value} value={op.value}>
+              {op.label}
+            </option>
+          ))}
+        </select>
+      </div>
 
-      {/* Value Input */}
+      {/* Value Input - full width when narrow */}
       {condition.operator && !['is_empty', 'is_not_empty', 'changed', 'is_true', 'is_false'].includes(condition.operator) && (
-        <>
+        <div className={isNarrow ? 'w-full' : 'flex-1'}>
           {renderValueInput()}
-        </>
+        </div>
       )}
 
-      {/* Remove Button */}
+      {/* Remove Button - positioned absolute when narrow, inline otherwise */}
       <button
         onClick={onRemove}
-        className="p-1 text-red-500 hover:bg-red-100 rounded"
+        className={`${isNarrow ? 'absolute top-2 right-2' : 'relative'} p-1 text-red-500 hover:bg-red-100 rounded`}
       >
         <X className="w-4 h-4" />
       </button>
@@ -642,10 +664,10 @@ const GroupBuilder: React.FC<GroupBuilderProps> = ({
           <select
             value={group.logic}
             onChange={(e) => onUpdate({ ...group, logic: e.target.value as 'AND' | 'OR' })}
-            className={`text-sm font-medium border rounded px-3 py-1 ${getLogicColor(group.logic)}`}
+            className={`text-sm font-medium border rounded px-2 py-1 ${getLogicColor(group.logic)}`}
           >
-            <option value="AND">All conditions must be true (AND)</option>
-            <option value="OR">Any condition can be true (OR)</option>
+            <option value="AND">AND</option>
+            <option value="OR">OR</option>
           </select>
 
           <span className="text-xs text-gray-500">
@@ -777,12 +799,14 @@ export const WorkflowConditionBuilder: React.FC<WorkflowConditionBuilderProps> =
   }, [onChange])
 
   return (
-    <GroupBuilder
-      group={rootGroup}
-      fields={fields}
-      onUpdate={handleUpdate}
-      supportsChangeOperators={supportsChangeOperators}
-      pipelineId={pipelineId}
-    />
+    <div className="workflow-condition-container">
+      <GroupBuilder
+        group={rootGroup}
+        fields={fields}
+        onUpdate={handleUpdate}
+        supportsChangeOperators={supportsChangeOperators}
+        pipelineId={pipelineId}
+      />
+    </div>
   )
 }

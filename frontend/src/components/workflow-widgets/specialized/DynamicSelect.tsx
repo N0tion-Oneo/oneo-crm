@@ -18,7 +18,7 @@ import { BaseWidgetWrapper } from '../basic/BaseWidget';
 import { api } from '@/lib/api';
 
 export const DynamicSelect: React.FC<WidgetProps> = (props) => {
-  const { value, onChange, uiHints = {}, config = {} } = props;
+  const { value, onChange, uiHints = {}, config = {}, onConfigUpdate } = props;
   const [options, setOptions] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -29,7 +29,8 @@ export const DynamicSelect: React.FC<WidgetProps> = (props) => {
     value_field = 'id',
     label_field = 'label',
     show_field_count,
-    group_by
+    group_by,
+    store_additional_fields = []
   } = uiHints;
 
   // Get dependency value
@@ -134,11 +135,40 @@ export const DynamicSelect: React.FC<WidgetProps> = (props) => {
     );
   }
 
+  const handleValueChange = (newValue: string) => {
+    // Update the main field value
+    onChange(newValue);
+
+    // If we need to store additional fields, find the selected option and store its metadata
+    if (store_additional_fields && store_additional_fields.length > 0 && onConfigUpdate) {
+      const selectedOption = options.find(opt => {
+        const optValue = opt[value_field] || opt.value || opt.id;
+        return optValue === newValue;
+      });
+
+      if (selectedOption) {
+        // Build updates for additional fields
+        const fieldKey = props.field?.key || props.key;
+        const updates: Record<string, any> = { [fieldKey]: newValue };
+
+        store_additional_fields.forEach((field: string) => {
+          if (selectedOption[field] !== undefined) {
+            updates[field] = selectedOption[field];
+          }
+        });
+
+        // Update all fields at once
+        const newConfig = { ...config, ...updates };
+        onConfigUpdate(newConfig);
+      }
+    }
+  };
+
   return (
     <BaseWidgetWrapper {...props}>
       <Select
         value={value || ''}
-        onValueChange={onChange}
+        onValueChange={handleValueChange}
         disabled={props.disabled || props.readonly || isLoading}
       >
         <SelectTrigger>

@@ -60,6 +60,10 @@ export function NodeExecutionResults({
   const [records, setRecords] = useState<any[]>([]);
   const [selectedRecord, setSelectedRecord] = useState<string>('');
   const [loadingRecords, setLoadingRecords] = useState(false);
+  const [testData, setTestData] = useState<any[]>([]);
+  const [selectedTestData, setSelectedTestData] = useState<string>('');
+  const [testDataType, setTestDataType] = useState<string>('');
+  const [loadingTestData, setLoadingTestData] = useState(false);
   const [executing, setExecuting] = useState(false);
   const [testResult, setTestResult] = useState<TestResult | null>(null);
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set(['output', 'side_effects']));
@@ -69,12 +73,35 @@ export function NodeExecutionResults({
     loadPipelines();
   }, []);
 
-  // Load records when pipeline is selected
+  // Load records when pipeline is selected or when using config pipeline
   useEffect(() => {
-    if (selectedPipeline && selectedPipeline !== 'config') {
+    const shouldLoadRecords = (selectedPipeline === 'config' && (testConfig?.pipeline_id || testConfig?.pipeline_ids?.length > 0)) ||
+                             (selectedPipeline && selectedPipeline !== 'config');
+
+    if (shouldLoadRecords) {
       loadRecords();
     }
-  }, [selectedPipeline]);
+  }, [selectedPipeline, testConfig?.pipeline_id, testConfig?.pipeline_ids]);
+
+  // Load test data for triggers
+  useEffect(() => {
+    if (selectedNode && selectedNode.type && selectedNode.type.toLowerCase().includes('trigger')) {
+      // Only load test data if we have a pipeline (either selected or from config)
+      const hasPipeline = (selectedPipeline && selectedPipeline !== 'config') ||
+                         (selectedPipeline === 'config' && (testConfig?.pipeline_id || testConfig?.pipeline_ids?.length > 0));
+      if (hasPipeline) {
+        loadTestData();
+      }
+    }
+  }, [
+    selectedNode,
+    selectedPipeline,
+    testConfig?.pipeline_id,
+    testConfig?.pipeline_ids,  // Also watch pipeline_ids array for record triggers
+    testConfig?.form_selection,  // Reload when form selection changes
+    testConfig?.mode,  // Reload when form mode changes
+    testConfig?.stage  // Reload when stage changes
+  ]);
 
 
   const loadPipelines = async () => {
@@ -88,11 +115,25 @@ export function NodeExecutionResults({
   };
 
   const loadRecords = async () => {
-    if (!selectedPipeline || selectedPipeline === 'config') return;
+    // Determine which pipeline to use
+    let pipelineToUse: string | null = null;
+
+    if (selectedPipeline === 'config') {
+      // Check both pipeline_id and pipeline_ids
+      if (testConfig?.pipeline_id) {
+        pipelineToUse = String(testConfig.pipeline_id);
+      } else if (testConfig?.pipeline_ids && testConfig.pipeline_ids.length > 0) {
+        pipelineToUse = String(testConfig.pipeline_ids[0]);
+      }
+    } else if (selectedPipeline && selectedPipeline !== 'config') {
+      pipelineToUse = selectedPipeline;
+    }
+
+    if (!pipelineToUse) return;
 
     setLoadingRecords(true);
     try {
-      const response = await pipelinesApi.getRecords(selectedPipeline, {
+      const response = await pipelinesApi.getRecords(pipelineToUse, {
         page_size: 50,
         ordering: '-created_at'
       });
@@ -102,6 +143,52 @@ export function NodeExecutionResults({
       setRecords([]);
     } finally {
       setLoadingRecords(false);
+    }
+  };
+
+  const loadTestData = async () => {
+    if (!selectedNode || !selectedNode.type) return;
+
+    // Determine which pipeline ID to use
+    let pipelineId = null;
+    if (selectedPipeline && selectedPipeline !== 'config') {
+      pipelineId = selectedPipeline;
+    } else if (selectedPipeline === 'config' || !selectedPipeline) {
+      // Use config pipeline if 'config' is selected OR if nothing is selected yet
+      // Check both pipeline_id and pipeline_ids (some triggers use plural)
+      if (testConfig?.pipeline_id) {
+        pipelineId = String(testConfig.pipeline_id);
+      } else if (testConfig?.pipeline_ids && testConfig.pipeline_ids.length > 0) {
+        pipelineId = String(testConfig.pipeline_ids[0]);
+      }
+    }
+
+    // If no pipeline is available, don't load test data
+    if (!pipelineId) {
+      console.log('No pipeline available for loading test data. selectedPipeline:', selectedPipeline, 'testConfig:', testConfig);
+      setTestData([]);
+      setTestDataType('');
+      return;
+    }
+
+    setLoadingTestData(true);
+    try {
+      console.log('Loading test data for node type:', selectedNode.type, 'with pipeline:', pipelineId, 'and config:', testConfig);
+      const response = await workflowsApi.getTestData({
+        node_type: selectedNode.type,
+        pipeline_id: pipelineId,
+        node_config: testConfig ? JSON.stringify(testConfig) : undefined
+      });
+
+      console.log('Test data loaded:', response.data);
+      setTestData(response.data.data || []);
+      setTestDataType(response.data.data_type || '');
+    } catch (error) {
+      console.error('Failed to load test data:', error);
+      setTestData([]);
+      setTestDataType('');
+    } finally {
+      setLoadingTestData(false);
     }
   };
 
@@ -128,12 +215,23 @@ export function NodeExecutionResults({
         }
       }
 
-      const response = await workflowsApi.testNodeStandalone({
+      // For triggers with test data, pass the test data ID and type
+      const requestData: any = {
         node_type: selectedNode.type,
         node_config: testConfig,
         test_context: testContext,
         test_mode: true // Ensure we're in test mode to prevent side effects
-      });
+      };
+
+      // Add test data if selected (for triggers)
+      if (selectedTestData && selectedTestData !== 'none' && testDataType) {
+        requestData.test_data_id = selectedTestData;
+        requestData.test_data_type = testDataType;
+      }
+
+      console.log('Executing node test with data:', requestData);
+      const response = await workflowsApi.testNodeStandalone(requestData);
+      console.log('Test execution response:', response.data);
 
       setTestResult(response.data);
 
@@ -164,6 +262,56 @@ export function NodeExecutionResults({
       newExpanded.add(section);
     }
     setExpandedSections(newExpanded);
+  };
+
+  const getTriggerTestDataMessage = (nodeType: string): string => {
+    const type = nodeType.toLowerCase();
+
+    if (type.includes('webhook')) {
+      return 'Webhook triggers require live data. Configure the webhook URL and send a test request to trigger this workflow.';
+    }
+
+    if (type.includes('manual')) {
+      return 'Manual triggers are activated by users. No test data needed - the trigger will fire when you click "Run Workflow".';
+    }
+
+    if (type.includes('scheduled')) {
+      return 'No scheduled workflows found. Create a workflow schedule to test scheduled triggers.';
+    }
+
+    if (type.includes('date_reached')) {
+      return 'No records with date fields found. Select a pipeline with records containing date fields to test this trigger.';
+    }
+
+    if (type.includes('pipeline_stage')) {
+      return 'No records with stage changes found. Select a pipeline with records that have stage fields to test this trigger.';
+    }
+
+    if (type.includes('workflow_completed')) {
+      return 'No completed workflow executions found. Run a workflow to create test data for this trigger.';
+    }
+
+    if (type.includes('condition_met')) {
+      return 'No records available to test conditions. Select a pipeline with records to evaluate condition triggers.';
+    }
+
+    if (type.includes('email')) {
+      return 'No email messages found. Send or receive emails to create test data for this trigger.';
+    }
+
+    if (type.includes('linkedin') || type.includes('whatsapp')) {
+      return `No ${type.includes('linkedin') ? 'LinkedIn' : 'WhatsApp'} messages found. Send or receive messages to create test data.`;
+    }
+
+    if (type.includes('form')) {
+      return 'No form submissions found. Submit a form or select a pipeline with records to test this trigger.';
+    }
+
+    if (type.includes('record')) {
+      return 'No records found in the selected pipeline. Create records to test this trigger.';
+    }
+
+    return 'No test data available for this trigger type. Configure the trigger settings to proceed.';
   };
 
   const getSideEffectIcon = (type: string) => {
@@ -212,8 +360,69 @@ export function NodeExecutionResults({
             </Select>
           </div>
 
-          {/* Record Selection */}
-          {selectedPipeline && selectedPipeline !== 'config' && (
+          {/* Test Data Selection for Triggers */}
+          {selectedNode?.type?.toLowerCase().includes('trigger') && (
+            <div className="space-y-2">
+              <Label>
+                Select Test Data for Trigger
+                {selectedPipeline === 'config' && testConfig?.pipeline_id && (
+                  <span className="text-xs text-muted-foreground ml-2">
+                    (using pipeline from config)
+                  </span>
+                )}
+              </Label>
+
+              {loadingTestData ? (
+                <Alert>
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertDescription>
+                    Loading available test data...
+                  </AlertDescription>
+                </Alert>
+              ) : testData.length > 0 ? (
+                <>
+                  <Select
+                    value={selectedTestData}
+                    onValueChange={setSelectedTestData}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Choose test data to simulate trigger" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">No test data (show configuration only)</SelectItem>
+                      {testData.map((item: any) => (
+                        <SelectItem key={item.id} value={String(item.id)}>
+                          <div className="flex flex-col">
+                            <span>{item.title}</span>
+                            {item.preview && (
+                              <span className="text-xs text-muted-foreground">
+                                {item.preview.from || item.preview.subject || Object.values(item.preview)[0]}
+                              </span>
+                            )}
+                          </div>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {testDataType && (
+                    <p className="text-sm text-muted-foreground">
+                      Test data type: {testDataType}
+                    </p>
+                  )}
+                </>
+              ) : (
+                <Alert>
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertDescription>
+                    {getTriggerTestDataMessage(selectedNode.type)}
+                  </AlertDescription>
+                </Alert>
+              )}
+            </div>
+          )}
+
+          {/* Record Selection for non-trigger nodes */}
+          {((selectedPipeline && selectedPipeline !== 'config') || (selectedPipeline === 'config' && testConfig?.pipeline_id)) && !selectedNode?.type?.toLowerCase().includes('trigger') && (
             <div className="space-y-2">
               <Label>Select Test Record (Optional)</Label>
               <Select

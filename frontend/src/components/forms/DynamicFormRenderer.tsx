@@ -353,9 +353,9 @@ export function DynamicFormRenderer({
       
       let endpoint = ''
       let response
-      
+
       if (formType.includes('public')) {
-        endpoint = `/api/public-forms/${pipelineSlug || pipelineId}/submit/`
+        endpoint = `/api/v1/public-forms/${pipelineSlug || pipelineId}/submit/`
         response = await api.post(endpoint, submitData)
       } else if (formType === 'shared_record') {
         // For shared records, don't make an API call here - let the parent component handle it
@@ -366,7 +366,8 @@ export function DynamicFormRenderer({
         setSubmitted(true)
         return
       } else {
-        endpoint = `/api/pipelines/${pipelineId}/forms/submit/`
+        // Use the new dynamic forms endpoint that properly tracks submissions
+        endpoint = `/api/v1/pipelines/${pipelineId}/forms/submit/`
         response = await api.post(endpoint, submitData)
       }
       

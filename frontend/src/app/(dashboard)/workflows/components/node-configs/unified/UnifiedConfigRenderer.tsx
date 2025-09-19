@@ -140,6 +140,12 @@ export function UnifiedConfigRenderer({
       return null;
     }
 
+    // Skip hidden fields - they should not be rendered in the UI
+    const widget = field.uiHints?.widget || field.widget;
+    if (widget === 'hidden') {
+      return null;
+    }
+
     const fieldKey = field.key;
     const value = currentConfig[fieldKey] ?? field.defaultValue;
     const error = errors[fieldKey];
@@ -274,6 +280,8 @@ export function UnifiedConfigRenderer({
           // Don't pass helpText either - UnifiedConfigRenderer renders it
           uiHints: field.uiHints || {},
           config: currentConfig,
+          field: { key: field.key },
+          onConfigUpdate: onChange,  // Pass the full config update function
           pipelines,
           users,
           userTypes,

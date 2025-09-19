@@ -1566,5 +1566,266 @@ class SavedFilter(models.Model):
             # All users with pipeline access can use
             permission_manager = SyncPermissionManager(user)
             return permission_manager.has_permission('action', 'pipelines', 'access', self.pipeline.id)
-        
+
         return False
+
+
+class FormSubmission(models.Model):
+    """
+    Track form submissions as first-class entities with full metadata.
+    This model captures the context around form submissions that would otherwise be lost
+    when only creating Records.
+    """
+
+    # Core identification
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+
+    # Relationship to the created record
+    record = models.ForeignKey(
+        Record,
+        on_delete=models.CASCADE,
+        related_name='form_submissions',
+        help_text="The record created from this form submission"
+    )
+
+    # Form context
+    form_id = models.CharField(
+        max_length=255,
+        help_text="ID of the form configuration used (e.g., 'pipeline_23_internal_full')"
+    )
+    form_name = models.CharField(
+        max_length=255,
+        help_text="Human-readable name of the form at submission time"
+    )
+    form_mode = models.CharField(
+        max_length=50,
+        choices=[
+            ('internal_full', 'Internal Full Access'),
+            ('internal_filtered', 'Internal Filtered'),
+            ('public_full', 'Public Full'),
+            ('public_filtered', 'Public Filtered'),
+            ('stage_internal', 'Stage Internal'),
+            ('stage_public', 'Stage Public'),
+            ('shared_record', 'Shared Record Form'),
+        ],
+        default='internal_full',
+        help_text="The form mode used for submission"
+    )
+
+    # Submission metadata
+    submitted_data = models.JSONField(
+        default=dict,
+        help_text="Raw form data as submitted (before processing)"
+    )
+    processed_data = models.JSONField(
+        default=dict,
+        help_text="Processed data after validation and transformation"
+    )
+
+    # Form configuration snapshot
+    form_config = models.JSONField(
+        default=dict,
+        help_text="Snapshot of form configuration at submission time"
+    )
+
+    # Submission context
+    submission_source = models.CharField(
+        max_length=50,
+        choices=[
+            ('web', 'Web Form'),
+            ('api', 'API'),
+            ('import', 'Import'),
+            ('workflow', 'Workflow'),
+            ('mobile', 'Mobile App'),
+            ('email', 'Email'),
+        ],
+        default='web',
+        help_text="Source of the submission"
+    )
+    submission_url = models.URLField(
+        blank=True,
+        help_text="URL where the form was submitted from"
+    )
+
+    # User and authentication
+    submitted_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='form_submissions',
+        help_text="Authenticated user who submitted (null for anonymous)"
+    )
+    is_anonymous = models.BooleanField(
+        default=False,
+        help_text="Whether this was an anonymous submission"
+    )
+
+    # Session and tracking
+    session_id = models.CharField(
+        max_length=255,
+        blank=True,
+        help_text="Session ID for tracking anonymous submissions"
+    )
+    ip_address = models.GenericIPAddressField(
+        null=True,
+        blank=True,
+        help_text="IP address of submitter"
+    )
+    user_agent = models.TextField(
+        blank=True,
+        help_text="User agent string of submitter"
+    )
+    referrer = models.URLField(
+        blank=True,
+        help_text="Referrer URL"
+    )
+
+    # Validation and processing
+    validation_errors = models.JSONField(
+        default=list,
+        help_text="Any validation errors encountered"
+    )
+    processing_time_ms = models.IntegerField(
+        null=True,
+        blank=True,
+        help_text="Time taken to process submission in milliseconds"
+    )
+
+    # Spam and security
+    spam_score = models.FloatField(
+        null=True,
+        blank=True,
+        help_text="Spam detection score (0-1)"
+    )
+    captcha_verified = models.BooleanField(
+        default=False,
+        help_text="Whether captcha was verified (if applicable)"
+    )
+
+    # UTM and campaign tracking
+    utm_source = models.CharField(max_length=255, blank=True)
+    utm_medium = models.CharField(max_length=255, blank=True)
+    utm_campaign = models.CharField(max_length=255, blank=True)
+    utm_term = models.CharField(max_length=255, blank=True)
+    utm_content = models.CharField(max_length=255, blank=True)
+
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'pipelines_formsubmission'
+        indexes = [
+            models.Index(fields=['form_id']),
+            models.Index(fields=['submission_source']),
+            models.Index(fields=['created_at']),
+            models.Index(fields=['submitted_by']),
+            models.Index(fields=['is_anonymous']),
+            models.Index(fields=['session_id']),
+        ]
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"Form Submission: {self.form_name} - {self.created_at}"
+
+    def get_submission_metadata(self):
+        """Get a dictionary of all submission metadata for workflows"""
+        return {
+            'form_id': self.form_id,
+            'form_name': self.form_name,
+            'form_mode': self.form_mode,
+            'submission_source': self.submission_source,
+            'submission_url': self.submission_url,
+            'is_anonymous': self.is_anonymous,
+            'session_id': self.session_id,
+            'ip_address': self.ip_address,
+            'referrer': self.referrer,
+            'utm_source': self.utm_source,
+            'utm_medium': self.utm_medium,
+            'utm_campaign': self.utm_campaign,
+            'submitted_at': self.created_at.isoformat() if self.created_at else None,
+            'submitted_by': {
+                'id': self.submitted_by.id,
+                'email': self.submitted_by.email,
+                'name': getattr(self.submitted_by, 'get_full_name', lambda: '')()
+            } if self.submitted_by else None,
+        }
+
+    @classmethod
+    def create_from_form_data(cls, pipeline, form_data, form_config, user=None, request=None):
+        """
+        Helper method to create a FormSubmission and associated Record
+
+        Args:
+            pipeline: Pipeline instance
+            form_data: The submitted form data
+            form_config: The form configuration dict
+            user: The user submitting (optional)
+            request: The HTTP request (optional, for metadata extraction)
+
+        Returns:
+            Tuple of (FormSubmission, Record)
+        """
+        from django.utils import timezone
+        import time
+
+        start_time = time.time()
+
+        # Create the record first
+        record = Record.objects.create(
+            pipeline=pipeline,
+            data=form_data,
+            created_by=user or pipeline.created_by,  # Default to pipeline creator if anonymous
+            updated_by=user or pipeline.created_by,
+        )
+
+        processing_time = int((time.time() - start_time) * 1000)
+
+        # Extract metadata from request if available
+        if request:
+            submission_metadata = {
+                'submission_url': request.build_absolute_uri(),
+                'ip_address': request.META.get('REMOTE_ADDR'),
+                'user_agent': request.META.get('HTTP_USER_AGENT', ''),
+                'referrer': request.META.get('HTTP_REFERER', ''),
+                # Ensure session_id is never None (use empty string if no session)
+                'session_id': request.session.session_key if (hasattr(request, 'session') and request.session.session_key) else '',
+                # Extract UTM parameters from query params
+                'utm_source': request.GET.get('utm_source', ''),
+                'utm_medium': request.GET.get('utm_medium', ''),
+                'utm_campaign': request.GET.get('utm_campaign', ''),
+                'utm_term': request.GET.get('utm_term', ''),
+                'utm_content': request.GET.get('utm_content', ''),
+            }
+        else:
+            # Provide default values for fields that can't be NULL
+            submission_metadata = {
+                'submission_url': '',
+                'ip_address': None,  # This field allows NULL
+                'user_agent': '',
+                'referrer': '',
+                'session_id': '',  # Must be empty string, not NULL
+                'utm_source': '',
+                'utm_medium': '',
+                'utm_campaign': '',
+                'utm_term': '',
+                'utm_content': '',
+            }
+
+        # Create the form submission record
+        form_submission = cls.objects.create(
+            record=record,
+            form_id=form_config.get('id', f"pipeline_{pipeline.id}_{form_config.get('mode', 'internal_full')}"),
+            form_name=form_config.get('name', f"{pipeline.name} Form"),
+            form_mode=form_config.get('mode', 'internal_full'),
+            submitted_data=form_data,
+            processed_data=record.data,
+            form_config=form_config,
+            submission_source='web',
+            submitted_by=user,
+            is_anonymous=(user is None),
+            processing_time_ms=processing_time,
+            **submission_metadata
+        )
+
+        return form_submission, record

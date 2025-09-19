@@ -92,7 +92,7 @@ python manage.py setup_recovery_system --admin-user <your-username>
 
 # 6. Access applications
 # Frontend: http://localhost:3000
-# Tenants:  http://demo.localhost:3000
+# Tenants:  http://oneotalent.localhost:3000
 # Admin:    http://localhost:8000/admin/
 # API:      http://localhost:8000/api/
 ```

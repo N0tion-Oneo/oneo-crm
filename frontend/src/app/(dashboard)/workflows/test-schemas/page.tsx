@@ -114,10 +114,9 @@ export default function TestSchemasPage() {
       const config = await workflowSchemaService.getNodeConfig(selectedNode.type);
       setTransformedConfig(config);
 
-      // Set default values
-      if (config?.defaults) {
-        setTestConfig(config.defaults);
-      }
+      // Always reset config to defaults or empty object when switching nodes
+      // This prevents configuration from previous nodes polluting the current node
+      setTestConfig(config?.defaults || {});
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to transform schema');
     } finally {

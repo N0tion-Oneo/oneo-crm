@@ -42,6 +42,7 @@ export interface UIHints {
   label_field?: string;
   show_field_count?: boolean;
   group_by?: string;
+  store_additional_fields?: string[];
   // Computed fields
   computed_from?: string;
   // Conditional display
@@ -60,6 +61,8 @@ export interface WidgetProps extends BaseWidgetConfig {
   uiHints?: UIHints;
   // Context data for widgets that need it
   config?: Record<string, any>;  // Full form config for conditional logic
+  field?: { key: string };  // Field metadata
+  onConfigUpdate?: (config: Record<string, any>) => void;  // Update entire config object
   pipelines?: any[];
   users?: any[];
   userTypes?: any[];

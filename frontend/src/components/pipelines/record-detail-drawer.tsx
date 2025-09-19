@@ -871,7 +871,27 @@ export function RecordDetailDrawer({
       if (errors.length === 0) {
         // Transform data to use backend field slugs
         const transformedData = transformFormDataForBackend(formData)
-        const response = await pipelinesApi.createRecord(pipeline.id, { data: transformedData })
+
+        // Include form metadata to trigger FormSubmission tracking
+        const visibleFieldSlugs = visibleFields.map(f => f.slug || f.name)
+        const requiredFieldSlugs = visibleFields
+          .filter(f => f.is_required)
+          .map(f => f.slug || f.name)
+
+        const response = await pipelinesApi.createRecord(
+          pipeline.id,
+          { data: transformedData },
+          {
+            isFormSubmission: true,
+            formConfig: {
+              id: `pipeline_${pipeline.id}_ui_form`,
+              name: `${pipeline.name} Form (UI)`,
+              mode: 'internal_full',
+              visible_fields: visibleFieldSlugs,
+              required_fields: requiredFieldSlugs
+            }
+          }
+        )
         const newRecord = response.data
         setLastSaved(new Date())
         

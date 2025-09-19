@@ -292,53 +292,53 @@ export const permissionsApi = {
 
 export const pipelinesApi = {
   list: () =>
-    api.get('/api/pipelines/'),
-  
+    api.get('/api/v1/pipelines/'),
+
   get: (id: string) =>
-    api.get(`/api/pipelines/${id}/`),
-  
+    api.get(`/api/v1/pipelines/${id}/`),
+
   create: (data: any) =>
-    api.post('/api/pipelines/', data),
-  
+    api.post('/api/v1/pipelines/', data),
+
   update: (id: string, data: any) =>
-    api.patch(`/api/pipelines/${id}/`, data),
-  
+    api.patch(`/api/v1/pipelines/${id}/`, data),
+
   delete: (id: string) =>
-    api.delete(`/api/pipelines/${id}/`),
+    api.delete(`/api/v1/pipelines/${id}/`),
   
   // Field management - using nested API structure consistently
   getFields: (pipelineId: string) =>
-    api.get(`/api/pipelines/${pipelineId}/fields/`),
-  
+    api.get(`/api/v1/pipelines/${pipelineId}/fields/`),
+
   createField: (pipelineId: string, data: any) =>
-    api.post(`/api/pipelines/${pipelineId}/fields/`, data),
-  
+    api.post(`/api/v1/pipelines/${pipelineId}/fields/`, data),
+
   updateField: (pipelineId: string, fieldId: string, data: any) =>
-    api.patch(`/api/pipelines/${pipelineId}/fields/${fieldId}/`, data),
-  
+    api.patch(`/api/v1/pipelines/${pipelineId}/fields/${fieldId}/`, data),
+
   deleteField: (pipelineId: string, fieldId: string) =>
-    api.delete(`/api/pipelines/${pipelineId}/fields/${fieldId}/`),
+    api.delete(`/api/v1/pipelines/${pipelineId}/fields/${fieldId}/`),
 
   // Advanced field lifecycle management (nested under pipelines)
   manageField: (pipelineId: string, fieldId: string, action: 'soft_delete' | 'restore' | 'schedule_hard_delete' | 'impact_analysis', data?: any) =>
-    api.post(`/api/pipelines/${pipelineId}/fields/${fieldId}/manage/`, { action, ...data }),
+    api.post(`/api/v1/pipelines/${pipelineId}/fields/${fieldId}/manage/`, { action, ...data }),
 
   // Migration validation and execution
   validateMigration: (pipelineId: string, fieldId: string, data: { new_config: any; include_impact_preview?: boolean }) =>
-    api.post(`/api/pipelines/${pipelineId}/fields/${fieldId}/validate_migration/`, data),
+    api.post(`/api/v1/pipelines/${pipelineId}/fields/${fieldId}/validate_migration/`, data),
 
   migrateFieldSchema: (pipelineId: string, fieldId: string, data: { new_config: any; dry_run?: boolean; batch_size?: number; force?: boolean }) =>
-    api.post(`/api/pipelines/${pipelineId}/fields/${fieldId}/migrate_schema/`, data),
+    api.post(`/api/v1/pipelines/${pipelineId}/fields/${fieldId}/migrate_schema/`, data),
 
   // Enhanced field recovery endpoints (using nested router structure)
   getDeletedFields: (pipelineId: string) =>
-    api.get(`/api/pipelines/${pipelineId}/fields/deleted/`),
+    api.get(`/api/v1/pipelines/${pipelineId}/fields/deleted/`),
 
   restoreField: (pipelineId: string, fieldId: string, options: { reason?: string; dry_run?: boolean; force?: boolean } = {}) =>
-    api.post(`/api/pipelines/${pipelineId}/fields/${fieldId}/restore/`, options),
+    api.post(`/api/v1/pipelines/${pipelineId}/fields/${fieldId}/restore/`, options),
 
   bulkRestoreFields: (pipelineId: string, data: { field_ids: string[]; reason?: string; force?: boolean }) =>
-    api.post(`/api/pipelines/${pipelineId}/fields/bulk_restore/`, data),
+    api.post(`/api/v1/pipelines/${pipelineId}/fields/bulk_restore/`, data),
 
   // Legacy global endpoints (for backward compatibility)
   getAllDeletedFields: () =>
@@ -351,69 +351,87 @@ export const pipelinesApi = {
     api.get('/api/fields/migration_status/', { params: { task_id: taskId } }),
 
   validateFieldValue: (pipelineId: string, fieldId: string, value: any, isRequired?: boolean) =>
-    api.post(`/api/pipelines/${pipelineId}/fields/${fieldId}/validate_value/`, { value, is_required: isRequired }),
+    api.post(`/api/v1/pipelines/${pipelineId}/fields/${fieldId}/validate_value/`, { value, is_required: isRequired }),
   
   // Field Groups management
   getFieldGroups: (pipelineId: string) =>
-    api.get(`/api/pipelines/${pipelineId}/field-groups/`),
-  
+    api.get(`/api/v1/pipelines/${pipelineId}/field-groups/`),
+
   createFieldGroup: (pipelineId: string, data: any) =>
-    api.post(`/api/pipelines/${pipelineId}/field-groups/`, data),
-  
+    api.post(`/api/v1/pipelines/${pipelineId}/field-groups/`, data),
+
   updateFieldGroup: (pipelineId: string, groupId: string, data: any) =>
-    api.patch(`/api/pipelines/${pipelineId}/field-groups/${groupId}/`, data),
-  
+    api.patch(`/api/v1/pipelines/${pipelineId}/field-groups/${groupId}/`, data),
+
   deleteFieldGroup: (pipelineId: string, groupId: string) =>
-    api.delete(`/api/pipelines/${pipelineId}/field-groups/${groupId}/`),
+    api.delete(`/api/v1/pipelines/${pipelineId}/field-groups/${groupId}/`),
   
   reorderFieldGroups: (pipelineId: string, groupOrders: { id: string; display_order: number }[]) =>
-    api.post(`/api/pipelines/${pipelineId}/field-groups/reorder/`, { group_orders: groupOrders }),
+    api.post(`/api/v1/pipelines/${pipelineId}/field-groups/reorder/`, { group_orders: groupOrders }),
   
   assignFieldsToGroup: (pipelineId: string, groupId: string, fieldIds: string[]) =>
-    api.post(`/api/pipelines/${pipelineId}/field-groups/${groupId}/assign_fields/`, { field_ids: fieldIds }),
+    api.post(`/api/v1/pipelines/${pipelineId}/field-groups/${groupId}/assign_fields/`, { field_ids: fieldIds }),
   
   ungroupFields: (pipelineId: string, groupId: string, fieldIds: string[]) =>
-    api.post(`/api/pipelines/${pipelineId}/field-groups/${groupId}/ungroup_fields/`, { field_ids: fieldIds }),
+    api.post(`/api/v1/pipelines/${pipelineId}/field-groups/${groupId}/ungroup_fields/`, { field_ids: fieldIds }),
   
   // Record management
   getRecords: (pipelineId: string, params?: any) =>
-    api.get(`/api/pipelines/${pipelineId}/records/`, { params }),
-  
+    api.get(`/api/v1/pipelines/${pipelineId}/records/`, { params }),
+
   getRecord: (pipelineId: string, recordId: string) =>
-    api.get(`/api/pipelines/${pipelineId}/records/${recordId}/`),
+    api.get(`/api/v1/pipelines/${pipelineId}/records/${recordId}/`),
   
-  createRecord: (pipelineId: string, data: any) =>
-    api.post(`/api/pipelines/${pipelineId}/records/`, data),
+  createRecord: (pipelineId: string, data: any, formMetadata?: {
+    isFormSubmission?: boolean
+    formConfig?: {
+      id?: string
+      name?: string
+      mode?: string
+      stage?: string
+      visible_fields?: string[]
+      required_fields?: string[]
+    }
+  }) => {
+    // If form metadata is provided, include it to trigger FormSubmission tracking
+    const payload = formMetadata ? {
+      ...data,
+      _is_form_submission: formMetadata.isFormSubmission || true,
+      _form_config: formMetadata.formConfig
+    } : data
+
+    return api.post(`/api/v1/pipelines/${pipelineId}/records/`, payload)
+  },
   
   updateRecord: (pipelineId: string, recordId: string, data: any) =>
-    api.patch(`/api/pipelines/${pipelineId}/records/${recordId}/`, data),
+    api.patch(`/api/v1/pipelines/${pipelineId}/records/${recordId}/`, data),
   
   // Soft delete (default) - can be restored
   deleteRecord: (pipelineId: string, recordId: string) =>
-    api.post(`/api/pipelines/${pipelineId}/records/${recordId}/soft_delete/`),
-  
-  // Hard delete (permanent) - cannot be restored  
+    api.post(`/api/v1/pipelines/${pipelineId}/records/${recordId}/soft_delete/`),
+
+  // Hard delete (permanent) - cannot be restored
   hardDeleteRecord: (pipelineId: string, recordId: string) =>
-    api.delete(`/api/pipelines/${pipelineId}/records/${recordId}/`),
-  
+    api.delete(`/api/v1/pipelines/${pipelineId}/records/${recordId}/`),
+
   // Restore soft-deleted record
   restoreRecord: (pipelineId: string, recordId: string) =>
-    api.post(`/api/pipelines/${pipelineId}/records/${recordId}/restore/`),
-  
+    api.post(`/api/v1/pipelines/${pipelineId}/records/${recordId}/restore/`),
+
   // Get deleted records
   getDeletedRecords: (pipelineId: string, params?: any) =>
-    api.get(`/api/pipelines/${pipelineId}/records/deleted/`, { params }),
+    api.get(`/api/v1/pipelines/${pipelineId}/records/deleted/`, { params }),
   
   // Bulk operations
   bulkUpdateRecords: (pipelineId: string, data: any) =>
-    api.post(`/api/records/bulk_update/`, { ...data, pipeline: parseInt(pipelineId) }),
+    api.post(`/api/v1/records/bulk_update/`, { ...data, pipeline: parseInt(pipelineId) }),
   
   bulkDeleteRecords: (pipelineId: string, data: any) =>
-    api.post(`/api/records/bulk_delete/`, { ...data, pipeline: parseInt(pipelineId) }),
+    api.post(`/api/v1/records/bulk_delete/`, { ...data, pipeline: parseInt(pipelineId) }),
   
   // Export
   exportRecords: (pipelineId: string, format: 'csv' | 'json' | 'excel', params?: any) =>
-    api.get(`/api/records/export/`, { 
+    api.get(`/api/v1/records/export/`, { 
       params: { ...params, format, pipeline: parseInt(pipelineId) },
       responseType: 'blob'
     }),
@@ -423,7 +441,7 @@ export const pipelinesApi = {
     api.get('/api/templates/'),
   
   createFromTemplate: (templateId: string, data: any) =>
-    api.post(`/api/pipelines/from_template/`, { template_id: templateId, ...data }),
+    api.post(`/api/v1/pipelines/from_template/`, { template_id: templateId, ...data }),
 }
 
 export const recordsApi = {
@@ -433,35 +451,35 @@ export const recordsApi = {
   
   // Record activity/history
   getRecordActivity: (pipelineId: string, recordId: string) =>
-    api.get(`/api/pipelines/${pipelineId}/records/${recordId}/history/`),
+    api.get(`/api/v1/pipelines/${pipelineId}/records/${recordId}/history/`),
   
   // Record comments (placeholder - endpoint may not exist)
   getRecordComments: (pipelineId: string, recordId: string) =>
-    api.get(`/api/pipelines/${pipelineId}/records/${recordId}/comments/`),
+    api.get(`/api/v1/pipelines/${pipelineId}/records/${recordId}/comments/`),
   
   createRecordComment: (pipelineId: string, recordId: string, data: any) =>
-    api.post(`/api/pipelines/${pipelineId}/records/${recordId}/comments/`, data),
+    api.post(`/api/v1/pipelines/${pipelineId}/records/${recordId}/comments/`, data),
   
   // Record relationships (using correct nested endpoint)
   getRecordRelationships: (pipelineId: string, recordId: string) =>
-    api.get(`/api/pipelines/${pipelineId}/records/${recordId}/relationships/`),
+    api.get(`/api/v1/pipelines/${pipelineId}/records/${recordId}/relationships/`),
   
   createRecordRelationship: (pipelineId: string, recordId: string, data: any) =>
-    api.post(`/api/pipelines/${pipelineId}/records/${recordId}/relationships/`, data),
+    api.post(`/api/v1/pipelines/${pipelineId}/records/${recordId}/relationships/`, data),
   
   // Share link generation (encrypted sharing)
   generateShareLink: (pipelineId: string, recordId: string, data?: { 
     access_mode?: 'readonly' | 'editable'
     intended_recipient_email?: string 
   }) =>
-    api.post(`/api/pipelines/${pipelineId}/records/${recordId}/generate_share_link/`, data || {}),
+    api.post(`/api/v1/pipelines/${pipelineId}/records/${recordId}/generate_share_link/`, data || {}),
   
   previewSharedForm: (pipelineId: string, recordId: string) =>
-    api.get(`/api/pipelines/${pipelineId}/records/${recordId}/preview_shared_form/`),
+    api.get(`/api/v1/pipelines/${pipelineId}/records/${recordId}/preview_shared_form/`),
   
   // Sharing history and management
   getSharingHistory: (pipelineId: string, recordId: string) =>
-    api.get(`/api/pipelines/${pipelineId}/records/${recordId}/sharing-history/`),
+    api.get(`/api/v1/pipelines/${pipelineId}/records/${recordId}/sharing-history/`),
   
   getShareAccessLogs: (shareId: string) =>
     api.get(`/api/shared-record-history/${shareId}/access_logs/`),
@@ -1109,12 +1127,18 @@ export const workflowsApi = {
     node_config: any;
     test_context?: any;
     test_record_id?: string;
+    test_data_id?: string;
+    test_data_type?: string;
   }) =>
     api.post('/api/v1/workflows/test-node-standalone/', data),
 
   // Get test records for a workflow node
   getTestRecords: (workflowId: string, params: { pipeline_id?: string; node_type?: string }) =>
     api.get(`/api/v1/workflows/test-records/`, { params }),
+
+  // Get test data for trigger testing (emails, messages, records)
+  getTestData: (params: { node_type: string; pipeline_id?: string; node_config?: string }) =>
+    api.get('/api/v1/workflows/test-data/', { params }),
 
   // Workflow executions
   getExecutions: (workflowId: string, params?: any) =>

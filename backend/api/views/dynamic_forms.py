@@ -231,12 +231,13 @@ class DynamicFormViewSet(viewsets.ViewSet):
 
             forms = []
 
-            # Add base forms
+            # Add base forms with structured data
             forms.append({
                 'id': f'{pipeline.id}_internal_full',
-                'label': 'All Fields (Internal)',
+                'pipeline_id': pipeline.id,
                 'mode': 'internal_full',
                 'stage': None,
+                'label': 'All Fields (Internal)',
                 'url': f'/forms/internal/{pipeline.id}',
                 'field_count': pipeline.fields.filter(is_visible_in_detail=True).count(),
                 'description': 'Form with all pipeline fields for internal users'
@@ -244,9 +245,10 @@ class DynamicFormViewSet(viewsets.ViewSet):
 
             forms.append({
                 'id': f'{pipeline.id}_public_filtered',
-                'label': 'Public Fields Only',
+                'pipeline_id': pipeline.id,
                 'mode': 'public_filtered',
                 'stage': None,
+                'label': 'Public Fields Only',
                 'url': f'/forms/{pipeline.slug}',
                 'field_count': pipeline.fields.filter(
                     is_visible_in_public_forms=True,
@@ -261,28 +263,30 @@ class DynamicFormViewSet(viewsets.ViewSet):
                 stage_internal_schema = generator.generate_form(mode='stage_internal', stage=stage)
                 stage_public_schema = generator.generate_form(mode='stage_public', stage=stage)
 
-                # Internal stage form
+                # Internal stage form with structured data
                 forms.append({
                     'id': f'{pipeline.id}_stage_internal_{stage}',
-                    'label': f'{stage} Stage Form (Internal)',
+                    'pipeline_id': pipeline.id,
                     'mode': 'stage_internal',
                     'stage': stage,
+                    'label': f'{stage} Stage Form (Internal)',
                     'url': f'/forms/internal/{pipeline.id}?stage={stage}',
                     'field_count': len(stage_internal_schema.fields),
-                    'required_fields': [f.field_slug for f in stage_internal_schema.fields],
+                    'field_slugs': [f.field_slug for f in stage_internal_schema.fields],
                     'description': f'Stage-specific form for {stage} (internal use)'
                 })
 
-                # Public stage form
+                # Public stage form with structured data
                 if len(stage_public_schema.fields) > 0:
                     forms.append({
                         'id': f'{pipeline.id}_stage_public_{stage}',
-                        'label': f'{stage} Stage Form (Public)',
+                        'pipeline_id': pipeline.id,
                         'mode': 'stage_public',
                         'stage': stage,
+                        'label': f'{stage} Stage Form (Public)',
                         'url': f'/forms/{pipeline.slug}/stage/{stage}',
                         'field_count': len(stage_public_schema.fields),
-                        'required_fields': [f.field_slug for f in stage_public_schema.fields],
+                        'field_slugs': [f.field_slug for f in stage_public_schema.fields],
                         'description': f'Stage-specific form for {stage} (public)'
                     })
 
@@ -336,47 +340,87 @@ class DynamicFormViewSet(viewsets.ViewSet):
     def submit_form(self, request, pipeline_pk=None):
         """Submit form data to pipeline"""
         pipeline = get_object_or_404(Pipeline, pk=pipeline_pk)
-        
+
         form_mode = request.data.get('form_mode', 'internal_full')
         stage = request.data.get('stage')
         record_id = request.data.get('record_id')
         form_data = request.data.get('data', {})
-        
+
         if not form_data:
             return Response(
                 {'error': 'Form data is required'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
+
         try:
             # Validate data against form schema
             generator = DynamicFormGenerator(pipeline)
             form_schema = generator.generate_form(mode=form_mode, stage=stage)
-            
+
+            # Build form configuration (simplified - no need for visible/required fields)
+            form_config = {
+                'id': f"pipeline_{pipeline.id}_{form_mode}",
+                'name': f"{pipeline.name} Form ({form_mode})",
+                'mode': form_mode,
+                'stage': stage,
+                'submitted_field_count': len(form_data.keys()),
+            }
+
             # TODO: Add form validation logic here
-            
-            # Create or update record
+
+            # Create or update record using FormSubmission for tracking
             if record_id:
-                # Update existing record
+                # Update existing record (still track as form submission for audit)
                 record = get_object_or_404(Record, pk=record_id, pipeline=pipeline)
+
+                # Store original data for tracking changes
+                original_data = record.data.copy()
+
+                # Update the record
                 record.data.update(form_data)
                 record.updated_by = request.user
                 record.save()
-            else:
-                # Create new record
-                record = Record.objects.create(
-                    pipeline=pipeline,
-                    data=form_data,
-                    created_by=request.user,
-                    updated_by=request.user
+
+                # Create FormSubmission to track the update
+                from pipelines.models import FormSubmission
+                form_submission = FormSubmission.objects.create(
+                    record=record,
+                    form_id=form_config['id'],
+                    form_name=form_config['name'],
+                    form_mode=form_mode,
+                    submitted_data=form_data,
+                    processed_data=record.data,
+                    form_config=form_config,
+                    submission_source='api',
+                    submission_metadata={
+                        'is_update': True,
+                        'original_data': original_data,
+                        'ip_address': request.META.get('REMOTE_ADDR'),
+                        'user_agent': request.META.get('HTTP_USER_AGENT', ''),
+                        'endpoint': 'dynamic_forms.submit_form'
+                    },
+                    submitted_by=request.user
                 )
-            
+            else:
+                # Create new record with FormSubmission tracking
+                from pipelines.models import FormSubmission
+
+                # Use FormSubmission.create_from_form_data for consistent tracking
+                form_submission, record = FormSubmission.create_from_form_data(
+                    pipeline=pipeline,
+                    form_data=form_data,
+                    form_config=form_config,
+                    user=request.user,
+                    request=request
+                )
+
             return Response({
                 'success': True,
                 'record_id': record.id,
-                'message': 'Form submitted successfully'
+                'message': 'Form submitted successfully',
+                'form_submission_id': str(form_submission.id) if 'form_submission' in locals() else None
             })
-            
+
         except Exception as e:
             return Response(
                 {'error': f'Failed to submit form: {str(e)}'},
@@ -487,27 +531,48 @@ class PublicFormViewSet(viewsets.ViewSet):
             pipeline = Pipeline.objects.get(slug=pk, access_level='public')
         except Pipeline.DoesNotExist:
             raise Http404("Public form not found")
-        
+
         stage = request.data.get('stage')
         form_data = request.data.get('data', {})
         captcha_token = request.data.get('captcha_token')
-        
+
         if not form_data:
             return Response(
                 {'error': 'Form data is required'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
+
         # TODO: Add captcha validation
-        
+
         try:
             # Validate against public form schema
             form_mode = 'stage_public' if stage else 'public_filtered'
             generator = DynamicFormGenerator(pipeline)
             form_schema = generator.generate_form(mode=form_mode, stage=stage)
-            
+
+            # Evaluate conditional requirements based on submitted data
+            from pipelines.conditional_evaluator import ConditionalRuleEvaluator
+            requirements = ConditionalRuleEvaluator.get_form_requirements(
+                pipeline, form_data, form_mode, stage=stage
+            )
+
+            # Build form configuration with dynamically evaluated requirements
+            form_config = {
+                'id': f"pipeline_{pipeline.id}_{form_mode}_public",
+                'name': f"{pipeline.name} Public Form",
+                'mode': form_mode,
+                'stage': stage,
+                'visible_fields': requirements['visible_fields'],  # Use evaluated visible fields
+                'required_fields': requirements['required_fields'],  # Use evaluated required fields
+                'total_fields': form_schema.total_fields,
+                'visible_fields_count': len(requirements['visible_fields']),
+                'required_fields_count': len(requirements['required_fields']),
+                'is_public': True,
+                'conditional_context': requirements.get('form_data_context', {})  # Store evaluation context
+            }
+
             # TODO: Add form validation logic
-            
+
             # Create record with anonymous system user
             from django.contrib.auth import get_user_model
             User = get_user_model()
@@ -522,20 +587,39 @@ class PublicFormViewSet(viewsets.ViewSet):
                     'is_superuser': False
                 }
             )
-            
-            record = Record.objects.create(
+
+            # Use FormSubmission.create_from_form_data for consistent tracking
+            from pipelines.models import FormSubmission
+
+            # Override form config to mark as public submission
+            form_config['submission_source'] = 'public_form'
+
+            # Create FormSubmission and Record together
+            form_submission, record = FormSubmission.create_from_form_data(
                 pipeline=pipeline,
-                data=form_data,
-                created_by=anonymous_user,
-                updated_by=anonymous_user
+                form_data=form_data,
+                form_config=form_config,
+                user=anonymous_user,  # Anonymous user for public forms
+                request=request
             )
-            
+
+            # Update FormSubmission with additional public form metadata
+            form_submission.submission_source = 'public_form'
+            form_submission.submission_metadata.update({
+                'is_public': True,
+                'captcha_token': captcha_token[:20] if captcha_token else None,  # Store truncated for security
+                'referrer': request.META.get('HTTP_REFERER', ''),
+                'endpoint': 'public_forms.submit_public_form'
+            })
+            form_submission.save()
+
             return Response({
                 'success': True,
                 'message': 'Form submitted successfully',
-                'record_id': record.id
+                'record_id': record.id,
+                'form_submission_id': str(form_submission.id)
             })
-            
+
         except Exception as e:
             return Response(
                 {'error': f'Failed to submit form: {str(e)}'},

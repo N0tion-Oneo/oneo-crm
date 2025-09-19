@@ -177,29 +177,59 @@ class PipelineViewSet(viewsets.ModelViewSet):
     def create_record(self, request, pk=None):
         """Create a new record in the pipeline"""
         pipeline = self.get_object()
+
+        # Check if this is a form submission
+        form_config = request.data.get('_form_config', None)
+        is_form_submission = form_config is not None or request.data.get('_is_form_submission', False)
+
+        # Extract form data (remove form metadata from actual record data)
+        record_data = {k: v for k, v in request.data.items() if not k.startswith('_')}
+
         serializer = RecordCreateSerializer(
-            data=request.data,
+            data=record_data,
             context={'request': request, 'pipeline': pipeline}
         )
-        
+
         if serializer.is_valid():
-            record = serializer.save()
-            
-            # Process AI fields asynchronously if present
-            # COMMENTED OUT: Legacy AI processing - now handled automatically via Record.save()
-            # if pipeline.get_ai_fields().exists():
-            #     try:
-            #         ai_results = process_ai_fields_sync(record)
-            #         if ai_results:
-            #             record.data.update(ai_results)
-            #             record.save(update_fields=['data'])
-            #     except Exception as e:
-            #         # AI processing failed, but record was created successfully
-            #         pass
-            
-            response_serializer = RecordSerializer(record, context={'request': request})
-            return Response(response_serializer.data, status=status.HTTP_201_CREATED)
-        
+            # If this is a form submission, use FormSubmission.create_from_form_data
+            if is_form_submission:
+                from .models import FormSubmission
+
+                # Build form config if not provided
+                if not form_config:
+                    form_config = {
+                        'id': f"pipeline_{pipeline.id}_web",
+                        'name': f"{pipeline.name} Form",
+                        'mode': 'internal_full',
+                        'visible_fields': list(record_data.keys()),
+                        'required_fields': []
+                    }
+
+                # Create FormSubmission and Record together
+                form_submission, record = FormSubmission.create_from_form_data(
+                    pipeline=pipeline,
+                    form_data=record_data,
+                    form_config=form_config,
+                    user=request.user if request.user.is_authenticated else None,
+                    request=request
+                )
+
+                # Return record data with form submission metadata
+                response_serializer = RecordSerializer(record, context={'request': request})
+                response_data = response_serializer.data
+                response_data['_form_submission'] = {
+                    'id': str(form_submission.id),
+                    'form_name': form_submission.form_name,
+                    'form_id': form_submission.form_id,
+                    'submitted_at': form_submission.created_at.isoformat()
+                }
+                return Response(response_data, status=status.HTTP_201_CREATED)
+            else:
+                # Normal record creation (not a form submission)
+                record = serializer.save()
+                response_serializer = RecordSerializer(record, context={'request': request})
+                return Response(response_serializer.data, status=status.HTTP_201_CREATED)
+
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
     
     @action(detail=True, methods=['get'])
@@ -880,6 +910,63 @@ class RecordViewSet(viewsets.ModelViewSet):
     search_fields = ['title', 'data']
     ordering_fields = ['created_at', 'updated_at', 'title']
     ordering = ['-updated_at']
+
+    def create(self, request, *args, **kwargs):
+        """Override create to handle form submissions"""
+        # Check if this is a form submission
+        form_config = request.data.get('_form_config', None)
+        is_form_submission = form_config is not None or request.data.get('_is_form_submission', False)
+
+        if is_form_submission:
+            # Extract form data (remove form metadata from actual record data)
+            record_data = {k: v for k, v in request.data.items() if not k.startswith('_')}
+
+            # Get pipeline from the data
+            pipeline_id = record_data.get('pipeline') or request.data.get('pipeline')
+            if not pipeline_id:
+                return Response({'error': 'Pipeline ID is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+            try:
+                pipeline = Pipeline.objects.get(id=pipeline_id)
+            except Pipeline.DoesNotExist:
+                return Response({'error': 'Pipeline not found'}, status=status.HTTP_404_NOT_FOUND)
+
+            # Build form config if not provided
+            if not form_config:
+                form_config = {
+                    'id': f"pipeline_{pipeline.id}_web",
+                    'name': f"{pipeline.name} Form",
+                    'mode': 'internal_full',
+                    'visible_fields': list(record_data.keys()),
+                    'required_fields': []
+                }
+
+            from .models import FormSubmission
+
+            # Create FormSubmission and Record together
+            form_submission, record = FormSubmission.create_from_form_data(
+                pipeline=pipeline,
+                form_data={k: v for k, v in record_data.items() if k != 'pipeline'},
+                form_config=form_config,
+                user=request.user if request.user.is_authenticated else None,
+                request=request
+            )
+
+            # Serialize and return the record with form submission metadata
+            serializer = self.get_serializer(record)
+            response_data = serializer.data
+            response_data['_form_submission'] = {
+                'id': str(form_submission.id),
+                'form_name': form_submission.form_name,
+                'form_id': form_submission.form_id,
+                'submitted_at': form_submission.created_at.isoformat()
+            }
+
+            headers = self.get_success_headers(serializer.data)
+            return Response(response_data, status=status.HTTP_201_CREATED, headers=headers)
+
+        # Normal record creation (delegate to parent)
+        return super().create(request, *args, **kwargs)
     
     def get_queryset(self):
         """Filter records based on pipeline access"""

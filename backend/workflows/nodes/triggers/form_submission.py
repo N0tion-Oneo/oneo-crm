@@ -44,7 +44,24 @@ class TriggerFormSubmittedProcessor(AsyncNodeProcessor):
                     "value_field": "id",
                     "label_field": "label",
                     "show_field_count": True,
-                    "group_by": "type"  # Groups forms by general vs stage-specific
+                    "group_by": "type",  # Groups forms by general vs stage-specific
+                    "store_additional_fields": ["mode", "stage", "pipeline_id"]  # Store structured data
+                }
+            },
+            "mode": {
+                "type": "string",
+                "description": "Form Mode",
+                "ui_hints": {
+                    "widget": "hidden",
+                    "computed_from": "form_selection.mode"
+                }
+            },
+            "stage": {
+                "type": "string",
+                "description": "Form Stage",
+                "ui_hints": {
+                    "widget": "hidden",
+                    "computed_from": "form_selection.stage"
                 }
             },
             "form_url_preview": {
@@ -170,13 +187,16 @@ class TriggerFormSubmittedProcessor(AsyncNodeProcessor):
         form_data = trigger_data.get('form_data', {})
         pipeline_id = config.get('pipeline_id') or trigger_data.get('pipeline_id')
 
-        # Parse form_selection to extract mode and stage if needed
+        # Use clean structured data from config (no parsing needed!)
         form_selection = config.get('form_selection', '')
-        form_mode = 'public_filtered'  # default
-        stage = None
+        # Check for both 'mode' and 'form_mode' for compatibility
+        form_mode = config.get('mode', config.get('form_mode', 'public_filtered'))
+        # Check for both 'stage' and 'form_stage' for compatibility
+        stage = config.get('stage', config.get('form_stage', None))
 
-        if form_selection:
-            # Form selection format: {pipeline_id}_{mode} or {pipeline_id}_{mode}_{stage}
+        # Fallback to parsing only if structured data not available (backward compatibility)
+        if not form_mode and form_selection:
+            # Legacy parsing for old configs
             parts = form_selection.split('_')
             if len(parts) >= 2:
                 form_mode = '_'.join(parts[1:3]) if parts[1] == 'stage' else parts[1] + '_' + parts[2] if len(parts) > 2 and parts[2] in ['full', 'filtered', 'internal', 'public'] else parts[1]
@@ -225,41 +245,76 @@ class TriggerFormSubmittedProcessor(AsyncNodeProcessor):
 
         form_url = self._generate_form_url(pipeline_id, form_mode, stage)
 
-        # Get required and visible fields for this form
-        try:
-            from pipelines.models import Pipeline
-            from pipelines.form_generation import DynamicFormGenerator
+        # Extract submission metadata if available
+        submission_metadata = {}
+        if submission_info:
+            submission_metadata = {
+                'ip_address': submission_info.get('ip_address'),
+                'user_agent': submission_info.get('user_agent'),
+                'browser': submission_info.get('browser', 'Unknown'),
+                'device': submission_info.get('device', 'Unknown'),
+                'referrer': submission_info.get('referrer'),
+                'utm_source': submission_info.get('utm_source'),
+                'utm_medium': submission_info.get('utm_medium'),
+                'utm_campaign': submission_info.get('utm_campaign'),
+                'utm_term': submission_info.get('utm_term'),
+                'utm_content': submission_info.get('utm_content'),
+            }
 
-            pipeline = Pipeline.objects.get(id=pipeline_id)
-            generator = DynamicFormGenerator(pipeline)
-            form_schema = generator.generate_form(mode=form_mode, stage=stage)
-
-            required_fields = [f.field_slug for f in form_schema.fields if f.is_required]
-            visible_fields = [f.field_slug for f in form_schema.fields if f.is_visible]
-        except Exception as e:
-            logger.warning(f"Could not fetch form metadata: {e}")
-            required_fields = []
-            visible_fields = []
-
-        # Pass the form data forward in the workflow
-        return {
-            'success': True,
-            'form_data': form_data,
+        # Build comprehensive output matching test expectations
+        output = {
+            # Core identifiers
+            'submission_id': submission_info.get('submission_id', f'sub_{form_id}'),
+            'record_id': submission_info.get('record_id'),
             'pipeline_id': pipeline_id,
+
+            # Form information
+            'form_id': form_id,
+            'form_name': submission_info.get('form_name', f'Pipeline {pipeline_id} Form'),
+            'form_version': submission_info.get('form_version', '1.0'),
             'form_mode': form_mode,
             'stage': stage,
             'form_selection': form_selection,
+
+            # Submission timing
+            'submitted_at': submission_info.get('submitted_at', context.get('trigger_time', '')),
+            'submission_source': submission_info.get('submission_source', 'web'),
+
+            # Form data
+            'fields': form_data,  # All submitted field values
+            # 'form_data': form_data,  # Backward compatibility
+
+            # Submission metadata
+            'submission_metadata': submission_metadata,
+
+            # Form metadata
             'form_metadata': {
                 'id': form_id,
                 'url': form_url,
                 'mode': form_mode,
                 'stage': stage,
-                'required_fields': required_fields,
-                'visible_fields': visible_fields
             },
+
+            # Validation info
+            'validation_passed': submission_info.get('validation_passed', True),
+            'validation_errors': submission_info.get('validation_errors', []),
+
+            # Form configuration (from submission context)
+            'form_config': {
+                'requires_authentication': submission_info.get('requires_authentication', False),
+                'is_public': submission_info.get('is_public', form_mode in ['public_filtered', 'stage_public']),
+                'redirect_url': submission_info.get('redirect_url', '/thank-you'),
+                'notification_emails': submission_info.get('notification_emails', []),
+                'webhook_url': submission_info.get('webhook_url'),
+            },
+
+            # Legacy fields for compatibility
             'submission_info': submission_info,
-            'trigger_type': 'form_submitted'
+            'trigger_type': 'form_submitted',
+            'success': True
         }
+
+        return output
 
     def _generate_form_url(self, pipeline_id: str, form_mode: str, stage: Optional[str] = None) -> str:
         """Generate the form URL based on mode and stage"""

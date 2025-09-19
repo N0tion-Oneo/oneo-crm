@@ -4,6 +4,23 @@ Node processors for workflow engine
 import logging
 from workflows.nodes.crm.status_update import FollowUpTaskProcessor
 
+# Import all real trigger processors
+from workflows.nodes.triggers.form_submission import TriggerFormSubmittedProcessor
+from workflows.nodes.triggers.manual import TriggerManualProcessor
+from workflows.nodes.triggers.record_created import TriggerRecordCreatedProcessor
+from workflows.nodes.triggers.record_updated import TriggerRecordUpdatedProcessor
+from workflows.nodes.triggers.record_deleted import TriggerRecordDeletedProcessor
+from workflows.nodes.triggers.schedule import TriggerScheduleProcessor
+from workflows.nodes.triggers.webhook import TriggerWebhookProcessor
+from workflows.nodes.triggers.email_received import TriggerEmailReceivedProcessor
+from workflows.nodes.triggers.message_received import (
+    TriggerLinkedInMessageProcessor, TriggerWhatsAppMessageProcessor
+)
+from workflows.nodes.triggers.date_reached import TriggerDateReachedProcessor
+from workflows.nodes.triggers.pipeline_stage import TriggerPipelineStageChangedProcessor
+from workflows.nodes.triggers.workflow_completed import TriggerWorkflowCompletedProcessor
+from workflows.nodes.triggers.condition_met import TriggerConditionMetProcessor
+
 logger = logging.getLogger(__name__)
 
 
@@ -22,19 +39,7 @@ class BaseNodeProcessor:
         return True
 
 
-class TriggerFormSubmittedProcessor(BaseNodeProcessor):
-    """Processor for form submission trigger"""
-
-    def process(self, input_data, context=None):
-        """Process form submission trigger"""
-        return {
-            'success': True,
-            'output': {
-                'form_data': input_data,
-                'pipeline_id': context.get('pipeline_id'),
-                'form_mode': context.get('form_mode')
-            }
-        }
+# TriggerFormSubmittedProcessor removed - using the real processor from workflows.nodes.triggers.form_submission
 
 
 class GenerateFormProcessor(BaseNodeProcessor):
@@ -178,8 +183,21 @@ class WebhookProcessor(BaseNodeProcessor):
 
 # Registry of node processors
 NODE_PROCESSORS = {
-    # Triggers
+    # Triggers - using real processors from nodes/triggers/
     'trigger_form_submitted': TriggerFormSubmittedProcessor,
+    'trigger_manual': TriggerManualProcessor,
+    'trigger_record_created': TriggerRecordCreatedProcessor,
+    'trigger_record_updated': TriggerRecordUpdatedProcessor,
+    'trigger_record_deleted': TriggerRecordDeletedProcessor,
+    'trigger_scheduled': TriggerScheduleProcessor,
+    'trigger_webhook': TriggerWebhookProcessor,
+    'trigger_email_received': TriggerEmailReceivedProcessor,
+    'trigger_linkedin_message': TriggerLinkedInMessageProcessor,
+    'trigger_whatsapp_message': TriggerWhatsAppMessageProcessor,
+    'trigger_date_reached': TriggerDateReachedProcessor,
+    'trigger_pipeline_stage_changed': TriggerPipelineStageChangedProcessor,
+    'trigger_workflow_completed': TriggerWorkflowCompletedProcessor,
+    'trigger_condition_met': TriggerConditionMetProcessor,
 
     # Form operations
     'generate_form': GenerateFormProcessor,

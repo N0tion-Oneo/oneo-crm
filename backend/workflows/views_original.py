@@ -412,16 +412,574 @@ class WorkflowViewSet(viewsets.ModelViewSet):
                 'error': f'Unable to fetch records from pipeline: {str(e)}'
             })
 
+    def get_record_display_name(self, record):
+        """Helper to get a display name for a record"""
+        if not record.data:
+            return f"Record {str(record.id)[:8]}"
+
+        # Try common field names
+        for field in ['name', 'title', 'label', 'subject', 'email', 'company']:
+            if field in record.data and record.data[field]:
+                return str(record.data[field])
+
+        # Try combining first and last name
+        if 'first_name' in record.data and 'last_name' in record.data:
+            return f"{record.data.get('first_name', '')} {record.data.get('last_name', '')}".strip()
+
+        # Fallback to ID
+        return f"Record {str(record.id)[:8]}"
+
+    @action(detail=False, methods=['get'], url_path='test-data', permission_classes=[TenantMemberPermission])
+    def get_test_data(self, request):
+        """Get recent test data based on trigger type - uses real data from system"""
+        from django_tenants.utils import get_tenant
+        current_tenant = get_tenant(request)
+        logger.info(f"get_test_data called in tenant: {current_tenant.schema_name if current_tenant else 'No tenant'}")
+
+        node_type = request.query_params.get('node_type', '').lower()
+        pipeline_id = request.query_params.get('pipeline_id')
+
+        # Also check for node_config to extract pipeline_id from there
+        node_config_str = request.query_params.get('node_config')
+        node_config = None
+        if node_config_str:
+            try:
+                import json
+                node_config = json.loads(node_config_str)
+                # Always check node_config for pipeline_id, even if one was provided
+                # This ensures we use the pipeline from the form config when available
+                # Check both pipeline_id and pipeline_ids (some triggers use plural)
+                config_pipeline_id = node_config.get('pipeline_id')
+                if not config_pipeline_id:
+                    # Try pipeline_ids array (used by record triggers)
+                    pipeline_ids = node_config.get('pipeline_ids', [])
+                    if pipeline_ids and len(pipeline_ids) > 0:
+                        config_pipeline_id = pipeline_ids[0]
+                        logger.info(f"Using first pipeline_id from pipeline_ids array: {config_pipeline_id}")
+
+                if config_pipeline_id:
+                    pipeline_id = config_pipeline_id
+                    logger.info(f"Using pipeline_id from node_config: {pipeline_id}")
+                logger.info(f"Parsed node_config: {node_config}")
+            except (json.JSONDecodeError, AttributeError) as e:
+                logger.error(f"Failed to parse node_config: {e}, raw: {node_config_str[:200]}")
+
+        logger.info(f"get_test_data called with node_type={node_type}, pipeline_id={pipeline_id}, has_config={bool(node_config)}")
+
+        # Helper function for getting record display name
+        def get_record_display_name(record):
+            if not record.data:
+                return f"Record {str(record.id)[:8]}"
+
+            # Try common field names
+            for field in ['name', 'title', 'label', 'subject', 'email', 'company']:
+                if field in record.data and record.data[field]:
+                    return str(record.data[field])
+
+            # Try combining first and last name
+            if 'first_name' in record.data and 'last_name' in record.data:
+                return f"{record.data.get('first_name', '')} {record.data.get('last_name', '')}".strip()
+
+            # Fallback to ID
+            return f"Record {str(record.id)[:8]}"
+
+        try:
+            # Determine what type of data to fetch based on trigger type
+            if 'email' in node_type:
+                # Fetch recent email messages
+                from communications.models import Message, Channel
+
+                messages = Message.objects.filter(
+                    channel__channel_type__in=['email', 'gmail', 'outlook'],
+                    direction='inbound'
+                ).select_related('channel', 'conversation').order_by('-created_at')[:10]
+
+                formatted_data = []
+                for msg in messages:
+                    formatted_data.append({
+                        'id': str(msg.id),
+                        'type': 'email',
+                        'title': msg.subject or f"Email from {msg.contact_email or 'Unknown'}",
+                        'created_at': msg.created_at.isoformat(),
+                        'preview': {
+                            'from': msg.contact_email,
+                            'subject': msg.subject,
+                            'body': msg.content[:200] if msg.content else '',
+                            'channel': msg.channel.name if msg.channel else None
+                        }
+                    })
+
+                return Response({
+                    'data': formatted_data,
+                    'data_type': 'email',
+                    'total': len(formatted_data)
+                })
+
+            elif 'linkedin' in node_type or 'whatsapp' in node_type:
+                # Fetch recent messages from specific channel
+                from communications.models import Message, Channel
+
+                channel_type = 'linkedin' if 'linkedin' in node_type else 'whatsapp'
+                messages = Message.objects.filter(
+                    channel__channel_type=channel_type,
+                    direction='inbound'
+                ).select_related('channel', 'conversation').order_by('-created_at')[:10]
+
+                formatted_data = []
+                for msg in messages:
+                    formatted_data.append({
+                        'id': str(msg.id),
+                        'type': channel_type,
+                        'title': f"{channel_type.title()} from {msg.contact_phone or msg.contact_email or 'Unknown'}",
+                        'created_at': msg.created_at.isoformat(),
+                        'preview': {
+                            'from': msg.contact_phone or msg.contact_email,
+                            'content': msg.content[:200] if msg.content else '',
+                            'channel': msg.channel.name if msg.channel else None
+                        }
+                    })
+
+                return Response({
+                    'data': formatted_data,
+                    'data_type': channel_type,
+                    'total': len(formatted_data)
+                })
+
+            elif 'form' in node_type:
+                # Get FormSubmission data for form triggers
+                if not pipeline_id:
+                    return Response({
+                        'data': [],
+                        'data_type': 'form_submission',
+                        'message': 'Pipeline ID required for form triggers'
+                    })
+
+                from pipelines.models import FormSubmission, Record
+
+                # Debug: Check which tenant we're in
+                from django_tenants.utils import get_tenant
+                current_tenant = get_tenant(request)
+                logger.info(f"Querying FormSubmissions in tenant: {current_tenant.schema_name if current_tenant else 'No tenant'}")
+
+                # Get recent form submissions
+                initial_count = FormSubmission.objects.filter(
+                    record__pipeline_id=pipeline_id
+                ).count()
+
+                form_submissions_qs = FormSubmission.objects.filter(
+                    record__pipeline_id=pipeline_id
+                )
+
+                # Log initial state
+                logger.info(f"Starting with {initial_count} form submissions for pipeline {pipeline_id} in tenant {current_tenant.schema_name if current_tenant else 'unknown'}")
+
+                # Filter by form_mode and stage if provided in config
+                if node_config:
+                    form_mode = node_config.get('mode') or node_config.get('form_mode')
+                    stage = node_config.get('stage') or node_config.get('form_stage')
+
+                    logger.info(f"Filtering form submissions - mode: {form_mode}, stage: {stage}, full config: {node_config}")
+
+                    if form_mode:
+                        form_submissions_qs = form_submissions_qs.filter(form_mode=form_mode)
+                        logger.info(f"Filtered by form_mode={form_mode}, count: {form_submissions_qs.count()}")
+
+                    # If stage is specified, filter by form_config containing the stage
+                    # Note: form_config is a JSONField, so we need to use the correct lookup
+                    if stage:
+                        # First try to filter by form_config JSON field
+                        try:
+                            form_submissions_qs = form_submissions_qs.filter(
+                                form_config__stage=stage
+                            )
+                            logger.info(f"Filtered by form_config__stage={stage}, count: {form_submissions_qs.count()}")
+                        except Exception as e:
+                            logger.warning(f"Could not filter by form_config__stage: {e}")
+                            # Fallback: check if any submissions match manually (for debugging)
+                            matching = []
+                            for fs in form_submissions_qs[:10]:
+                                if fs.form_config.get('stage') == stage:
+                                    matching.append(fs.id)
+                            logger.info(f"Manual check found {len(matching)} matching submissions with stage={stage}")
+
+                form_submissions = form_submissions_qs.select_related(
+                    'record', 'record__pipeline', 'submitted_by'
+                ).order_by('-created_at')[:10]
+
+                formatted_data = []
+                for submission in form_submissions:
+                    # Use submission metadata for preview
+                    preview_data = submission.submitted_data or {}
+                    title = (
+                        f"{submission.form_name} - {submission.created_at.strftime('%Y-%m-%d %H:%M')}" if submission.form_name
+                        else f"Form Submission - {submission.created_at.strftime('%Y-%m-%d %H:%M')}"
+                    )
+
+                    # Extract stage from form_config if present
+                    form_stage = submission.form_config.get('stage') if submission.form_config else None
+
+                    formatted_data.append({
+                        'id': str(submission.id),
+                        'type': 'form_submission',
+                        'title': title,
+                        'created_at': submission.created_at.isoformat(),
+                        'preview': {
+                            'form_name': submission.form_name,
+                            'form_id': submission.form_id,
+                            'form_mode': submission.form_mode,
+                            'form_stage': form_stage,
+                            'submission_source': submission.submission_source,
+                            'is_anonymous': submission.is_anonymous,
+                            'submitted_by': submission.submitted_by.email if submission.submitted_by else 'Anonymous',
+                            'fields': list(preview_data.keys())[:5]  # Show first 5 field names
+                        },
+                        'record_id': str(submission.record.id)
+                    })
+
+                # Initialize message variable
+                message = None
+
+                # If no form submissions exist yet, provide helpful message
+                if not formatted_data:
+                    # Check if there are ANY form submissions for this pipeline
+                    total_submissions = FormSubmission.objects.filter(
+                        record__pipeline_id=pipeline_id
+                    ).count()
+
+                    # Check if filters were applied
+                    form_mode = node_config.get('mode') or node_config.get('form_mode') if node_config else None
+                    stage = node_config.get('stage') or node_config.get('form_stage') if node_config else None
+
+                    if total_submissions > 0 and (form_mode or stage):
+                        # There are submissions, but none match the filters
+                        message = f"No form submissions found matching filters (mode: {form_mode}, stage: {stage}). "
+                        message += f"Pipeline has {total_submissions} total submissions."
+                        logger.info(message)
+                    else:
+                        message = "No form submissions found. Submit a form first to test this trigger."
+
+                    # Still try to fall back to records for convenience
+                    records = Record.objects.filter(
+                        pipeline_id=pipeline_id,
+                        is_deleted=False
+                    ).order_by('-created_at')[:5]
+
+                    for record in records:
+                        data = record.data or {}
+                        formatted_data.append({
+                            'id': str(record.id),
+                            'type': 'record_as_form',  # Special type to indicate this is a record being used as form data
+                            'title': f"Record (as form data) - {record.created_at.strftime('%Y-%m-%d %H:%M')}",
+                            'created_at': record.created_at.isoformat(),
+                            'preview': {
+                                'form_name': f"{record.pipeline.name} Form",
+                                'form_id': f"pipeline_{pipeline_id}_default",
+                                'fields': list(data.keys())[:5]
+                            }
+                        })
+
+                    # Change data_type to indicate these are records being used as form test data
+                    return Response({
+                        'data': formatted_data,
+                        'data_type': 'record_as_form' if formatted_data and formatted_data[0]['type'] == 'record_as_form' else 'form_submission',
+                        'total': len(formatted_data)
+                    })
+
+                response_data = {
+                    'data': formatted_data,
+                    'data_type': 'form_submission',
+                    'total': len(formatted_data)
+                }
+
+                # Add message if defined
+                if message:
+                    response_data['message'] = message
+
+                return Response(response_data)
+
+            elif 'record' in node_type:
+                # Use existing record fetching logic for record triggers
+                if not pipeline_id:
+                    return Response({
+                        'data': [],
+                        'data_type': 'record',
+                        'message': 'Pipeline ID required for record-based triggers'
+                    })
+
+                from pipelines.models import Record
+
+                records = Record.objects.filter(
+                    pipeline_id=pipeline_id,
+                    is_deleted=False
+                ).order_by('-created_at')[:10]
+
+                formatted_data = []
+                for record in records:
+                    data = record.data or {}
+                    title = (
+                        data.get('name') or
+                        f"{data.get('first_name', '')} {data.get('last_name', '')}".strip() or
+                        data.get('email') or
+                        f"Record {str(record.id)[:8]}"
+                    )
+
+                    formatted_data.append({
+                        'id': str(record.id),
+                        'type': 'record',
+                        'title': title,
+                        'created_at': record.created_at.isoformat(),
+                        'preview': {
+                            k: v for k, v in data.items()
+                            if k in ['name', 'first_name', 'last_name', 'email', 'company']
+                        }
+                    })
+
+                return Response({
+                    'data': formatted_data,
+                    'data_type': 'record',
+                    'total': len(formatted_data)
+                })
+
+            elif 'scheduled' in node_type:
+                # Fetch scheduled workflow executions
+                from .models import WorkflowSchedule
+
+                schedules = WorkflowSchedule.objects.filter(
+                    is_active=True
+                ).select_related('workflow').order_by('-next_run')[:10]
+
+                formatted_data = []
+                for schedule in schedules:
+                    formatted_data.append({
+                        'id': str(schedule.id),
+                        'type': 'schedule',
+                        'title': f"{schedule.workflow.name} - {schedule.cron_expression}",
+                        'created_at': schedule.created_at.isoformat() if hasattr(schedule, 'created_at') else None,
+                        'preview': {
+                            'workflow_name': schedule.workflow.name,
+                            'next_run': schedule.next_run.isoformat() if schedule.next_run else None,
+                            'cron_expression': schedule.cron_expression,
+                            'timezone': str(schedule.timezone) if hasattr(schedule, 'timezone') else 'UTC'
+                        }
+                    })
+
+                return Response({
+                    'data': formatted_data,
+                    'data_type': 'schedule',
+                    'total': len(formatted_data)
+                })
+
+            elif 'date_reached' in node_type:
+                # Fetch records with date fields
+                if not pipeline_id:
+                    return Response({
+                        'data': [],
+                        'data_type': 'date_trigger',
+                        'message': 'Please select a pipeline to see records with date fields'
+                    })
+
+                from pipelines.models import Record
+
+                # Get records that have fields containing 'date' in their data
+                records = []
+                all_records = Record.objects.filter(
+                    pipeline_id=pipeline_id,
+                    is_deleted=False
+                ).order_by('-updated_at')[:50]  # Check up to 50 records
+
+                for record in all_records:
+                    if record.data:
+                        # Check if any field contains date-like values
+                        date_fields = {}
+                        for key, value in record.data.items():
+                            if 'date' in key.lower() or isinstance(value, str) and any(
+                                pattern in value for pattern in ['2024', '2025', '2023', '-', '/']
+                            ):
+                                date_fields[key] = value
+
+                        if date_fields and len(records) < 10:
+                            records.append({
+                                'id': str(record.id),
+                                'type': 'date_trigger',
+                                'title': f"Record with date fields: {get_record_display_name(record)}",
+                                'created_at': record.created_at.isoformat(),
+                                'preview': {
+                                    'record_name': get_record_display_name(record),
+                                    'date_fields': date_fields
+                                }
+                            })
+
+                return Response({
+                    'data': records,
+                    'data_type': 'date_trigger',
+                    'total': len(records),
+                    'message': 'Records with date fields found' if records else 'No records with date fields found in this pipeline'
+                })
+
+            elif 'pipeline_stage' in node_type:
+                # Fetch records with stage information
+                if not pipeline_id:
+                    return Response({
+                        'data': [],
+                        'data_type': 'stage_change',
+                        'message': 'Please select a pipeline to see records with stage information'
+                    })
+
+                from pipelines.models import Record
+
+                records = Record.objects.filter(
+                    pipeline_id=pipeline_id,
+                    is_deleted=False
+                ).order_by('-updated_at')[:20]
+
+                formatted_data = []
+                for record in records:
+                    if record.data and 'stage' in record.data:
+                        formatted_data.append({
+                            'id': str(record.id),
+                            'type': 'stage_change',
+                            'title': f"{get_record_display_name(record)} - Stage: {record.data.get('stage', 'Unknown')}",
+                            'created_at': record.created_at.isoformat(),
+                            'preview': {
+                                'current_stage': record.data.get('stage'),
+                                'record_name': get_record_display_name(record),
+                                'pipeline': record.pipeline.name if hasattr(record, 'pipeline') else None
+                            }
+                        })
+                        if len(formatted_data) >= 10:
+                            break
+
+                return Response({
+                    'data': formatted_data,
+                    'data_type': 'stage_change',
+                    'total': len(formatted_data),
+                    'message': 'Records with stage information found' if formatted_data else 'No records with stage field found in this pipeline'
+                })
+
+            elif 'workflow_completed' in node_type:
+                # Fetch completed workflow executions
+                from .models import WorkflowExecution
+
+                executions = WorkflowExecution.objects.filter(
+                    status='success'
+                ).select_related('workflow').order_by('-completed_at')[:10]
+
+                formatted_data = []
+                for execution in executions:
+                    formatted_data.append({
+                        'id': str(execution.id),
+                        'type': 'workflow_execution',
+                        'title': f"{execution.workflow.name} - Completed {execution.completed_at.strftime('%Y-%m-%d %H:%M') if execution.completed_at else 'Unknown'}",
+                        'created_at': execution.started_at.isoformat() if execution.started_at else None,
+                        'preview': {
+                            'workflow_name': execution.workflow.name,
+                            'completed_at': execution.completed_at.isoformat() if execution.completed_at else None,
+                            'status': execution.status,
+                            'execution_time': str(execution.completed_at - execution.started_at) if execution.completed_at and execution.started_at else None
+                        }
+                    })
+
+                return Response({
+                    'data': formatted_data,
+                    'data_type': 'workflow_execution',
+                    'total': len(formatted_data)
+                })
+
+            elif 'condition_met' in node_type:
+                # Return records that can be tested against conditions
+                if not pipeline_id:
+                    return Response({
+                        'data': [],
+                        'data_type': 'condition_test',
+                        'message': 'Please select a pipeline to see records for condition testing'
+                    })
+
+                from pipelines.models import Record
+
+                records = Record.objects.filter(
+                    pipeline_id=pipeline_id,
+                    is_deleted=False
+                ).order_by('-updated_at')[:10]
+
+                formatted_data = []
+                for record in records:
+                    formatted_data.append({
+                        'id': str(record.id),
+                        'type': 'condition_test',
+                        'title': f"Test conditions with: {get_record_display_name(record)}",
+                        'created_at': record.created_at.isoformat(),
+                        'preview': {
+                            'record_name': get_record_display_name(record),
+                            'sample_fields': dict(list(record.data.items())[:5]) if record.data else {}
+                        }
+                    })
+
+                return Response({
+                    'data': formatted_data,
+                    'data_type': 'condition_test',
+                    'total': len(formatted_data),
+                    'message': 'Select a record to test condition evaluation' if formatted_data else 'No records found in this pipeline'
+                })
+
+            elif 'webhook' in node_type:
+                # For webhooks, we can't fetch historical data but provide guidance
+                return Response({
+                    'data': [],
+                    'data_type': 'webhook',
+                    'message': 'Webhook triggers use live data. Configure the webhook URL and send a test request.',
+                    'supports_manual_input': True,
+                    'sample_payload': {
+                        'event': 'test_webhook',
+                        'data': {
+                            'id': '123',
+                            'action': 'created',
+                            'resource': 'contact'
+                        },
+                        'timestamp': timezone.now().isoformat()
+                    }
+                })
+
+            elif 'manual' in node_type:
+                # Manual triggers don't need test data
+                return Response({
+                    'data': [],
+                    'data_type': 'manual',
+                    'message': 'Manual triggers are activated by users. No test data needed.'
+                })
+
+            else:
+                # For any other trigger types
+                return Response({
+                    'data': [],
+                    'data_type': 'unknown',
+                    'message': f'No test data available for trigger type: {node_type}'
+                })
+
+        except Exception as e:
+            logger.error(f"Failed to fetch test data: {e}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            return Response({
+                'data': [],
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
     @action(detail=False, methods=['post'], url_path='test-node-standalone', permission_classes=[TenantMemberPermission])
     def test_node_standalone(self, request):
         """Test a node without requiring a workflow - for test page"""
+        import time
+        import asyncio
+        from asgiref.sync import async_to_sync
+        from django.utils import timezone
+
         # Get node configuration from request
         node_type = request.data.get('node_type')
         node_config = request.data.get('node_config', {})
-        test_context = request.data.get('test_context', {})
         test_record_id = request.data.get('test_record_id')
+        test_data_id = request.data.get('test_data_id')
+        test_data_type = request.data.get('test_data_type')
 
-        logger.info(f"test_node_standalone called with node_type={node_type}, test_record_id={test_record_id}")
+        logger.info(f"test_node_standalone called with node_type={node_type}, test_data_id={test_data_id}, test_data_type={test_data_type}")
 
         if not node_type:
             return Response({
@@ -430,189 +988,202 @@ class WorkflowViewSet(viewsets.ModelViewSet):
             }, status=status.HTTP_400_BAD_REQUEST)
 
         try:
+            # Get the actual processor directly
             from workflows.processors import get_node_processor
-            import time
-
-            # Track side effects
-            side_effects = []
-
-            # For trigger nodes, return actual or sample data
-            if 'trigger' in node_type.lower():
-                if test_record_id:
-                    from pipelines.models import Record
-                    try:
-                        record = Record.objects.get(id=test_record_id, is_deleted=False)
-
-                        # Format trigger output based on type
-                        if node_type.lower() in ['trigger_form_submitted', 'TRIGGER_FORM_SUBMITTED']:
-                            form_data = record.data or {}
-                            output_data = {
-                                **form_data,  # All fields at top level
-                                'form_data': form_data,  # Nested form data
-                                'submission_id': f'sub_{record.id}',
-                                'submitted_at': record.created_at.isoformat(),
-                                'pipeline_id': str(record.pipeline_id),
-                                'record_id': str(record.id),
-                            }
-
-                            return Response({
-                                'status': 'success',
-                                'message': f'Trigger would fire with data from "{record.data.get("name", record.id)}"',
-                                'duration': 0,
-                                'input': {
-                                    'node_type': node_type,
-                                    'config': node_config,
-                                    'record_id': str(record.id)
-                                },
-                                'output': output_data,
-                                'side_effects': [],
-                                'logs': [
-                                    {'level': 'info', 'message': f'Loaded record {record.id}'},
-                                    {'level': 'info', 'message': 'Formatted trigger data'}
-                                ]
-                            })
-
-                    except Record.DoesNotExist:
-                        return Response({
-                            'status': 'error',
-                            'error': f'Record {test_record_id} not found'
-                        }, status=status.HTTP_404_NOT_FOUND)
-
-                # Return sample data for triggers without record
-                return Response({
-                    'status': 'success',
-                    'message': 'Trigger configuration validated',
-                    'duration': 0,
-                    'input': {'node_type': node_type, 'config': node_config},
-                    'output': {'trigger_type': node_type, 'config': node_config},
-                    'side_effects': [],
-                    'logs': [{'level': 'info', 'message': 'Trigger configured successfully'}]
-                })
-
-            # Get processor for non-trigger nodes
             processor = get_node_processor(node_type)
 
             if not processor:
                 return Response({
                     'status': 'error',
                     'error': f'No processor found for node type: {node_type}'
-                }, status=status.HTTP_400_BAD_REQUEST)
+                }, status=status.HTTP_404_NOT_FOUND)
 
-            # Add record data to context if provided
-            if test_record_id:
+            # Build base context
+            context = {
+                'workflow_id': 'test_workflow',
+                'execution_id': 'test_execution',
+                'tenant_id': request.user.tenant_id if hasattr(request.user, 'tenant_id') else None,
+                'user_id': request.user.id,
+                'trigger_time': timezone.now().isoformat()
+            }
+
+            # For trigger nodes, add real trigger_data
+            if node_type.startswith('trigger_'):
+                trigger_data = {}
+
+                if node_type == 'trigger_form_submitted':
+                    # Use config values for form configuration
+                    trigger_data['pipeline_id'] = node_config.get('pipeline_id')
+                    trigger_data['form_mode'] = node_config.get('mode', 'internal_full')
+                    trigger_data['stage'] = node_config.get('stage')
+                    trigger_data['submitted_at'] = timezone.now().isoformat()
+
+                    # Get real form data
+                    if test_data_id and test_data_type == 'form_submission':
+                        from pipelines.models import FormSubmission
+                        try:
+                            submission = FormSubmission.objects.get(id=test_data_id)
+                            trigger_data['form_data'] = submission.submitted_data or {}
+                        except FormSubmission.DoesNotExist:
+                            trigger_data['form_data'] = {}
+                    elif test_record_id:
+                        from pipelines.models import Record
+                        try:
+                            record = Record.objects.get(id=test_record_id, is_deleted=False)
+                            trigger_data['form_data'] = record.data or {}
+                        except Record.DoesNotExist:
+                            trigger_data['form_data'] = {}
+                    else:
+                        trigger_data['form_data'] = {}
+
+                elif node_type in ['trigger_record_created', 'trigger_record_updated', 'trigger_record_deleted']:
+                    # For record triggers, use test record if available
+                    # Check both test_record_id and test_data_id (when test_data_type is 'record')
+                    record_id_to_use = test_record_id or (test_data_id if test_data_type == 'record' else None)
+
+                    if record_id_to_use:
+                        from pipelines.models import Record
+                        try:
+                            record = Record.objects.get(id=record_id_to_use, is_deleted=False)
+                            trigger_data = {
+                                'record': record.data or {},
+                                'record_id': str(record.id),
+                                'pipeline_id': str(record.pipeline_id),
+                                'updated_at': record.updated_at.isoformat(),
+                                'created_at': record.created_at.isoformat(),
+                            }
+
+                            if node_type == 'trigger_record_updated':
+                                # For updates, simulate previous record data
+                                trigger_data['previous_record'] = record.data or {}
+                                trigger_data['changed_fields'] = list(record.data.keys()) if record.data else []
+                                trigger_data['updated_by'] = str(request.user.id)
+                            elif node_type == 'trigger_record_created':
+                                trigger_data['created_by'] = str(request.user.id)
+                            elif node_type == 'trigger_record_deleted':
+                                trigger_data['deleted_by'] = str(request.user.id)
+                                trigger_data['deleted_at'] = timezone.now().isoformat()
+                        except Record.DoesNotExist:
+                            # No record found, provide empty trigger data
+                            pipeline_id = node_config.get('pipeline_id') or node_config.get('pipeline_ids', [None])[0] if node_config.get('pipeline_ids') else None
+
+                            trigger_data = {
+                                'record': {},
+                                'pipeline_id': pipeline_id,
+                                'updated_at': timezone.now().isoformat()
+                            }
+
+                            if node_type == 'trigger_record_updated':
+                                trigger_data['previous_record'] = {}
+                                trigger_data['changed_fields'] = []
+                                trigger_data['updated_by'] = str(request.user.id) if request.user.is_authenticated else None
+                    else:
+                        # No test record provided - provide complete structure for proper testing
+                        pipeline_id = node_config.get('pipeline_id') or node_config.get('pipeline_ids', [None])[0] if node_config.get('pipeline_ids') else None
+
+                        trigger_data = {
+                            'record': {},
+                            'pipeline_id': pipeline_id,
+                            'updated_at': timezone.now().isoformat(),
+                            'created_at': timezone.now().isoformat()
+                        }
+
+                        if node_type == 'trigger_record_updated':
+                            trigger_data['previous_record'] = {}
+                            trigger_data['changed_fields'] = []
+                            trigger_data['updated_by'] = str(request.user.id) if request.user.is_authenticated else None
+                        elif node_type == 'trigger_record_created':
+                            trigger_data['created_by'] = str(request.user.id) if request.user.is_authenticated else None
+                        elif node_type == 'trigger_record_deleted':
+                            trigger_data['deleted_by'] = str(request.user.id) if request.user.is_authenticated else None
+                            trigger_data['deleted_at'] = timezone.now().isoformat()
+
+                elif node_type == 'trigger_email_received':
+                    # For email triggers, check if we have test email data
+                    if test_data_id and test_data_type == 'email':
+                        from communications.models import Message
+                        try:
+                            message = Message.objects.get(id=test_data_id)
+                            trigger_data = {
+                                'from': message.contact_email,
+                                'to': message.channel.email_address if hasattr(message.channel, 'email_address') else 'team@company.com',
+                                'subject': message.subject or '',
+                                'body': message.content or '',
+                                'message_id': str(message.id),
+                                'received_at': message.created_at.isoformat()
+                            }
+                        except:
+                            trigger_data = {
+                                'from': 'test@example.com',
+                                'to': 'team@company.com',
+                                'subject': 'Test Email',
+                                'body': 'Test email body'
+                            }
+                    else:
+                        trigger_data = {
+                            'from': 'test@example.com',
+                            'to': 'team@company.com',
+                            'subject': 'Test Email',
+                            'body': 'Test email body'
+                        }
+
+                # Add default trigger_data for other trigger types
+                elif not trigger_data:
+                    trigger_data = {
+                        'triggered_at': timezone.now().isoformat(),
+                        'trigger_type': node_type
+                    }
+
+                context['trigger_data'] = trigger_data
+
+            # For action nodes with test record
+            elif test_record_id:
                 from pipelines.models import Record
                 try:
                     record = Record.objects.get(id=test_record_id, is_deleted=False)
-                    test_context['record'] = {
+                    context['record'] = {
                         'id': str(record.id),
-                        **(record.data or {})
+                        'pipeline_id': str(record.pipeline_id),
+                        'data': record.data or {},
+                        'created_at': record.created_at.isoformat(),
+                        'updated_at': record.updated_at.isoformat()
                     }
-                    logger.info(f"Added record {record.id} to test context")
                 except Record.DoesNotExist:
-                    logger.warning(f"Record {test_record_id} not found")
+                    pass
 
             # Execute the processor
             start_time = time.time()
-            logs = []
 
-            # Capture logs during execution
-            import logging
-            class TestLogHandler(logging.Handler):
-                def emit(self, record):
-                    logs.append({
-                        'level': record.levelname.lower(),
-                        'message': record.getMessage(),
-                        'timestamp': time.time()
-                    })
+            if asyncio.iscoroutinefunction(processor.process):
+                result = async_to_sync(processor.process)(node_config, context)
+            else:
+                result = processor.process(node_config, context)
 
-            test_handler = TestLogHandler()
-            test_handler.setLevel(logging.DEBUG)
-            processor_logger = logging.getLogger(processor.__module__)
-            processor_logger.addHandler(test_handler)
+            execution_time = (time.time() - start_time) * 1000
 
-            try:
-                # Execute processor
-                import asyncio
-                from asgiref.sync import async_to_sync
+            # Return response with full result data
+            # The result from the processor should contain all the output fields
+            # The processor returns the complete output, so we pass it directly
+            response_data = {
+                'status': 'success',
+                'execution_time': execution_time,
+            }
 
-                if asyncio.iscoroutinefunction(processor.process):
-                    result = async_to_sync(processor.process)(node_config, test_context)
-                else:
-                    result = processor.process(node_config, test_context)
+            # If the processor returned a dict result, spread it into the response
+            if isinstance(result, dict):
+                # Preserve the processor's output structure
+                response_data['output'] = result
+            else:
+                # For non-dict results, wrap in output
+                response_data['output'] = {'result': result}
 
-                execution_time = (time.time() - start_time) * 1000
-
-                # Track side effects based on node type
-                if 'email' in node_type.lower():
-                    side_effects.append({
-                        'type': 'email',
-                        'description': f"Email sent to {node_config.get('to_email', 'configured recipient')}",
-                        'details': result
-                    })
-                elif 'sms' in node_type.lower():
-                    side_effects.append({
-                        'type': 'sms',
-                        'description': f"SMS sent to {node_config.get('to_phone', 'configured number')}",
-                        'details': result
-                    })
-                elif 'create' in node_type.lower() and 'record' in node_type.lower():
-                    side_effects.append({
-                        'type': 'record_created',
-                        'description': 'New record created',
-                        'details': result
-                    })
-                elif 'task' in node_type.lower():
-                    side_effects.append({
-                        'type': 'task_created',
-                        'description': f"Task created: {node_config.get('task_title', 'Task')}",
-                        'details': result
-                    })
-
-                return Response({
-                    'status': 'success',
-                    'message': f'Node executed successfully',
-                    'duration': execution_time,
-                    'input': {
-                        'node_type': node_type,
-                        'config': node_config,
-                        'context': test_context
-                    },
-                    'output': result.get('output', result) if isinstance(result, dict) else {'result': result},
-                    'side_effects': side_effects,
-                    'logs': logs
-                })
-
-            except Exception as proc_error:
-                execution_time = (time.time() - start_time) * 1000
-                return Response({
-                    'status': 'error',
-                    'message': str(proc_error),
-                    'duration': execution_time,
-                    'input': {
-                        'node_type': node_type,
-                        'config': node_config,
-                        'context': test_context
-                    },
-                    'output': None,
-                    'side_effects': side_effects,
-                    'logs': logs,
-                    'error': {
-                        'type': type(proc_error).__name__,
-                        'message': str(proc_error),
-                        'traceback': traceback.format_exc() if request.user.is_staff else None
-                    }
-                })
-            finally:
-                # Remove test log handler
-                processor_logger.removeHandler(test_handler)
+            return Response(response_data)
 
         except Exception as e:
             logger.error(f"Node test failed: {e}", exc_info=True)
-            import traceback
             return Response({
                 'status': 'error',
-                'error': str(e),
-                'traceback': traceback.format_exc() if request.user.is_staff else None
+                'error': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     @action(detail=True, methods=['post'], url_path='test-node')
@@ -1107,6 +1678,18 @@ class WorkflowViewSet(viewsets.ModelViewSet):
             'success_rate': round(success_rate, 1),
             'recent_execution_details': WorkflowExecutionSerializer(recent_executions, many=True).data
         })
+
+    def _generate_test_form_url(self, pipeline_id: str, form_mode: str, stage: str = None) -> str:
+        """Generate the form URL based on mode and stage for test outputs"""
+        if form_mode == 'internal_full':
+            return f'/forms/internal/{pipeline_id}'
+        elif form_mode == 'public_filtered':
+            return f'/forms/{pipeline_id}'
+        elif form_mode == 'stage_internal' and stage:
+            return f'/forms/internal/{pipeline_id}?stage={stage}'
+        elif form_mode == 'stage_public' and stage:
+            return f'/forms/{pipeline_id}/stage/{stage}'
+        return '/forms'
 
 
 class WorkflowExecutionViewSet(viewsets.ReadOnlyModelViewSet):

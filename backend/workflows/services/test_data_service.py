@@ -1,0 +1,614 @@
+"""
+Service for fetching test data for workflow nodes
+"""
+import logging
+import json
+from django.utils import timezone
+from rest_framework.response import Response
+from rest_framework import status
+from django_tenants.utils import get_tenant
+
+logger = logging.getLogger(__name__)
+
+
+class TestDataService:
+    """Service for managing test data retrieval for workflow nodes"""
+
+    @staticmethod
+    def get_record_display_name(record):
+        """Helper to get a display name for a record"""
+        if not record.data:
+            return f"Record {str(record.id)[:8]}"
+
+        # Try common field names
+        for field in ['name', 'title', 'label', 'subject', 'email', 'company']:
+            if field in record.data and record.data[field]:
+                return str(record.data[field])
+
+        # Try combining first and last name
+        if 'first_name' in record.data and 'last_name' in record.data:
+            return f"{record.data.get('first_name', '')} {record.data.get('last_name', '')}".strip()
+
+        # Fallback to ID
+        return f"Record {str(record.id)[:8]}"
+
+    @staticmethod
+    def parse_node_config(request):
+        """Parse node config from request parameters"""
+        pipeline_id = request.query_params.get('pipeline_id')
+        node_config_str = request.query_params.get('node_config')
+        node_config = None
+
+        if node_config_str:
+            try:
+                node_config = json.loads(node_config_str)
+                # Check both pipeline_id and pipeline_ids (some triggers use plural)
+                config_pipeline_id = node_config.get('pipeline_id')
+                if not config_pipeline_id:
+                    # Try pipeline_ids array (used by record triggers)
+                    pipeline_ids = node_config.get('pipeline_ids', [])
+                    if pipeline_ids and len(pipeline_ids) > 0:
+                        config_pipeline_id = pipeline_ids[0]
+                        logger.info(f"Using first pipeline_id from pipeline_ids array: {config_pipeline_id}")
+
+                if config_pipeline_id:
+                    pipeline_id = config_pipeline_id
+                    logger.info(f"Using pipeline_id from node_config: {pipeline_id}")
+                logger.info(f"Parsed node_config: {node_config}")
+            except (json.JSONDecodeError, AttributeError) as e:
+                logger.error(f"Failed to parse node_config: {e}, raw: {node_config_str[:200]}")
+
+        return pipeline_id, node_config
+
+    @classmethod
+    def get_test_records(cls, request):
+        """Get recent records for testing workflow nodes"""
+        pipeline_id = request.query_params.get('pipeline_id')
+        node_type = request.query_params.get('node_type')
+
+        logger.info(f"get_test_records called with pipeline_id={pipeline_id}, node_type={node_type}")
+
+        if not pipeline_id:
+            return Response({
+                'records': [],
+                'message': 'No pipeline selected'
+            })
+
+        try:
+            from pipelines.models import Record
+            from django.db import connection
+
+            # Get current tenant schema
+            schema_name = connection.schema_name
+            logger.info(f"Fetching test records for pipeline {pipeline_id} in schema {schema_name}")
+
+            # Fetch recent records from the pipeline
+            records = Record.objects.filter(
+                pipeline_id=pipeline_id,
+                is_deleted=False
+            ).order_by('-created_at')[:10]
+
+            logger.info(f"Found {records.count()} records for pipeline {pipeline_id}")
+
+            # Format records for the dropdown
+            formatted_records = []
+            for record in records:
+                # Get a title for the record
+                title = record.get_title() if hasattr(record, 'get_title') else None
+                if not title:
+                    # Try to construct a title from common fields
+                    data = record.data or {}
+                    if data.get('first_name') and data.get('last_name'):
+                        title = f"{data['first_name']} {data['last_name']}"
+                    elif data.get('name'):
+                        title = data['name']
+                    elif data.get('email'):
+                        title = data['email']
+                    else:
+                        title = f"Record {str(record.id)[:8]}"
+
+                formatted_records.append({
+                    'id': str(record.id),
+                    'title': title,
+                    'created_at': record.created_at.isoformat(),
+                    'updated_at': record.updated_at.isoformat(),
+                    'preview': {
+                        k: v for k, v in (record.data or {}).items()
+                        if k in ['first_name', 'last_name', 'email', 'company', 'phone']
+                    }
+                })
+
+            return Response({
+                'records': formatted_records,
+                'total': len(formatted_records)
+            })
+
+        except Exception as e:
+            import traceback
+            logger.error(f"Failed to fetch test records: {e}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            return Response({
+                'records': [],
+                'total': 0,
+                'error': f'Unable to fetch records from pipeline: {str(e)}'
+            })
+
+    @classmethod
+    def get_test_data(cls, request):
+        """Get recent test data based on trigger type - uses real data from system"""
+        current_tenant = get_tenant(request)
+        logger.info(f"get_test_data called in tenant: {current_tenant.schema_name if current_tenant else 'No tenant'}")
+
+        node_type = request.query_params.get('node_type', '').lower()
+        pipeline_id, node_config = cls.parse_node_config(request)
+
+        logger.info(f"get_test_data called with node_type={node_type}, pipeline_id={pipeline_id}, has_config={bool(node_config)}")
+
+        try:
+            # Email triggers
+            if 'email' in node_type:
+                return cls._get_email_test_data()
+
+            # LinkedIn/WhatsApp triggers
+            elif 'linkedin' in node_type or 'whatsapp' in node_type:
+                return cls._get_messaging_test_data(node_type)
+
+            # Form triggers
+            elif 'form' in node_type:
+                return cls._get_form_test_data(pipeline_id, node_config, request)
+
+            # Record triggers
+            elif 'record' in node_type:
+                return cls._get_record_test_data(pipeline_id)
+
+            # Scheduled triggers
+            elif 'scheduled' in node_type:
+                return cls._get_schedule_test_data()
+
+            # Date reached triggers
+            elif 'date_reached' in node_type:
+                return cls._get_date_trigger_test_data(pipeline_id)
+
+            # Pipeline stage triggers
+            elif 'pipeline_stage' in node_type:
+                return cls._get_stage_change_test_data(pipeline_id)
+
+            # Workflow completed triggers
+            elif 'workflow_completed' in node_type:
+                return cls._get_workflow_execution_test_data()
+
+            # Condition met triggers
+            elif 'condition_met' in node_type:
+                return cls._get_condition_test_data(pipeline_id)
+
+            # Webhook triggers
+            elif 'webhook' in node_type:
+                return cls._get_webhook_test_data()
+
+            # Manual triggers
+            elif 'manual' in node_type:
+                return Response({
+                    'data': [],
+                    'data_type': 'manual',
+                    'message': 'Manual triggers are activated by users. No test data needed.'
+                })
+
+            else:
+                return Response({
+                    'data': [],
+                    'data_type': 'unknown',
+                    'message': f'No test data available for trigger type: {node_type}'
+                })
+
+        except Exception as e:
+            logger.error(f"Failed to fetch test data: {e}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            return Response({
+                'data': [],
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @staticmethod
+    def _get_email_test_data():
+        """Get email test data"""
+        from communications.models import Message
+
+        messages = Message.objects.filter(
+            channel__channel_type__in=['email', 'gmail', 'outlook'],
+            direction='inbound'
+        ).select_related('channel', 'conversation').order_by('-created_at')[:10]
+
+        formatted_data = []
+        for msg in messages:
+            formatted_data.append({
+                'id': str(msg.id),
+                'type': 'email',
+                'title': msg.subject or f"Email from {msg.contact_email or 'Unknown'}",
+                'created_at': msg.created_at.isoformat(),
+                'preview': {
+                    'from': msg.contact_email,
+                    'subject': msg.subject,
+                    'body': msg.content[:200] if msg.content else '',
+                    'channel': msg.channel.name if msg.channel else None
+                }
+            })
+
+        return Response({
+            'data': formatted_data,
+            'data_type': 'email',
+            'total': len(formatted_data)
+        })
+
+    @staticmethod
+    def _get_messaging_test_data(node_type):
+        """Get LinkedIn/WhatsApp test data"""
+        from communications.models import Message
+
+        channel_type = 'linkedin' if 'linkedin' in node_type else 'whatsapp'
+        messages = Message.objects.filter(
+            channel__channel_type=channel_type,
+            direction='inbound'
+        ).select_related('channel', 'conversation').order_by('-created_at')[:10]
+
+        formatted_data = []
+        for msg in messages:
+            formatted_data.append({
+                'id': str(msg.id),
+                'type': channel_type,
+                'title': f"{channel_type.title()} from {msg.contact_phone or msg.contact_email or 'Unknown'}",
+                'created_at': msg.created_at.isoformat(),
+                'preview': {
+                    'from': msg.contact_phone or msg.contact_email,
+                    'content': msg.content[:200] if msg.content else '',
+                    'channel': msg.channel.name if msg.channel else None
+                }
+            })
+
+        return Response({
+            'data': formatted_data,
+            'data_type': channel_type,
+            'total': len(formatted_data)
+        })
+
+    @classmethod
+    def _get_form_test_data(cls, pipeline_id, node_config, request):
+        """Get form submission test data"""
+        if not pipeline_id:
+            return Response({
+                'data': [],
+                'data_type': 'form_submission',
+                'message': 'Pipeline ID required for form triggers'
+            })
+
+        from pipelines.models import FormSubmission, Record
+
+        current_tenant = get_tenant(request)
+        logger.info(f"Querying FormSubmissions in tenant: {current_tenant.schema_name if current_tenant else 'No tenant'}")
+
+        # Get recent form submissions
+        form_submissions_qs = FormSubmission.objects.filter(
+            record__pipeline_id=pipeline_id
+        )
+
+        # Filter by form_mode and stage if provided
+        if node_config:
+            form_mode = node_config.get('mode') or node_config.get('form_mode')
+            stage = node_config.get('stage') or node_config.get('form_stage')
+
+            if form_mode:
+                form_submissions_qs = form_submissions_qs.filter(form_mode=form_mode)
+
+            if stage:
+                try:
+                    form_submissions_qs = form_submissions_qs.filter(
+                        form_config__stage=stage
+                    )
+                except Exception as e:
+                    logger.warning(f"Could not filter by form_config__stage: {e}")
+
+        form_submissions = form_submissions_qs.select_related(
+            'record', 'record__pipeline', 'submitted_by'
+        ).order_by('-created_at')[:10]
+
+        formatted_data = []
+        for submission in form_submissions:
+            preview_data = submission.submitted_data or {}
+            title = (
+                f"{submission.form_name} - {submission.created_at.strftime('%Y-%m-%d %H:%M')}" if submission.form_name
+                else f"Form Submission - {submission.created_at.strftime('%Y-%m-%d %H:%M')}"
+            )
+
+            form_stage = submission.form_config.get('stage') if submission.form_config else None
+
+            formatted_data.append({
+                'id': str(submission.id),
+                'type': 'form_submission',
+                'title': title,
+                'created_at': submission.created_at.isoformat(),
+                'preview': {
+                    'form_name': submission.form_name,
+                    'form_id': submission.form_id,
+                    'form_mode': submission.form_mode,
+                    'form_stage': form_stage,
+                    'submission_source': submission.submission_source,
+                    'is_anonymous': submission.is_anonymous,
+                    'submitted_by': submission.submitted_by.email if submission.submitted_by else 'Anonymous',
+                    'fields': list(preview_data.keys())[:5]
+                },
+                'record_id': str(submission.record.id)
+            })
+
+        # If no form submissions, fallback to records
+        if not formatted_data:
+            records = Record.objects.filter(
+                pipeline_id=pipeline_id,
+                is_deleted=False
+            ).order_by('-created_at')[:5]
+
+            for record in records:
+                data = record.data or {}
+                formatted_data.append({
+                    'id': str(record.id),
+                    'type': 'record_as_form',
+                    'title': f"Record (as form data) - {record.created_at.strftime('%Y-%m-%d %H:%M')}",
+                    'created_at': record.created_at.isoformat(),
+                    'preview': {
+                        'form_name': f"{record.pipeline.name} Form",
+                        'form_id': f"pipeline_{pipeline_id}_default",
+                        'fields': list(data.keys())[:5]
+                    }
+                })
+
+        return Response({
+            'data': formatted_data,
+            'data_type': 'record_as_form' if formatted_data and formatted_data[0]['type'] == 'record_as_form' else 'form_submission',
+            'total': len(formatted_data)
+        })
+
+    @classmethod
+    def _get_record_test_data(cls, pipeline_id):
+        """Get record test data"""
+        if not pipeline_id:
+            return Response({
+                'data': [],
+                'data_type': 'record',
+                'message': 'Pipeline ID required for record-based triggers'
+            })
+
+        from pipelines.models import Record
+
+        records = Record.objects.filter(
+            pipeline_id=pipeline_id,
+            is_deleted=False
+        ).order_by('-created_at')[:10]
+
+        formatted_data = []
+        for record in records:
+            data = record.data or {}
+            title = (
+                data.get('name') or
+                f"{data.get('first_name', '')} {data.get('last_name', '')}".strip() or
+                data.get('email') or
+                f"Record {str(record.id)[:8]}"
+            )
+
+            formatted_data.append({
+                'id': str(record.id),
+                'type': 'record',
+                'title': title,
+                'created_at': record.created_at.isoformat(),
+                'preview': {
+                    k: v for k, v in data.items()
+                    if k in ['name', 'first_name', 'last_name', 'email', 'company']
+                }
+            })
+
+        return Response({
+            'data': formatted_data,
+            'data_type': 'record',
+            'total': len(formatted_data)
+        })
+
+    @staticmethod
+    def _get_schedule_test_data():
+        """Get schedule test data"""
+        from workflows.models import WorkflowSchedule
+
+        schedules = WorkflowSchedule.objects.filter(
+            is_active=True
+        ).select_related('workflow').order_by('-next_run')[:10]
+
+        formatted_data = []
+        for schedule in schedules:
+            formatted_data.append({
+                'id': str(schedule.id),
+                'type': 'schedule',
+                'title': f"{schedule.workflow.name} - {schedule.cron_expression}",
+                'created_at': schedule.created_at.isoformat() if hasattr(schedule, 'created_at') else None,
+                'preview': {
+                    'workflow_name': schedule.workflow.name,
+                    'next_run': schedule.next_run.isoformat() if schedule.next_run else None,
+                    'cron_expression': schedule.cron_expression,
+                    'timezone': str(schedule.timezone) if hasattr(schedule, 'timezone') else 'UTC'
+                }
+            })
+
+        return Response({
+            'data': formatted_data,
+            'data_type': 'schedule',
+            'total': len(formatted_data)
+        })
+
+    @classmethod
+    def _get_date_trigger_test_data(cls, pipeline_id):
+        """Get date trigger test data"""
+        if not pipeline_id:
+            return Response({
+                'data': [],
+                'data_type': 'date_trigger',
+                'message': 'Please select a pipeline to see records with date fields'
+            })
+
+        from pipelines.models import Record
+
+        records = []
+        all_records = Record.objects.filter(
+            pipeline_id=pipeline_id,
+            is_deleted=False
+        ).order_by('-updated_at')[:50]
+
+        for record in all_records:
+            if record.data:
+                date_fields = {}
+                for key, value in record.data.items():
+                    if 'date' in key.lower() or isinstance(value, str) and any(
+                        pattern in value for pattern in ['2024', '2025', '2023', '-', '/']
+                    ):
+                        date_fields[key] = value
+
+                if date_fields and len(records) < 10:
+                    records.append({
+                        'id': str(record.id),
+                        'type': 'date_trigger',
+                        'title': f"Record with date fields: {cls.get_record_display_name(record)}",
+                        'created_at': record.created_at.isoformat(),
+                        'preview': {
+                            'record_name': cls.get_record_display_name(record),
+                            'date_fields': date_fields
+                        }
+                    })
+
+        return Response({
+            'data': records,
+            'data_type': 'date_trigger',
+            'total': len(records),
+            'message': 'Records with date fields found' if records else 'No records with date fields found in this pipeline'
+        })
+
+    @classmethod
+    def _get_stage_change_test_data(cls, pipeline_id):
+        """Get stage change test data"""
+        if not pipeline_id:
+            return Response({
+                'data': [],
+                'data_type': 'stage_change',
+                'message': 'Please select a pipeline to see records with stage information'
+            })
+
+        from pipelines.models import Record
+
+        records = Record.objects.filter(
+            pipeline_id=pipeline_id,
+            is_deleted=False
+        ).order_by('-updated_at')[:20]
+
+        formatted_data = []
+        for record in records:
+            if record.data and 'stage' in record.data:
+                formatted_data.append({
+                    'id': str(record.id),
+                    'type': 'stage_change',
+                    'title': f"{cls.get_record_display_name(record)} - Stage: {record.data.get('stage', 'Unknown')}",
+                    'created_at': record.created_at.isoformat(),
+                    'preview': {
+                        'current_stage': record.data.get('stage'),
+                        'record_name': cls.get_record_display_name(record),
+                        'pipeline': record.pipeline.name if hasattr(record, 'pipeline') else None
+                    }
+                })
+                if len(formatted_data) >= 10:
+                    break
+
+        return Response({
+            'data': formatted_data,
+            'data_type': 'stage_change',
+            'total': len(formatted_data),
+            'message': 'Records with stage information found' if formatted_data else 'No records with stage field found in this pipeline'
+        })
+
+    @staticmethod
+    def _get_workflow_execution_test_data():
+        """Get workflow execution test data"""
+        from workflows.models import WorkflowExecution
+
+        executions = WorkflowExecution.objects.filter(
+            status='success'
+        ).select_related('workflow').order_by('-completed_at')[:10]
+
+        formatted_data = []
+        for execution in executions:
+            formatted_data.append({
+                'id': str(execution.id),
+                'type': 'workflow_execution',
+                'title': f"{execution.workflow.name} - Completed {execution.completed_at.strftime('%Y-%m-%d %H:%M') if execution.completed_at else 'Unknown'}",
+                'created_at': execution.started_at.isoformat() if execution.started_at else None,
+                'preview': {
+                    'workflow_name': execution.workflow.name,
+                    'completed_at': execution.completed_at.isoformat() if execution.completed_at else None,
+                    'status': execution.status,
+                    'execution_time': str(execution.completed_at - execution.started_at) if execution.completed_at and execution.started_at else None
+                }
+            })
+
+        return Response({
+            'data': formatted_data,
+            'data_type': 'workflow_execution',
+            'total': len(formatted_data)
+        })
+
+    @classmethod
+    def _get_condition_test_data(cls, pipeline_id):
+        """Get condition test data"""
+        if not pipeline_id:
+            return Response({
+                'data': [],
+                'data_type': 'condition_test',
+                'message': 'Please select a pipeline to see records for condition testing'
+            })
+
+        from pipelines.models import Record
+
+        records = Record.objects.filter(
+            pipeline_id=pipeline_id,
+            is_deleted=False
+        ).order_by('-updated_at')[:10]
+
+        formatted_data = []
+        for record in records:
+            formatted_data.append({
+                'id': str(record.id),
+                'type': 'condition_test',
+                'title': f"Test conditions with: {cls.get_record_display_name(record)}",
+                'created_at': record.created_at.isoformat(),
+                'preview': {
+                    'record_name': cls.get_record_display_name(record),
+                    'sample_fields': dict(list(record.data.items())[:5]) if record.data else {}
+                }
+            })
+
+        return Response({
+            'data': formatted_data,
+            'data_type': 'condition_test',
+            'total': len(formatted_data),
+            'message': 'Select a record to test condition evaluation' if formatted_data else 'No records found in this pipeline'
+        })
+
+    @staticmethod
+    def _get_webhook_test_data():
+        """Get webhook test data"""
+        return Response({
+            'data': [],
+            'data_type': 'webhook',
+            'message': 'Webhook triggers use live data. Configure the webhook URL and send a test request.',
+            'supports_manual_input': True,
+            'sample_payload': {
+                'event': 'test_webhook',
+                'data': {
+                    'id': '123',
+                    'action': 'created',
+                    'resource': 'contact'
+                },
+                'timestamp': timezone.now().isoformat()
+            }
+        })

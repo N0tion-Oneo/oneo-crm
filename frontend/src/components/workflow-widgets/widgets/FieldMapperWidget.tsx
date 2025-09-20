@@ -26,7 +26,6 @@ const FieldMappingRow: React.FC<{
   index: number;
   targetFields: any[];
   availableVariables: Array<{ label: string; value: string; description?: string }>;
-  mappingMode: string;
   targetPipelineId?: string;
   onUpdate: (index: number, updates: Partial<FieldMapping>) => void;
   onRemove: (index: number) => void;
@@ -37,7 +36,6 @@ const FieldMappingRow: React.FC<{
   index,
   targetFields,
   availableVariables,
-  mappingMode,
   targetPipelineId,
   onUpdate,
   onRemove,
@@ -66,15 +64,15 @@ const FieldMappingRow: React.FC<{
                   key={field.id || field.name}
                   value={field.name}
                 >
-                  <div className="flex items-center gap-2">
+                  <>
                     <span>{field.display_name || field.name}</span>
                     {field.is_required && (
-                      <span className="text-xs text-destructive">*</span>
+                      <span className="text-xs text-destructive ml-1">*</span>
                     )}
-                    <span className="text-xs text-muted-foreground">
+                    <span className="text-xs text-muted-foreground ml-2">
                       ({field.field_type})
                     </span>
-                  </div>
+                  </>
                 </SelectItem>
               ))}
             </SelectContent>
@@ -87,30 +85,55 @@ const FieldMappingRow: React.FC<{
             <Label className="text-xs font-medium text-muted-foreground">
               Source Value
             </Label>
-            {mappingMode === 'advanced' && (
-              <Select
-                value={mapping.sourceType}
-                onValueChange={(val) => onUpdate(index, {
-                  sourceType: val as 'value' | 'variable' | 'template'
-                })}
-              >
-                <SelectTrigger className="h-6 w-20 text-xs">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="value">Value</SelectItem>
-                  <SelectItem value="variable">Variable</SelectItem>
-                  <SelectItem value="template">Template</SelectItem>
-                </SelectContent>
-              </Select>
-            )}
+            <div className="flex items-center gap-1">
+              {/* Variable insertion button - available for all types */}
+              {availableVariables.length > 0 && (
+                <Select
+                  value=""
+                  onValueChange={(val) => {
+                    if (!val) return;
+                    // Insert variable at cursor position or append
+                    const currentValue = mapping.sourceValue || '';
+                    const variable = `{{${val}}}`;
+                    const newValue = mapping.sourceType === 'template' || currentValue.includes('{{')
+                      ? `${currentValue}${currentValue ? ' ' : ''}${variable}`
+                      : variable;
+                    onUpdate(index, {
+                      sourceValue: newValue,
+                      sourceType: newValue.includes('{{') ? 'template' : mapping.sourceType
+                    });
+                  }}
+                >
+                  <SelectTrigger className="h-6 w-6 p-0" title="Insert variable">
+                    <Variable className="h-3 w-3" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <div className="px-2 py-1.5 text-sm font-semibold text-muted-foreground">
+                      Insert Variable
+                    </div>
+                    {availableVariables.map((variable) => (
+                      <SelectItem key={variable.value} value={variable.value}>
+                        <>
+                          {variable.label}
+                          {variable.description && (
+                            <div className="text-xs text-muted-foreground">
+                              {variable.description}
+                            </div>
+                          )}
+                        </>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            </div>
           </div>
 
-          {/* Conditionally render input based on sourceType */}
+          {/* Render appropriate input based on sourceType */}
           {mapping.sourceType === 'variable' && availableVariables.length > 0 ? (
             <Select
-              value={mapping.sourceValue}
-              onValueChange={(val) => onUpdate(index, { sourceValue: val })}
+              value={mapping.sourceValue?.replace(/[{}]/g, '') || ''}
+              onValueChange={(val) => onUpdate(index, { sourceValue: `{{${val}}}` })}
             >
               <SelectTrigger className="h-9 w-full">
                 <SelectValue placeholder="Select variable" />
@@ -118,19 +141,28 @@ const FieldMappingRow: React.FC<{
               <SelectContent>
                 {availableVariables.map((variable) => (
                   <SelectItem key={variable.value} value={variable.value}>
-                    <div>
-                      <div>{variable.label}</div>
+                    <>
+                      {variable.label}
                       {variable.description && (
                         <div className="text-xs text-muted-foreground">
                           {variable.description}
                         </div>
                       )}
-                    </div>
+                    </>
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
+          ) : mapping.sourceType === 'template' || (mapping.sourceValue && mapping.sourceValue.includes('{{')) ? (
+            // Template mode - always use Input for mixed content
+            <Input
+              value={mapping.sourceValue}
+              onChange={(e) => onUpdate(index, { sourceValue: e.target.value })}
+              placeholder="Enter text and {{variables}}"
+              className="h-9 w-full font-mono text-sm"
+            />
           ) : mapping.sourceType === 'value' && targetFieldDef ? (
+            // Value mode - use field-specific component
             <FieldRenderer
               field={targetFieldDef}
               value={mapping.sourceValue}
@@ -141,13 +173,12 @@ const FieldMappingRow: React.FC<{
               autoFocus={false}
             />
           ) : (
+            // Fallback to basic Input
             <Input
               value={mapping.sourceValue}
               onChange={(e) => onUpdate(index, { sourceValue: e.target.value })}
               placeholder={
-                mapping.sourceType === 'template'
-                  ? '{{variable}} or text'
-                  : mapping.targetField
+                mapping.targetField
                   ? `Enter ${getFieldType(mapping.targetField)} value`
                   : 'Enter value'
               }
@@ -190,7 +221,6 @@ interface FieldMapperWidgetProps extends BaseWidgetProps {
   config?: any;
   uiHints?: {
     target_pipeline_key?: string;
-    mapping_mode?: 'simple' | 'advanced';
     show_required_only?: boolean;
     [key: string]: any;
   };
@@ -208,7 +238,6 @@ export function FieldMapperWidget({
   // Get target pipeline from config
   const targetPipelineKey = uiHints.target_pipeline_key || 'pipeline_id';
   const targetPipelineId = config?.[targetPipelineKey];
-  const mappingMode = uiHints.mapping_mode || 'simple';
   const showRequiredOnly = uiHints.show_required_only || false;
 
   // Convert value to mappings array format for internal use
@@ -245,29 +274,20 @@ export function FieldMapperWidget({
 
   // Update parent when mappings change
   useEffect(() => {
-    // Convert back to object format for simple mode
-    if (mappingMode === 'simple') {
-      const objValue: Record<string, any> = {};
-      mappings.forEach(m => {
-        if (m.targetField && m.sourceValue) {
-          objValue[m.targetField] = m.sourceValue;
-        }
-      });
-      // Only call onChange if the value actually changed
-      const currentValue = JSON.stringify(value);
-      const newValue = JSON.stringify(objValue);
-      if (currentValue !== newValue) {
-        onChange(objValue);
+    // Always convert to object format
+    const objValue: Record<string, any> = {};
+    mappings.forEach(m => {
+      if (m.targetField && m.sourceValue) {
+        objValue[m.targetField] = m.sourceValue;
       }
-    } else {
-      // Only call onChange if the value actually changed
-      const currentValue = JSON.stringify(value);
-      const newValue = JSON.stringify(mappings);
-      if (currentValue !== newValue) {
-        onChange(mappings);
-      }
+    });
+    // Only call onChange if the value actually changed
+    const currentValue = JSON.stringify(value);
+    const newValue = JSON.stringify(objValue);
+    if (currentValue !== newValue) {
+      onChange(objValue);
     }
-  }, [mappings, mappingMode, value, onChange]);
+  }, [mappings, value, onChange]);
 
   const addMapping = () => {
     setMappings([...mappings, {
@@ -376,7 +396,6 @@ export function FieldMapperWidget({
               index={index}
               targetFields={targetFields}
               availableVariables={availableVariables}
-              mappingMode={mappingMode}
               targetPipelineId={targetPipelineId}
               onUpdate={updateMapping}
               onRemove={removeMapping}

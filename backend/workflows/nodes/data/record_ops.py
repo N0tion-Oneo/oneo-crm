@@ -25,15 +25,6 @@ class RecordCreateProcessor(AsyncNodeProcessor):
                     "placeholder": "Select target pipeline"
                 }
             },
-            "field_mapping_type": {
-                "type": "string",
-                "enum": ["manual", "json", "copy"],
-                "default": "json",
-                "description": "How to map field values",
-                "ui_hints": {
-                    "widget": "select"
-                }
-            },
             "record_data": {
                 "type": "object",
                 "description": "Map fields for the new record",
@@ -41,39 +32,7 @@ class RecordCreateProcessor(AsyncNodeProcessor):
                 "ui_hints": {
                     "widget": "field_mapper",
                     "target_pipeline_key": "pipeline_id",
-                    "mapping_mode": "simple",
-                    "show_required_only": False,
-                    "show_when": {"field_mapping_type": "manual"}
-                }
-            },
-            "record_data_json": {
-                "type": "object",
-                "description": "Field values for the new record (JSON format)",
-                "default": {},
-                "ui_hints": {
-                    "widget": "json_editor",
-                    "rows": 10,
-                    "placeholder": '{\n  "name": "{{contact_name}}",\n  "email": "{{email}}",\n  "status": "new"\n}',
-                    "show_when": {"field_mapping_type": "json"}
-                }
-            },
-            "source_record": {
-                "type": "string",
-                "description": "Record to copy field values from (when field_mapping_type is 'copy')",
-                "ui_hints": {
-                    "widget": "text",
-                    "placeholder": "{{trigger.record}}",
-                    "show_when": {"field_mapping_type": "copy"}
-                }
-            },
-            "field_overrides": {
-                "type": "object",
-                "description": "Override specific fields when copying",
-                "ui_hints": {
-                    "widget": "json_editor",
-                    "rows": 6,
-                    "placeholder": '{\n  "status": "copied",\n  "source_id": "{{original.id}}"\n}',
-                    "show_when": {"field_mapping_type": "copy"}
+                    "show_required_only": False
                 }
             },
             "skip_validation": {
@@ -98,18 +57,8 @@ class RecordCreateProcessor(AsyncNodeProcessor):
 
         # Get configuration values
         pipeline_id = config.get('pipeline_id')
-        field_mapping_type = config.get('field_mapping_type', 'json')
-        source_record = config.get('source_record')
-        field_overrides = config.get('field_overrides', {})
+        record_data = config.get('record_data', {})
         skip_validation = config.get('skip_validation', False)
-
-        # Get the appropriate record data based on mapping type
-        if field_mapping_type == 'manual':
-            record_data = config.get('record_data', {})
-        elif field_mapping_type == 'json':
-            record_data = config.get('record_data_json', {})
-        else:  # copy type
-            record_data = {}  # Will be populated from source_record
 
         if not pipeline_id:
             raise ValueError("Record create node requires pipeline_id")
@@ -172,8 +121,7 @@ class RecordCreateProcessor(AsyncNodeProcessor):
         config = node_data.get('config', {})
         checkpoint.update({
             'pipeline_id': config.get('pipeline_id'),
-            'record_data_template': config.get('record_data', {}),
-            'field_mapping_type': config.get('field_mapping_type', 'json')
+            'record_data_template': config.get('record_data', {})
         })
 
         return checkpoint
@@ -204,35 +152,13 @@ class RecordUpdateProcessor(AsyncNodeProcessor):
                     "help_text": "Optional: Helps with field mapping. Leave empty to use trigger record pipeline"
                 }
             },
-            "update_mode": {
-                "type": "string",
-                "enum": ["manual", "json"],
-                "default": "manual",
-                "description": "How to specify update values",
-                "ui_hints": {
-                    "widget": "select"
-                }
-            },
             "update_data": {
                 "type": "object",
                 "description": "Map fields to update",
                 "minProperties": 0,
                 "ui_hints": {
                     "widget": "field_mapper",
-                    "target_pipeline_key": "pipeline_id",
-                    "mapping_mode": "advanced",
-                    "show_when": {"update_mode": "manual"}
-                }
-            },
-            "update_data_json": {
-                "type": "object",
-                "description": "Fields to update (JSON format)",
-                "minProperties": 0,
-                "ui_hints": {
-                    "widget": "json_editor",
-                    "rows": 8,
-                    "placeholder": '{\n  "status": "updated",\n  "last_modified": "{{now}}",\n  "notes": "{{trigger.notes}}"\n}',
-                    "show_when": {"update_mode": "json"}
+                    "target_pipeline_key": "pipeline_id"
                 }
             },
             "merge_strategy": {
@@ -266,15 +192,9 @@ class RecordUpdateProcessor(AsyncNodeProcessor):
 
         # Get configuration values
         record_id_source = config.get('record_id_source', '')
-        update_mode = config.get('update_mode', 'manual')
+        update_data = config.get('update_data', {})
         merge_strategy = config.get('merge_strategy', 'merge')
         skip_validation = config.get('skip_validation', False)
-
-        # Get the appropriate update data based on update mode
-        if update_mode == 'manual':
-            update_data = config.get('update_data', {})
-        else:  # json mode
-            update_data = config.get('update_data_json', {})
         
         # Get record ID from context
         record_id = self._get_nested_value(context, record_id_source)
@@ -370,15 +290,6 @@ class RecordFindProcessor(AsyncNodeProcessor):
                     "placeholder": "Select pipeline to search"
                 }
             },
-            "search_mode": {
-                "type": "string",
-                "enum": ["conditions", "json"],
-                "default": "conditions",
-                "description": "How to specify search criteria",
-                "ui_hints": {
-                    "widget": "select"
-                }
-            },
             "search_conditions": {
                 "type": "array",
                 "items": {
@@ -392,19 +303,7 @@ class RecordFindProcessor(AsyncNodeProcessor):
                 "description": "Search conditions to match records",
                 "ui_hints": {
                     "widget": "condition_builder",
-                    "help_text": "Define conditions that records must meet",
-                    "show_when": {"search_mode": "conditions"}
-                }
-            },
-            "search_criteria": {
-                "type": "object",
-                "description": "Field values to search for (JSON format)",
-                "default": {},
-                "ui_hints": {
-                    "widget": "json_editor",
-                    "rows": 6,
-                    "placeholder": '{\n  "name": "{{search_name}}",\n  "email": "{{email}}",\n  "status": "active"\n}',
-                    "show_when": {"search_mode": "json"}
+                    "help_text": "Define conditions that records must meet"
                 }
             },
             "exact_match": {
@@ -441,9 +340,7 @@ class RecordFindProcessor(AsyncNodeProcessor):
 
         # Get configuration values
         pipeline_id = config.get('pipeline_id')
-        search_mode = config.get('search_mode', 'conditions')
         search_conditions = config.get('search_conditions', [])
-        search_criteria = config.get('search_criteria', {})
         exact_match = config.get('exact_match', False)
         limit = config.get('limit', 10)
         return_first_only = config.get('return_first_only', False)
@@ -451,24 +348,17 @@ class RecordFindProcessor(AsyncNodeProcessor):
         if not pipeline_id:
             raise ValueError("Record find node requires pipeline_id")
 
-        # Format search criteria based on mode
-        formatted_criteria = {}
-        if search_mode == 'json':
-            # Format JSON search criteria with context
-            for key, value in search_criteria.items():
-                formatted_criteria[key] = self._format_template(str(value), context)
-        
         try:
             from pipelines.models import Pipeline, Record
             from django.db.models import Q
-            
+
             pipeline = await sync_to_async(Pipeline.objects.get)(id=pipeline_id)
-            
+
             # Build query
             query = Q(pipeline=pipeline, is_deleted=False)
 
-            # Add search criteria based on mode
-            if search_mode == 'conditions' and search_conditions:
+            # Add search conditions
+            if search_conditions:
                 # Use condition evaluator for conditions
                 from workflows.utils.condition_evaluator import condition_evaluator
 
@@ -505,15 +395,6 @@ class RecordFindProcessor(AsyncNodeProcessor):
                             query &= (Q(**{f'data__{field}__isnull': True}) | Q(**{f'data__{field}': ''}))
                         elif operator == 'is_not_empty':
                             query &= ~(Q(**{f'data__{field}__isnull': True}) | Q(**{f'data__{field}': ''}))
-            else:
-                # Use formatted_criteria for JSON mode
-                for field_name, field_value in formatted_criteria.items():
-                    if field_value:  # Only add non-empty criteria
-                        # Support both exact match and contains search
-                        if exact_match:
-                            query &= Q(**{f'data__{field_name}': field_value})
-                        else:
-                            query &= Q(**{f'data__{field_name}__icontains': field_value})
             
             # Execute query
             queryset = Record.objects.filter(query)[:limit]
@@ -577,7 +458,7 @@ class RecordFindProcessor(AsyncNodeProcessor):
         config = node_data.get('config', {})
         checkpoint.update({
             'pipeline_id': config.get('pipeline_id'),
-            'search_criteria_template': config.get('search_criteria', {}),
+            'search_conditions': config.get('search_conditions', []),
             'exact_match': config.get('exact_match', False),
             'limit': config.get('limit', 10),
             'return_first_only': config.get('return_first_only', False)

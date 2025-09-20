@@ -3,12 +3,12 @@ Record event trigger node processor
 """
 import logging
 from typing import Dict, Any
-from workflows.nodes.base import BaseNodeProcessor
+from workflows.nodes.base import AsyncNodeProcessor
 
 logger = logging.getLogger(__name__)
 
 
-class TriggerRecordEventProcessor(BaseNodeProcessor):
+class TriggerRecordEventProcessor(AsyncNodeProcessor):
     """
     Processes record event triggers (created, updated, deleted)
     This node starts a workflow when a record event occurs

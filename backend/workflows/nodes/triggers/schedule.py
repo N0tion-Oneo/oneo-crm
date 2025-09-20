@@ -3,13 +3,13 @@ Schedule trigger node processor
 """
 import logging
 from typing import Dict, Any
-from workflows.nodes.base import BaseNodeProcessor
+from workflows.nodes.base import AsyncNodeProcessor
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
 
-class TriggerScheduleProcessor(BaseNodeProcessor):
+class TriggerScheduleProcessor(AsyncNodeProcessor):
     """
     Processes scheduled trigger events
     This node starts a workflow on a schedule

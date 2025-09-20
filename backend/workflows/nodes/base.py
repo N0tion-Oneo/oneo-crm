@@ -371,13 +371,16 @@ class AsyncNodeProcessor(BaseNodeProcessor):
             # Log successful execution
             await self.log_execution(node_config, result, execution_time_ms, True)
             
-            # Add metadata to result
+            # Add metadata to result, preserving the success value from the processor
             result.update({
                 'execution_time_ms': execution_time_ms,
-                'success': True,
                 'node_id': node_config.get('id'),
                 'checkpoint': checkpoint
             })
+
+            # Only set success to True if it wasn't already set by the processor
+            if 'success' not in result:
+                result['success'] = True
             
             return result
             

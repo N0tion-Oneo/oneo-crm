@@ -3,6 +3,7 @@
  * to work with the existing UnifiedConfigRenderer
  */
 
+import React from 'react';
 import { WorkflowNodeType } from '@/app/(dashboard)/workflows/types';
 import { UnifiedNodeConfig, ConfigSection, ConfigField, FieldType } from '@/app/(dashboard)/workflows/components/node-configs/unified/types';
 import { api } from '@/lib/api';
@@ -148,12 +149,35 @@ class WorkflowSchemaService {
       });
     }
 
+    // Add custom component for specific node types
+    let customComponent = undefined;
+    if (nodeType === 'trigger_date_reached' || nodeType === WorkflowNodeType.TRIGGER_DATE_REACHED) {
+      // Lazy load the custom component to avoid circular dependencies
+      customComponent = React.lazy(() =>
+        import('@/app/(dashboard)/workflows/components/node-configs/triggers/DateReachedConfig')
+          .then(module => ({ default: module.DateReachedConfig }))
+      );
+    }
+
+    // Use defaults from backend - backend is single source of truth
+    // First, get any defaults from the backend default_config
+    let defaults: Record<string, any> = schema.default_config || {};
+
+    // Then merge in any field-level defaults from the schema
+    Object.entries(properties).forEach(([key, prop]) => {
+      if (prop.default !== undefined && !(key in defaults)) {
+        defaults[key] = prop.default;
+      }
+    });
+
     return {
       type: nodeType,
       label: schema.display_name,
       description: schema.description,
       category: this.getNodeCategory(nodeType),
       sections,
+      customComponent,
+      defaults,
       features: {
         supportsExpressions: true,
         supportsVariables: true,
@@ -163,11 +187,27 @@ class WorkflowSchemaService {
       validate: (config: any) => {
         // Basic required field validation
         const errors: Record<string, string> = {};
-        required.forEach(field => {
-          if (!config[field]) {
-            errors[field] = `${properties[field]?.description || field} is required`;
+
+        // Special validation for date_reached trigger
+        if (nodeType === 'trigger_date_reached' || nodeType === WorkflowNodeType.TRIGGER_DATE_REACHED) {
+          // Must have either date_field OR target_date
+          if (!config.date_field && !config.target_date) {
+            errors.date_field = 'Either date field or target date is required';
+            errors.target_date = 'Either target date or date field is required';
           }
-        });
+          // If using dynamic mode, pipeline is required
+          if (config.date_field && !config.pipeline_id) {
+            errors.pipeline_id = 'Pipeline is required when using date field';
+          }
+        } else {
+          // Standard required field validation
+          required.forEach(field => {
+            if (!config[field]) {
+              errors[field] = `${properties[field]?.description || field} is required`;
+            }
+          });
+        }
+
         return errors;
       }
     };

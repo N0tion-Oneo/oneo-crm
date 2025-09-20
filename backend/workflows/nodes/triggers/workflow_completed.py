@@ -3,13 +3,13 @@ Workflow completed trigger processor
 Triggers when another workflow completes (for workflow chaining)
 """
 from typing import Any, Dict
-from ..base import BaseNodeProcessor
+from ..base import AsyncNodeProcessor
 import logging
 
 logger = logging.getLogger(__name__)
 
 
-class TriggerWorkflowCompletedProcessor(BaseNodeProcessor):
+class TriggerWorkflowCompletedProcessor(AsyncNodeProcessor):
     """
     Processor for workflow completion triggers
     Enables workflow chaining and complex multi-stage processes

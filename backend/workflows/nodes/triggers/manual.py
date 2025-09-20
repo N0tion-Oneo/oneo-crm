@@ -3,13 +3,13 @@ Manual trigger processor for workflows
 Allows workflows to be triggered manually by users
 """
 from typing import Any, Dict
-from ..base import BaseNodeProcessor
+from ..base import AsyncNodeProcessor
 import logging
 
 logger = logging.getLogger(__name__)
 
 
-class TriggerManualProcessor(BaseNodeProcessor):
+class TriggerManualProcessor(AsyncNodeProcessor):
     """
     Processor for manual workflow triggers
     Used when a user manually initiates a workflow

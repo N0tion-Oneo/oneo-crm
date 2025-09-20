@@ -3,12 +3,12 @@ Record deleted trigger node processor
 """
 import logging
 from typing import Dict, Any
-from workflows.nodes.base import BaseNodeProcessor
+from workflows.nodes.base import AsyncNodeProcessor
 
 logger = logging.getLogger(__name__)
 
 
-class TriggerRecordDeletedProcessor(BaseNodeProcessor):
+class TriggerRecordDeletedProcessor(AsyncNodeProcessor):
     """
     Processes record deleted trigger events
     This node starts a workflow when a record is deleted

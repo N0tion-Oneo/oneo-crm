@@ -55,8 +55,7 @@ export function NodeExecutionResults({
   testConfig,
   onExecute
 }: NodeExecutionResultsProps) {
-  const [selectedPipeline, setSelectedPipeline] = useState<string>('config');
-  const [pipelines, setPipelines] = useState<any[]>([]);
+  // Removed pipeline selector - always use config pipeline
   const [records, setRecords] = useState<any[]>([]);
   const [selectedRecord, setSelectedRecord] = useState<string>('');
   const [loadingRecords, setLoadingRecords] = useState(false);
@@ -68,65 +67,69 @@ export function NodeExecutionResults({
   const [testResult, setTestResult] = useState<TestResult | null>(null);
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set(['output', 'side_effects']));
 
-  // Load pipelines on mount
-  useEffect(() => {
-    loadPipelines();
-  }, []);
+  // No longer loading pipelines - using config only
 
-  // Load records when pipeline is selected or when using config pipeline
+  // Load records when config has pipeline
   useEffect(() => {
-    const shouldLoadRecords = (selectedPipeline === 'config' && (testConfig?.pipeline_id || testConfig?.pipeline_ids?.length > 0)) ||
-                             (selectedPipeline && selectedPipeline !== 'config');
+    const shouldLoadRecords = testConfig?.pipeline_id || testConfig?.pipeline_ids?.length > 0;
 
     if (shouldLoadRecords) {
       loadRecords();
     }
-  }, [selectedPipeline, testConfig?.pipeline_id, testConfig?.pipeline_ids]);
+  }, [testConfig?.pipeline_id, testConfig?.pipeline_ids]);
 
   // Load test data for triggers
   useEffect(() => {
     if (selectedNode && selectedNode.type && selectedNode.type.toLowerCase().includes('trigger')) {
-      // Only load test data if we have a pipeline (either selected or from config)
-      const hasPipeline = (selectedPipeline && selectedPipeline !== 'config') ||
-                         (selectedPipeline === 'config' && (testConfig?.pipeline_id || testConfig?.pipeline_ids?.length > 0));
-      if (hasPipeline) {
+      const nodeType = selectedNode.type.toLowerCase();
+
+      // Communication triggers (email, linkedin, whatsapp) don't need pipelines
+      const isCommunicationTrigger = nodeType.includes('email') ||
+                                     nodeType.includes('linkedin') ||
+                                     nodeType.includes('whatsapp') ||
+                                     nodeType.includes('message');
+
+      // Date reached trigger can work without pipeline when using static dates
+      const isDateReachedTrigger = nodeType.includes('date_reached');
+      const isUsingDynamicDateField = isDateReachedTrigger && testConfig?.date_field;
+
+      if (isCommunicationTrigger) {
+        // Load test data for communication triggers regardless of pipeline
         loadTestData();
+      } else if (isDateReachedTrigger && !isUsingDynamicDateField) {
+        // Date reached with static date mode - no pipeline needed
+        loadTestData();
+      } else {
+        // Other triggers need a pipeline from config
+        const hasPipeline = testConfig?.pipeline_id || testConfig?.pipeline_ids?.length > 0;
+        if (hasPipeline) {
+          loadTestData();
+        }
       }
     }
   }, [
     selectedNode,
-    selectedPipeline,
     testConfig?.pipeline_id,
     testConfig?.pipeline_ids,  // Also watch pipeline_ids array for record triggers
     testConfig?.form_selection,  // Reload when form selection changes
     testConfig?.mode,  // Reload when form mode changes
-    testConfig?.stage  // Reload when stage changes
+    testConfig?.stage,  // Reload when stage changes
+    testConfig?.monitor_users,  // Reload when monitor_users changes for communication triggers
+    testConfig?.date_field  // Reload when date_field changes for date triggers
   ]);
 
 
-  const loadPipelines = async () => {
-    try {
-      const response = await pipelinesApi.list();
-      setPipelines(response.data.results || response.data || []);
-    } catch (error) {
-      console.error('Failed to load pipelines:', error);
-      setPipelines([]);
-    }
-  };
+  // Removed loadPipelines - no longer needed
 
   const loadRecords = async () => {
-    // Determine which pipeline to use
+    // Determine which pipeline to use from config
     let pipelineToUse: string | null = null;
 
-    if (selectedPipeline === 'config') {
-      // Check both pipeline_id and pipeline_ids
-      if (testConfig?.pipeline_id) {
-        pipelineToUse = String(testConfig.pipeline_id);
-      } else if (testConfig?.pipeline_ids && testConfig.pipeline_ids.length > 0) {
-        pipelineToUse = String(testConfig.pipeline_ids[0]);
-      }
-    } else if (selectedPipeline && selectedPipeline !== 'config') {
-      pipelineToUse = selectedPipeline;
+    // Check both pipeline_id and pipeline_ids from config
+    if (testConfig?.pipeline_id) {
+      pipelineToUse = String(testConfig.pipeline_id);
+    } else if (testConfig?.pipeline_ids && testConfig.pipeline_ids.length > 0) {
+      pipelineToUse = String(testConfig.pipeline_ids[0]);
     }
 
     if (!pipelineToUse) return;
@@ -149,26 +152,38 @@ export function NodeExecutionResults({
   const loadTestData = async () => {
     if (!selectedNode || !selectedNode.type) return;
 
-    // Determine which pipeline ID to use
+    const nodeType = selectedNode.type.toLowerCase();
+
+    // Check if this is a communication trigger
+    const isCommunicationTrigger = nodeType.includes('email') ||
+                                   nodeType.includes('linkedin') ||
+                                   nodeType.includes('whatsapp') ||
+                                   nodeType.includes('message');
+
+    // Check if this is a date reached trigger
+    const isDateReachedTrigger = nodeType.includes('date_reached');
+    const isUsingDynamicDateField = isDateReachedTrigger && testConfig?.date_field;
+
+    // Determine which pipeline ID to use from config (if needed)
     let pipelineId = null;
-    if (selectedPipeline && selectedPipeline !== 'config') {
-      pipelineId = selectedPipeline;
-    } else if (selectedPipeline === 'config' || !selectedPipeline) {
-      // Use config pipeline if 'config' is selected OR if nothing is selected yet
+
+    // Communication triggers and static date triggers don't need a pipeline
+    if (!isCommunicationTrigger && !(isDateReachedTrigger && !isUsingDynamicDateField)) {
+      // Other triggers and dynamic date triggers need a pipeline
       // Check both pipeline_id and pipeline_ids (some triggers use plural)
       if (testConfig?.pipeline_id) {
         pipelineId = String(testConfig.pipeline_id);
       } else if (testConfig?.pipeline_ids && testConfig.pipeline_ids.length > 0) {
         pipelineId = String(testConfig.pipeline_ids[0]);
       }
-    }
 
-    // If no pipeline is available, don't load test data
-    if (!pipelineId) {
-      console.log('No pipeline available for loading test data. selectedPipeline:', selectedPipeline, 'testConfig:', testConfig);
-      setTestData([]);
-      setTestDataType('');
-      return;
+      // If no pipeline is available for triggers that need it, don't load test data
+      if (!pipelineId) {
+        console.log('No pipeline available for loading test data. testConfig:', testConfig);
+        setTestData([]);
+        setTestDataType('');
+        return;
+      }
     }
 
     setLoadingTestData(true);
@@ -201,7 +216,7 @@ export function NodeExecutionResults({
     try {
       // Build test context
       const testContext: any = {
-        pipeline_id: selectedPipeline === 'config' ? testConfig.pipeline_id : selectedPipeline,
+        pipeline_id: testConfig.pipeline_id,
         ...testConfig
       };
 
@@ -342,30 +357,12 @@ export function NodeExecutionResults({
           <CardTitle className="text-lg">Test Execution Setup</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          {/* Pipeline Selection */}
-          <div className="space-y-2">
-            <Label>Select Test Pipeline (Optional)</Label>
-            <Select value={selectedPipeline} onValueChange={setSelectedPipeline}>
-              <SelectTrigger>
-                <SelectValue placeholder="Use config pipeline or select test data source" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="config">Use pipeline from config</SelectItem>
-                {pipelines.map((pipeline: any) => (
-                  <SelectItem key={pipeline.id} value={pipeline.id}>
-                    {pipeline.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
           {/* Test Data Selection for Triggers */}
           {selectedNode?.type?.toLowerCase().includes('trigger') && (
             <div className="space-y-2">
               <Label>
                 Select Test Data for Trigger
-                {selectedPipeline === 'config' && testConfig?.pipeline_id && (
+                {testConfig?.pipeline_id && (
                   <span className="text-xs text-muted-foreground ml-2">
                     (using pipeline from config)
                   </span>
@@ -422,7 +419,7 @@ export function NodeExecutionResults({
           )}
 
           {/* Record Selection for non-trigger nodes */}
-          {((selectedPipeline && selectedPipeline !== 'config') || (selectedPipeline === 'config' && testConfig?.pipeline_id)) && !selectedNode?.type?.toLowerCase().includes('trigger') && (
+          {testConfig?.pipeline_id && !selectedNode?.type?.toLowerCase().includes('trigger') && (
             <div className="space-y-2">
               <Label>Select Test Record (Optional)</Label>
               <Select

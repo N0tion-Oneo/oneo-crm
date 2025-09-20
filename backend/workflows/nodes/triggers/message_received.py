@@ -2,13 +2,13 @@
 Message received trigger processors for various channels
 """
 from typing import Any, Dict
-from ..base import BaseNodeProcessor
+from ..base import AsyncNodeProcessor
 import logging
 
 logger = logging.getLogger(__name__)
 
 
-class TriggerLinkedInMessageProcessor(BaseNodeProcessor):
+class TriggerLinkedInMessageProcessor(AsyncNodeProcessor):
     """
     Processor for LinkedIn message received triggers
     """
@@ -132,23 +132,49 @@ class TriggerLinkedInMessageProcessor(BaseNodeProcessor):
     async def process(self, node_config: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
         """Process LinkedIn message trigger"""
         try:
-            config = node_config.get('config', {})
+            # Extract config from node_config structure
+            config = node_config.get('data', {}).get('config', {})
             trigger_data = context.get('trigger_data', {})
-            message = trigger_data.get('message', {})
+
+            # Check if trigger_data indicates no messages were found
+            if trigger_data.get('success') == False:
+                # Return early with failure status when no messages found
+                return {
+                    'success': False,
+                    'trigger_type': 'linkedin_message',
+                    'message': trigger_data.get('message', 'No LinkedIn messages found'),
+                    'channel': 'linkedin'
+                }
+
+            # Extract message data - it comes directly in trigger_data
+            message_content = trigger_data.get('message', '')
+            sender = trigger_data.get('from', '')
+            message_id = trigger_data.get('message_id')
+            received_at = trigger_data.get('received_at')
+            user_id = trigger_data.get('user_id')
+            account_id = trigger_data.get('account_id')
+            account_name = trigger_data.get('account_name')
 
             # Build output
             output = {
                 'success': True,
                 'trigger_type': 'linkedin_message',
-                'message': message,
-                'sender': message.get('sender'),
-                'conversation_id': message.get('conversation_id'),
-                'content': message.get('content'),
-                'timestamp': message.get('timestamp'),
-                'attachments': message.get('attachments', []),
+                'sender': sender,
+                'content': message_content,
+                'message_id': message_id,
             }
 
-            logger.info(f"LinkedIn message trigger activated from {message.get('sender')}")
+            # Only include fields with values
+            if received_at:
+                output['timestamp'] = received_at
+            if user_id:
+                output['user_id'] = user_id
+            if account_id:
+                output['account_id'] = account_id
+            if account_name:
+                output['account_name'] = account_name
+
+            logger.info(f"LinkedIn message trigger activated from {sender}")
 
             # Store in context
             context['linkedin_message'] = output
@@ -164,7 +190,7 @@ class TriggerLinkedInMessageProcessor(BaseNodeProcessor):
             }
 
 
-class TriggerWhatsAppMessageProcessor(BaseNodeProcessor):
+class TriggerWhatsAppMessageProcessor(AsyncNodeProcessor):
     """
     Processor for WhatsApp message received triggers
     """
@@ -309,24 +335,48 @@ class TriggerWhatsAppMessageProcessor(BaseNodeProcessor):
     async def process(self, node_config: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
         """Process WhatsApp message trigger"""
         try:
-            config = node_config.get('config', {})
+            # Extract config from node_config structure
+            config = node_config.get('data', {}).get('config', {})
             trigger_data = context.get('trigger_data', {})
-            message = trigger_data.get('message', {})
+
+            # Check if trigger_data indicates no messages were found
+            if trigger_data.get('success') == False:
+                return {
+                    'success': False,
+                    'trigger_type': 'whatsapp_message',
+                    'message': trigger_data.get('message', 'No WhatsApp messages found'),
+                    'channel': 'whatsapp'
+                }
+
+            # Extract message data - it comes directly in trigger_data
+            message_content = trigger_data.get('message', '')
+            sender_phone = trigger_data.get('from', '')
+            message_id = trigger_data.get('message_id')
+            received_at = trigger_data.get('received_at')
+            user_id = trigger_data.get('user_id')
+            account_id = trigger_data.get('account_id')
+            account_name = trigger_data.get('account_name')
 
             # Build output
             output = {
                 'success': True,
                 'trigger_type': 'whatsapp_message',
-                'message': message,
-                'sender_phone': message.get('sender_phone'),
-                'chat_id': message.get('chat_id'),
-                'content': message.get('content'),
-                'timestamp': message.get('timestamp'),
-                'media': message.get('media', []),
-                'is_group': message.get('is_group', False),
+                'sender_phone': sender_phone,
+                'content': message_content,
+                'message_id': message_id,
             }
 
-            logger.info(f"WhatsApp message trigger activated from {message.get('sender_phone')}")
+            # Only include fields with values
+            if received_at:
+                output['timestamp'] = received_at
+            if user_id:
+                output['user_id'] = user_id
+            if account_id:
+                output['account_id'] = account_id
+            if account_name:
+                output['account_name'] = account_name
+
+            logger.info(f"WhatsApp message trigger activated from {sender_phone}")
 
             # Store in context
             context['whatsapp_message'] = output

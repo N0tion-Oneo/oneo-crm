@@ -478,39 +478,189 @@ export function TriggerConfigModal({ isOpen, onClose, workflow, initialTriggers,
         return (
           <div className="space-y-4">
             <div>
-              <Label>Date Field</Label>
-              <Input
-                placeholder="follow_up_date, expiry_date, etc."
-                value={currentConfig.date_field || ''}
-                onChange={(e) => setCurrentConfig({ ...currentConfig, date_field: e.target.value })}
-              />
-            </div>
-            <div>
-              <Label>Trigger Timing</Label>
+              <Label>Date Mode</Label>
               <Select
-                value={currentConfig.timing || 'on_date'}
-                onValueChange={(value) => setCurrentConfig({ ...currentConfig, timing: value })}
+                value={currentConfig.date_field ? 'dynamic' : 'static'}
+                onValueChange={(value) => {
+                  if (value === 'static') {
+                    // Switch to static mode - clear date_field, set target_date
+                    const { date_field, ...rest } = currentConfig;
+                    const tomorrow = new Date();
+                    tomorrow.setDate(tomorrow.getDate() + 1);
+                    tomorrow.setHours(9, 0, 0, 0);
+                    setCurrentConfig({
+                      ...rest,
+                      target_date: tomorrow.toISOString()
+                    });
+                  } else {
+                    // Switch to dynamic mode - clear target_date, set date_field
+                    const { target_date, ...rest } = currentConfig;
+                    setCurrentConfig({
+                      ...rest,
+                      date_field: ''
+                    });
+                  }
+                }}
               >
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="on_date">On the date</SelectItem>
-                  <SelectItem value="before_1d">1 day before</SelectItem>
-                  <SelectItem value="before_3d">3 days before</SelectItem>
-                  <SelectItem value="before_7d">7 days before</SelectItem>
-                  <SelectItem value="after_1d">1 day after</SelectItem>
+                  <SelectItem value="static">Static Date (specific date/time)</SelectItem>
+                  <SelectItem value="dynamic">Dynamic Date (from record field)</SelectItem>
                 </SelectContent>
               </Select>
             </div>
+
+            {/* Static Date Mode */}
+            {!currentConfig.date_field && (
+              <div>
+                <Label>Target Date & Time</Label>
+                <Input
+                  type="datetime-local"
+                  value={currentConfig.target_date ?
+                    new Date(currentConfig.target_date).toISOString().slice(0, 16) :
+                    ''
+                  }
+                  onChange={(e) => {
+                    const date = new Date(e.target.value);
+                    setCurrentConfig({
+                      ...currentConfig,
+                      target_date: date.toISOString()
+                    });
+                  }}
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Select the exact date and time to trigger the workflow
+                </p>
+              </div>
+            )}
+
+            {/* Dynamic Date Mode */}
+            {currentConfig.date_field !== undefined && !currentConfig.target_date && (
+              <div>
+                <Label>Date Field Name</Label>
+                <Input
+                  placeholder="follow_up_date, expiry_date, deadline, etc."
+                  value={currentConfig.date_field || ''}
+                  onChange={(e) => setCurrentConfig({ ...currentConfig, date_field: e.target.value })}
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Enter the name of the field containing the date in your records
+                </p>
+              </div>
+            )}
+
+            {/* Offset Controls */}
             <div>
-              <Label>Time of Day</Label>
-              <Input
-                type="time"
-                value={currentConfig.time || '09:00'}
-                onChange={(e) => setCurrentConfig({ ...currentConfig, time: e.target.value })}
-              />
+              <Label>Trigger Offset</Label>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <Label className="text-xs">Days</Label>
+                  <Input
+                    type="number"
+                    min="-365"
+                    max="365"
+                    placeholder="0"
+                    value={currentConfig.offset_days || 0}
+                    onChange={(e) => setCurrentConfig({
+                      ...currentConfig,
+                      offset_days: parseInt(e.target.value) || 0
+                    })}
+                  />
+                </div>
+                <div>
+                  <Label className="text-xs">Hours</Label>
+                  <Input
+                    type="number"
+                    min="-24"
+                    max="24"
+                    placeholder="0"
+                    value={currentConfig.offset_hours || 0}
+                    onChange={(e) => setCurrentConfig({
+                      ...currentConfig,
+                      offset_hours: parseInt(e.target.value) || 0
+                    })}
+                  />
+                </div>
+              </div>
+              <p className="text-xs text-gray-500 mt-1">
+                Use negative values to trigger before the date, positive for after
+              </p>
             </div>
+
+            <div>
+              <Label>Timezone</Label>
+              <Select
+                value={currentConfig.timezone || 'UTC'}
+                onValueChange={(value) => setCurrentConfig({ ...currentConfig, timezone: value })}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="UTC">UTC</SelectItem>
+                  <SelectItem value="America/New_York">Eastern Time</SelectItem>
+                  <SelectItem value="America/Chicago">Central Time</SelectItem>
+                  <SelectItem value="America/Denver">Mountain Time</SelectItem>
+                  <SelectItem value="America/Los_Angeles">Pacific Time</SelectItem>
+                  <SelectItem value="Europe/London">London</SelectItem>
+                  <SelectItem value="Europe/Paris">Paris</SelectItem>
+                  <SelectItem value="Asia/Tokyo">Tokyo</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="flex items-center space-x-2">
+              <input
+                type="checkbox"
+                id="business-days"
+                checked={currentConfig.business_days_only || false}
+                onChange={(e) => setCurrentConfig({
+                  ...currentConfig,
+                  business_days_only: e.target.checked
+                })}
+                className="rounded border-gray-300"
+              />
+              <Label htmlFor="business-days">Only trigger on business days (Mon-Fri)</Label>
+            </div>
+
+            <div className="flex items-center space-x-2">
+              <input
+                type="checkbox"
+                id="recurring"
+                checked={currentConfig.recurring || false}
+                onChange={(e) => setCurrentConfig({
+                  ...currentConfig,
+                  recurring: e.target.checked
+                })}
+                className="rounded border-gray-300"
+              />
+              <Label htmlFor="recurring">Make this a recurring trigger</Label>
+            </div>
+
+            {currentConfig.recurring && (
+              <div>
+                <Label>Recurrence Pattern</Label>
+                <Select
+                  value={currentConfig.recurrence_pattern || 'daily'}
+                  onValueChange={(value) => setCurrentConfig({
+                    ...currentConfig,
+                    recurrence_pattern: value
+                  })}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="daily">Daily</SelectItem>
+                    <SelectItem value="weekly">Weekly</SelectItem>
+                    <SelectItem value="monthly">Monthly</SelectItem>
+                    <SelectItem value="yearly">Yearly</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
           </div>
         );
 
@@ -782,7 +932,11 @@ export function TriggerConfigModal({ isOpen, onClose, workflow, initialTriggers,
                               {trigger.type === 'email_received' && `From: ${trigger.config.from_pattern || 'Any'}`}
                               {trigger.type === 'message_received' && `Channel: ${trigger.config.channel || 'Any'}`}
                               {trigger.type === 'status_changed' && `To status: ${trigger.config.to_status || 'Any'}`}
-                              {trigger.type === 'date_reached' && `Field: ${trigger.config.date_field || 'Not set'}`}
+                              {trigger.type === 'date_reached' && (
+                                trigger.config.target_date ?
+                                  `Static: ${new Date(trigger.config.target_date).toLocaleDateString()}` :
+                                  `Field: ${trigger.config.date_field || 'Not set'}`
+                              )}
                               {trigger.type === 'condition_met' && 'Custom condition'}
                               {trigger.type === 'pipeline_stage_changed' && `To stage: ${trigger.config.to_stage || 'Any'}`}
                               {trigger.type === 'engagement_threshold' && `${trigger.config.engagement_type || 'Engagement'}: ${trigger.config.threshold || '0'}`}

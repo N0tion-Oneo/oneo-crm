@@ -147,11 +147,11 @@ class TestDataService:
         try:
             # Email triggers
             if 'email' in node_type:
-                return cls._get_email_test_data()
+                return cls._get_email_test_data(node_config)
 
             # LinkedIn/WhatsApp triggers
             elif 'linkedin' in node_type or 'whatsapp' in node_type:
-                return cls._get_messaging_test_data(node_type)
+                return cls._get_messaging_test_data(node_type, node_config)
 
             # Form triggers
             elif 'form' in node_type:
@@ -210,24 +210,87 @@ class TestDataService:
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     @staticmethod
-    def _get_email_test_data():
+    def _get_email_test_data(node_config):
         """Get email test data"""
-        from communications.models import Message
+        from communications.models import Message, Channel, UserChannelConnection
+        from django.contrib.auth import get_user_model
 
+        User = get_user_model()
+
+        # Check monitor_users configuration
+        monitor_users = node_config.get('monitor_users', []) if node_config else []
+
+        # If no users are configured, return empty
+        if not monitor_users:
+            return Response({
+                'data': [],
+                'data_type': 'email',
+                'message': 'No users configured to monitor for emails'
+            })
+
+        # Check if "all users" is selected
+        if monitor_users == 'all' or monitor_users == ['all']:
+            # Get all user IDs
+            user_ids = list(User.objects.values_list('id', flat=True))
+        else:
+            # Extract user IDs from monitor_users configuration
+            # Convert to integers to match database and frontend
+            user_ids = []
+            for monitor_user in monitor_users:
+                if isinstance(monitor_user, dict):
+                    user_id = monitor_user.get('user_id')
+                    if user_id:
+                        user_ids.append(int(user_id))
+                else:
+                    user_ids.append(int(monitor_user))
+
+        # Get unipile account IDs for these users
+        connections = UserChannelConnection.objects.filter(
+            user_id__in=user_ids,
+            channel_type__in=['email', 'gmail', 'outlook']
+        )
+        unipile_ids = list(connections.values_list('unipile_account_id', flat=True))
+
+        # Get channels for these unipile accounts
+        channels = Channel.objects.filter(
+            unipile_account_id__in=unipile_ids
+        ).values_list('id', flat=True)
+
+        # Filter messages by the channels of monitored users
         messages = Message.objects.filter(
-            channel__channel_type__in=['email', 'gmail', 'outlook'],
+            channel_id__in=channels,
             direction='inbound'
-        ).select_related('channel', 'conversation').order_by('-created_at')[:10]
+        ).select_related('channel', 'conversation', 'sender_participant').order_by('-created_at')[:10]
 
         formatted_data = []
         for msg in messages:
+            # Get sender name from participant if available
+            sender_name = ''
+            if msg.sender_participant:
+                sender_name = msg.sender_participant.name or ''
+
+            # Build display title including name if available
+            if sender_name and msg.contact_email:
+                title = f"{sender_name} ({msg.contact_email})"
+            elif sender_name:
+                title = sender_name
+            elif msg.contact_email:
+                title = msg.contact_email
+            else:
+                title = "Unknown sender"
+
+            # Add subject if available
+            if msg.subject:
+                title = f"{title} - {msg.subject}"
+
             formatted_data.append({
                 'id': str(msg.id),
                 'type': 'email',
-                'title': msg.subject or f"Email from {msg.contact_email or 'Unknown'}",
+                'title': title,
                 'created_at': msg.created_at.isoformat(),
                 'preview': {
                     'from': msg.contact_email,
+                    'from_name': sender_name,
                     'subject': msg.subject,
                     'body': msg.content[:200] if msg.content else '',
                     'channel': msg.channel.name if msg.channel else None
@@ -241,25 +304,87 @@ class TestDataService:
         })
 
     @staticmethod
-    def _get_messaging_test_data(node_type):
+    def _get_messaging_test_data(node_type, node_config):
         """Get LinkedIn/WhatsApp test data"""
-        from communications.models import Message
+        from communications.models import Message, Channel, UserChannelConnection
+        from django.contrib.auth import get_user_model
+
+        User = get_user_model()
+
+        # Check monitor_users configuration
+        monitor_users = node_config.get('monitor_users', []) if node_config else []
+
+        # If no users are configured, return empty
+        if not monitor_users:
+            channel_type = 'linkedin' if 'linkedin' in node_type else 'whatsapp'
+            return Response({
+                'data': [],
+                'data_type': channel_type,
+                'message': f'No users configured to monitor for {channel_type} messages'
+            })
+
+        # Check if "all users" is selected
+        if monitor_users == 'all' or monitor_users == ['all']:
+            # Get all user IDs
+            user_ids = list(User.objects.values_list('id', flat=True))
+        else:
+            # Extract user IDs from monitor_users configuration
+            # Convert to integers to match database and frontend
+            user_ids = []
+            for monitor_user in monitor_users:
+                if isinstance(monitor_user, dict):
+                    user_id = monitor_user.get('user_id')
+                    if user_id:
+                        user_ids.append(int(user_id))
+                else:
+                    user_ids.append(int(monitor_user))
 
         channel_type = 'linkedin' if 'linkedin' in node_type else 'whatsapp'
+
+        # Get unipile account IDs for these users
+        connections = UserChannelConnection.objects.filter(
+            user_id__in=user_ids,
+            channel_type=channel_type
+        )
+        unipile_ids = list(connections.values_list('unipile_account_id', flat=True))
+
+        # Get channels for these unipile accounts
+        channels = Channel.objects.filter(
+            unipile_account_id__in=unipile_ids
+        ).values_list('id', flat=True)
+
+        # Filter messages by the channels of monitored users
         messages = Message.objects.filter(
-            channel__channel_type=channel_type,
+            channel_id__in=channels,
             direction='inbound'
-        ).select_related('channel', 'conversation').order_by('-created_at')[:10]
+        ).select_related('channel', 'conversation', 'sender_participant').order_by('-created_at')[:10]
 
         formatted_data = []
         for msg in messages:
+            # Get sender name from participant if available
+            sender_name = ''
+            if msg.sender_participant:
+                sender_name = msg.sender_participant.name or ''
+
+            # Build display title including name if available
+            contact = msg.contact_phone or msg.contact_email
+            if sender_name and contact:
+                title = f"{sender_name} ({contact})"
+            elif sender_name:
+                title = sender_name
+            elif contact:
+                title = contact
+            else:
+                title = "Unknown sender"
+
             formatted_data.append({
                 'id': str(msg.id),
                 'type': channel_type,
-                'title': f"{channel_type.title()} from {msg.contact_phone or msg.contact_email or 'Unknown'}",
+                'title': title,
                 'created_at': msg.created_at.isoformat(),
                 'preview': {
                     'from': msg.contact_phone or msg.contact_email,
+                    'from_name': sender_name,
                     'content': msg.content[:200] if msg.content else '',
                     'channel': msg.channel.name if msg.channel else None
                 }
@@ -443,13 +568,92 @@ class TestDataService:
     @classmethod
     def _get_date_trigger_test_data(cls, pipeline_id):
         """Get date trigger test data"""
+        from datetime import datetime, timedelta
+        from django.utils import timezone
+
+        # If no pipeline, provide static date options
         if not pipeline_id:
+            now = timezone.now()
+            today_noon = now.replace(hour=12, minute=0, second=0, microsecond=0)
+            tomorrow = now + timedelta(days=1)
+            tomorrow_9am = tomorrow.replace(hour=9, minute=0, second=0, microsecond=0)
+            next_monday = now + timedelta(days=(7 - now.weekday()))
+            next_monday_10am = next_monday.replace(hour=10, minute=0, second=0, microsecond=0)
+
+            # Calculate end of month
+            if now.month == 12:
+                end_of_month = now.replace(year=now.year + 1, month=1, day=1) - timedelta(days=1)
+            else:
+                end_of_month = now.replace(month=now.month + 1, day=1) - timedelta(days=1)
+            end_of_month = end_of_month.replace(hour=23, minute=59, second=59)
+
+            static_dates = [
+                {
+                    'id': 'static_today_noon',
+                    'type': 'date_trigger_static',
+                    'title': 'Today at noon',
+                    'created_at': now.isoformat(),
+                    'preview': {
+                        'target_date': today_noon.isoformat(),
+                        'description': f'{today_noon.strftime("%B %d, %Y at %I:%M %p")}',
+                        'mode': 'static'
+                    }
+                },
+                {
+                    'id': 'static_tomorrow_9am',
+                    'type': 'date_trigger_static',
+                    'title': 'Tomorrow at 9 AM',
+                    'created_at': now.isoformat(),
+                    'preview': {
+                        'target_date': tomorrow_9am.isoformat(),
+                        'description': f'{tomorrow_9am.strftime("%B %d, %Y at %I:%M %p")}',
+                        'mode': 'static'
+                    }
+                },
+                {
+                    'id': 'static_next_monday',
+                    'type': 'date_trigger_static',
+                    'title': 'Next Monday at 10 AM',
+                    'created_at': now.isoformat(),
+                    'preview': {
+                        'target_date': next_monday_10am.isoformat(),
+                        'description': f'{next_monday_10am.strftime("%B %d, %Y at %I:%M %p")}',
+                        'mode': 'static'
+                    }
+                },
+                {
+                    'id': 'static_end_of_month',
+                    'type': 'date_trigger_static',
+                    'title': 'End of this month',
+                    'created_at': now.isoformat(),
+                    'preview': {
+                        'target_date': end_of_month.isoformat(),
+                        'description': f'{end_of_month.strftime("%B %d, %Y at %I:%M %p")}',
+                        'mode': 'static'
+                    }
+                },
+                {
+                    'id': 'static_custom',
+                    'type': 'date_trigger_static',
+                    'title': 'Custom date/time',
+                    'created_at': now.isoformat(),
+                    'preview': {
+                        'target_date': now.isoformat(),
+                        'description': 'Enter your own date and time',
+                        'mode': 'static',
+                        'custom': True
+                    }
+                }
+            ]
+
             return Response({
-                'data': [],
+                'data': static_dates,
                 'data_type': 'date_trigger',
-                'message': 'Please select a pipeline to see records with date fields'
+                'total': len(static_dates),
+                'message': 'Static date options for testing. Select a pipeline to see records with date fields.'
             })
 
+        # With pipeline, show records with date fields (existing behavior)
         from pipelines.models import Record
 
         records = []
@@ -475,7 +679,8 @@ class TestDataService:
                         'created_at': record.created_at.isoformat(),
                         'preview': {
                             'record_name': cls.get_record_display_name(record),
-                            'date_fields': date_fields
+                            'date_fields': date_fields,
+                            'mode': 'dynamic'
                         }
                     })
 

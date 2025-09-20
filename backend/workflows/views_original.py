@@ -672,6 +672,12 @@ class WorkflowViewSet(viewsets.ModelViewSet):
                 else:
                     schema_info['config_schema'] = None
 
+                # Get default configuration if available
+                if hasattr(processor, 'get_default_config'):
+                    schema_info['default_config'] = processor.get_default_config()
+                else:
+                    schema_info['default_config'] = {}
+
                 schemas[node_type] = schema_info
 
             except Exception as e:

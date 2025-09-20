@@ -3,13 +3,13 @@ Pipeline stage changed trigger processor for workflows
 Triggers when records move between pipeline stages
 """
 from typing import Any, Dict
-from ..base import BaseNodeProcessor
+from ..base import AsyncNodeProcessor
 import logging
 
 logger = logging.getLogger(__name__)
 
 
-class TriggerPipelineStageChangedProcessor(BaseNodeProcessor):
+class TriggerPipelineStageChangedProcessor(AsyncNodeProcessor):
     """
     Processor for pipeline stage change triggers
     Essential for CRM and sales automation

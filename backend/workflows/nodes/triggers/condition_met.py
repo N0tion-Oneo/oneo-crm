@@ -3,14 +3,14 @@ Condition met trigger processor
 Triggers when complex conditions are satisfied
 """
 from typing import Any, Dict
-from ..base import BaseNodeProcessor
+from ..base import AsyncNodeProcessor
 import logging
 import operator
 
 logger = logging.getLogger(__name__)
 
 
-class TriggerConditionMetProcessor(BaseNodeProcessor):
+class TriggerConditionMetProcessor(AsyncNodeProcessor):
     """
     Processor for condition-based triggers
     Monitors and triggers when complex conditions are met

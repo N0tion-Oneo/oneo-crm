@@ -299,16 +299,39 @@ class TriggerRegistry:
             config_schema={
                 "type": "object",
                 "properties": {
-                    "date_field": {"type": "string"},
-                    "offset_days": {"type": "integer", "default": 0},
-                    "offset_hours": {"type": "integer", "default": 0},
+                    "date_field": {
+                        "type": "string",
+                        "description": "Field containing the target date (for dynamic dates)"
+                    },
+                    "target_date": {
+                        "type": "string",
+                        "format": "date-time",
+                        "description": "Static target date (ISO format) - alternative to date_field"
+                    },
+                    "offset_days": {"type": "integer", "default": 0, "minimum": -365, "maximum": 365},
+                    "offset_hours": {"type": "integer", "default": 0, "minimum": -24, "maximum": 24},
                     "business_days_only": {"type": "boolean", "default": False},
                     "timezone": {"type": "string", "default": "UTC"},
                     "reminder_type": {"type": "string", "enum": ["before", "on", "after"], "default": "on"},
-                    "recurring": {"type": "boolean", "default": False}
-                }
+                    "recurring": {"type": "boolean", "default": False},
+                    "recurrence_pattern": {
+                        "type": "string",
+                        "enum": ["daily", "weekly", "monthly", "yearly"],
+                        "description": "How often to repeat (if recurring)"
+                    },
+                    "max_occurrences": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 1000,
+                        "description": "Maximum number of occurrences (if recurring)"
+                    }
+                },
+                "oneOf": [
+                    {"required": ["date_field"]},
+                    {"required": ["target_date"]}
+                ]
             },
-            required_fields=["date_field"],
+            required_fields=[],  # No strict requirements - oneOf handles validation
             is_real_time=False,
             handler_class="DateReachedHandler",
             processor_class="DateBasedProcessor"

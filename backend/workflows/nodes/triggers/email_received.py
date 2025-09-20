@@ -3,12 +3,12 @@ Email received trigger node processor
 """
 import logging
 from typing import Dict, Any
-from workflows.nodes.base import BaseNodeProcessor
+from workflows.nodes.base import AsyncNodeProcessor
 
 logger = logging.getLogger(__name__)
 
 
-class TriggerEmailReceivedProcessor(BaseNodeProcessor):
+class TriggerEmailReceivedProcessor(AsyncNodeProcessor):
     """
     Processes email received trigger events
     This node starts a workflow when an email is received
@@ -164,13 +164,16 @@ class TriggerEmailReceivedProcessor(BaseNodeProcessor):
         "required": []
     }
 
-    async def process(self, config: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
+    async def process(self, node_config: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
         """
         Process email received trigger
 
         The email data from the event is passed in context['trigger_data']
         """
         trigger_data = context.get('trigger_data', {})
+
+        # Extract config from node_config structure
+        config = node_config.get('data', {}).get('config', {})
 
         # Extract user monitoring configuration
         monitor_users = config.get('monitor_users', [])
@@ -194,24 +197,43 @@ class TriggerEmailReceivedProcessor(BaseNodeProcessor):
 
         logger.info(f"Email trigger activated from {email_from} to {email_to}")
 
-        # Pass email data forward with user context
-        return {
+        # Build clean output for email trigger
+        output = {
             'success': True,
+            'trigger_type': 'email_received',
             'from': email_from,
             'to': email_to,
             'subject': subject,
             'body': body,
-            'html': html,
-            'attachments': attachments,
-            'received_at': trigger_data.get('received_at'),
-            'trigger_type': 'email_received',
-            'user_id': user_id,
-            'account_id': account_id,
-            'account_name': account_name,
-            'message_id': trigger_data.get('message_id'),
-            'thread_id': trigger_data.get('thread_id'),
-            'conversation_id': trigger_data.get('conversation_id')
         }
+
+        # Only include fields that have actual values
+        if attachments:
+            output['attachments'] = attachments
+
+        if trigger_data.get('received_at'):
+            output['received_at'] = trigger_data.get('received_at')
+
+        if trigger_data.get('message_id'):
+            output['message_id'] = trigger_data.get('message_id')
+
+        # Only include HTML if it has content
+        if html:
+            output['html'] = html
+
+        # Only include thread/conversation IDs if they exist
+        if trigger_data.get('thread_id'):
+            output['thread_id'] = trigger_data.get('thread_id')
+        if trigger_data.get('conversation_id'):
+            output['conversation_id'] = trigger_data.get('conversation_id')
+
+        # Include account info for debugging if available
+        if account_id:
+            output['account_id'] = account_id
+        if account_name:
+            output['account_name'] = account_name
+
+        return output
 
     def get_display_name(self) -> str:
         return "Email Received Trigger"

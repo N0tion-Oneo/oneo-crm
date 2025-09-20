@@ -13,9 +13,13 @@ class TriggerPipelineStageChangedProcessor(AsyncNodeProcessor):
     """
     Processor for pipeline stage change triggers
     Essential for CRM and sales automation
+
+    DEPRECATED: Use trigger_record_updated with track_stage_changes option instead.
+    This trigger will be removed in a future version.
     """
 
     node_type = "trigger_pipeline_stage_changed"
+    is_deprecated = True  # Mark as deprecated
 
     # Configuration schema for pipeline stage triggers
     CONFIG_SCHEMA = {

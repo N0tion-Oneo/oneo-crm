@@ -79,30 +79,6 @@ export function UnifiedConfigRenderer({
     }
   }, [currentConfig.pipeline_id, currentConfig.pipeline_slug, pipelines, onChange]);
 
-  // If a custom component is provided, use it
-  if (nodeConfig.customComponent) {
-    const CustomComponent = nodeConfig.customComponent;
-    return (
-      <React.Suspense fallback={
-        <div className="flex items-center justify-center p-4">
-          <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary"></div>
-          <span className="ml-2 text-sm">Loading component...</span>
-        </div>
-      }>
-        <CustomComponent
-          config={currentConfig}
-          onChange={onChange}
-          availableVariables={availableVariables}
-          pipelines={pipelines}
-          pipelineFields={pipelineFields}
-          workflows={workflows}
-          users={users}
-          errors={errors}
-        />
-      </React.Suspense>
-    );
-  }
-
   const toggleSectionCollapse = (sectionId: string) => {
     const newCollapsed = new Set(collapsedSections);
     if (newCollapsed.has(sectionId)) {
@@ -159,33 +135,39 @@ export function UnifiedConfigRenderer({
     const error = errors[fieldKey];
     const isExpression = expressionMode[fieldKey] || field.type === 'expression';
 
+    // Some widgets handle their own complete UI including labels
+    const selfContainedWidgets = ['stage_tracking_toggle', 'condition_builder'];
+    const isSelfContained = selfContainedWidgets.includes(widget);
+
     return (
       <div key={fieldKey} className="space-y-2">
-        <div className="flex items-center justify-between">
-          <Label className="text-sm font-medium flex items-center gap-1.5">
-            {field.label}
-            {field.required && <span className="text-destructive">*</span>}
-            {field.helpText && (
-              <Info className="h-3 w-3 text-muted-foreground" title={field.helpText} />
-            )}
-          </Label>
-
-          {field.allowExpressions && field.type !== 'expression' && (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={() => toggleExpressionMode(fieldKey)}
-              className="h-6 px-2"
-            >
-              {isExpression ? (
-                <Type className="h-3 w-3" />
-              ) : (
-                <Variable className="h-3 w-3" />
+        {!isSelfContained && (
+          <div className="flex items-center justify-between">
+            <Label className="text-sm font-medium flex items-center gap-1.5">
+              {field.label}
+              {field.required && <span className="text-destructive">*</span>}
+              {field.helpText && (
+                <Info className="h-3 w-3 text-muted-foreground" title={field.helpText} />
               )}
-            </Button>
-          )}
-        </div>
+            </Label>
+
+            {field.allowExpressions && field.type !== 'expression' && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => toggleExpressionMode(fieldKey)}
+                className="h-6 px-2"
+              >
+                {isExpression ? (
+                  <Type className="h-3 w-3" />
+                ) : (
+                  <Variable className="h-3 w-3" />
+                )}
+              </Button>
+            )}
+          </div>
+        )}
 
         {/* Render field using custom render or widget registry */}
         {field.customRender ? (
@@ -215,16 +197,16 @@ export function UnifiedConfigRenderer({
           renderFieldInput(field, value, isExpression, (v) => updateConfig(fieldKey, v))
         )}
 
-        {/* Error message */}
-        {error && (
+        {/* Error message - skip for self-contained widgets */}
+        {!isSelfContained && error && (
           <p className="text-xs text-destructive flex items-center gap-1">
             <AlertCircle className="h-3 w-3" />
             {error}
           </p>
         )}
 
-        {/* Help text */}
-        {!error && field.helpText && field.type !== 'boolean' && (
+        {/* Help text - skip for self-contained widgets */}
+        {!isSelfContained && !error && field.helpText && field.type !== 'boolean' && (
           <p className="text-xs text-muted-foreground">{field.helpText}</p>
         )}
       </div>
@@ -286,7 +268,10 @@ export function UnifiedConfigRenderer({
           readonly: field.readonly,
           required: field.required,
           // Don't pass helpText either - UnifiedConfigRenderer renders it
-          uiHints: field.uiHints || {},
+          uiHints: {
+            ...field.uiHints,
+            stage_field_key: field.uiHints?.stage_field_key,
+          },
           config: currentConfig,
           field: { key: field.key },
           onConfigUpdate: onChange,  // Pass the full config update function
@@ -349,6 +334,27 @@ export function UnifiedConfigRenderer({
     <div className="space-y-6">
       {/* Render normal sections */}
       {normalSections.map(renderSection)}
+
+      {/* Render custom component if provided (as an additional enhancement section) */}
+      {nodeConfig.customComponent && (
+        <React.Suspense fallback={
+          <div className="flex items-center justify-center p-4">
+            <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary"></div>
+            <span className="ml-2 text-sm">Loading component...</span>
+          </div>
+        }>
+          {React.createElement(nodeConfig.customComponent, {
+            config: currentConfig,
+            onChange,
+            availableVariables,
+            pipelines,
+            pipelineFields,
+            workflows,
+            users,
+            errors
+          })}
+        </React.Suspense>
+      )}
 
       {/* Separator between normal and advanced */}
       {normalSections.length > 0 && advancedSections.length > 0 && (

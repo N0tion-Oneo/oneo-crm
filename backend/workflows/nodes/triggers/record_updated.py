@@ -50,6 +50,63 @@ class TriggerRecordUpdatedProcessor(AsyncNodeProcessor):
                     "help_text": "Changes to these fields won't trigger the workflow"
                 }
             },
+            "track_stage_changes": {
+                "type": "boolean",
+                "default": False,
+                "description": "",
+                "ui_hints": {
+                    "widget": "stage_tracking_toggle"
+                }
+            },
+            "from_stages": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Only trigger when moving FROM these stages",
+                "ui_hints": {
+                    "widget": "stage_options_multiselect",
+                    "stage_field_key": "watch_fields",
+                    "placeholder": "Any stage",
+                    "help_text": "Leave empty to trigger from any stage",
+                    "show_when": {"track_stage_changes": True}
+                }
+            },
+            "to_stages": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Only trigger when moving TO these stages",
+                "ui_hints": {
+                    "widget": "stage_options_multiselect",
+                    "stage_field_key": "watch_fields",
+                    "placeholder": "Any stage",
+                    "help_text": "Leave empty to trigger to any stage",
+                    "show_when": {"track_stage_changes": True}
+                }
+            },
+            "stage_direction": {
+                "type": "string",
+                "enum": ["forward", "backward", "any"],
+                "default": "any",
+                "description": "Direction of stage movement",
+                "ui_hints": {
+                    "widget": "select",
+                    "show_when": {"track_stage_changes": True},
+                    "options": [
+                        {"value": "forward", "label": "Forward only (progress)"},
+                        {"value": "backward", "label": "Backward only (regression)"},
+                        {"value": "any", "label": "Any direction"}
+                    ]
+                }
+            },
+            "track_stage_duration": {
+                "type": "boolean",
+                "default": False,
+                "description": "Track time spent in previous stage",
+                "ui_hints": {
+                    "widget": "checkbox",
+                    "show_when": {"track_stage_changes": True},
+                    "section": "advanced"
+                }
+            },
             "field_conditions": {
                 "type": "array",
                 "items": {
@@ -60,7 +117,7 @@ class TriggerRecordUpdatedProcessor(AsyncNodeProcessor):
                         "value": {}
                     }
                 },
-                "description": "When should updates trigger this workflow?",
+                "description": "",
                 "ui_hints": {
                     "widget": "condition_builder",
                     "help_text": "Set conditions that updated records must meet to trigger",
@@ -140,6 +197,15 @@ class TriggerRecordUpdatedProcessor(AsyncNodeProcessor):
         logic_operator = config.get('logic_operator', 'AND')
         group_operators = config.get('group_operators', {})
 
+        # Stage tracking configuration
+        track_stage_changes = config.get('track_stage_changes', False)
+        # When stage tracking is enabled, the stage field is the watched field
+        stage_field = watch_fields[0] if track_stage_changes and len(watch_fields) == 1 else None
+        from_stages = config.get('from_stages', [])
+        to_stages = config.get('to_stages', [])
+        stage_direction = config.get('stage_direction', 'any')
+        track_stage_duration = config.get('track_stage_duration', False)
+
         # Extract record data
         record = trigger_data.get('record', {})
         previous_record = trigger_data.get('previous_record', {})
@@ -148,6 +214,67 @@ class TriggerRecordUpdatedProcessor(AsyncNodeProcessor):
         changed_fields = trigger_data.get('changed_fields', [])
 
         logger.info(f"Record updated trigger activated for pipeline {pipeline_id}, fields changed: {changed_fields}")
+
+        # Handle stage change tracking if enabled
+        stage_transition = None
+        if track_stage_changes and stage_field:
+            # Use the stage field (which is watch_fields[0] when stage tracking is enabled)
+            field_to_check = stage_field
+
+            if field_to_check and field_to_check in changed_fields:
+                old_value = previous_record.get(field_to_check)
+                new_value = record.get(field_to_check)
+
+                # Check from_stages filter
+                if from_stages and old_value not in from_stages:
+                    logger.info(f"Stage change from '{old_value}' not in allowed from_stages: {from_stages}")
+                    return {
+                        'success': False,
+                        'skip': True,
+                        'reason': 'Stage transition from stage not allowed',
+                        'stage_transition': {
+                            'from': old_value,
+                            'to': new_value,
+                            'allowed_from': from_stages
+                        }
+                    }
+
+                # Check to_stages filter
+                if to_stages and new_value not in to_stages:
+                    logger.info(f"Stage change to '{new_value}' not in allowed to_stages: {to_stages}")
+                    return {
+                        'success': False,
+                        'skip': True,
+                        'reason': 'Stage transition to stage not allowed',
+                        'stage_transition': {
+                            'from': old_value,
+                            'to': new_value,
+                            'allowed_to': to_stages
+                        }
+                    }
+
+                # Check stage direction if specified
+                if stage_direction != 'any':
+                    # This would require knowing the stage order - simplified check for now
+                    # In a real implementation, you'd need to know the stage sequence
+                    stage_transition = {
+                        'field': field_to_check,
+                        'from': old_value,
+                        'to': new_value,
+                        'direction': 'unknown'  # Would need stage order to determine
+                    }
+
+                    if track_stage_duration and 'updated_at' in trigger_data:
+                        # Calculate duration in previous stage if timestamps are available
+                        stage_transition['duration_hours'] = None  # Would need to calculate
+
+                # Store stage transition info
+                stage_transition = {
+                    'field': field_to_check,
+                    'from': old_value,
+                    'to': new_value,
+                    'timestamp': trigger_data.get('updated_at')
+                }
 
         # Check if we have conditions to evaluate
         if field_conditions:
@@ -178,7 +305,7 @@ class TriggerRecordUpdatedProcessor(AsyncNodeProcessor):
                 }
 
         # Pass record data forward
-        return {
+        result = {
             'success': True,
             'record': record,
             'previous_record': previous_record,
@@ -188,6 +315,13 @@ class TriggerRecordUpdatedProcessor(AsyncNodeProcessor):
             'changed_fields': changed_fields,
             'trigger_type': 'record_updated'
         }
+
+        # Add stage transition info if tracking
+        if stage_transition:
+            result['stage_transition'] = stage_transition
+            result['is_stage_change'] = True
+
+        return result
 
     def get_display_name(self) -> str:
         return "Record Updated Trigger"

@@ -3,6 +3,7 @@
  */
 
 import { widgetRegistry } from './core/WidgetRegistry';
+import React from 'react';
 
 // Basic widgets
 import {
@@ -280,11 +281,21 @@ export function registerAllWidgets() {
     component: CriteriaBuilderWidget
   });
 
+  // Stage tracking widgets
+  widgetRegistry.register('stage_options_multiselect', {
+    name: 'stage_options_multiselect',
+    component: React.lazy(() => import('./widgets/StageOptionsMultiselect').then(m => ({ default: m.StageOptionsMultiselect })))
+  });
+
+  widgetRegistry.register('stage_tracking_toggle', {
+    name: 'stage_tracking_toggle',
+    component: React.lazy(() => import('./widgets/StageTrackingToggle').then(m => ({ default: m.StageTrackingToggle })))
+  });
+
   // TODO: Register these widgets as they're built:
   // - condition_builder (already exists, needs integration)
   // - data_source_builder
   // - branch_mapper
-  // - stage_multiselect
   // - file_upload
   // - external_check_config
 }

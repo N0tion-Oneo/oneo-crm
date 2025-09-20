@@ -158,6 +158,7 @@ class WorkflowSchemaService {
           .then(module => ({ default: module.DateReachedConfig }))
       );
     }
+    // RecordUpdatedConfig custom component removed - backend fields handle everything
 
     // Use defaults from backend - backend is single source of truth
     // First, get any defaults from the backend default_config
@@ -354,6 +355,8 @@ class WorkflowSchemaService {
         'schedule_builder': 'text', // Schedule builder returns cron string
         'condition_builder': 'conditions', // Condition builder for complex logic
         'file_upload': 'file',
+        'stage_options_multiselect': 'stage_options_multiselect',
+        'stage_tracking_toggle': 'stage_tracking_toggle',
       };
       if (widgetMap[widget]) {
         return widgetMap[widget];

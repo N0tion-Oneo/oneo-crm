@@ -3,6 +3,7 @@
 import React, { useMemo, useCallback, useState, useEffect } from 'react'
 import { Plus, X, Layers, ChevronDown, ChevronRight, Loader2 } from 'lucide-react'
 import { RecordDataService } from '@/services/records/RecordDataService'
+import { cn } from '@/lib/utils'
 
 interface Condition {
   field: string
@@ -773,6 +774,12 @@ export const WorkflowConditionBuilder: React.FC<WorkflowConditionBuilderProps> =
   // Ensure fields is always an array
   const safeFields = Array.isArray(fields) ? fields : []
 
+  // State for toggling the builder visibility
+  const [showBuilder, setShowBuilder] = useState(() => {
+    // Show builder by default if there are existing conditions
+    return value && ((Array.isArray(value) && value.length > 0) || (value.conditions && value.conditions.length > 0))
+  })
+
   // Convert flat array to group structure if needed
   const rootGroup = useMemo(() => {
     if (!value) {
@@ -805,15 +812,43 @@ export const WorkflowConditionBuilder: React.FC<WorkflowConditionBuilderProps> =
     }
   }, [onChange])
 
+  const hasConditions = rootGroup.conditions.length > 0
+
   return (
-    <div className="workflow-condition-container">
-      <GroupBuilder
-        group={rootGroup}
-        fields={safeFields}
-        onUpdate={handleUpdate}
-        supportsChangeOperators={supportsChangeOperators}
-        pipelineId={pipelineId}
-      />
+    <div className="workflow-condition-container space-y-4">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-medium">Add Filters</span>
+          {hasConditions && (
+            <span className="text-xs text-muted-foreground">({rootGroup.conditions.length} active)</span>
+          )}
+        </div>
+        <button
+          type="button"
+          onClick={() => setShowBuilder(!showBuilder)}
+          className={cn(
+            "relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2",
+            showBuilder ? "bg-primary" : "bg-gray-200"
+          )}
+        >
+          <span
+            className={cn(
+              "inline-block h-4 w-4 transform rounded-full bg-white transition-transform",
+              showBuilder ? "translate-x-6" : "translate-x-1"
+            )}
+          />
+        </button>
+      </div>
+
+      {showBuilder && (
+        <GroupBuilder
+          group={rootGroup}
+          fields={safeFields}
+          onUpdate={handleUpdate}
+          supportsChangeOperators={supportsChangeOperators}
+          pipelineId={pipelineId}
+        />
+      )}
     </div>
   )
 }

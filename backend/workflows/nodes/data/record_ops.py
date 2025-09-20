@@ -36,12 +36,25 @@ class RecordCreateProcessor(AsyncNodeProcessor):
             },
             "record_data": {
                 "type": "object",
-                "description": "Field values for the new record (when field_mapping_type is 'json')",
+                "description": "Map fields for the new record",
+                "default": {},
+                "ui_hints": {
+                    "widget": "field_mapper",
+                    "target_pipeline_key": "pipeline_id",
+                    "mapping_mode": "simple",
+                    "show_required_only": False,
+                    "show_when": {"field_mapping_type": "manual"}
+                }
+            },
+            "record_data_json": {
+                "type": "object",
+                "description": "Field values for the new record (JSON format)",
                 "default": {},
                 "ui_hints": {
                     "widget": "json_editor",
                     "rows": 10,
-                    "placeholder": '{\n  "name": "{{contact_name}}",\n  "email": "{{email}}",\n  "status": "new"\n}'
+                    "placeholder": '{\n  "name": "{{contact_name}}",\n  "email": "{{email}}",\n  "status": "new"\n}',
+                    "show_when": {"field_mapping_type": "json"}
                 }
             },
             "source_record": {
@@ -86,14 +99,21 @@ class RecordCreateProcessor(AsyncNodeProcessor):
         # Get configuration values
         pipeline_id = config.get('pipeline_id')
         field_mapping_type = config.get('field_mapping_type', 'json')
-        record_data = config.get('record_data', {})
         source_record = config.get('source_record')
         field_overrides = config.get('field_overrides', {})
         skip_validation = config.get('skip_validation', False)
-        
+
+        # Get the appropriate record data based on mapping type
+        if field_mapping_type == 'manual':
+            record_data = config.get('record_data', {})
+        elif field_mapping_type == 'json':
+            record_data = config.get('record_data_json', {})
+        else:  # copy type
+            record_data = {}  # Will be populated from source_record
+
         if not pipeline_id:
             raise ValueError("Record create node requires pipeline_id")
-        
+
         # Format record data with context
         formatted_data = {}
         for key, value in record_data.items():
@@ -165,24 +185,54 @@ class RecordUpdateProcessor(AsyncNodeProcessor):
     # Configuration schema
     CONFIG_SCHEMA = {
         "type": "object",
-        "required": ["record_id_source", "update_data"],
+        "required": ["record_id_source"],
         "properties": {
             "record_id_source": {
                 "type": "string",
-                "description": "Path to record ID in context (e.g., 'trigger_data.record_id')",
+                "description": "Path to record ID in context",
                 "ui_hints": {
                     "widget": "text",
                     "placeholder": "{{trigger.record_id}} or trigger_data.record_id"
                 }
             },
+            "pipeline_id": {
+                "type": "string",
+                "description": "Pipeline of the record being updated",
+                "ui_hints": {
+                    "widget": "pipeline_select",
+                    "placeholder": "Select pipeline",
+                    "help_text": "Optional: Helps with field mapping. Leave empty to use trigger record pipeline"
+                }
+            },
+            "update_mode": {
+                "type": "string",
+                "enum": ["manual", "json"],
+                "default": "manual",
+                "description": "How to specify update values",
+                "ui_hints": {
+                    "widget": "select"
+                }
+            },
             "update_data": {
                 "type": "object",
-                "description": "Fields to update on the record",
-                "minProperties": 1,
+                "description": "Map fields to update",
+                "minProperties": 0,
+                "ui_hints": {
+                    "widget": "field_mapper",
+                    "target_pipeline_key": "pipeline_id",
+                    "mapping_mode": "advanced",
+                    "show_when": {"update_mode": "manual"}
+                }
+            },
+            "update_data_json": {
+                "type": "object",
+                "description": "Fields to update (JSON format)",
+                "minProperties": 0,
                 "ui_hints": {
                     "widget": "json_editor",
                     "rows": 8,
-                    "placeholder": '{\n  "status": "updated",\n  "last_modified": "{{now}}",\n  "notes": "{{trigger.notes}}"\n}'
+                    "placeholder": '{\n  "status": "updated",\n  "last_modified": "{{now}}",\n  "notes": "{{trigger.notes}}"\n}',
+                    "show_when": {"update_mode": "json"}
                 }
             },
             "merge_strategy": {
@@ -216,9 +266,15 @@ class RecordUpdateProcessor(AsyncNodeProcessor):
 
         # Get configuration values
         record_id_source = config.get('record_id_source', '')
-        update_data = config.get('update_data', {})
+        update_mode = config.get('update_mode', 'manual')
         merge_strategy = config.get('merge_strategy', 'merge')
         skip_validation = config.get('skip_validation', False)
+
+        # Get the appropriate update data based on update mode
+        if update_mode == 'manual':
+            update_data = config.get('update_data', {})
+        else:  # json mode
+            update_data = config.get('update_data_json', {})
         
         # Get record ID from context
         record_id = self._get_nested_value(context, record_id_source)
@@ -314,14 +370,41 @@ class RecordFindProcessor(AsyncNodeProcessor):
                     "placeholder": "Select pipeline to search"
                 }
             },
+            "search_mode": {
+                "type": "string",
+                "enum": ["conditions", "json"],
+                "default": "conditions",
+                "description": "How to specify search criteria",
+                "ui_hints": {
+                    "widget": "select"
+                }
+            },
+            "search_conditions": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "field": {"type": "string"},
+                        "operator": {"type": "string"},
+                        "value": {}
+                    }
+                },
+                "description": "Search conditions to match records",
+                "ui_hints": {
+                    "widget": "condition_builder",
+                    "help_text": "Define conditions that records must meet",
+                    "show_when": {"search_mode": "conditions"}
+                }
+            },
             "search_criteria": {
                 "type": "object",
-                "description": "Field values to search for",
+                "description": "Field values to search for (JSON format)",
                 "default": {},
                 "ui_hints": {
                     "widget": "json_editor",
                     "rows": 6,
-                    "placeholder": '{\n  "name": "{{search_name}}",\n  "email": "{{email}}",\n  "status": "active"\n}'
+                    "placeholder": '{\n  "name": "{{search_name}}",\n  "email": "{{email}}",\n  "status": "active"\n}',
+                    "show_when": {"search_mode": "json"}
                 }
             },
             "exact_match": {
@@ -358,18 +441,22 @@ class RecordFindProcessor(AsyncNodeProcessor):
 
         # Get configuration values
         pipeline_id = config.get('pipeline_id')
+        search_mode = config.get('search_mode', 'conditions')
+        search_conditions = config.get('search_conditions', [])
         search_criteria = config.get('search_criteria', {})
         exact_match = config.get('exact_match', False)
         limit = config.get('limit', 10)
         return_first_only = config.get('return_first_only', False)
-        
+
         if not pipeline_id:
             raise ValueError("Record find node requires pipeline_id")
-        
-        # Format search criteria with context
+
+        # Format search criteria based on mode
         formatted_criteria = {}
-        for key, value in search_criteria.items():
-            formatted_criteria[key] = self._format_template(str(value), context)
+        if search_mode == 'json':
+            # Format JSON search criteria with context
+            for key, value in search_criteria.items():
+                formatted_criteria[key] = self._format_template(str(value), context)
         
         try:
             from pipelines.models import Pipeline, Record
@@ -379,15 +466,54 @@ class RecordFindProcessor(AsyncNodeProcessor):
             
             # Build query
             query = Q(pipeline=pipeline, is_deleted=False)
-            
-            # Add search criteria
-            for field_name, field_value in formatted_criteria.items():
-                if field_value:  # Only add non-empty criteria
-                    # Support both exact match and contains search
-                    if exact_match:
-                        query &= Q(**{f'data__{field_name}': field_value})
-                    else:
-                        query &= Q(**{f'data__{field_name}__icontains': field_value})
+
+            # Add search criteria based on mode
+            if search_mode == 'conditions' and search_conditions:
+                # Use condition evaluator for conditions
+                from workflows.utils.condition_evaluator import condition_evaluator
+
+                # We'll need to filter records based on conditions
+                # For now, convert conditions to simple queries
+                for condition in search_conditions:
+                    field = condition.get('field', '')
+                    operator = condition.get('operator', '=')
+                    value = condition.get('value', '')
+
+                    # Format value with context
+                    formatted_value = self._format_template(str(value), context) if value else value
+
+                    if field and formatted_value is not None:
+                        if operator == '=':
+                            query &= Q(**{f'data__{field}': formatted_value})
+                        elif operator == '!=':
+                            query &= ~Q(**{f'data__{field}': formatted_value})
+                        elif operator == 'contains':
+                            query &= Q(**{f'data__{field}__icontains': formatted_value})
+                        elif operator == 'starts_with':
+                            query &= Q(**{f'data__{field}__istartswith': formatted_value})
+                        elif operator == 'ends_with':
+                            query &= Q(**{f'data__{field}__iendswith': formatted_value})
+                        elif operator == '>':
+                            query &= Q(**{f'data__{field}__gt': formatted_value})
+                        elif operator == '>=':
+                            query &= Q(**{f'data__{field}__gte': formatted_value})
+                        elif operator == '<':
+                            query &= Q(**{f'data__{field}__lt': formatted_value})
+                        elif operator == '<=':
+                            query &= Q(**{f'data__{field}__lte': formatted_value})
+                        elif operator == 'is_empty':
+                            query &= (Q(**{f'data__{field}__isnull': True}) | Q(**{f'data__{field}': ''}))
+                        elif operator == 'is_not_empty':
+                            query &= ~(Q(**{f'data__{field}__isnull': True}) | Q(**{f'data__{field}': ''}))
+            else:
+                # Use formatted_criteria for JSON mode
+                for field_name, field_value in formatted_criteria.items():
+                    if field_value:  # Only add non-empty criteria
+                        # Support both exact match and contains search
+                        if exact_match:
+                            query &= Q(**{f'data__{field_name}': field_value})
+                        else:
+                            query &= Q(**{f'data__{field_name}__icontains': field_value})
             
             # Execute query
             queryset = Record.objects.filter(query)[:limit]

@@ -253,6 +253,13 @@ class WorkflowSchemaService {
         label: String(value),
         value
       }));
+      // Also add to uiHints so SelectWidget can access them
+      field.uiHints.options = field.options;
+    } else if (uiHints.options) {
+      // Handle options provided through ui_hints
+      field.options = uiHints.options;
+      // Ensure uiHints has the options for the widget
+      field.uiHints.options = uiHints.options;
     }
 
     // Handle special widgets

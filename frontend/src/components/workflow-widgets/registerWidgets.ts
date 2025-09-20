@@ -292,6 +292,12 @@ export function registerAllWidgets() {
     component: React.lazy(() => import('./widgets/StageTrackingToggle').then(m => ({ default: m.StageTrackingToggle })))
   });
 
+  // Data action widgets
+  widgetRegistry.register('field_mapper', {
+    name: 'field_mapper',
+    component: React.lazy(() => import('./widgets/FieldMapperWidget').then(m => ({ default: m.FieldMapperWidget })))
+  });
+
   // TODO: Register these widgets as they're built:
   // - condition_builder (already exists, needs integration)
   // - data_source_builder

@@ -47,7 +47,7 @@ import {
 import { ExecutionHistory } from './ExecutionHistory';
 import { WorkflowDebugPanel } from './WorkflowDebugPanel';
 import { WorkflowContextPanel } from './WorkflowContextPanel';
-import { getNodeConfig } from './node-configs/unified/registry';
+import { workflowSchemaService } from '@/services/workflowSchemaService';
 
 interface WorkflowBuilderRedesignedProps {
   definition: WorkflowDefinition;
@@ -578,29 +578,34 @@ export function WorkflowBuilderRedesigned({
           const sourceNode = definition.nodes.find((n: WorkflowNode) => n.id === edge.source);
 
           if (sourceNode) {
-            // Get the node configuration to extract outputs
-            const nodeConfig = getNodeConfig(sourceNode.type as WorkflowNodeType);
+            // For now, we'll provide basic output structure since backend doesn't provide output schemas yet
+            // TODO: Update when backend provides output_schema in node_schemas endpoint
 
-            if (nodeConfig && nodeConfig.outputs) {
-              let outputs = nodeConfig.outputs;
+            // Provide default outputs based on node type
+            let outputKeys: string[] = [];
+            const nodeType = sourceNode.type.toLowerCase();
 
-              // If outputs is a function, call it with the node's config data
-              if (typeof outputs === 'function') {
-                // Pass the node config and any dependencies if needed
-                outputs = outputs(sourceNode.data || {}, {});
-              }
-
-              // Extract output keys from the configuration
-              const outputKeys = outputs.map((output: any) =>
-                typeof output === 'string' ? output : output.key || output.name
-              );
-
-              availableVars.push({
-                nodeId: sourceNode.id,
-                label: sourceNode.data?.label || sourceNode.type || sourceNode.id,
-                outputs: outputKeys
-              });
+            // Provide some basic outputs for common node types
+            if (nodeType.includes('record') || nodeType.includes('fetch')) {
+              outputKeys = ['record', 'data', 'success'];
+            } else if (nodeType.includes('ai') || nodeType.includes('prompt')) {
+              outputKeys = ['response', 'content', 'success'];
+            } else if (nodeType.includes('condition')) {
+              outputKeys = ['result', 'matched_condition'];
+            } else if (nodeType.includes('email') || nodeType.includes('send')) {
+              outputKeys = ['sent', 'message_id', 'success'];
+            } else if (nodeType.includes('trigger')) {
+              outputKeys = ['trigger_data', 'event', 'timestamp'];
+            } else {
+              // Default outputs for unknown node types
+              outputKeys = ['output', 'data', 'success'];
             }
+
+            availableVars.push({
+              nodeId: sourceNode.id,
+              label: sourceNode.data?.label || sourceNode.type || sourceNode.id,
+              outputs: outputKeys
+            });
           }
 
           // Recursively get predecessors of this node

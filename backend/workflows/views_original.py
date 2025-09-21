@@ -656,10 +656,188 @@ class WorkflowViewSet(viewsets.ModelViewSet):
             try:
                 # Instantiate processor to get its schema
                 processor = processor_class()
+                # Determine category based on node type if not provided by processor
+                if hasattr(processor, 'get_category'):
+                    category = processor.get_category()
+                else:
+                    # Categorization matching test-schema structure
+                    node_type_lower = node_type.lower()
+
+                    # Triggers
+                    if node_type_lower.startswith('trigger_'):
+                        category = 'Triggers'
+
+                    # Data Operations
+                    elif any(data_op in node_type_lower for data_op in ['record_create', 'record_update', 'record_find',
+                                                                         'record_delete', 'record_get', 'fetch_record']):
+                        category = 'Data'
+
+                    # AI Operations
+                    elif any(ai_op in node_type_lower for ai_op in ['ai_prompt', 'ai_analysis', 'ai_message',
+                                                                     'ai_response', 'ai_conversation']):
+                        category = 'AI'
+
+                    # Communication
+                    elif any(comm in node_type_lower for comm in ['unipile_send_email', 'unipile_send_sms',
+                                                                   'unipile_send_whatsapp', 'unipile_send_linkedin',
+                                                                   'send_email', 'send_sms']):
+                        category = 'Communication'
+
+                    # Control Flow
+                    elif node_type_lower in ['condition', 'for_each', 'wait_delay', 'wait_for_response',
+                                            'wait_for_record_event', 'wait_for_condition',
+                                            'workflow_loop_controller', 'workflow_loop_breaker',
+                                            'conversation_state', 'sub_workflow', 'merge_data']:
+                        category = 'Control'
+
+                    # CRM Operations
+                    elif any(crm in node_type_lower for crm in ['create_follow_up_task', 'update_contact_status',
+                                                                 'resolve_contact']):
+                        category = 'CRM'
+
+                    # External Integrations
+                    elif any(ext in node_type_lower for ext in ['http_request', 'webhook_out']):
+                        category = 'External'
+
+                    # Default to Actions
+                    else:
+                        category = 'Actions'
+
+                # Determine subcategory for better organization
+                subcategory = None
+                if hasattr(processor, 'get_subcategory'):
+                    subcategory = processor.get_subcategory()
+                else:
+                    node_type_lower = node_type.lower()
+
+                    # Trigger subcategories
+                    if category == 'Triggers':
+                        if 'manual' in node_type_lower or 'form' in node_type_lower:
+                            subcategory = 'User Initiated'
+                        elif 'record' in node_type_lower:
+                            subcategory = 'Data Events'
+                        elif 'schedule' in node_type_lower or 'date_' in node_type_lower or '_date' in node_type_lower:
+                            subcategory = 'Time Based'
+                        elif 'webhook' in node_type_lower or 'api' in node_type_lower:
+                            subcategory = 'External'
+                        elif any(comm in node_type_lower for comm in ['email', 'linkedin', 'whatsapp']):
+                            subcategory = 'Communication'
+                        elif 'workflow' in node_type_lower or 'pipeline' in node_type_lower:
+                            subcategory = 'System Events'
+                        else:
+                            subcategory = 'General'
+
+                    # Control/Logic subcategories
+                    elif category == 'Control':
+                        if 'condition' in node_type_lower or 'decision' in node_type_lower:
+                            subcategory = 'Conditional Logic'
+                        elif 'loop' in node_type_lower or 'for_each' in node_type_lower:
+                            subcategory = 'Loops'
+                        elif 'wait' in node_type_lower or 'delay' in node_type_lower:
+                            subcategory = 'Timing'
+                        elif 'conversation' in node_type_lower or 'response' in node_type_lower:
+                            subcategory = 'Human Interaction'
+                        elif 'sub_workflow' in node_type_lower or 'merge' in node_type_lower:
+                            subcategory = 'Advanced'
+                        else:
+                            subcategory = 'Control Flow'
+
+                # Generate better display names
+                def get_display_name(node_type_str):
+                    """Generate user-friendly display names from node types."""
+                    # Special cases for better naming
+                    name_mappings = {
+                        'trigger_manual': 'Manual Trigger',
+                        'trigger_scheduled': 'Scheduled',
+                        'trigger_schedule': 'Schedule',
+                        'trigger_webhook': 'Webhook',
+                        'trigger_api_endpoint': 'API Endpoint',
+                        'trigger_record_created': 'Record Created',
+                        'trigger_record_updated': 'Record Updated',
+                        'trigger_record_deleted': 'Record Deleted',
+                        'trigger_form_submitted': 'Form Submitted',
+                        'trigger_email_received': 'Email Received',
+                        'trigger_linkedin_message': 'LinkedIn Message',
+                        'trigger_whatsapp_message': 'WhatsApp Message',
+                        'trigger_date_reached': 'Date Reached',
+                        'trigger_pipeline_stage_changed': 'Pipeline Stage Changed',
+                        'trigger_workflow_completed': 'Workflow Completed',
+                        'trigger_condition_met': 'Condition Met',
+
+                        # Data operations
+                        'record_create': 'Create Record',
+                        'record_update': 'Update Record',
+                        'record_find': 'Find Record',
+                        'record_delete': 'Delete Record',
+                        'record_merge': 'Merge Data',
+
+                        # Communication - remove vendor prefixes
+                        'send_email': 'Send Email',
+                        'unipile_send_email': 'Send Email',
+                        'unipile_send_sms': 'Send SMS',
+                        'unipile_send_whatsapp': 'Send WhatsApp',
+                        'unipile_send_linkedin': 'Send LinkedIn',
+                        'send_sms': 'Send SMS',
+                        'send_notification': 'Send Notification',
+
+                        # AI operations
+                        'ai_prompt': 'AI Prompt',
+                        'ai_analyze': 'AI Analyze',
+                        'ai_analysis': 'AI Analysis',
+                        'ai_message_generator': 'AI Message Generator',
+                        'ai_response_evaluator': 'AI Response Evaluator',
+                        'ai_conversation_loop': 'AI Conversation Loop',
+
+                        # Control flow
+                        'condition': 'Condition',
+                        'for_each': 'For Each',
+                        'wait_delay': 'Wait/Delay',
+                        'wait_condition': 'Wait Condition',
+                        'decision_tree': 'Decision Tree',
+                        'workflow_loop': 'Workflow Loop',
+                        'approve_reject': 'Approve/Reject',
+                        'send_for_approval': 'Send for Approval',
+                        'conversation_state': 'Conversation State',
+                        'end_workflow': 'End Workflow',
+
+                        # External
+                        'http_request': 'HTTP Request',
+                        'webhook_out': 'Webhook Out',
+                        'webhook_response': 'Webhook Response',
+
+                        # CRM
+                        'crm_resolve_contact': 'Resolve Contact',
+                        'resolve_contact': 'Resolve Contact',
+                        'crm_update_status': 'Update Status',
+                        'update_contact_status': 'Update Contact Status',
+                        'crm_create_followup_task': 'Create Follow-up',
+                        'create_follow_up_task': 'Follow Up Task',
+                        'crm_calculate_score': 'Calculate Score',
+                    }
+
+                    # Check if we have a specific mapping
+                    lower_type = node_type_str.lower()
+                    if lower_type in name_mappings:
+                        return name_mappings[lower_type]
+
+                    # Otherwise, intelligently format the name
+                    # Remove common prefixes
+                    clean_name = node_type_str
+                    for prefix in ['trigger_', 'unipile_', 'crm_']:
+                        if clean_name.lower().startswith(prefix):
+                            clean_name = clean_name[len(prefix):]
+                            break
+
+                    # Convert to title case
+                    return clean_name.replace('_', ' ').title()
+
                 schema_info = {
                     'node_type': node_type,
-                    'display_name': getattr(processor, 'display_name', node_type.replace('_', ' ').title()),
+                    'display_name': getattr(processor, 'display_name', get_display_name(node_type)),
                     'description': processor.__class__.__doc__.strip() if processor.__class__.__doc__ else '',
+                    'category': category,
+                    'subcategory': subcategory,
+                    'icon': processor.get_icon() if hasattr(processor, 'get_icon') else '⚙️',
                     'supports_replay': getattr(processor, 'supports_replay', False),
                     'supports_checkpoints': getattr(processor, 'supports_checkpoints', False)
                 }

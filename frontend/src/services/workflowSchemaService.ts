@@ -86,6 +86,16 @@ class WorkflowSchemaService {
   }
 
   /**
+   * Transform backend schema directly (public method for external use)
+   */
+  transformBackendSchema(schema: BackendSchema, nodeType: string): UnifiedNodeConfig | null {
+    if (!schema.config_schema) {
+      return null;
+    }
+    return this.transformSchema(nodeType as WorkflowNodeType, schema);
+  }
+
+  /**
    * Map frontend WorkflowNodeType to backend node type string
    * Backend now uses all lowercase with underscores
    */

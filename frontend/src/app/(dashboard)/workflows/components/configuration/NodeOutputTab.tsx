@@ -444,7 +444,7 @@ export function NodeOutputTab({
                             className="text-xs px-3 py-2 border-b max-w-[200px] truncate"
                             title={String(cell)}
                           >
-                            {cell}
+                            {String(cell)}
                           </td>
                         ))}
                       </tr>

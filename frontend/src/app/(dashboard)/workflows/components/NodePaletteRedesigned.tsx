@@ -4,7 +4,10 @@ import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Input } from '@/components/ui/input';
-import { useState } from 'react';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { useState, useEffect } from 'react';
+import { api } from '@/lib/api';
 import {
   Zap, Clock, Calendar, FileText, User, GitBranch,
   Database, Send, MessageSquare, Mail, Bot, Code,
@@ -29,16 +32,128 @@ interface NodeTemplate {
   type: WorkflowNodeType;
   label: string;
   description: string;
-  icon: React.ElementType;
+  icon: string;
   color: string;
-  category: 'triggers' | 'actions' | 'logic';
+  category: string;
   subcategory: string;
   isPremium?: boolean;
   isNew?: boolean;
   isBeta?: boolean;
 }
 
-const nodeTemplates: NodeTemplate[] = [
+// Map node types to subcategories for better organization
+const getNodeSubcategory = (nodeType: WorkflowNodeType, category: string): string => {
+  // Triggers
+  if (nodeType.includes('TRIGGER_MANUAL') || nodeType.includes('TRIGGER_FORM')) {
+    return 'User Initiated';
+  }
+  if (nodeType.includes('TRIGGER_SCHEDULE') || nodeType.includes('TRIGGER_DATE')) {
+    return 'Time Based';
+  }
+  if (nodeType.includes('TRIGGER_WEBHOOK') || nodeType.includes('TRIGGER_API')) {
+    return 'External';
+  }
+  if (nodeType.includes('TRIGGER_RECORD')) {
+    return 'Data Events';
+  }
+
+  // Actions
+  if (nodeType.includes('RECORD_')) {
+    return 'Data Operations';
+  }
+  if (nodeType.includes('UNIPILE_') || nodeType.includes('EMAIL_') || nodeType.includes('TASK_NOTIFY')) {
+    return 'Communication';
+  }
+  if (nodeType.includes('AI_')) {
+    return 'AI & Automation';
+  }
+  if (nodeType.includes('HTTP_') || nodeType.includes('WEBHOOK_')) {
+    return 'External Systems';
+  }
+
+  // Logic
+  if (nodeType.includes('CONDITION') || nodeType.includes('DECISION')) {
+    return 'Conditions';
+  }
+  if (nodeType.includes('LOOP') || nodeType.includes('FOREACH')) {
+    return 'Loops';
+  }
+  if (nodeType.includes('WAIT') || nodeType.includes('DELAY')) {
+    return 'Control Flow';
+  }
+
+  return category === 'triggers' || category === 'Triggers' ? 'General Triggers' :
+         category === 'logic' || category === 'Logic' ? 'Control Flow' : 'General Actions';
+};
+
+// Map node types to colors
+const getNodeColor = (nodeType: WorkflowNodeType, category: string): string => {
+  // Triggers
+  if (category === 'triggers' || category === 'Triggers') {
+    if (nodeType.includes('MANUAL') || nodeType.includes('FORM')) return 'bg-blue-500';
+    if (nodeType.includes('SCHEDULE') || nodeType.includes('DATE')) return 'bg-indigo-500';
+    if (nodeType.includes('WEBHOOK') || nodeType.includes('API')) return 'bg-purple-500';
+    return 'bg-violet-500';
+  }
+
+  // Actions
+  if (nodeType.includes('RECORD_')) return 'bg-green-500';
+  if (nodeType.includes('EMAIL_') || nodeType.includes('UNIPILE_')) return 'bg-indigo-500';
+  if (nodeType.includes('AI_')) return 'bg-pink-500';
+  if (nodeType.includes('HTTP_') || nodeType.includes('WEBHOOK_')) return 'bg-teal-500';
+
+  // Logic
+  if (nodeType.includes('CONDITION') || nodeType.includes('DECISION')) return 'bg-orange-500';
+  if (nodeType.includes('LOOP') || nodeType.includes('FOREACH')) return 'bg-amber-500';
+  if (nodeType.includes('WAIT') || nodeType.includes('DELAY')) return 'bg-yellow-500';
+
+  return 'bg-gray-500';
+};
+
+// Map emoji icons to Lucide icons
+const getIconComponent = (icon: string): React.ElementType => {
+  const iconMap: Record<string, React.ElementType> = {
+    '➕': Plus,
+    '✏️': Edit2,
+    '🗑️': Trash2,
+    '⏰': Clock,
+    '📅': Calendar,
+    '📝': FileText,
+    '👤': User,
+    '🔀': GitBranch,
+    '💾': Database,
+    '✉️': Mail,
+    '📧': Send,
+    '💬': MessageSquare,
+    '🤖': Bot,
+    '✨': Sparkles,
+    '🧠': Brain,
+    '🔄': RefreshCw,
+    '⏸️': PauseCircle,
+    '🛑': StopCircle,
+    '🌐': Globe,
+    '🔗': Link,
+    '🔔': Bell,
+    '📊': BarChart,
+    '⚙️': Settings,
+    '🚀': Zap,
+    '🔍': Search,
+    '🎯': Target,
+    '📂': FolderOpen,
+    '💡': Info,
+    '❓': HelpCircle,
+    '✅': CheckCircle,
+    '❌': X,
+    '⚡': Zap,
+    '🏃': Activity,
+    '🔓': Unlock,
+    '🔒': Lock,
+  };
+  return iconMap[icon] || Settings;
+};
+
+// All node templates are now loaded from backend with proper categories and subcategories
+const fallbackNodeTemplates: NodeTemplate[] = [
   // Triggers - User Initiated
   {
     type: WorkflowNodeType.TRIGGER_MANUAL,
@@ -439,9 +554,114 @@ const nodeTemplates: NodeTemplate[] = [
 
 export function NodePaletteRedesigned({ selectedCategory }: NodePaletteRedesignedProps) {
   const [searchQuery, setSearchQuery] = useState('');
+  const [nodeTemplates, setNodeTemplates] = useState<NodeTemplate[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  // Fetch node schemas from backend
+  useEffect(() => {
+    const fetchNodeSchemas = async () => {
+      try {
+        setLoading(true);
+        const response = await api.get('/api/v1/workflows/node_schemas/');
+        const schemas = response.data;
+
+        // Transform backend schemas to NodeTemplate format
+        const templates: NodeTemplate[] = Object.entries(schemas).map(([nodeType, schema]: [string, any]) => {
+          // Use category from backend schema
+          // Backend provides these categories: Triggers, Data, AI, Communication, Control, CRM, External, Actions
+          let category: string = 'actions'; // default fallback
+
+          // Map backend categories to frontend tab names (we have 3 tabs: triggers, logic, actions)
+          if (schema.category) {
+            const backendCategory = schema.category.toLowerCase();
+            if (backendCategory === 'triggers') {
+              category = 'triggers';
+            } else if (backendCategory === 'control') {
+              category = 'logic'; // Frontend uses 'logic' for control flow
+            } else {
+              // Data, AI, Communication, CRM, External, Actions all go to actions tab
+              category = 'actions';
+            }
+          }
+
+          // Use backend subcategory if available, otherwise use category for grouping
+          // Backend provides both category and subcategory for better organization
+          const displaySubcategory = schema.subcategory || schema.category || 'General';
+
+          return {
+            type: nodeType as WorkflowNodeType,
+            label: schema.display_name || nodeType.replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, (l: string) => l.toUpperCase()),
+            description: schema.description || '',
+            icon: schema.icon || '⚙️',
+            color: getNodeColor(nodeType as WorkflowNodeType, category),
+            category: category,
+            subcategory: displaySubcategory, // Use backend subcategory for display grouping
+            // Add flags based on node type
+            isPremium: nodeType.includes('AI_'),
+            isNew: ['AI_MESSAGE_GENERATOR', 'AI_RESPONSE_EVALUATOR', 'AI_CONVERSATION_LOOP', 'CONVERSATION_STATE'].includes(nodeType),
+            isBeta: false
+          };
+        });
+
+        // Define subcategory order for better organization
+        const subcategoryOrder = {
+          // Trigger subcategories
+          'User Initiated': 1,
+          'Time Based': 2,
+          'Data Events': 3,
+          'Communication': 4,
+          'External': 5,
+          'System Events': 6,
+          // Control subcategories
+          'Conditional Logic': 10,
+          'Loops': 11,
+          'Timing': 12,
+          'Human Interaction': 13,
+          'Control Flow': 14,
+          'Advanced': 15,
+          // Main categories (when no subcategory)
+          'Triggers': 20,
+          'Data': 21,
+          'AI': 22,
+          'Communication': 23,
+          'CRM': 24,
+          'Control': 25,
+          'External': 26,
+          'Actions': 27
+        };
+
+        // Sort templates by subcategory with defined order
+        templates.sort((a, b) => {
+          // Get priority from subcategory order
+          const aPriority = subcategoryOrder[a.subcategory] || 99;
+          const bPriority = subcategoryOrder[b.subcategory] || 99;
+
+          if (aPriority !== bPriority) {
+            return aPriority - bPriority;
+          }
+
+          // Then by label alphabetically
+          return a.label.localeCompare(b.label);
+        });
+
+        setNodeTemplates(templates);
+        setError(null);
+      } catch (err) {
+        console.error('Failed to fetch node schemas:', err);
+        setError('Failed to load workflow nodes');
+        // Use fallback templates
+        setNodeTemplates(fallbackNodeTemplates);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchNodeSchemas();
+  }, []);
 
   const filteredNodes = nodeTemplates.filter(node => {
-    const matchesCategory = node.category === selectedCategory;
+    const matchesCategory = node.category.toLowerCase() === selectedCategory.toLowerCase();
     const matchesSearch = searchQuery === '' ||
       node.label.toLowerCase().includes(searchQuery.toLowerCase()) ||
       node.description.toLowerCase().includes(searchQuery.toLowerCase());
@@ -462,11 +682,37 @@ export function NodePaletteRedesigned({ selectedCategory }: NodePaletteRedesigne
       type: node.type,
       label: node.label,
       description: node.description,
-      icon: node.icon.name,
+      icon: node.icon,
       color: node.color
     }));
     event.dataTransfer.effectAllowed = 'move';
   };
+
+  // Loading state
+  if (loading) {
+    return (
+      <div className="py-4 space-y-4">
+        <Skeleton className="h-9 w-full" />
+        <div className="space-y-3">
+          <Skeleton className="h-20 w-full" />
+          <Skeleton className="h-20 w-full" />
+          <Skeleton className="h-20 w-full" />
+        </div>
+      </div>
+    );
+  }
+
+  // Error state
+  if (error) {
+    return (
+      <div className="py-4">
+        <Alert variant="destructive">
+          <AlertCircle className="h-4 w-4" />
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      </div>
+    );
+  }
 
   return (
     <div className="py-4 space-y-4">
@@ -502,7 +748,10 @@ export function NodePaletteRedesigned({ selectedCategory }: NodePaletteRedesigne
                       "p-2 rounded-lg text-white",
                       node.color
                     )}>
-                      <node.icon className="h-4 w-4" />
+                      {(() => {
+                        const IconComponent = getIconComponent(node.icon);
+                        return <IconComponent className="h-4 w-4" />;
+                      })()}
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">

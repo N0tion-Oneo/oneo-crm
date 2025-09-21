@@ -470,7 +470,6 @@ export function NodePaletteRedesigned({ selectedCategory }: NodePaletteRedesigne
 
   return (
     <div className="py-4 space-y-4">
-      {/* Search */}
       <div className="relative">
         <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
         <Input
@@ -481,17 +480,16 @@ export function NodePaletteRedesigned({ selectedCategory }: NodePaletteRedesigne
         />
       </div>
 
-      {/* Node Groups */}
       <div className="space-y-6">
-        {Object.entries(groupedNodes).map(([subcategory, nodes]) => (
-          <div key={subcategory}>
+        {Object.entries(groupedNodes).map(([subcategory, nodes], categoryIndex) => (
+          <div key={`category-${subcategory}-${categoryIndex}`}>
             <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
               {subcategory}
             </h3>
             <div className="grid gap-2">
-              {nodes.map((node) => (
+              {nodes.map((node, index) => (
                 <Card
-                  key={node.type}
+                  key={`${subcategory}-${node.type}-${index}`}
                   className={cn(
                     "p-3 cursor-move hover:shadow-md transition-all hover:scale-[1.02]",
                     "border hover:border-primary/50"
@@ -511,21 +509,23 @@ export function NodePaletteRedesigned({ selectedCategory }: NodePaletteRedesigne
                         <h4 className="text-sm font-medium truncate">
                           {node.label}
                         </h4>
-                        {node.isPremium && (
-                          <Badge variant="secondary" className="text-xs px-1 py-0">
-                            PRO
-                          </Badge>
-                        )}
-                        {node.isNew && (
-                          <Badge variant="default" className="text-xs px-1 py-0 bg-green-500">
-                            NEW
-                          </Badge>
-                        )}
-                        {node.isBeta && (
-                          <Badge variant="outline" className="text-xs px-1 py-0">
-                            BETA
-                          </Badge>
-                        )}
+                        <div className="flex items-center gap-1">
+                          {node.isPremium && (
+                            <Badge key="premium" variant="secondary" className="text-xs px-1 py-0">
+                              PRO
+                            </Badge>
+                          )}
+                          {node.isNew && (
+                            <Badge key="new" variant="default" className="text-xs px-1 py-0 bg-green-500">
+                              NEW
+                            </Badge>
+                          )}
+                          {node.isBeta && (
+                            <Badge key="beta" variant="outline" className="text-xs px-1 py-0">
+                              BETA
+                            </Badge>
+                          )}
+                        </div>
                       </div>
                       <p className="text-xs text-muted-foreground mt-0.5">
                         {node.description}

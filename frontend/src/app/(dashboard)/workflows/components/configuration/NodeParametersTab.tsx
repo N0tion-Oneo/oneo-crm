@@ -69,7 +69,7 @@ export function NodeParametersTab({
   const [expressionMode, setExpressionMode] = useState<Record<string, boolean>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [pipelines, setPipelines] = useState<any[]>([]);
-  const [pipelineFields, setPipelineFields] = useState<any[]>([]);
+  const [pipelineFieldsMap, setPipelineFieldsMap] = useState<Record<string, any[]>>({});
   const [selectedFieldsMetadata, setSelectedFieldsMetadata] = useState<Record<string, any>>({});
   const [users, setUsers] = useState<any[]>([]);
   const [userTypes, setUserTypes] = useState<any[]>([]);
@@ -194,8 +194,12 @@ export function NodeParametersTab({
     // Skip if no pipeline ID or if it's invalid
     if (!pipelineId || pipelineId === 'undefined' || pipelineId === 'null') {
       console.warn('Invalid pipeline ID:', pipelineId);
-      setPipelineFields([]);
-      setSelectedFieldsMetadata({});
+      return;
+    }
+
+    // Skip if we already have fields for this pipeline
+    if (pipelineFieldsMap[pipelineId]) {
+      console.log('Fields already loaded for pipeline:', pipelineId);
       return;
     }
 
@@ -210,7 +214,12 @@ export function NodeParametersTab({
       // Ensure fields is always an array
       const fieldsArray = Array.isArray(fields) ? fields : [];
       console.log('Loaded fields:', fieldsArray.length);
-      setPipelineFields(fieldsArray);
+
+      // Store fields in the map keyed by pipeline ID
+      setPipelineFieldsMap(prev => ({
+        ...prev,
+        [pipelineId]: fieldsArray
+      }));
 
       // Store metadata for selected fields
       const metadata: Record<string, any> = {};
@@ -220,12 +229,13 @@ export function NodeParametersTab({
           options: getFieldOptions(field)
         };
       });
-      setSelectedFieldsMetadata(metadata);
+      setSelectedFieldsMetadata(prev => ({
+        ...prev,
+        ...metadata
+      }));
     } catch (error: any) {
       console.error('Failed to load fields for pipeline', pipelineId, ':', error);
       console.error('Error details:', error.response?.data || error.message);
-      setPipelineFields([]);
-      setSelectedFieldsMetadata({});
     }
   };
 
@@ -254,7 +264,20 @@ export function NodeParametersTab({
   const handleUnifiedConfigChange = useCallback((newConfig: any) => {
     setConfig(newConfig);
     onUpdate({ ...nodeData, config: newConfig });
-  }, [nodeData, onUpdate]);
+
+    // Auto-fetch pipeline fields when a pipeline is selected (single)
+    if (newConfig.pipeline_id && newConfig.pipeline_id !== config.pipeline_id) {
+      loadPipelineFields(newConfig.pipeline_id);
+    }
+
+    // Auto-fetch pipeline fields when pipelines are selected (multi)
+    if (newConfig.pipeline_ids && Array.isArray(newConfig.pipeline_ids)) {
+      const previousIds = config.pipeline_ids || [];
+      const newIds = newConfig.pipeline_ids.filter((id: string) => !previousIds.includes(id));
+      // Fetch fields for newly selected pipelines
+      newIds.forEach((id: string) => loadPipelineFields(id));
+    }
+  }, [nodeData, onUpdate, config]);
 
   // Get the unified configuration from backend
   const { config: unifiedConfig, loading: configLoading, error: configError } = useNodeConfig(nodeType);
@@ -298,6 +321,32 @@ export function NodeParametersTab({
     );
   }
 
+  // Get the appropriate pipeline fields based on current config
+  const getCurrentPipelineFields = () => {
+    // For single pipeline selection
+    if (config.pipeline_id) {
+      return pipelineFieldsMap[config.pipeline_id];
+    }
+    // For multiple pipeline selection, aggregate all fields
+    if (config.pipeline_ids && Array.isArray(config.pipeline_ids)) {
+      const allFields: any[] = [];
+      config.pipeline_ids.forEach((id: string) => {
+        if (pipelineFieldsMap[id]) {
+          allFields.push(...pipelineFieldsMap[id]);
+        }
+      });
+      // Remove duplicates based on field name/slug
+      const uniqueFields = allFields.filter((field, index, self) =>
+        index === self.findIndex((f) =>
+          (f.slug === field.slug && f.slug) ||
+          (f.name === field.name)
+        )
+      );
+      return uniqueFields.length > 0 ? uniqueFields : undefined;
+    }
+    return undefined;
+  };
+
   // Use the unified configuration system
   return (
     <UnifiedConfigRenderer
@@ -306,7 +355,7 @@ export function NodeParametersTab({
       onChange={handleUnifiedConfigChange}
       availableVariables={availableVariables}
       pipelines={pipelines}
-      pipelineFields={pipelineFields}
+      pipelineFields={getCurrentPipelineFields()}
       users={users}
       userTypes={userTypes}
       unipileAccounts={unipileAccounts}

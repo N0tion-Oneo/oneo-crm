@@ -288,12 +288,12 @@ class TriggerFormSubmittedProcessor(AsyncNodeProcessor):
             'submission_metadata': submission_metadata,
 
             # Form metadata
-            'form_metadata': {
-                'id': form_id,
-                'url': form_url,
-                'mode': form_mode,
-                'stage': stage,
-            },
+            # 'form_metadata': {
+            #     'id': form_id,
+            #     'url': form_url,
+            #     'mode': form_mode,
+            #     'stage': stage,
+            # },
 
             # Validation info
             'validation_passed': submission_info.get('validation_passed', True),

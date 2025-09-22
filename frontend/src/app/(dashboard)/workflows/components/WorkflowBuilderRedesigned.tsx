@@ -77,16 +77,22 @@ function WorkflowCanvas({
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
   const [reactFlowInstance, setReactFlowInstance] = useState<ReactFlowInstance | null>(null);
 
-  const [nodes, setNodes] = useState<Node[]>(
+  // Use refs to track current state without causing re-renders
+  const nodesRef = useRef<Node[]>([]);
+  const edgesRef = useRef<Edge[]>([]);
+  const isDraggingRef = useRef(false);
+  const updateTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  const [nodes, setNodes] = useState<Node[]>(() =>
     (definition?.nodes || []).map(node => ({
       id: node.id,
-      type: 'workflow',
+      type: node.type === WorkflowNodeType.WORKFLOW_LOOP_CONTROLLER ? 'loopController' : 'workflow',
       position: node.position,
       data: { ...node.data, nodeType: node.type }
     }))
   );
 
-  const [edges, setEdges] = useState<Edge[]>(
+  const [edges, setEdges] = useState<Edge[]>(() =>
     (definition?.edges || []).map(edge => ({
       id: edge.id,
       source: edge.source,
@@ -99,6 +105,19 @@ function WorkflowCanvas({
       style: edge.type === 'error' ? { stroke: '#ef4444' } : undefined
     }))
   );
+
+  // Update refs whenever state changes
+  nodesRef.current = nodes;
+  edgesRef.current = edges;
+
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (updateTimeoutRef.current) {
+        clearTimeout(updateTimeoutRef.current);
+      }
+    };
+  }, []);
 
   const [showMinimap, setShowMinimap] = useState(true);
   const [showGrid, setShowGrid] = useState(true);
@@ -127,75 +146,79 @@ function WorkflowCanvas({
     });
   }, [onChange]);
 
-  // Track if we're updating from internal changes to avoid conflicts
-  const isInternalUpdate = useRef(false);
-
-  // Sync nodes with definition when it changes externally
-  useEffect(() => {
-    if (definition?.nodes && !isInternalUpdate.current) {
-      setNodes(definition.nodes.map(node => ({
-        id: node.id,
-        type: node.type === WorkflowNodeType.WORKFLOW_LOOP_CONTROLLER ? 'loopController' : 'workflow',
-        position: node.position,
-        data: { ...node.data, nodeType: node.type }
-      })));
+  // Debounced version of updateDefinition for drag operations
+  const debouncedUpdateDefinition = useCallback((newNodes: Node[], newEdges: Edge[]) => {
+    // Clear any existing timeout
+    if (updateTimeoutRef.current) {
+      clearTimeout(updateTimeoutRef.current);
     }
-    isInternalUpdate.current = false;
-  }, [definition?.nodes]);
 
-  // Sync edges with definition when it changes externally
-  useEffect(() => {
-    if (definition?.edges && !isInternalUpdate.current) {
-      setEdges(definition.edges.map(edge => ({
-        id: edge.id,
-        source: edge.source,
-        target: edge.target,
-        sourceHandle: edge.sourceHandle,
-        targetHandle: edge.targetHandle,
-        label: edge.label,
-        type: edge.type || 'default',
-        animated: edge.type === 'conditional',
-        style: edge.type === 'error' ? { stroke: '#ef4444' } : undefined
-      })));
-    }
-  }, [definition?.edges]);
+    // Set a new timeout to update after dragging stops
+    updateTimeoutRef.current = setTimeout(() => {
+      updateDefinition(newNodes, newEdges);
+      isDraggingRef.current = false;
+    }, 100); // 100ms debounce
+  }, [updateDefinition]);
 
   const onNodesChange = useCallback(
     (changes: NodeChange[]) => {
-      const newNodes = applyNodeChanges(changes, nodes);
-      isInternalUpdate.current = true;
-      setNodes(newNodes);
-      updateDefinition(newNodes, edges);
+      // Check if this is a drag operation
+      const isDragChange = changes.some(change =>
+        change.type === 'position' && change.dragging === true
+      );
+
+      if (isDragChange) {
+        isDraggingRef.current = true;
+      }
+
+      setNodes((currentNodes) => {
+        const newNodes = applyNodeChanges(changes, currentNodes);
+
+        // Schedule updates after state change to avoid updating during render
+        if (isDraggingRef.current) {
+          // Use debounced update for dragging
+          setTimeout(() => debouncedUpdateDefinition(newNodes, edgesRef.current), 0);
+        } else {
+          // For non-drag changes (selection, deletion, etc.), update quickly
+          setTimeout(() => updateDefinition(newNodes, edgesRef.current), 0);
+        }
+
+        return newNodes;
+      });
     },
-    [nodes, edges, updateDefinition]
+    [updateDefinition, debouncedUpdateDefinition]
   );
 
   const onEdgesChange = useCallback(
     (changes: EdgeChange[]) => {
-      const newEdges = applyEdgeChanges(changes, edges);
-      isInternalUpdate.current = true;
-      setEdges(newEdges);
-      updateDefinition(nodes, newEdges);
+      setEdges((currentEdges) => {
+        const newEdges = applyEdgeChanges(changes, currentEdges);
+        // Schedule update to avoid updating during render
+        setTimeout(() => updateDefinition(nodesRef.current, newEdges), 0);
+        return newEdges;
+      });
     },
-    [nodes, edges, updateDefinition]
+    [updateDefinition]
   );
 
   const onConnect = useCallback(
     (params: Connection) => {
-      const newEdges = addEdge(
-        {
-          ...params,
-          id: `edge-${Date.now()}`,
-          type: 'default',
-          animated: false
-        },
-        edges
-      );
-      isInternalUpdate.current = true;
-      setEdges(newEdges);
-      updateDefinition(nodes, newEdges);
+      setEdges((currentEdges) => {
+        const newEdges = addEdge(
+          {
+            ...params,
+            id: `edge-${Date.now()}`,
+            type: 'default',
+            animated: false
+          },
+          currentEdges
+        );
+        // Schedule update to avoid updating during render
+        setTimeout(() => updateDefinition(nodesRef.current, newEdges), 0);
+        return newEdges;
+      });
     },
-    [nodes, edges, updateDefinition]
+    [updateDefinition]
   );
 
   const onDragOver = useCallback((event: React.DragEvent) => {
@@ -245,12 +268,14 @@ function WorkflowCanvas({
         }
       };
 
-      const updatedNodes = [...nodes, newNode];
-      isInternalUpdate.current = true;
-      setNodes(updatedNodes);
-      updateDefinition(updatedNodes, edges);
+      setNodes((currentNodes) => {
+        const updatedNodes = [...currentNodes, newNode];
+        // Schedule update after state change to avoid updating during render
+        setTimeout(() => updateDefinition(updatedNodes, edgesRef.current), 0);
+        return updatedNodes;
+      });
     },
-    [reactFlowInstance, edges, nodes, updateDefinition]
+    [reactFlowInstance, updateDefinition]
   );
 
   const onNodeClick = useCallback((event: React.MouseEvent, node: Node) => {

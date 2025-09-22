@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { pipelinesApi, usersApi, permissionsApi } from '@/lib/api';
 
 interface Pipeline {
@@ -56,6 +56,10 @@ interface WorkflowData {
 }
 
 export function useWorkflowData(): WorkflowData {
+  console.log('[useWorkflowData] Hook called/rendered', {
+    timestamp: new Date().toISOString()
+  });
+
   const [pipelines, setPipelines] = useState<Pipeline[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [userTypes, setUserTypes] = useState<UserType[]>([]);
@@ -159,13 +163,32 @@ export function useWorkflowData(): WorkflowData {
     }
   };
 
+  // Track ongoing requests to prevent duplicates
+  const fieldRequestsRef = useRef<Set<string>>(new Set());
+
   // Fetch fields for a specific pipeline
   const fetchPipelineFields = async (pipelineId: string) => {
+    console.log('[useWorkflowData] fetchPipelineFields called', {
+      pipelineId,
+      alreadyCached: !!pipelineFields[pipelineId],
+      requestInProgress: fieldRequestsRef.current.has(pipelineId),
+      timestamp: new Date().toISOString()
+    });
+
     // Don't fetch if we already have the fields cached
     if (pipelineFields[pipelineId]) {
+      console.log('[useWorkflowData] Fields already cached for pipeline:', pipelineId);
       return;
     }
 
+    // Don't fetch if a request is already in progress
+    if (fieldRequestsRef.current.has(pipelineId)) {
+      console.log('[useWorkflowData] Request already in progress for pipeline:', pipelineId);
+      return;
+    }
+
+    console.log('[useWorkflowData] Starting fetch for pipeline fields:', pipelineId);
+    fieldRequestsRef.current.add(pipelineId);
     setLoading(prev => ({ ...prev, fields: true }));
     setError(prev => ({ ...prev, fields: null }));
 
@@ -190,6 +213,7 @@ export function useWorkflowData(): WorkflowData {
         fields: err.response?.data?.detail || err.message || 'Failed to fetch pipeline fields'
       }));
     } finally {
+      fieldRequestsRef.current.delete(pipelineId);
       setLoading(prev => ({ ...prev, fields: false }));
     }
   };

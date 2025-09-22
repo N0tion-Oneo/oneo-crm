@@ -46,6 +46,14 @@ export function UnifiedConfigRenderer({
   pipelineFields,
   errors: externalErrors = {}
 }: UnifiedConfigRendererProps) {
+  console.log('[UnifiedConfigRenderer] RENDER', {
+    nodeType: nodeConfig?.type,
+    config,
+    pipelines: pipelines?.length,
+    pipelineFields: Object.keys(pipelineFields || {}),
+    timestamp: new Date().toISOString()
+  });
+
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(
     new Set(nodeConfig.sections?.filter(s => s.collapsed || s.advanced).map(s => s.id) || [])
   );

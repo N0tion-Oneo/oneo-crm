@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useMemo, useState, useRef } from 'react';
+import { useCallback, useMemo, useState, useRef, useEffect } from 'react';
 import { workflowsApi } from '@/lib/api';
 import ReactFlow, {
   Node,
@@ -48,6 +48,7 @@ import { ExecutionHistory } from './ExecutionHistory';
 import { WorkflowDebugPanel } from './WorkflowDebugPanel';
 import { WorkflowContextPanel } from './WorkflowContextPanel';
 import { workflowSchemaService } from '@/services/workflowSchemaService';
+import { useWorkflowData } from '../hooks/useWorkflowData';
 
 interface WorkflowBuilderRedesignedProps {
   definition: WorkflowDefinition;
@@ -102,42 +103,7 @@ function WorkflowCanvas({
   const [showMinimap, setShowMinimap] = useState(true);
   const [showGrid, setShowGrid] = useState(true);
 
-  const onNodesChange = useCallback(
-    (changes: NodeChange[]) => {
-      const newNodes = applyNodeChanges(changes, nodes);
-      setNodes(newNodes);
-      updateDefinition(newNodes, edges);
-    },
-    [nodes, edges]
-  );
-
-  const onEdgesChange = useCallback(
-    (changes: EdgeChange[]) => {
-      const newEdges = applyEdgeChanges(changes, edges);
-      setEdges(newEdges);
-      updateDefinition(nodes, newEdges);
-    },
-    [nodes, edges]
-  );
-
-  const onConnect = useCallback(
-    (params: Connection) => {
-      const newEdges = addEdge(
-        {
-          ...params,
-          id: `edge-${Date.now()}`,
-          type: 'default',
-          animated: false
-        },
-        edges
-      );
-      setEdges(newEdges);
-      updateDefinition(nodes, newEdges);
-    },
-    [nodes, edges]
-  );
-
-  const updateDefinition = (newNodes: Node[], newEdges: Edge[]) => {
+  const updateDefinition = useCallback((newNodes: Node[], newEdges: Edge[]) => {
     const workflowNodes: WorkflowNode[] = newNodes.map(node => ({
       id: node.id,
       type: node.data.nodeType as WorkflowNodeType,
@@ -159,7 +125,78 @@ function WorkflowCanvas({
       nodes: workflowNodes,
       edges: workflowEdges
     });
-  };
+  }, [onChange]);
+
+  // Track if we're updating from internal changes to avoid conflicts
+  const isInternalUpdate = useRef(false);
+
+  // Sync nodes with definition when it changes externally
+  useEffect(() => {
+    if (definition?.nodes && !isInternalUpdate.current) {
+      setNodes(definition.nodes.map(node => ({
+        id: node.id,
+        type: node.type === WorkflowNodeType.WORKFLOW_LOOP_CONTROLLER ? 'loopController' : 'workflow',
+        position: node.position,
+        data: { ...node.data, nodeType: node.type }
+      })));
+    }
+    isInternalUpdate.current = false;
+  }, [definition?.nodes]);
+
+  // Sync edges with definition when it changes externally
+  useEffect(() => {
+    if (definition?.edges && !isInternalUpdate.current) {
+      setEdges(definition.edges.map(edge => ({
+        id: edge.id,
+        source: edge.source,
+        target: edge.target,
+        sourceHandle: edge.sourceHandle,
+        targetHandle: edge.targetHandle,
+        label: edge.label,
+        type: edge.type || 'default',
+        animated: edge.type === 'conditional',
+        style: edge.type === 'error' ? { stroke: '#ef4444' } : undefined
+      })));
+    }
+  }, [definition?.edges]);
+
+  const onNodesChange = useCallback(
+    (changes: NodeChange[]) => {
+      const newNodes = applyNodeChanges(changes, nodes);
+      isInternalUpdate.current = true;
+      setNodes(newNodes);
+      updateDefinition(newNodes, edges);
+    },
+    [nodes, edges, updateDefinition]
+  );
+
+  const onEdgesChange = useCallback(
+    (changes: EdgeChange[]) => {
+      const newEdges = applyEdgeChanges(changes, edges);
+      isInternalUpdate.current = true;
+      setEdges(newEdges);
+      updateDefinition(nodes, newEdges);
+    },
+    [nodes, edges, updateDefinition]
+  );
+
+  const onConnect = useCallback(
+    (params: Connection) => {
+      const newEdges = addEdge(
+        {
+          ...params,
+          id: `edge-${Date.now()}`,
+          type: 'default',
+          animated: false
+        },
+        edges
+      );
+      isInternalUpdate.current = true;
+      setEdges(newEdges);
+      updateDefinition(nodes, newEdges);
+    },
+    [nodes, edges, updateDefinition]
+  );
 
   const onDragOver = useCallback((event: React.DragEvent) => {
     event.preventDefault();
@@ -208,9 +245,12 @@ function WorkflowCanvas({
         }
       };
 
-      setNodes((nds) => nds.concat(newNode));
+      const updatedNodes = [...nodes, newNode];
+      isInternalUpdate.current = true;
+      setNodes(updatedNodes);
+      updateDefinition(updatedNodes, edges);
     },
-    [reactFlowInstance]
+    [reactFlowInstance, edges, nodes, updateDefinition]
   );
 
   const onNodeClick = useCallback((event: React.MouseEvent, node: Node) => {
@@ -219,23 +259,6 @@ function WorkflowCanvas({
     const nodeData = definitionNode ? definitionNode.data : node.data;
     onNodeSelect(node.id, nodeData);
   }, [onNodeSelect, definition]);
-
-  const updateNode = (nodeId: string, data: any) => {
-    setNodes((nds) =>
-      nds.map((node) => {
-        if (node.id === nodeId) {
-          return {
-            ...node,
-            data: {
-              ...node.data,
-              ...data
-            }
-          };
-        }
-        return node;
-      })
-    );
-  };
 
   const fitView = () => {
     if (reactFlowInstance) {
@@ -408,9 +431,26 @@ export function WorkflowBuilderRedesigned({
   const [executionContext, setExecutionContext] = useState<Record<string, any>>({ nodes: {} });
   const [showContextPanel, setShowContextPanel] = useState(true);
 
+  // Use workflow data hook at the top level
+  const {
+    pipelines,
+    users,
+    userTypes,
+    pipelineFields,
+    fetchPipelineFields,
+    loading: dataLoading,
+    error: dataError
+  } = useWorkflowData();
+
   const handleNodeSelect = (nodeId: string | null, nodeData?: any) => {
     setSelectedNode(nodeId);
-    setSelectedNodeData(nodeData);
+    // Always get the latest data from the definition when selecting a node
+    if (nodeId) {
+      const definitionNode = definition?.nodes?.find(n => n.id === nodeId);
+      setSelectedNodeData(definitionNode ? definitionNode.data : nodeData);
+    } else {
+      setSelectedNodeData(nodeData);
+    }
   };
 
   const handleNodeUpdate = (nodeId: string, data: any) => {
@@ -425,6 +465,19 @@ export function WorkflowBuilderRedesigned({
     const updatedNode = updatedNodes.find(n => n.id === nodeId);
     if (updatedNode) {
       setSelectedNodeData(updatedNode.data);
+    }
+
+    // Handle pipeline field fetching when pipeline is selected (like test-schemas page)
+    if (data.pipeline_id && data.pipeline_id !== selectedNodeData?.pipeline_id) {
+      fetchPipelineFields(data.pipeline_id);
+    }
+
+    // Handle multiple pipeline selections
+    if (data.pipeline_ids && Array.isArray(data.pipeline_ids)) {
+      const previousIds = selectedNodeData?.pipeline_ids || [];
+      const newIds = data.pipeline_ids.filter((id: string) => !previousIds.includes(id));
+      // Fetch fields for newly selected pipelines
+      newIds.forEach((id: string) => fetchPipelineFields(id));
     }
   };
 
@@ -664,13 +717,18 @@ export function WorkflowBuilderRedesigned({
         {selectedNode && (
           <NodeConfigurationPanel
             nodeId={selectedNode}
-            nodeType={selectedNodeData?.nodeType}
-            nodeData={selectedNodeData}
+            nodeType={definition?.nodes?.find(n => n.id === selectedNode)?.data?.nodeType || selectedNodeData?.nodeType}
+            nodeData={definition?.nodes?.find(n => n.id === selectedNode)?.data || selectedNodeData}
             workflowId={workflowId}
             availableVariables={calculateAvailableVariables(selectedNode)}
             onUpdate={handleNodeUpdate}
             onClose={() => handleNodeSelect(null)}
             onTest={handleTestNode}
+            pipelines={pipelines}
+            users={users}
+            userTypes={userTypes}
+            pipelineFields={pipelineFields}
+            fetchPipelineFields={fetchPipelineFields}
           />
         )}
 

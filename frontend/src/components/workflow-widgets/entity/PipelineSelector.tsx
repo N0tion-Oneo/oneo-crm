@@ -26,7 +26,7 @@ export const PipelineSelector: React.FC<WidgetProps> = (props) => {
     enabled: shouldFetch
   });
 
-  const pipelines = props.pipelines || fetchedPipelines;
+  const pipelines = props.pipelines || fetchedPipelines || [];
   const placeholder = props.placeholder || uiHints.placeholder || 'Select pipeline(s)';
 
   if (isMultiple) {

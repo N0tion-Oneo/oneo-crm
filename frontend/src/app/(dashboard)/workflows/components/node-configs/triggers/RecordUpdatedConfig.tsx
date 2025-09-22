@@ -23,6 +23,12 @@ export function RecordUpdatedConfig({
   pipelineFields = {},
   errors = {}
 }: RecordUpdatedConfigProps) {
+  console.log('[RecordUpdatedConfig] RENDER', {
+    config,
+    pipelines: pipelines?.length,
+    pipelineFields: Object.keys(pipelineFields || {}),
+    timestamp: new Date().toISOString()
+  });
 
   const safeConfig = config || {};
   const [stageFieldOptions, setStageFieldOptions] = useState<string[]>([]);
@@ -110,9 +116,18 @@ export function RecordUpdatedConfig({
 
   // Auto-set stage_field when track_stage_changes is enabled
   useEffect(() => {
+    console.log('[RecordUpdatedConfig] useEffect for stage_field auto-set', {
+      track_stage_changes: safeConfig.track_stage_changes,
+      shouldShowStageTracking,
+      stage_field: safeConfig.stage_field,
+      watch_fields: safeConfig.watch_fields,
+      timestamp: new Date().toISOString()
+    });
+
     if (safeConfig.track_stage_changes && shouldShowStageTracking && !safeConfig.stage_field) {
       const watchFields = safeConfig.watch_fields || [];
       if (watchFields.length === 1) {
+        console.log('[RecordUpdatedConfig] Auto-setting stage_field to:', watchFields[0]);
         onChange({ ...safeConfig, stage_field: watchFields[0] });
       }
     }

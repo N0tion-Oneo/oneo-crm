@@ -27,6 +27,11 @@ interface NodeConfigurationPanelProps {
   onUpdate: (nodeId: string, data: any) => void;
   onClose: () => void;
   onTest?: (nodeId: string, testRecordId?: string) => Promise<any>;
+  pipelines?: any[];
+  users?: any[];
+  userTypes?: any[];
+  pipelineFields?: Record<string, any[]>;
+  fetchPipelineFields?: (pipelineId: string) => Promise<void>;
 }
 
 export function NodeConfigurationPanel({
@@ -37,7 +42,12 @@ export function NodeConfigurationPanel({
   availableVariables,
   onUpdate,
   onClose,
-  onTest
+  onTest,
+  pipelines,
+  users,
+  userTypes,
+  pipelineFields,
+  fetchPipelineFields
 }: NodeConfigurationPanelProps) {
   const [activeTab, setActiveTab] = useState('parameters');
   const [testing, setTesting] = useState(false);
@@ -177,8 +187,8 @@ export function NodeConfigurationPanel({
         )}
       </div>
 
-      {/* Tabs */}
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 overflow-hidden flex flex-col">
+      {/* Tabs - Key on the outer container forces full recreation when node changes */}
+      <Tabs key={nodeId} value={activeTab} onValueChange={setActiveTab} className="flex-1 overflow-hidden flex flex-col">
         <TabsList className="grid w-full grid-cols-3 p-1 mx-4 mt-4" style={{ width: 'calc(100% - 2rem)' }}>
           <TabsTrigger value="parameters" className="text-xs">
             <FileText className="h-3.5 w-3.5 mr-1" />
@@ -197,24 +207,30 @@ export function NodeConfigurationPanel({
           </TabsTrigger>
         </TabsList>
 
-        <TabsContent value="parameters" className="flex-1 overflow-auto p-4 mt-4">
+        {/* Keep all tabs mounted to prevent re-rendering and data loss */}
+        <div className={cn("flex-1 overflow-auto p-4 mt-4", activeTab !== "parameters" && "hidden")}>
           <NodeParametersTab
             nodeType={nodeType}
             nodeData={nodeData}
             availableVariables={availableVariables}
             onUpdate={handleUpdate}
             onValidationChange={setValidationErrors}
+            pipelines={pipelines}
+            users={users}
+            userTypes={userTypes}
+            pipelineFields={pipelineFields}
+            fetchPipelineFields={fetchPipelineFields}
           />
-        </TabsContent>
+        </div>
 
-        <TabsContent value="settings" className="flex-1 overflow-auto p-4 mt-4">
+        <div className={cn("flex-1 overflow-auto p-4 mt-4", activeTab !== "settings" && "hidden")}>
           <NodeSettingsTab
             nodeData={nodeData}
             onUpdate={handleUpdate}
           />
-        </TabsContent>
+        </div>
 
-        <TabsContent value="output" className="flex-1 overflow-auto p-4 mt-4">
+        <div className={cn("flex-1 overflow-auto p-4 mt-4", activeTab !== "output" && "hidden")}>
           <NodeOutputTab
             output={testOutput}
             error={testError}
@@ -225,7 +241,7 @@ export function NodeConfigurationPanel({
             workflowId={workflowId}
             onTest={handleTest}
           />
-        </TabsContent>
+        </div>
       </Tabs>
 
       {/* Footer Help */}

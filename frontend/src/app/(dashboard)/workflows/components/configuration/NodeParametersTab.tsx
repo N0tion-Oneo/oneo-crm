@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { AlertCircle, Loader2 } from 'lucide-react';
 import { WorkflowNodeType } from '../../types';
@@ -25,11 +25,17 @@ export function NodeParametersTab({
   onUpdate,
   onValidationChange
 }: NodeParametersTabProps) {
-  const [config, setConfig] = useState(nodeData.config || {});
+  // nodeData is now the config directly (flat structure)
+  const [config, setConfig] = useState(nodeData || {});
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [backendSchema, setBackendSchema] = useState<any>(null);
   const [schemaLoading, setSchemaLoading] = useState(true);
   const [schemaError, setSchemaError] = useState<string | null>(null);
+
+  // Sync config state when nodeData changes (e.g., when switching tabs back)
+  useEffect(() => {
+    setConfig(nodeData || {});
+  }, [nodeData]);
 
   // Use the workflow data hook to get real data
   const {
@@ -47,31 +53,54 @@ export function NodeParametersTab({
     fetchNodeSchema();
   }, [nodeType]);
 
-  // Fetch pipeline fields when pipeline is selected
+  // Fetch pipeline fields when pipeline is selected (only on initial mount)
   useEffect(() => {
     if (config.pipeline_id && fetchPipelineFields) {
       fetchPipelineFields(config.pipeline_id);
     }
-  }, [config.pipeline_id, fetchPipelineFields]);
+    // Also fetch for pipeline_ids on mount
+    if (config.pipeline_ids && Array.isArray(config.pipeline_ids) && fetchPipelineFields) {
+      config.pipeline_ids.forEach((pipelineId: string) => {
+        fetchPipelineFields(pipelineId);
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Empty deps - only run on mount
+
+  // Handle pipeline_ids updates in the config change handler instead of useEffect
+  const handleConfigChange = useCallback((newConfig: any) => {
+    setConfig(newConfig);
+    // Pass config directly as the node data (flat structure)
+    onUpdate(newConfig);
+
+    // Fetch pipeline fields if pipeline_ids changed
+    if (newConfig.pipeline_ids && Array.isArray(newConfig.pipeline_ids)) {
+      const oldIds = config.pipeline_ids || [];
+      const newIds = newConfig.pipeline_ids.filter((id: string) => !oldIds.includes(id));
+      newIds.forEach((pipelineId: string) => {
+        if (fetchPipelineFields) {
+          fetchPipelineFields(pipelineId);
+        }
+      });
+    }
+
+    // Fetch pipeline fields if pipeline_id changed
+    if (newConfig.pipeline_id && newConfig.pipeline_id !== config.pipeline_id) {
+      if (fetchPipelineFields) {
+        fetchPipelineFields(newConfig.pipeline_id);
+      }
+    }
+  }, [config, fetchPipelineFields, onUpdate]);
 
   const fetchNodeSchema = async () => {
     setSchemaLoading(true);
     setSchemaError(null);
 
     try {
-      // Fetch all node schemas from backend
-      const response = await api.get('/api/v1/workflows/node_schemas/');
-      const schemas = response.data;
+      // Use workflowSchemaService which has built-in caching
+      const transformedSchema = await workflowSchemaService.getNodeConfig(nodeType);
 
-      // Get the schema for the current node type
-      const nodeSchema = schemas[nodeType];
-
-      if (nodeSchema) {
-        // Transform backend schema to unified config format
-        const transformedSchema = workflowSchemaService.transformBackendSchema(
-          nodeSchema,
-          nodeType
-        );
+      if (transformedSchema) {
         setBackendSchema(transformedSchema);
       } else {
         setSchemaError(`No schema found for node type: ${nodeType}`);
@@ -84,20 +113,11 @@ export function NodeParametersTab({
     }
   };
 
-  const handleConfigChange = (newConfig: any) => {
-    setConfig(newConfig);
-    onUpdate({ ...nodeData, config: newConfig });
 
-    // Fetch pipeline fields if pipeline changed
-    if (newConfig.pipeline_id && newConfig.pipeline_id !== config.pipeline_id) {
-      fetchPipelineFields(newConfig.pipeline_id);
-    }
-  };
-
-  const handleValidationChange = (validationErrors: Record<string, string>) => {
+  const handleValidationChange = useCallback((validationErrors: Record<string, string>) => {
     setErrors(validationErrors);
     onValidationChange(validationErrors);
-  };
+  }, [onValidationChange]);
 
   // Loading state
   if (schemaLoading) {

@@ -178,6 +178,7 @@ export function useWorkflowData(): WorkflowData {
         ? fieldsData
         : fieldsData.results || [];
 
+
       setPipelineFields(prev => ({
         ...prev,
         [pipelineId]: fieldList

@@ -5,6 +5,9 @@
 
 set -e  # Exit on any error
 
+# Fix macOS fork() safety issue that causes crashes
+export OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES
+
 echo "🚀 Starting Oneo CRM Backend..."
 
 # Change to backend directory

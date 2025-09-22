@@ -69,20 +69,42 @@ class NodeTestingService:
                 }
             }
 
-            # Execute the processor in a thread pool to avoid event loop issues
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(NodeTestingService._execute_processor_thread, processor, wrapped_node_config, context)
-                try:
-                    result = future.result(timeout=25)
-                    return result
-                except concurrent.futures.TimeoutError:
-                    logger.error("Node test execution timed out")
-                    return Response({
-                        'status': 'error',
-                        'error': 'Test execution timed out after 25 seconds',
-                        'timeout': True
-                    }, status=status.HTTP_408_REQUEST_TIMEOUT)
+            # Execute the processor using async_to_sync to avoid fork() issues on macOS
+            from asgiref.sync import async_to_sync
+            import time
+
+            start_time = time.time()
+
+            try:
+                # Use execute() method if available (AsyncNodeProcessor), otherwise use process()
+                if hasattr(processor, 'execute'):
+                    result = async_to_sync(processor.execute)(wrapped_node_config, context)
+                else:
+                    result = async_to_sync(processor.process)(wrapped_node_config, context)
+
+                execution_time = (time.time() - start_time) * 1000
+
+                # Return response with full result data
+                response_data = {
+                    'status': 'success',
+                    'execution_time': execution_time,
+                }
+
+                # If the processor returned a dict result, spread it into the response
+                if isinstance(result, dict):
+                    response_data['output'] = result
+                else:
+                    response_data['output'] = {'result': result}
+
+                return Response(response_data)
+
+            except asyncio.TimeoutError:
+                logger.error("Node test execution timed out")
+                return Response({
+                    'status': 'error',
+                    'error': 'Test execution timed out',
+                    'timeout': True
+                }, status=status.HTTP_408_REQUEST_TIMEOUT)
 
         except Exception as e:
             logger.error(f"Node test failed: {e}", exc_info=True)
@@ -212,11 +234,11 @@ class NodeTestingService:
             try:
                 record = Record.objects.filter(pipeline_id=pipeline_id, is_deleted=False).first()
             except Exception as e:
-                logger.error(f"Failed to get email test data: {e}", exc_info=True)
+                logger.error(f"Failed to get record test data: {e}", exc_info=True)
                 return {
                     'success': False,
-                    'message': f'Error retrieving email data: {str(e)}',
-                    'trigger_type': 'email_received'
+                    'message': f'Error retrieving record data: {str(e)}',
+                    'trigger_type': node_type
                 }
 
         if record:
@@ -656,11 +678,11 @@ class NodeTestingService:
                             'account_name': message.channel.name
                         }
             except Exception as e:
-                logger.error(f"Failed to get email test data: {e}", exc_info=True)
+                logger.error(f"Failed to get message test data: {e}", exc_info=True)
                 return {
                     'success': False,
-                    'message': f'Error retrieving email data: {str(e)}',
-                    'trigger_type': 'email_received'
+                    'message': f'Error retrieving message data: {str(e)}',
+                    'trigger_type': channel_type
                 }
 
         # No test data available - return empty trigger data
@@ -685,11 +707,11 @@ class NodeTestingService:
                     'cron_expression': schedule.cron_expression
                 }
             except Exception as e:
-                logger.error(f"Failed to get email test data: {e}", exc_info=True)
+                logger.error(f"Failed to get schedule test data: {e}", exc_info=True)
                 return {
                     'success': False,
-                    'message': f'Error retrieving email data: {str(e)}',
-                    'trigger_type': 'email_received'
+                    'message': f'Error retrieving schedule data: {str(e)}',
+                    'trigger_type': 'scheduled'
                 }
 
         # No test data available
@@ -726,11 +748,11 @@ class NodeTestingService:
                     'changed_at': timezone.now().isoformat()
                 }
             except Exception as e:
-                logger.error(f"Failed to get email test data: {e}", exc_info=True)
+                logger.error(f"Failed to get stage change test data: {e}", exc_info=True)
                 return {
                     'success': False,
-                    'message': f'Error retrieving email data: {str(e)}',
-                    'trigger_type': 'email_received'
+                    'message': f'Error retrieving stage change data: {str(e)}',
+                    'trigger_type': 'pipeline_stage_changed'
                 }
 
         # No test data available
@@ -754,11 +776,11 @@ class NodeTestingService:
                         'message': 'Using existing record stage for test'
                     }
             except Exception as e:
-                logger.error(f"Failed to get email test data: {e}", exc_info=True)
+                logger.error(f"Failed to get stage change test data: {e}", exc_info=True)
                 return {
                     'success': False,
-                    'message': f'Error retrieving email data: {str(e)}',
-                    'trigger_type': 'email_received'
+                    'message': f'Error retrieving stage change data: {str(e)}',
+                    'trigger_type': 'pipeline_stage_changed'
                 }
 
         return {
@@ -783,11 +805,11 @@ class NodeTestingService:
                     'completed_at': execution.completed_at.isoformat() if execution.completed_at else timezone.now().isoformat()
                 }
             except Exception as e:
-                logger.error(f"Failed to get email test data: {e}", exc_info=True)
+                logger.error(f"Failed to get workflow execution test data: {e}", exc_info=True)
                 return {
                     'success': False,
-                    'message': f'Error retrieving email data: {str(e)}',
-                    'trigger_type': 'email_received'
+                    'message': f'Error retrieving workflow execution data: {str(e)}',
+                    'trigger_type': 'workflow_completed'
                 }
 
         # No test data available
@@ -837,70 +859,8 @@ class NodeTestingService:
                         'updated_at': record.updated_at.isoformat()
                     }
             except Exception as e:
-                logger.error(f"Failed to get email test data: {e}", exc_info=True)
-                return {
-                    'success': False,
-                    'message': f'Error retrieving email data: {str(e)}',
-                    'trigger_type': 'email_received'
-                }
+                logger.error(f"Failed to get test record: {e}", exc_info=True)
+                return None
 
         return None
 
-    @staticmethod
-    def _execute_processor_thread(processor, node_config, context):
-        """Execute processor in isolated thread with its own event loop"""
-        import asyncio
-        import time
-        from rest_framework.response import Response
-
-        start_time = time.time()
-
-        try:
-            # Create a new event loop for this thread
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-
-            logger.info(f"Executing processor in thread: {processor.__class__.__name__}")
-
-            # Use execute() method if available (AsyncNodeProcessor), otherwise use process()
-            if hasattr(processor, 'execute'):
-                result = loop.run_until_complete(processor.execute(node_config, context))
-            else:
-                result = loop.run_until_complete(processor.process(node_config, context))
-
-            logger.info(f"Processor executed successfully: {processor.__class__.__name__}")
-
-        except Exception as e:
-            logger.error(f"Processor execution failed: {e}", exc_info=True)
-            result = {
-                'success': False,
-                'error': str(e),
-                'traceback': str(e.__class__.__name__)
-            }
-        finally:
-            # Clean up the loop
-            try:
-                loop.close()
-            except Exception as e:
-                logger.error(f"Failed to get email test data: {e}", exc_info=True)
-                return {
-                    'success': False,
-                    'message': f'Error retrieving email data: {str(e)}',
-                    'trigger_type': 'email_received'
-                }
-
-        execution_time = (time.time() - start_time) * 1000
-
-        # Return response with full result data
-        response_data = {
-            'status': 'success',
-            'execution_time': execution_time,
-        }
-
-        # If the processor returned a dict result, spread it into the response
-        if isinstance(result, dict):
-            response_data['output'] = result
-        else:
-            response_data['output'] = {'result': result}
-
-        return Response(response_data)

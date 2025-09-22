@@ -414,17 +414,18 @@ export function WorkflowBuilderRedesigned({
   };
 
   const handleNodeUpdate = (nodeId: string, data: any) => {
-    // Update the node in the definition
+    // Update the node in the definition with flat structure
     const updatedNodes = (definition?.nodes || []).map(node =>
-      node.id === nodeId ? { ...node, data: { ...node.data, ...data } } : node
+      node.id === nodeId ? { ...node, data } : node
     );
     onChange({ ...definition, nodes: updatedNodes });
 
-    // Merge the new data with existing selectedNodeData
-    setSelectedNodeData(prevData => ({
-      ...prevData,
-      ...data
-    }));
+    // Update selectedNodeData to reflect the exact state of the node
+    // This ensures tab switches always have the latest data
+    const updatedNode = updatedNodes.find(n => n.id === nodeId);
+    if (updatedNode) {
+      setSelectedNodeData(updatedNode.data);
+    }
   };
 
   const handleTestNode = async (nodeId: string, testRecordId?: string) => {
@@ -470,24 +471,18 @@ export function WorkflowBuilderRedesigned({
           console.log(`Executing predecessor node: ${predecessorId} (${predecessorNode.type})`);
 
           try {
-            // Execute the predecessor node to get its actual output
-            const predecessorResponse = await workflowsApi.testNode(workflowId || 'new', {
-              node_id: predecessorId,
+            // Execute the predecessor node to get its actual output using standalone API
+            const predecessorResponse = await workflowsApi.testNodeStandalone({
               node_type: predecessorNode.type,
               node_config: predecessorNode.data,
-              test_record_id: testRecordId,
-              test_context: {
-                pipeline_id: predecessorNode.data?.pipeline_id,
-                form_mode: predecessorNode.data?.form_mode,
-                stage_field: predecessorNode.data?.stage_field,
-                stage: predecessorNode.data?.stage,
-                nodes: nodeOutputs // Pass already executed node outputs
-              }
+              test_data_id: testRecordId,
+              test_data_type: testRecordId ? 'record' : undefined
             });
 
             // Store the actual output from this node
-            if (predecessorResponse.data?.output?.data) {
-              nodeOutputs[predecessorId] = predecessorResponse.data.output.data;
+            // The testNodeStandalone returns output directly, not nested in output.data
+            if (predecessorResponse.data?.output) {
+              nodeOutputs[predecessorId] = predecessorResponse.data.output;
               console.log(`Stored output for node ${predecessorId}:`, nodeOutputs[predecessorId]);
             }
           } catch (error) {
@@ -513,29 +508,22 @@ export function WorkflowBuilderRedesigned({
       // Show the context panel
       setShowContextPanel(true);
 
-      // Call the backend API to test the target node
-      const response = await workflowsApi.testNode(workflowId || 'new', {
-        node_id: nodeId,
+      // Call the backend API to test the target node using standalone API
+      const response = await workflowsApi.testNodeStandalone({
         node_type: node.type,
         node_config: node.data,
-        test_record_id: testRecordId, // Pass the selected record ID
-        // Include context with actual node outputs
-        test_context: {
-          pipeline_id: node.data?.pipeline_id,
-          form_mode: node.data?.form_mode,
-          stage_field: node.data?.stage_field,
-          stage: node.data?.stage,
-          nodes: nodeOutputs // Add ACTUAL node outputs for template variable resolution
-        }
+        test_data_id: testRecordId,
+        test_data_type: testRecordId ? 'record' : undefined
       });
 
       // Update context with the current node's output
+      // The testNodeStandalone returns output directly, not nested in output.data
       if (response.data?.output) {
         setExecutionContext(prev => ({
           ...prev,
           nodes: {
             ...prev.nodes,
-            [nodeId]: response.data.output.data
+            [nodeId]: response.data.output
           }
         }));
       }
@@ -704,7 +692,11 @@ export function WorkflowBuilderRedesigned({
               </TabsContent>
 
               <TabsContent value="debug" className="flex-1 overflow-auto p-4 pt-0">
-                <WorkflowDebugPanel data={debugData} />
+                <WorkflowDebugPanel
+                  execution={debugData}
+                  workflow={null}
+                  onClose={() => {}}
+                />
               </TabsContent>
 
               <TabsContent value="history" className="flex-1 overflow-auto p-4 pt-0">

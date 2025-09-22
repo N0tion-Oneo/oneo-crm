@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Input } from '@/components/ui/input';
@@ -45,6 +45,21 @@ export function NodeSettingsTab({
     batchSize: 10,
     notes: ''
   });
+
+  // Sync settings state when nodeData changes (e.g., when switching tabs back)
+  useEffect(() => {
+    setSettings(nodeData.settings || {
+      retryOnFail: false,
+      maxRetries: 3,
+      retryDelay: 1000,
+      executeOnce: false,
+      continueOnFail: false,
+      pauseBeforeExecution: false,
+      timeout: 30000,
+      batchSize: 10,
+      notes: ''
+    });
+  }, [nodeData.settings]);
 
   const updateSettings = (key: keyof NodeSettings, value: any) => {
     const newSettings = { ...settings, [key]: value };

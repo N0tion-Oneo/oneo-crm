@@ -55,16 +55,19 @@ export function UnifiedConfigRenderer({
   // Use the config directly from props
   const currentConfig = config || nodeConfig.defaults || {};
 
-  // Merge external and validation errors
-  const errors = { ...validationErrors, ...externalErrors };
-
-  // Run validation when config changes
+  // Sync expression mode and validation when config changes (e.g., tab switches)
   useEffect(() => {
+    // Reset expression mode when config changes significantly
+    setExpressionMode({});
+    // Re-run validation with new config
     if (nodeConfig.validate) {
       const newErrors = nodeConfig.validate(currentConfig);
       setValidationErrors(newErrors || {});
     }
-  }, [currentConfig, nodeConfig]);
+  }, [config, nodeConfig]);
+
+  // Merge external and validation errors
+  const errors = { ...validationErrors, ...externalErrors };
 
   // Auto-populate pipeline_slug when pipeline_id exists but slug doesn't
   useEffect(() => {
@@ -77,7 +80,9 @@ export function UnifiedConfigRenderer({
         }
       }
     }
-  }, [currentConfig.pipeline_id, currentConfig.pipeline_slug, pipelines, onChange]);
+    // Remove onChange from dependencies to prevent infinite loop
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentConfig.pipeline_id, currentConfig.pipeline_slug, pipelines]);
 
   const toggleSectionCollapse = (sectionId: string) => {
     const newCollapsed = new Set(collapsedSections);

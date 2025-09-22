@@ -23,12 +23,6 @@ export function RecordUpdatedConfig({
   pipelineFields = {},
   errors = {}
 }: RecordUpdatedConfigProps) {
-  console.log('[RecordUpdatedConfig] Component rendering with props:', {
-    config,
-    pipelines,
-    pipelineFields,
-    errors
-  });
 
   const safeConfig = config || {};
   const [stageFieldOptions, setStageFieldOptions] = useState<string[]>([]);
@@ -80,7 +74,6 @@ export function RecordUpdatedConfig({
   // Get options from the select field
   useEffect(() => {
     if (isSelectField && watchedField) {
-      console.log('[RecordUpdatedConfig] Extracting options from field:', watchedField);
 
       let options: string[] = [];
 

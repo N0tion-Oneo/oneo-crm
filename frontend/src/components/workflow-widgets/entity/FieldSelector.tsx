@@ -24,13 +24,47 @@ export const FieldSelector: React.FC<WidgetProps> = (props) => {
   const dependsOn = uiHints.depends_on || 'pipeline_id';
   const pipelineIds = config[dependsOn] || config.pipeline_ids || [];
 
-  // Use fields from props if available, otherwise fetch
-  const shouldFetch = !props.pipelineFields || props.pipelineFields.length === 0;
+  // Extract fields from props - handle both array and object formats
+  const extractedFields = useMemo(() => {
+    if (!props.pipelineFields) return null;
+
+    // If it's already an array, use it directly
+    if (Array.isArray(props.pipelineFields)) {
+      return props.pipelineFields;
+    }
+
+    // If it's an object keyed by pipeline IDs, extract based on selected pipelines
+    if (typeof props.pipelineFields === 'object') {
+      const allFields: any[] = [];
+      const idsToCheck = Array.isArray(pipelineIds) ? pipelineIds : [pipelineIds];
+
+      idsToCheck.forEach((id: string) => {
+        if (props.pipelineFields[id]) {
+          allFields.push(...props.pipelineFields[id]);
+        }
+      });
+
+      // Remove duplicates based on field slug/name
+      if (allFields.length > 0) {
+        return allFields.filter((field, index, self) =>
+          index === self.findIndex((f) =>
+            (f.slug === field.slug && f.slug) ||
+            (f.name === field.name)
+          )
+        );
+      }
+    }
+
+    return null;
+  }, [props.pipelineFields, pipelineIds]);
+
+  // Use extracted fields from props if available, otherwise fetch
+  const shouldFetch = !extractedFields || extractedFields.length === 0;
   const { data: fetchedFields, isLoading } = usePipelineFields(
     shouldFetch ? pipelineIds : undefined
   );
 
-  const fields = props.pipelineFields || fetchedFields || [];
+  const fields = extractedFields || fetchedFields || [];
 
   // Apply field filters if specified
   const filteredFields = useMemo(() => {

@@ -644,6 +644,95 @@ class WorkflowViewSet(viewsets.ModelViewSet):
 #         except WorkflowTrigger.DoesNotExist:
 #             return Response({'error': 'Trigger not found'}, status=status.HTTP_404_NOT_FOUND)
 
+    def _get_display_name(self, node_type_str):
+        """Generate user-friendly display names from node types."""
+        # Special cases for better naming
+        name_mappings = {
+            # Triggers
+            'trigger_manual': 'Manual Trigger',
+            'trigger_scheduled': 'Scheduled',
+            'trigger_schedule': 'Schedule',
+            'trigger_webhook': 'Webhook',
+            'trigger_api_endpoint': 'API Endpoint',
+            'trigger_record_created': 'Record Created',
+            'trigger_record_updated': 'Record Updated',
+            'trigger_record_deleted': 'Record Deleted',
+            'trigger_form_submitted': 'Form Submitted',
+            'trigger_email_received': 'Email Received',
+            'trigger_linkedin_message': 'LinkedIn Message',
+            'trigger_whatsapp_message': 'WhatsApp Message',
+            'trigger_date_reached': 'Date Reached',
+            'trigger_pipeline_stage_changed': 'Pipeline Stage Changed',
+            'trigger_workflow_completed': 'Workflow Completed',
+            'trigger_condition_met': 'Condition Met',
+
+            # Data operations
+            'record_create': 'Create Record',
+            'record_update': 'Update Record',
+            'record_find': 'Find Record',
+            'record_delete': 'Delete Record',
+            'record_merge': 'Merge Data',
+
+            # Communication - remove vendor prefixes
+            'send_email': 'Send Email',
+            'unipile_send_email': 'Send Email',
+            'unipile_send_sms': 'Send SMS',
+            'unipile_send_whatsapp': 'Send WhatsApp',
+            'unipile_send_linkedin': 'Send LinkedIn',
+            'send_sms': 'Send SMS',
+            'send_notification': 'Send Notification',
+
+            # AI operations
+            'ai_prompt': 'AI Prompt',
+            'ai_analyze': 'AI Analyze',
+            'ai_analysis': 'AI Analysis',
+            'ai_message_generator': 'AI Message Generator',
+            'ai_response_evaluator': 'AI Response Evaluator',
+            'ai_conversation_loop': 'AI Conversation Loop',
+
+            # Control flow
+            'condition': 'Condition',
+            'for_each': 'For Each',
+            'wait_delay': 'Wait/Delay',
+            'wait_condition': 'Wait Condition',
+            'decision_tree': 'Decision Tree',
+            'workflow_loop': 'Workflow Loop',
+            'approve_reject': 'Approve/Reject',
+            'send_for_approval': 'Send for Approval',
+            'conversation_state': 'Conversation State',
+            'end_workflow': 'End Workflow',
+
+            # External
+            'http_request': 'HTTP Request',
+            'webhook_out': 'Webhook Out',
+            'webhook_response': 'Webhook Response',
+
+            # CRM
+            'crm_resolve_contact': 'Resolve Contact',
+            'resolve_contact': 'Resolve Contact',
+            'crm_update_status': 'Update Status',
+            'update_contact_status': 'Update Contact Status',
+            'crm_create_followup_task': 'Create Follow-up',
+            'create_follow_up_task': 'Follow Up Task',
+            'crm_calculate_score': 'Calculate Score',
+        }
+
+        # Check if we have a specific mapping
+        lower_type = node_type_str.lower()
+        if lower_type in name_mappings:
+            return name_mappings[lower_type]
+
+        # Otherwise, intelligently format the name
+        # Remove common prefixes
+        clean_name = node_type_str
+        for prefix in ['trigger_', 'unipile_', 'crm_']:
+            if clean_name.lower().startswith(prefix):
+                clean_name = clean_name[len(prefix):]
+                break
+
+        # Convert to title case
+        return clean_name.replace('_', ' ').title()
+
     @action(detail=False, methods=['get'])
     def node_schemas(self, request):
         """Get configuration schemas for all node types"""
@@ -742,98 +831,9 @@ class WorkflowViewSet(viewsets.ModelViewSet):
                         else:
                             subcategory = 'Control Flow'
 
-                # Generate better display names
-                def get_display_name(node_type_str):
-                    """Generate user-friendly display names from node types."""
-                    # Special cases for better naming
-                    name_mappings = {
-                        'trigger_manual': 'Manual Trigger',
-                        'trigger_scheduled': 'Scheduled',
-                        'trigger_schedule': 'Schedule',
-                        'trigger_webhook': 'Webhook',
-                        'trigger_api_endpoint': 'API Endpoint',
-                        'trigger_record_created': 'Record Created',
-                        'trigger_record_updated': 'Record Updated',
-                        'trigger_record_deleted': 'Record Deleted',
-                        'trigger_form_submitted': 'Form Submitted',
-                        'trigger_email_received': 'Email Received',
-                        'trigger_linkedin_message': 'LinkedIn Message',
-                        'trigger_whatsapp_message': 'WhatsApp Message',
-                        'trigger_date_reached': 'Date Reached',
-                        'trigger_pipeline_stage_changed': 'Pipeline Stage Changed',
-                        'trigger_workflow_completed': 'Workflow Completed',
-                        'trigger_condition_met': 'Condition Met',
-
-                        # Data operations
-                        'record_create': 'Create Record',
-                        'record_update': 'Update Record',
-                        'record_find': 'Find Record',
-                        'record_delete': 'Delete Record',
-                        'record_merge': 'Merge Data',
-
-                        # Communication - remove vendor prefixes
-                        'send_email': 'Send Email',
-                        'unipile_send_email': 'Send Email',
-                        'unipile_send_sms': 'Send SMS',
-                        'unipile_send_whatsapp': 'Send WhatsApp',
-                        'unipile_send_linkedin': 'Send LinkedIn',
-                        'send_sms': 'Send SMS',
-                        'send_notification': 'Send Notification',
-
-                        # AI operations
-                        'ai_prompt': 'AI Prompt',
-                        'ai_analyze': 'AI Analyze',
-                        'ai_analysis': 'AI Analysis',
-                        'ai_message_generator': 'AI Message Generator',
-                        'ai_response_evaluator': 'AI Response Evaluator',
-                        'ai_conversation_loop': 'AI Conversation Loop',
-
-                        # Control flow
-                        'condition': 'Condition',
-                        'for_each': 'For Each',
-                        'wait_delay': 'Wait/Delay',
-                        'wait_condition': 'Wait Condition',
-                        'decision_tree': 'Decision Tree',
-                        'workflow_loop': 'Workflow Loop',
-                        'approve_reject': 'Approve/Reject',
-                        'send_for_approval': 'Send for Approval',
-                        'conversation_state': 'Conversation State',
-                        'end_workflow': 'End Workflow',
-
-                        # External
-                        'http_request': 'HTTP Request',
-                        'webhook_out': 'Webhook Out',
-                        'webhook_response': 'Webhook Response',
-
-                        # CRM
-                        'crm_resolve_contact': 'Resolve Contact',
-                        'resolve_contact': 'Resolve Contact',
-                        'crm_update_status': 'Update Status',
-                        'update_contact_status': 'Update Contact Status',
-                        'crm_create_followup_task': 'Create Follow-up',
-                        'create_follow_up_task': 'Follow Up Task',
-                        'crm_calculate_score': 'Calculate Score',
-                    }
-
-                    # Check if we have a specific mapping
-                    lower_type = node_type_str.lower()
-                    if lower_type in name_mappings:
-                        return name_mappings[lower_type]
-
-                    # Otherwise, intelligently format the name
-                    # Remove common prefixes
-                    clean_name = node_type_str
-                    for prefix in ['trigger_', 'unipile_', 'crm_']:
-                        if clean_name.lower().startswith(prefix):
-                            clean_name = clean_name[len(prefix):]
-                            break
-
-                    # Convert to title case
-                    return clean_name.replace('_', ' ').title()
-
                 schema_info = {
                     'node_type': node_type,
-                    'display_name': getattr(processor, 'display_name', get_display_name(node_type)),
+                    'display_name': getattr(processor, 'display_name', self._get_display_name(node_type)),
                     'description': processor.__class__.__doc__.strip() if processor.__class__.__doc__ else '',
                     'category': category,
                     'subcategory': subcategory,

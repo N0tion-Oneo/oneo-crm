@@ -27,14 +27,18 @@ export function StageTrackingToggle({
   onConfigUpdate
 }: StageTrackingToggleProps) {
   const watchFields = config?.watch_fields || [];
-  
+
   // Check if we should show the toggle
   const shouldShow = useMemo(() => {
     // Only show if exactly one field is being watched
-    if (watchFields.length !== 1) return false;
-    
+    if (watchFields.length !== 1) {
+      return false;
+    }
+
     const fieldName = watchFields[0];
-    if (!fieldName || !pipelineFields) return false;
+    if (!fieldName || !pipelineFields) {
+      return false;
+    }
     
     // Find the field
     let field = null;

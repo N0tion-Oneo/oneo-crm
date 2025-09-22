@@ -64,7 +64,9 @@ export function StageOptionsMultiselect({
       }
     }
 
-    if (!field) return [];
+    if (!field) {
+      return [];
+    }
 
     // Extract options from various possible locations
     let options: string[] = [];

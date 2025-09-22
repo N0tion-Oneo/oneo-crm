@@ -124,11 +124,12 @@ const WorkflowNode = memo(({ data, selected }: NodeProps<WorkflowNodeData>) => {
   return (
     <Card
       className={cn(
-        'min-w-[220px] max-w-[280px] transition-all',
+        'min-w-[220px] max-w-[280px] transition-all cursor-pointer',
         categoryColors[category],
         selected && 'ring-2 ring-primary ring-offset-2',
         hasErrors && 'border-red-500 bg-red-50'
       )}
+      title="Double-click to configure"
     >
       {/* Input handle */}
       {!nodeType.startsWith('trigger_') && (

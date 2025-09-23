@@ -18,7 +18,9 @@ import {
   AlertCircle,
   RefreshCw,
   Copy,
-  Loader2
+  Loader2,
+  ChevronRight,
+  ChevronDown
 } from 'lucide-react';
 import { WorkflowNodeType } from '../../types';
 import { useTestData } from './TestDataContext';
@@ -42,9 +44,10 @@ export function NodeOutputTabV2({
 }: NodeOutputTabV2Props) {
   const { setNodeTestData } = useTestData();
   const [sampleOutput, setSampleOutput] = useState<any>(null);
-  const [outputFields, setOutputFields] = useState<Array<{ key: string; type: string; description: string }>>([]);
+  const [outputFields, setOutputFields] = useState<Array<{ key: string; type: string; value: any; description: string; depth: number }>>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [expandedFields, setExpandedFields] = useState<Set<string>>(new Set());
 
   // Check if this is a trigger node
   const isTriggerNode = useMemo(() => {
@@ -90,9 +93,11 @@ export function NodeOutputTabV2({
             output: output
           });
 
-          // Extract output field structure
-          const fields = extractOutputFields(nodeType, output);
+          // Extract output field structure from actual data
+          const fields = extractOutputFields(output);
           setOutputFields(fields);
+          // Auto-expand first level objects
+          setExpandedFields(new Set(fields.filter(f => f.depth === 0 && f.type === 'object').map(f => f.key)));
         } else {
           throw new Error('No output received from backend');
         }
@@ -111,74 +116,76 @@ export function NodeOutputTabV2({
     fetchRealOutput();
   }, [nodeType, config, inputData, nodeId, testRecord, setNodeTestData]);
 
-  const extractOutputFields = (type: WorkflowNodeType, output: any): Array<{ key: string; type: string; description: string }> => {
-    const fields: Array<{ key: string; type: string; description: string }> = [];
+  // Recursively extract fields from actual output data
+  const extractOutputFields = (data: any, prefix: string = ''): Array<{ key: string; type: string; value: any; description: string; depth: number }> => {
+    const fields: Array<{ key: string; type: string; value: any; description: string; depth: number }> = [];
 
-    // Common fields
-    fields.push({ key: 'success', type: 'boolean', description: 'Operation success status' });
-
-    // Type-specific fields
-    switch (type) {
-      case WorkflowNodeType.RECORD_FIND:
-      case WorkflowNodeType.RECORD_CREATE:
-      case WorkflowNodeType.RECORD_UPDATE:
-        fields.push({ key: 'record', type: 'object', description: 'The record data' });
-        fields.push({ key: 'record.id', type: 'string', description: 'Record ID' });
-        fields.push({ key: 'record.data', type: 'object', description: 'Record fields' });
-        break;
-
-      case WorkflowNodeType.UNIPILE_SEND_EMAIL:
-      case WorkflowNodeType.UNIPILE_SEND_SMS:
-      case WorkflowNodeType.UNIPILE_SEND_WHATSAPP:
-      case WorkflowNodeType.UNIPILE_SEND_LINKEDIN:
-        fields.push({ key: 'message_id', type: 'string', description: 'Message ID' });
-        fields.push({ key: 'status', type: 'string', description: 'Delivery status' });
-        fields.push({ key: 'sent_at', type: 'datetime', description: 'Timestamp' });
-        break;
-
-      case WorkflowNodeType.AI_PROMPT:
-      case WorkflowNodeType.AI_ANALYSIS:
-        fields.push({ key: 'result', type: 'string', description: 'AI response' });
-        fields.push({ key: 'model', type: 'string', description: 'Model used' });
-        fields.push({ key: 'tokens', type: 'number', description: 'Tokens consumed' });
-        break;
-
-      case WorkflowNodeType.CONDITION:
-        fields.push({ key: 'condition_met', type: 'boolean', description: 'Condition result' });
-        fields.push({ key: 'branch', type: 'string', description: 'Branch taken (true/false)' });
-        fields.push({ key: 'evaluated_conditions', type: 'array', description: 'Conditions evaluated' });
-        break;
-
-      case WorkflowNodeType.FOR_EACH:
-        fields.push({ key: 'items_processed', type: 'number', description: 'Number of items' });
-        fields.push({ key: 'results', type: 'array', description: 'Processing results' });
-        fields.push({ key: 'iteration_count', type: 'number', description: 'Total iterations' });
-        break;
-
-      case WorkflowNodeType.HTTP_REQUEST:
-        fields.push({ key: 'status_code', type: 'number', description: 'HTTP status code' });
-        fields.push({ key: 'response', type: 'object', description: 'Response data' });
-        fields.push({ key: 'headers', type: 'object', description: 'Response headers' });
-        break;
-
-      case WorkflowNodeType.WAIT_DELAY:
-        fields.push({ key: 'waited_for', type: 'number', description: 'Minutes waited' });
-        fields.push({ key: 'continued_at', type: 'datetime', description: 'Resume time' });
-        break;
-
-      default:
-        // Extract from actual output
-        if (output && typeof output === 'object') {
-          Object.keys(output).forEach(key => {
-            if (key !== 'success') {
-              const type = Array.isArray(output[key]) ? 'array' : typeof output[key];
-              fields.push({ key, type, description: `Output field: ${key}` });
-            }
-          });
-        }
+    if (!data || typeof data !== 'object') {
+      return fields;
     }
 
+    const depth = prefix.split('.').filter(Boolean).length;
+
+    Object.entries(data).forEach(([key, value]) => {
+      const fullKey = prefix ? `${prefix}.${key}` : key;
+      const type = getDataType(value);
+
+      // Add the current field
+      fields.push({
+        key: fullKey,
+        type,
+        value: value,
+        description: getFieldDescription(fullKey, type, value),
+        depth
+      });
+
+      // Recursively add nested fields for objects and arrays
+      if (type === 'object' && value !== null && !isDate(value)) {
+        fields.push(...extractOutputFields(value, fullKey));
+      } else if (type === 'array' && Array.isArray(value) && value.length > 0) {
+        // Show structure of first array item
+        if (typeof value[0] === 'object' && value[0] !== null) {
+          fields.push(...extractOutputFields(value[0], `${fullKey}[0]`));
+        }
+      }
+    });
+
     return fields;
+  };
+
+  // Helper to determine data type
+  const getDataType = (value: any): string => {
+    if (value === null) return 'null';
+    if (value === undefined) return 'undefined';
+    if (Array.isArray(value)) return 'array';
+    if (value instanceof Date || isDate(value)) return 'datetime';
+    if (typeof value === 'object') return 'object';
+    if (typeof value === 'boolean') return 'boolean';
+    if (typeof value === 'number') return 'number';
+    return 'string';
+  };
+
+  // Helper to check if value is a date string
+  const isDate = (value: any): boolean => {
+    if (typeof value !== 'string') return false;
+    // ISO 8601 date format check
+    return /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2}(\.\d{3})?Z?)?$/.test(value);
+  };
+
+  // Helper to generate field descriptions
+  const getFieldDescription = (key: string, type: string, value: any): string => {
+    // Only show size/count for collections
+    if (type === 'array') {
+      const length = Array.isArray(value) ? value.length : 0;
+      return `${length} item${length !== 1 ? 's' : ''}`;
+    }
+    if (type === 'object') {
+      const keys = Object.keys(value || {}).length;
+      return `${keys} field${keys !== 1 ? 's' : ''}`;
+    }
+
+    // For primitive types, don't show redundant descriptions
+    return '';
   };
 
   const regenerateOutput = async () => {
@@ -233,34 +240,151 @@ export function NodeOutputTabV2({
     }
   };
 
+  const copyFieldPath = (fieldKey: string) => {
+    const expression = `{{${nodeId}.${fieldKey}}}`;
+    navigator.clipboard.writeText(expression);
+    toast.success(`Copied: ${expression}`);
+  };
+
+  const toggleFieldExpansion = (fieldKey: string) => {
+    setExpandedFields(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(fieldKey)) {
+        // Collapse this field and all children
+        newSet.delete(fieldKey);
+        outputFields.forEach(field => {
+          if (field.key.startsWith(fieldKey + '.')) {
+            newSet.delete(field.key);
+          }
+        });
+      } else {
+        // Expand this field
+        newSet.add(fieldKey);
+      }
+      return newSet;
+    });
+  };
+
+  const isFieldVisible = (field: { key: string; depth: number; type: string }) => {
+    if (field.depth === 0) return true;
+
+    // Check if any parent is collapsed
+    const parts = field.key.split(/[\.\[\]]+/).filter(Boolean);
+
+    // Build up parent keys to check
+    for (let i = 1; i < parts.length; i++) {
+      let parentKey = parts.slice(0, i).join('.');
+
+      // Handle array notation - check if we need to add [0] for array items
+      const parentField = outputFields.find(f => {
+        return f.key === parentKey || f.key === `${parentKey}[0]`;
+      });
+
+      if (parentField && (parentField.type === 'object' || parentField.type === 'array')) {
+        // For array fields, check both with and without index
+        if (!expandedFields.has(parentField.key)) {
+          return false;
+        }
+      }
+    }
+    return true;
+  };
+
+  const formatValue = (value: any, type: string): string => {
+    if (value === null) return 'null';
+    if (value === undefined) return 'undefined';
+
+    if (type === 'string') {
+      // Truncate long strings
+      const str = String(value);
+      if (str.length > 50) {
+        return `"${str.substring(0, 47)}..."`;
+      }
+      return `"${str}"`;
+    }
+
+    if (type === 'boolean') {
+      return value ? '✓ true' : '✗ false';
+    }
+
+    if (type === 'number') {
+      // Format large numbers with commas
+      return Number(value).toLocaleString();
+    }
+
+    if (type === 'datetime') {
+      const date = new Date(value);
+      // Show relative time for recent dates
+      const now = new Date();
+      const diff = now.getTime() - date.getTime();
+      const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+
+      if (days === 0) {
+        return date.toLocaleTimeString();
+      } else if (days === 1) {
+        return 'Yesterday ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      } else if (days < 7) {
+        return `${days} days ago`;
+      } else {
+        return date.toLocaleDateString();
+      }
+    }
+
+    if (type === 'array') {
+      const count = Array.isArray(value) ? value.length : 0;
+      return `[${count}]`;
+    }
+
+    if (type === 'object') {
+      const count = Object.keys(value || {}).length;
+      return `{${count}}`;
+    }
+
+    return String(value);
+  };
+
   const getFieldTypeIcon = (type: string) => {
     switch (type) {
       case 'object':
+        return <Database className="h-3.5 w-3.5 text-orange-500" />;
       case 'array':
-        return <Database className="h-3 w-3" />;
+        return <Database className="h-3.5 w-3.5 text-pink-500" />;
       case 'boolean':
-        return <CheckCircle className="h-3 w-3" />;
+        return <CheckCircle className="h-3.5 w-3.5 text-purple-500" />;
+      case 'string':
+        return <Code2 className="h-3.5 w-3.5 text-blue-500" />;
+      case 'number':
+        return <Code2 className="h-3.5 w-3.5 text-green-500" />;
+      case 'datetime':
+        return <Code2 className="h-3.5 w-3.5 text-indigo-500" />;
+      case 'null':
+      case 'undefined':
+        return <Code2 className="h-3.5 w-3.5 text-gray-400" />;
       default:
-        return <Code2 className="h-3 w-3" />;
+        return <Code2 className="h-3.5 w-3.5 text-gray-500" />;
     }
   };
 
   const getFieldTypeBadgeColor = (type: string) => {
+    // Returns text color classes only for the inline type indicator
     switch (type) {
       case 'string':
-        return 'bg-blue-100 text-blue-700';
+        return 'text-blue-600 dark:text-blue-400';
       case 'number':
-        return 'bg-green-100 text-green-700';
+        return 'text-green-600 dark:text-green-400';
       case 'boolean':
-        return 'bg-purple-100 text-purple-700';
+        return 'text-purple-600 dark:text-purple-400';
       case 'object':
-        return 'bg-orange-100 text-orange-700';
+        return 'text-orange-600 dark:text-orange-400';
       case 'array':
-        return 'bg-pink-100 text-pink-700';
+        return 'text-pink-600 dark:text-pink-400';
       case 'datetime':
-        return 'bg-indigo-100 text-indigo-700';
+        return 'text-indigo-600 dark:text-indigo-400';
+      case 'null':
+      case 'undefined':
+        return 'text-gray-500 dark:text-gray-400';
       default:
-        return 'bg-gray-100 text-gray-700';
+        return 'text-gray-600 dark:text-gray-400';
     }
   };
 
@@ -282,14 +406,41 @@ export function NodeOutputTabV2({
       {/* Output Structure */}
       <div>
         <div className="flex items-center justify-between mb-3">
-          <h4 className="text-sm font-medium">Output Structure</h4>
-          <Badge variant="outline" className="text-xs">
-            {loading ? (
-              <Loader2 className="h-3 w-3 animate-spin" />
-            ) : (
-              `${outputFields.length} fields`
+          <div className="flex items-center gap-2">
+            <h4 className="text-sm font-medium">Output Structure</h4>
+            {!loading && outputFields.length > 0 && (
+              <Badge variant="secondary" className="text-xs">
+                {outputFields.filter(f => f.depth === 0).length} root fields
+              </Badge>
             )}
-          </Badge>
+          </div>
+          <div className="flex items-center gap-1">
+            {!loading && outputFields.some(f => f.type === 'object' || f.type === 'array') && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 text-xs px-2"
+                onClick={() => {
+                  const allExpandable = outputFields
+                    .filter(f => f.type === 'object' || f.type === 'array')
+                    .map(f => f.key);
+
+                  if (expandedFields.size === 0) {
+                    // Expand all
+                    setExpandedFields(new Set(allExpandable));
+                  } else {
+                    // Collapse all
+                    setExpandedFields(new Set());
+                  }
+                }}
+              >
+                {expandedFields.size > 0 ? 'Collapse All' : 'Expand All'}
+              </Button>
+            )}
+            {loading && (
+              <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+            )}
+          </div>
         </div>
 
         <Card className="p-3">
@@ -300,27 +451,106 @@ export function NodeOutputTabV2({
               <Skeleton className="h-4 w-1/2" />
             </div>
           ) : (
-            <ScrollArea className="h-[150px]">
-              <div className="space-y-2">
-                {outputFields.map((field, index) => (
-                <div key={index} className="flex items-start gap-2 text-xs">
-                  <div className="flex items-center gap-1 min-w-[100px]">
-                    {getFieldTypeIcon(field.type)}
-                    <code className="font-mono">{field.key}</code>
-                  </div>
-                  <Badge
-                    variant="secondary"
-                    className={`text-xs h-5 ${getFieldTypeBadgeColor(field.type)}`}
-                  >
-                    {field.type}
-                  </Badge>
-                  <span className="text-muted-foreground flex-1">
-                    {field.description}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </ScrollArea>
+            <ScrollArea className="h-[300px]">
+              <div className="space-y-0.5">
+                {outputFields.filter(isFieldVisible).map((field, index) => {
+                  const isExpandable = field.type === 'object' || field.type === 'array';
+                  const isExpanded = expandedFields.has(field.key);
+
+                  // Extract field name properly handling array indices
+                  let fieldName = field.key;
+                  if (field.key.includes('.')) {
+                    // Get the last part after the final dot
+                    const parts = field.key.split('.');
+                    fieldName = parts[parts.length - 1];
+                  }
+                  const isArrayIndex = fieldName.includes('[');
+
+                  return (
+                    <div
+                      key={index}
+                      className="group relative"
+                    >
+                      {/* Tree connector lines */}
+                      {field.depth > 0 && (
+                        <div
+                          className="absolute left-0 top-0 bottom-0 border-l border-gray-200 dark:border-gray-700"
+                          style={{ left: `${(field.depth - 1) * 20 + 16}px` }}
+                        />
+                      )}
+
+                      <div
+                        className="relative hover:bg-muted/30 rounded-md transition-all duration-150 py-1.5 px-2"
+                        style={{ paddingLeft: `${field.depth * 20 + 8}px` }}
+                      >
+                        {/* Main row */}
+                        <div className="flex items-center gap-2">
+                          {/* Expand/Collapse button */}
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className={`h-5 w-5 p-0 hover:bg-muted ${!isExpandable ? 'invisible' : ''}`}
+                            onClick={() => isExpandable && toggleFieldExpansion(field.key)}
+                          >
+                            {isExpandable && (
+                              isExpanded ? (
+                                <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+                              ) : (
+                                <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
+                              )
+                            )}
+                          </Button>
+
+                          {/* Field icon */}
+                          <div className="flex-shrink-0">
+                            {getFieldTypeIcon(field.type)}
+                          </div>
+
+                          {/* Field name */}
+                          <div className="flex-1 min-w-0">
+                            <code className={`font-mono text-sm ${isArrayIndex ? 'text-muted-foreground' : 'font-medium'}`}>
+                              {fieldName}
+                            </code>
+
+                            {/* Type indicator - more subtle */}
+                            <span className={`ml-2 text-xs ${getFieldTypeBadgeColor(field.type)}`}>
+                              {field.type}
+                            </span>
+                          </div>
+
+                          {/* Value/Description for objects and arrays */}
+                          {isExpandable && (
+                            <span className="text-xs text-muted-foreground">
+                              {field.description}
+                            </span>
+                          )}
+
+                          {/* Copy button */}
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-5 w-5 p-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                            onClick={() => copyFieldPath(field.key)}
+                            title={`Copy: {{${nodeId}.${field.key}}}`}
+                          >
+                            <Copy className="h-3 w-3 text-muted-foreground hover:text-foreground" />
+                          </Button>
+                        </div>
+
+                        {/* Second row - Value for primitives */}
+                        {!isExpandable && field.value !== undefined && (
+                          <div className="flex items-center gap-2 mt-0.5 pl-7">
+                            <span className="text-xs text-muted-foreground font-mono">
+                              = {formatValue(field.value, field.type)}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </ScrollArea>
           )}
         </Card>
       </div>
@@ -330,14 +560,21 @@ export function NodeOutputTabV2({
       {/* Sample Output Preview */}
       <div>
         <div className="flex items-center justify-between mb-3">
-          <h4 className="text-sm font-medium">Sample Output</h4>
+          <div className="flex items-center gap-2">
+            <h4 className="text-sm font-medium">Sample Output</h4>
+            {sampleOutput && (
+              <Badge variant="secondary" className="text-xs">
+                JSON
+              </Badge>
+            )}
+          </div>
           <div className="flex gap-1">
             <Button
               variant="ghost"
               size="sm"
               onClick={regenerateOutput}
               disabled={loading}
-              className="h-7 px-2"
+              className="h-6 text-xs px-2"
             >
               {loading ? (
                 <Loader2 className="h-3 w-3 mr-1 animate-spin" />
@@ -351,10 +588,10 @@ export function NodeOutputTabV2({
               size="sm"
               onClick={copyOutput}
               disabled={!sampleOutput || loading}
-              className="h-7 px-2"
+              className="h-6 text-xs px-2"
             >
               <Copy className="h-3 w-3 mr-1" />
-              Copy
+              Copy JSON
             </Button>
           </div>
         </div>

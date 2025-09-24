@@ -19,6 +19,17 @@ export function useWorkflowBuilder({
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [nodeConfigs, setNodeConfigs] = useState<Record<string, any>>({});
 
+  // Initialize nodeOutputs with any stored lastOutput from nodes
+  const [nodeOutputs, setNodeOutputs] = useState<Record<string, any>>(() => {
+    const outputs: Record<string, any> = {};
+    initialDefinition.nodes.forEach(node => {
+      if (node.data?.lastOutput) {
+        outputs[node.id] = node.data.lastOutput;
+      }
+    });
+    return outputs;
+  });
+
   // Update definition and notify parent
   const updateDefinition = useCallback((newDefinition: WorkflowDefinition) => {
     setDefinition(newDefinition);
@@ -105,6 +116,22 @@ export function useWorkflowBuilder({
     setSelectedNodeId(nodeId);
   }, []);
 
+  // Update node output (e.g., after testing/execution)
+  const updateNodeOutput = useCallback((nodeId: string, output: any) => {
+    setNodeOutputs(prev => ({
+      ...prev,
+      [nodeId]: output
+    }));
+
+    // Also store in the node's data for persistence
+    const newNodes = definition.nodes.map(node =>
+      node.id === nodeId
+        ? { ...node, data: { ...node.data, lastOutput: output } }
+        : node
+    );
+    updateDefinition({ ...definition, nodes: newNodes });
+  }, [definition, updateDefinition]);
+
   // Get selected node
   const selectedNode = definition.nodes.find(n => n.id === selectedNodeId) || null;
   const selectedNodeConfig = selectedNodeId ? nodeConfigs[selectedNodeId] : null;
@@ -116,11 +143,13 @@ export function useWorkflowBuilder({
     selectedNode,
     selectedNodeConfig,
     nodeConfigs,
+    nodeOutputs,
 
     // Actions
     addNode,
     updateNodePosition,
     updateNodeConfig,
+    updateNodeOutput,
     removeNode,
     addEdge,
     removeEdge,

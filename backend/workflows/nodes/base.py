@@ -22,7 +22,8 @@ class BaseNodeProcessor(ABC):
     }
 
     def __init__(self):
-        self.node_type = None
+        # Use the class attribute if defined, otherwise None
+        self.node_type = getattr(self.__class__, 'node_type', None)
         self.supports_replay = True
         self.supports_checkpoints = True
     
@@ -99,7 +100,7 @@ class BaseNodeProcessor(ABC):
             for field_name, field_value in config_data.items():
                 if field_name in properties:
                     field_schema = properties[field_name]
-                    if not self._validate_field_type(field_value, field_schema):
+                    if not self._validate_field_type(field_name, field_value, field_schema):
                         logger.warning(f"Field '{field_name}' validation failed in {self.node_type}")
                         return False
 
@@ -108,11 +109,12 @@ class BaseNodeProcessor(ABC):
             logger.error(f"Validation error in {self.node_type}: {e}")
             return False
 
-    def _validate_field_type(self, value: Any, field_schema: Dict[str, Any]) -> bool:
+    def _validate_field_type(self, field_name: str, value: Any, field_schema: Dict[str, Any]) -> bool:
         """
         Validate a field value against its schema
 
         Args:
+            field_name: Name of the field being validated
             value: Field value to validate
             field_schema: Field schema definition
 
@@ -127,6 +129,11 @@ class BaseNodeProcessor(ABC):
 
         # Type validation
         if field_type == 'string':
+            # Accept integers for ID fields and convert them
+            if isinstance(value, int):
+                # Allow integers for fields that look like IDs
+                if 'id' in field_name.lower() or field_name in ['pipeline', 'workflow', 'user', 'tenant']:
+                    return True
             if not isinstance(value, str):
                 return False
             # Check string constraints
@@ -362,8 +369,9 @@ class AsyncNodeProcessor(BaseNodeProcessor):
             if self.supports_checkpoints:
                 checkpoint = await self.create_checkpoint(node_config, context)
             
-            # Process the node
-            result = await self.process(node_config, context)
+            # Process the node - extract config data for process method
+            config_data = node_config.get('data', {}).get('config', {})
+            result = await self.process(config_data, context)
             
             # Calculate execution time
             execution_time_ms = int((time.time() - start_time) * 1000)

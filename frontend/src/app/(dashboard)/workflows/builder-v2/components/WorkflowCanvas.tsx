@@ -76,34 +76,38 @@ function WorkflowCanvasInner({
     onToggleSettings: () => setIsSettingsOpen(prev => !prev),
   });
 
-  // Convert workflow nodes to React Flow nodes with config
-  const flowNodes: Node[] = definition.nodes.map(node => ({
-    id: node.id,
-    type: 'workflow',
-    position: node.position,
-    data: {
-      ...node.data,
-      nodeType: node.type,
-      config: nodeConfigs[node.id] || node.data.config,
-    },
-    selected: node.id === selectedNodeId,
-  }));
+  // Convert workflow definition to React Flow format
+  // Use useMemo to prevent recreating on every render
+  const initialNodes = React.useMemo(() =>
+    definition.nodes.map(node => ({
+      id: node.id,
+      type: 'workflow',
+      position: node.position,
+      data: {
+        ...node.data,
+        nodeType: node.type,
+        config: nodeConfigs[node.id] || node.data.config,
+      },
+      selected: node.id === selectedNodeId,
+    })), []);  // Empty deps - only compute once on mount
 
-  // Convert workflow edges to React Flow edges
-  const flowEdges: Edge[] = definition.edges.map(edge => ({
-    id: edge.id,
-    source: edge.source,
-    target: edge.target,
-    sourceHandle: edge.sourceHandle || undefined,
-    targetHandle: edge.targetHandle || undefined,
-    label: edge.label,
-  }));
+  const initialEdges = React.useMemo(() =>
+    definition.edges.map(edge => ({
+      id: edge.id,
+      source: edge.source,
+      target: edge.target,
+      sourceHandle: edge.sourceHandle || undefined,
+      targetHandle: edge.targetHandle || undefined,
+      label: edge.label,
+    })), []); // Empty deps - only compute once on mount
 
-  const [nodes, setNodes, onNodesChangeInternal] = useNodesState(flowNodes);
-  const [edges, setEdges, onEdgesChangeInternal] = useEdgesState(flowEdges);
+  // Initialize nodes and edges state with initial values
+  const [nodes, setNodes, onNodesChangeInternal] = useNodesState(initialNodes);
+  const [edges, setEdges, onEdgesChangeInternal] = useEdgesState(initialEdges);
 
   // Track if we're currently dragging
   const isDraggingRef = useRef(false);
+  const pendingUpdateRef = useRef(false);
 
   // Handle nodes change - only update parent on specific events
   const handleNodesChange = useCallback((changes: NodeChange[]) => {
@@ -126,39 +130,64 @@ function WorkflowCanvasInner({
       isDraggingRef.current = true;
     }
 
-    // Only update parent when:
-    // 1. Drag ends (position finalized)
-    // 2. Node is removed
-    // 3. Selection changes (but not during drag)
-    if (hasDragEnd || hasRemove || (hasSelect && !isDraggingRef.current)) {
+    // Handle node removal immediately
+    if (hasRemove) {
+      // Get the IDs of nodes being removed
+      const removedNodeIds = changes
+        .filter(change => change.type === 'remove')
+        .map(change => change.id);
+
+      // Update parent immediately with filtered nodes
+      setTimeout(() => {
+        const remainingNodes = nodes.filter(node => !removedNodeIds.includes(node.id));
+        const workflowNodes: WorkflowNodeType[] = remainingNodes.map(node => ({
+          id: node.id,
+          type: node.data.nodeType as NodeType,
+          position: node.position,
+          data: node.data,
+        }));
+        onNodesChange(workflowNodes);
+      }, 0);
+      return; // Don't set pending update for removes
+    }
+
+    // For other changes, mark pending update
+    if (hasDragEnd || (hasSelect && !isDraggingRef.current)) {
       if (hasDragEnd) {
         isDraggingRef.current = false;
       }
 
-      // Schedule the parent update to avoid setState during render
-      setTimeout(() => {
-        setNodes((currentNodes) => {
-          const workflowNodes: WorkflowNodeType[] = currentNodes.map(node => ({
-            id: node.id,
-            type: node.data.nodeType as NodeType,
-            position: node.position,
-            data: node.data,
-          }));
-          onNodesChange(workflowNodes);
-          return currentNodes;
-        });
-      }, 0);
+      // Mark that we need to update parent
+      pendingUpdateRef.current = true;
     }
-  }, [onNodesChangeInternal, onNodesChange, setNodes]);
+  }, [onNodesChangeInternal, nodes, onNodesChange]);
+
+  // Track if we're syncing from parent to prevent loops
+  const isSyncingFromParentRef = useRef(false);
+
+  // Update parent when nodes change and we have a pending update
+  React.useEffect(() => {
+    if (pendingUpdateRef.current && !isSyncingFromParentRef.current) {
+      pendingUpdateRef.current = false;
+      const workflowNodes: WorkflowNodeType[] = nodes.map(node => ({
+        id: node.id,
+        type: node.data.nodeType as NodeType,
+        position: node.position,
+        data: node.data,
+      }));
+      onNodesChange(workflowNodes);
+    }
+  }, [nodes, onNodesChange]);
 
   // Handle edges change
   const handleEdgesChange = useCallback((changes: EdgeChange[]) => {
     // Apply changes locally first
     onEdgesChangeInternal(changes);
 
-    // Schedule parent update to avoid setState during render
-    setTimeout(() => {
-      setEdges((currentEdges) => {
+    // Mark that we need to update parent after the state settles
+    if (!isSyncingFromParentRef.current) {
+      requestAnimationFrame(() => {
+        const currentEdges = edges;
         const workflowEdges: WorkflowEdge[] = currentEdges.map(edge => ({
           id: edge.id,
           source: edge.source,
@@ -168,10 +197,9 @@ function WorkflowCanvasInner({
           label: typeof edge.label === 'string' ? edge.label : undefined,
         }));
         onEdgesChange(workflowEdges);
-        return currentEdges;
       });
-    }, 0);
-  }, [onEdgesChangeInternal, onEdgesChange, setEdges]);
+    }
+  }, [onEdgesChangeInternal, onEdgesChange, edges]);
 
   // Handle new connections
   const onConnect = useCallback(
@@ -265,7 +293,7 @@ function WorkflowCanvasInner({
 
   // Sync nodes and edges when definition changes from parent
   React.useEffect(() => {
-    // Only update if not currently dragging
+    // Only update if not currently dragging and this is a sync from parent
     if (!isDraggingRef.current) {
       // Create the flow nodes and edges inside the effect
       const newFlowNodes: Node[] = definition.nodes.map(node => ({
@@ -289,10 +317,18 @@ function WorkflowCanvasInner({
         label: edge.label,
       }));
 
+      // Mark that we're syncing from parent to prevent loop
+      isSyncingFromParentRef.current = true;
+
       // Use setTimeout to avoid setState during render
       setTimeout(() => {
         setNodes(newFlowNodes);
         setEdges(newFlowEdges);
+
+        // Clear the flag after state update
+        setTimeout(() => {
+          isSyncingFromParentRef.current = false;
+        }, 0);
       }, 0);
     }
   }, [definition, nodeConfigs, selectedNodeId, setNodes, setEdges]);

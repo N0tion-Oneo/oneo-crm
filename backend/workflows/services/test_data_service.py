@@ -459,7 +459,8 @@ class TestDataService:
                     'submission_source': submission.submission_source,
                     'is_anonymous': submission.is_anonymous,
                     'submitted_by': submission.submitted_by.email if submission.submitted_by else 'Anonymous',
-                    'fields': list(preview_data.keys())[:5]
+                    'fields': list(preview_data.keys())[:5],
+                    'submitted_data': preview_data  # Include full data for frontend preview
                 },
                 'record_id': str(submission.record.id)
             })

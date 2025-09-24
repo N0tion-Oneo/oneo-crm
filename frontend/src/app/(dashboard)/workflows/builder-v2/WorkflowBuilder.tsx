@@ -31,9 +31,11 @@ export function WorkflowBuilder({
     selectedNode,
     selectedNodeConfig,
     nodeConfigs,
+    nodeOutputs,
     addNode,
     updateNodePosition,
     updateNodeConfig,
+    updateNodeOutput,
     removeNode,
     addEdge,
     removeEdge,
@@ -80,6 +82,13 @@ export function WorkflowBuilder({
     setIsConfigModalOpen(false);
   }, []);
 
+  // Handle node test - store the output for data flow
+  const handleNodeTest = React.useCallback(async (nodeId: string, output: any) => {
+    // Store the node's output so it's available to downstream nodes
+    updateNodeOutput(nodeId, output);
+    console.log(`Stored output for node ${nodeId}:`, output);
+  }, [updateNodeOutput]);
+
   return (
     <div className={cn('flex h-full bg-background', className)}>
       {/* Left Panel - Node Palette */}
@@ -110,6 +119,8 @@ export function WorkflowBuilder({
         onConfigChange={handleNodeConfigChange}
         onSave={handleNodeConfigSave}
         workflowDefinition={definition}
+        nodeOutputs={nodeOutputs}
+        onNodeTest={handleNodeTest}
       />
     </div>
   );

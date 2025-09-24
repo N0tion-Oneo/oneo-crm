@@ -21,6 +21,12 @@ from workflows.nodes.triggers.pipeline_stage import TriggerPipelineStageChangedP
 from workflows.nodes.triggers.workflow_completed import TriggerWorkflowCompletedProcessor
 from workflows.nodes.triggers.condition_met import TriggerConditionMetProcessor
 
+# Import data operation processors
+from workflows.nodes.data.record_ops import (
+    RecordCreateProcessor, RecordUpdateProcessor,
+    RecordFindProcessor, RecordDeleteProcessor
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -208,10 +214,10 @@ NODE_PROCESSORS = {
     'send_whatsapp': SendEmailProcessor,  # Reuse for now
 
     # Record operations
-    'update_record': UpdateRecordProcessor,
-    'create_record': CreateRecordProcessor,
-    'delete_record': UpdateRecordProcessor,  # Reuse for now
-    'find_records': CreateRecordProcessor,  # Reuse for now
+    'update_record': RecordUpdateProcessor,
+    'create_record': RecordCreateProcessor,
+    'delete_record': RecordDeleteProcessor,
+    'find_records': RecordFindProcessor,
 
     # Logic nodes
     'conditional': ConditionalProcessor,
@@ -339,10 +345,10 @@ def get_all_node_processors():
             'trigger_condition_met': TriggerConditionMetProcessor,
 
             # Data operation processors
-            'record_create': RecordCreateProcessor,
-            'record_update': RecordUpdateProcessor,
-            'record_find': RecordFindProcessor,
-            'record_delete': RecordDeleteProcessor,
+            'create_record': RecordCreateProcessor,
+            'update_record': RecordUpdateProcessor,
+            'find_records': RecordFindProcessor,
+            'delete_record': RecordDeleteProcessor,
             'ai_prompt': AIPromptProcessor,
             'ai_analysis': AIAnalysisProcessor,
             'ai_message_generator': AIMessageGeneratorProcessor,

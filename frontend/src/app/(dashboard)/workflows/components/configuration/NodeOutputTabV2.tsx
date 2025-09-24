@@ -1,3 +1,5 @@
+'use client';
+
 /**
  * NodeOutputTabV2
  * Displays expected output structure for workflow nodes
@@ -33,6 +35,9 @@ interface NodeOutputTabV2Props {
   config: any;
   inputData?: any;
   testRecord?: any;  // Test record selected in input panel
+  testDataType?: string;  // Type of test data (record, email, linkedin_message, etc.)
+  onNodeTest?: (nodeId: string, output: any) => void;
+  nodeOutputs?: Record<string, any>;
 }
 
 export function NodeOutputTabV2({
@@ -40,7 +45,10 @@ export function NodeOutputTabV2({
   nodeType,
   config,
   inputData,
-  testRecord
+  testRecord,
+  testDataType,
+  onNodeTest,
+  nodeOutputs
 }: NodeOutputTabV2Props) {
   const { setNodeTestData } = useTestData();
   const [sampleOutput, setSampleOutput] = useState<any>(null);
@@ -49,15 +57,36 @@ export function NodeOutputTabV2({
   const [error, setError] = useState<string | null>(null);
   const [expandedFields, setExpandedFields] = useState<Set<string>>(new Set());
 
+  // Track previous config to detect actual changes
+  const [prevConfig, setPrevConfig] = useState<string>('');
+
   // Check if this is a trigger node
   const isTriggerNode = useMemo(() => {
     return nodeType.startsWith('TRIGGER_') || nodeType.toLowerCase().includes('trigger');
   }, [nodeType]);
 
-  // Fetch real output from backend when config, input or test record changes
+  // Serialize config for comparison
+  const configString = useMemo(() => {
+    try {
+      return JSON.stringify(config || {});
+    } catch {
+      return '';
+    }
+  }, [config]);
+
+  // Fetch real output from backend only when config actually changes
   useEffect(() => {
+    // Skip if config hasn't actually changed
+    if (configString === prevConfig && sampleOutput !== null) {
+      return;
+    }
     const fetchRealOutput = async () => {
       if (!nodeType || !config) return;
+
+      // Skip during server-side rendering to prevent tenant routing issues
+      if (typeof window === 'undefined') {
+        return;
+      }
 
       setLoading(true);
       setError(null);
@@ -72,12 +101,12 @@ export function NodeOutputTabV2({
         // Add test data for triggers or nodes with test records
         if (testRecord) {
           requestData.test_data_id = String(testRecord.id);
-          requestData.test_data_type = 'record';
+          requestData.test_data_type = testDataType || 'record';
         }
 
         // Add input data context if available
         if (inputData && Object.keys(inputData).length > 0) {
-          requestData.test_context = inputData;
+          requestData.context = inputData;
         }
 
         // Call the backend to get real output
@@ -93,11 +122,19 @@ export function NodeOutputTabV2({
             output: output
           });
 
+          // Call onNodeTest to store in parent's nodeOutputs state
+          if (onNodeTest) {
+            onNodeTest(nodeId, output);
+          }
+
           // Extract output field structure from actual data
           const fields = extractOutputFields(output);
           setOutputFields(fields);
           // Auto-expand first level objects
           setExpandedFields(new Set(fields.filter(f => f.depth === 0 && f.type === 'object').map(f => f.key)));
+
+          // Mark this config as tested
+          setPrevConfig(configString);
         } else {
           throw new Error('No output received from backend');
         }
@@ -114,7 +151,7 @@ export function NodeOutputTabV2({
     };
 
     fetchRealOutput();
-  }, [nodeType, config, inputData, nodeId, testRecord, setNodeTestData]);
+  }, [nodeType, configString, prevConfig, inputData, nodeId, testRecord, setNodeTestData, onNodeTest]);
 
   // Recursively extract fields from actual output data
   const extractOutputFields = (data: any, prefix: string = ''): Array<{ key: string; type: string; value: any; description: string; depth: number }> => {
@@ -189,6 +226,11 @@ export function NodeOutputTabV2({
   };
 
   const regenerateOutput = async () => {
+    // Skip during server-side rendering
+    if (typeof window === 'undefined') {
+      return;
+    }
+
     setLoading(true);
     setError(null);
 
@@ -202,12 +244,12 @@ export function NodeOutputTabV2({
       // Add test data for triggers or nodes with test records
       if (testRecord) {
         requestData.test_data_id = String(testRecord.id);
-        requestData.test_data_type = 'record';
+        requestData.test_data_type = testDataType || 'record';
       }
 
       // Add input data context if available
       if (inputData && Object.keys(inputData).length > 0) {
-        requestData.test_context = inputData;
+        requestData.context = inputData;
       }
 
       // Call the backend to get real output
@@ -220,6 +262,20 @@ export function NodeOutputTabV2({
           input: inputData || {},
           output: output
         });
+
+        // Call onNodeTest to store in parent's nodeOutputs state
+        if (onNodeTest) {
+          onNodeTest(nodeId, output);
+        }
+
+        // Update prevConfig to mark this config as tested
+        setPrevConfig(configString);
+
+        // Also update the fields
+        const fields = extractOutputFields(output);
+        setOutputFields(fields);
+        setExpandedFields(new Set(fields.filter(f => f.depth === 0 && f.type === 'object').map(f => f.key)));
+
         toast.success('Output regenerated from backend');
       } else {
         throw new Error('No output received from backend');
@@ -507,13 +563,13 @@ export function NodeOutputTabV2({
                           </div>
 
                           {/* Field name */}
-                          <div className="flex-1 min-w-0">
-                            <code className={`font-mono text-sm ${isArrayIndex ? 'text-muted-foreground' : 'font-medium'}`}>
+                          <div className="flex-1 min-w-0 overflow-hidden">
+                            <code className={`font-mono text-sm ${isArrayIndex ? 'text-muted-foreground' : 'font-medium'} break-all`}>
                               {fieldName}
                             </code>
 
                             {/* Type indicator - more subtle */}
-                            <span className={`ml-2 text-xs ${getFieldTypeBadgeColor(field.type)}`}>
+                            <span className={`ml-2 text-xs ${getFieldTypeBadgeColor(field.type)} whitespace-nowrap`}>
                               {field.type}
                             </span>
                           </div>
@@ -529,7 +585,7 @@ export function NodeOutputTabV2({
                           <Button
                             variant="ghost"
                             size="sm"
-                            className="h-5 w-5 p-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                            className="h-5 w-5 p-0 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
                             onClick={() => copyFieldPath(field.key)}
                             title={`Copy: {{${nodeId}.${field.key}}}`}
                           >
@@ -540,7 +596,7 @@ export function NodeOutputTabV2({
                         {/* Second row - Value for primitives */}
                         {!isExpandable && field.value !== undefined && (
                           <div className="flex items-center gap-2 mt-0.5 pl-7">
-                            <span className="text-xs text-muted-foreground font-mono">
+                            <span className="text-xs text-muted-foreground font-mono break-all">
                               = {formatValue(field.value, field.type)}
                             </span>
                           </div>
@@ -607,7 +663,7 @@ export function NodeOutputTabV2({
             </div>
           ) : (
             <ScrollArea className="h-[200px]">
-              <pre className="text-xs font-mono">
+              <pre className="text-xs font-mono whitespace-pre-wrap break-words">
                 {sampleOutput ? JSON.stringify(sampleOutput, null, 2) : 'No output generated'}
               </pre>
             </ScrollArea>
@@ -623,7 +679,7 @@ export function NodeOutputTabV2({
             <p className="font-medium mb-1">Using Output in Next Nodes</p>
             <p className="text-blue-600 dark:text-blue-400">
               Reference these fields in subsequent nodes using expressions like:
-              <code className="ml-1 font-mono bg-blue-100 dark:bg-blue-900 px-1 rounded">
+              <code className="ml-1 font-mono bg-blue-100 dark:bg-blue-900 px-1 rounded break-all">
                 {`{{${nodeId}.record.id}}`}
               </code>
             </p>

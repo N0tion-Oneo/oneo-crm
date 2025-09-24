@@ -57,10 +57,10 @@ export enum WorkflowNodeType {
   TRIGGER_WORKFLOW_COMPLETED = 'trigger_workflow_completed',
 
   // Data Operations - matching backend Django model
-  RECORD_CREATE = 'record_create',
-  RECORD_UPDATE = 'record_update',
-  RECORD_FIND = 'record_find',
-  RECORD_DELETE = 'record_delete',
+  RECORD_CREATE = 'create_record',
+  RECORD_UPDATE = 'update_record',
+  RECORD_FIND = 'find_records',
+  RECORD_DELETE = 'delete_record',
   MERGE_DATA = 'merge_data',
   RESOLVE_CONTACT = 'resolve_contact',
   CREATE_FOLLOW_UP_TASK = 'create_follow_up_task',

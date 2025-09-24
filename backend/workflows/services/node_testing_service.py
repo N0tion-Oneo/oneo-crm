@@ -25,6 +25,7 @@ class NodeTestingService:
         test_data_type = request.data.get('test_data_type')
 
         logger.info(f"test_node_standalone called with node_type={node_type}, test_data_id={test_data_id}, test_data_type={test_data_type}")
+        logger.info(f"node_config received: {node_config}")
 
         if not node_type:
             return Response({
@@ -76,11 +77,22 @@ class NodeTestingService:
             start_time = time.time()
 
             try:
+                import inspect
+
                 # Use execute() method if available (AsyncNodeProcessor), otherwise use process()
                 if hasattr(processor, 'execute'):
+                    # execute is always async
                     result = async_to_sync(processor.execute)(wrapped_node_config, context)
+                elif hasattr(processor, 'process'):
+                    # Check if process method is async or sync
+                    if inspect.iscoroutinefunction(processor.process):
+                        # Async process method
+                        result = async_to_sync(processor.process)(wrapped_node_config, context)
+                    else:
+                        # Synchronous process method - call directly
+                        result = processor.process(wrapped_node_config, context)
                 else:
-                    result = async_to_sync(processor.process)(wrapped_node_config, context)
+                    raise AttributeError(f"Processor {processor.__class__.__name__} has no execute or process method")
 
                 execution_time = (time.time() - start_time) * 1000
 
@@ -116,13 +128,30 @@ class NodeTestingService:
     @staticmethod
     def _build_base_context(request):
         """Build base execution context"""
-        return {
+        context = {
             'workflow_id': 'test_workflow',
             'execution_id': 'test_execution',
             'tenant_id': request.user.tenant_id if hasattr(request.user, 'tenant_id') else None,
             'user_id': request.user.id,
             'trigger_time': timezone.now().isoformat()
         }
+
+        # Include nodes context from request (outputs from previous nodes)
+        request_context = request.data.get('context', {})
+        if 'nodes' in request_context:
+            # Store nodes in two ways for compatibility
+            context['nodes'] = request_context['nodes']
+
+            # Also store as node_{id} for direct access by processors
+            # This matches how the workflow engine stores node outputs
+            for node_id, node_output in request_context['nodes'].items():
+                node_key = f"node_{node_id}" if not node_id.startswith('node_') else node_id
+                context[node_key] = node_output
+                logger.info(f"Stored node output as {node_key}")
+
+            logger.info(f"Including node outputs in context: {list(request_context['nodes'].keys())}")
+
+        return context
 
     @staticmethod
     def _build_trigger_data(node_type, node_config, test_data_id, test_data_type, request):
@@ -189,6 +218,28 @@ class NodeTestingService:
             try:
                 submission = FormSubmission.objects.get(id=test_data_id)
                 trigger_data['form_data'] = submission.submitted_data or {}
+
+                # Extract form metadata from the submission
+                trigger_data['form_id'] = submission.form_id
+                trigger_data['form_name'] = submission.form_name
+                trigger_data['form_mode'] = submission.form_mode
+
+                # Extract stage from form_config if available
+                if submission.form_config:
+                    trigger_data['stage'] = submission.form_config.get('stage')
+                    # Also pass along other useful metadata
+                    trigger_data['form_config'] = submission.form_config
+
+                # Add submission metadata
+                trigger_data['submission_id'] = str(submission.id)
+                trigger_data['record_id'] = str(submission.record_id) if submission.record_id else None
+
+                # Extract submission context if available (IP, user agent, etc.)
+                if hasattr(submission, 'ip_address'):
+                    trigger_data['ip_address'] = submission.ip_address
+                if hasattr(submission, 'user_agent'):
+                    trigger_data['user_agent'] = submission.user_agent
+
             except FormSubmission.DoesNotExist:
                 trigger_data['form_data'] = {}
         elif pipeline_id:

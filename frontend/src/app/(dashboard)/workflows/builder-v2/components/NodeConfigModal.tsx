@@ -1,3 +1,5 @@
+'use client';
+
 /**
  * NodeConfigModal Component
  * 3-panel modal for node configuration showing data flow
@@ -34,10 +36,15 @@ import {
   User,
   RefreshCw
 } from 'lucide-react';
+import { toast } from 'sonner';
 import { UnifiedConfigRenderer } from '../../components/node-configs/unified/UnifiedConfigRenderer';
 import { NodeOutputTabV2 } from '../../components/configuration/NodeOutputTabV2';
-import { useNodeSchemas } from '../hooks/useNodeSchemas';
+import { NodeInputStructure } from '../../components/configuration/NodeInputStructure';
+import { workflowSchemaService } from '@/services/workflowSchemaService';
 import { useWorkflowData } from '../../hooks/useWorkflowData';
+import { useWorkflowTestData } from '../../hooks/useWorkflowTestData';
+import { UnifiedNodeConfig } from '../../components/node-configs/unified/types';
+import { useNodeSchemas } from '../hooks/useNodeSchemas';
 import { WorkflowNode, WorkflowEdge, WorkflowDefinition } from '../types';
 import { WorkflowNodeType } from '../../types';
 import { TestDataProvider, useTestData } from '../../components/configuration/TestDataContext';
@@ -50,6 +57,8 @@ interface NodeConfigModalProps {
   onConfigChange: (config: any) => void;
   onSave: (config: any) => void;
   workflowDefinition: WorkflowDefinition;
+  nodeOutputs?: Record<string, any>;
+  onNodeTest?: (nodeId: string, output: any) => void;
 }
 
 // Helper function to get the best display name for a record
@@ -91,7 +100,9 @@ function NodeConfigModalInner({
   config,
   onConfigChange,
   onSave,
-  workflowDefinition
+  workflowDefinition,
+  nodeOutputs = {},
+  onNodeTest
 }: NodeConfigModalProps) {
   const { getNodeSchema, getNodeDefinition } = useNodeSchemas();
   const { loadPipelineRecords } = useTestData();
@@ -110,69 +121,79 @@ function NodeConfigModalInner({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
-  const [inputData, setInputData] = useState<any>({});
+  const [nodeSchema, setNodeSchema] = useState<UnifiedNodeConfig | null>(null);
+  const [schemaLoading, setSchemaLoading] = useState(false);
+  const [inputData, setInputData] = useState<any>({ sources: [], availableVariables: [] });
 
-  // Test data state for triggers
-  const [testRecords, setTestRecords] = useState<any[]>([]);
-  const [selectedTestRecord, setSelectedTestRecord] = useState<any>(null);
-  const [loadingTestRecords, setLoadingTestRecords] = useState(false);
+  // Test data state for triggers - using shared hook
   const [useRealData, setUseRealData] = useState(false);
 
   const isTriggerNode = node?.type.startsWith('TRIGGER_') || node?.type.toLowerCase().includes('trigger');
 
+  // Use the shared test data hook
+  const {
+    testData,
+    testDataType,
+    selectedTestData,
+    setSelectedTestData,
+    loading: loadingTestData,
+    error: testDataError,
+    refetch: refetchTestData
+  } = useWorkflowTestData({
+    nodeType: node?.type || '',
+    config: localConfig,
+    enabled: isTriggerNode
+  });
+
   // Load node schema when node changes
   useEffect(() => {
     if (node) {
-      loadNodeSchema(node.type);
-      setLocalConfig(config || {});
+      loadNodeSchema();
       loadInputData(node);
-
-      // Load test records for trigger nodes
-      if (isTriggerNode && (config?.pipeline_id || config?.pipeline_ids?.length)) {
-        loadTestRecordsForTrigger();
-      }
     }
-  }, [node?.id, node?.type, config?.pipeline_id, config?.pipeline_ids]);
+  }, [node?.id, node?.type]);
 
-  const loadNodeSchema = async (nodeType: WorkflowNodeType) => {
-    setLoading(true);
-    setError(null);
+  // Run validation when config changes
+  useEffect(() => {
+    if (nodeSchema?.validate) {
+      const errors = nodeSchema.validate(localConfig);
+      setValidationErrors(errors || {});
+    }
+  }, [localConfig, nodeSchema]);
 
+  const loadNodeSchema = async () => {
+    if (!node) return;
+
+    setSchemaLoading(true);
     try {
-      const schema = await getNodeSchema(nodeType);
-      setNodeConfig(schema);
+      const schema = await workflowSchemaService.getNodeConfig(node.type);
+      setNodeSchema(schema);
+
+      // Reset config to schema defaults when switching nodes
+      if (schema && schema.defaults) {
+        setLocalConfig(node.data?.config || schema.defaults || {});
+      }
 
       // Run initial validation if schema has validation
       if (schema?.validate) {
         const errors = schema.validate(localConfig || {});
         setValidationErrors(errors || {});
       }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load node configuration');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const loadTestRecordsForTrigger = async () => {
-    const pipelineId = localConfig?.pipeline_id || localConfig?.pipeline_ids?.[0];
-    if (!pipelineId) return;
-
-    setLoadingTestRecords(true);
-    try {
-      const records = await loadPipelineRecords(pipelineId);
-      setTestRecords(records);
-      if (records.length > 0 && !selectedTestRecord) {
-        setSelectedTestRecord(records[0]);
-        setUseRealData(true);
-      }
     } catch (error) {
-      console.error('Failed to load test records:', error);
-      setTestRecords([]);
+      console.error('Failed to load node schema:', error);
+      setNodeSchema(null);
+      setError('Failed to load node configuration');
     } finally {
-      setLoadingTestRecords(false);
+      setSchemaLoading(false);
     }
   };
+
+  // Auto-enable real data when test data is available
+  useEffect(() => {
+    if (testData.length > 0 && selectedTestData && !useRealData) {
+      setUseRealData(true);
+    }
+  }, [testData, selectedTestData]);
 
   const loadInputData = (currentNode: WorkflowNode) => {
     // Find incoming edges to this node
@@ -182,27 +203,28 @@ function NodeConfigModalInner({
     incomingEdges.forEach(edge => {
       const sourceNode = workflowDefinition.nodes.find(n => n.id === edge.source);
       if (sourceNode) {
+        // Get the node's actual configuration
+        const nodeConfig = sourceNode.data.config || {};
+
+        // First try to get actual output from nodeOutputs
+        // Then fallback to lastOutput stored in the node
+        // Finally fallback to default schema
+        const actualOutput = nodeOutputs[sourceNode.id] ||
+                           sourceNode.data.lastOutput ||
+                           getDefaultNodeOutputs(sourceNode.type);
+
         inputSources.push({
           nodeId: sourceNode.id,
           label: sourceNode.data.label,
           type: sourceNode.type,
-          outputs: getNodeOutputFields(sourceNode.type)
+          data: actualOutput,
+          config: nodeConfig
         });
       }
     });
 
-    // Add trigger data if this is not a trigger node
-    if (!currentNode.type.startsWith('trigger_')) {
-      const triggerNode = workflowDefinition.nodes.find(n => n.type.startsWith('trigger_'));
-      if (triggerNode) {
-        inputSources.unshift({
-          nodeId: 'trigger',
-          label: 'Trigger Data',
-          type: triggerNode.type,
-          outputs: getNodeOutputFields(triggerNode.type)
-        });
-      }
-    }
+    // Only include data from nodes that are actually connected via edges
+    // This ensures data flow follows the visual workflow connections
 
     setInputData({
       sources: inputSources,
@@ -210,22 +232,97 @@ function NodeConfigModalInner({
     });
   };
 
-  const getNodeOutputFields = (nodeType: WorkflowNodeType): string[] => {
-    // Return common output fields based on node type
-    switch (nodeType) {
-      case WorkflowNodeType.RECORD_FIND:
-      case WorkflowNodeType.RECORD_CREATE:
-      case WorkflowNodeType.RECORD_UPDATE:
-        return ['record', 'record.id', 'record.data', 'success'];
-      case WorkflowNodeType.UNIPILE_SEND_EMAIL:
-        return ['message_id', 'status', 'sent_at', 'success'];
-      case WorkflowNodeType.AI_PROMPT:
-        return ['result', 'model', 'tokens', 'success'];
-      case WorkflowNodeType.CONDITION:
-        return ['condition_met', 'branch', 'success'];
-      default:
-        return ['data', 'success', 'timestamp'];
+  const getDefaultNodeOutputs = (nodeType: WorkflowNodeType): any => {
+    // Return realistic output structure based on node type
+    // These match what the backend processors actually return
+
+    // Record operations
+    if (nodeType === WorkflowNodeType.TRIGGER_RECORD_UPDATED || nodeType === 'trigger_record_updated') {
+      return {
+        success: true,
+        record: { id: 123, pipeline_id: "pipe_123", data: {} },
+        previous_record: { id: 123, pipeline_id: "pipe_123", data: {} },
+        pipeline_id: "pipe_123",
+        updated_by: "user_123",
+        updated_at: new Date().toISOString(),
+        changed_fields: ["field1", "field2"],
+        trigger_type: 'record_updated'
+      };
     }
+
+    if (nodeType === WorkflowNodeType.TRIGGER_RECORD_CREATED || nodeType === 'trigger_record_created') {
+      return {
+        success: true,
+        record: { id: 123, pipeline_id: "pipe_123", data: {} },
+        pipeline_id: "pipe_123",
+        created_by: "user_123",
+        created_at: new Date().toISOString(),
+        trigger_type: 'record_created'
+      };
+    }
+
+    if (nodeType === WorkflowNodeType.RECORD_CREATE || nodeType === 'create_record') {
+      return {
+        success: true,
+        record: { id: 123, pipeline_id: "pipe_123", data: {} },
+        created_at: new Date().toISOString()
+      };
+    }
+
+    if (nodeType === WorkflowNodeType.RECORD_UPDATE || nodeType === 'update_record') {
+      return {
+        success: true,
+        record: { id: 123, pipeline_id: "pipe_123", data: {} },
+        updated_fields: [],
+        updated_at: new Date().toISOString()
+      };
+    }
+
+    if (nodeType === WorkflowNodeType.RECORD_FIND || nodeType === 'find_records') {
+      return {
+        success: true,
+        records: [{ id: 123, pipeline_id: "pipe_123", data: {} }],
+        count: 1
+      };
+    }
+
+    // AI operations
+    if (nodeType === WorkflowNodeType.AI_PROMPT || nodeType === 'ai_prompt') {
+      return {
+        success: true,
+        result: "AI generated response",
+        model: "gpt-4",
+        tokens_used: 150,
+        execution_time: 1.5
+      };
+    }
+
+    // Communication
+    if (nodeType === WorkflowNodeType.UNIPILE_SEND_EMAIL || nodeType === 'unipile_send_email') {
+      return {
+        success: true,
+        message_id: "msg_123",
+        thread_id: "thread_123",
+        sent_at: new Date().toISOString()
+      };
+    }
+
+    // Control flow
+    if (nodeType === WorkflowNodeType.CONDITION || nodeType === 'condition') {
+      return {
+        success: true,
+        condition_met: true,
+        branch_taken: "true_branch",
+        evaluation_details: {}
+      };
+    }
+
+    // Default output structure
+    return {
+      success: true,
+      data: {},
+      timestamp: new Date().toISOString()
+    };
   };
 
   // Handle config changes
@@ -233,22 +330,23 @@ function NodeConfigModalInner({
     setLocalConfig(newConfig);
     onConfigChange(newConfig);
 
-    // Run validation
-    if (nodeConfig?.validate) {
-      const errors = nodeConfig.validate(newConfig);
-      setValidationErrors(errors || {});
-    }
-
     // Auto-fetch pipeline fields when pipeline is selected
     if (newConfig.pipeline_id && newConfig.pipeline_id !== localConfig?.pipeline_id) {
       fetchPipelineFields(newConfig.pipeline_id);
     }
 
-    // Handle multiple pipeline selections
+    // Auto-fetch pipeline fields when pipelines are selected (multi)
     if (newConfig.pipeline_ids && Array.isArray(newConfig.pipeline_ids)) {
       const previousIds = localConfig?.pipeline_ids || [];
       const newIds = newConfig.pipeline_ids.filter((id: string) => !previousIds.includes(id));
+      // Fetch fields for newly selected pipelines
       newIds.forEach((id: string) => fetchPipelineFields(id));
+    }
+
+    // Run validation using the schema
+    if (nodeSchema?.validate) {
+      const errors = nodeSchema.validate(newConfig);
+      setValidationErrors(errors || {});
     }
   };
 
@@ -304,163 +402,31 @@ function NodeConfigModalInner({
               </div>
 
               <ScrollArea className="h-[calc(90vh-12rem)]">
-                <div className="space-y-3 pr-2">
-                  {/* Test Data Selector for Triggers */}
-                  {isTriggerNode && (localConfig?.pipeline_id || localConfig?.pipeline_ids?.length > 0) ? (
-                    <div className="space-y-3">
-                      <div className="text-xs text-muted-foreground">
-                        Select test data for this trigger:
-                      </div>
+                <div className="pr-2">
+                  {/* Input data structure display with 3 sections */}
+                  <NodeInputStructure
+                    sources={inputData.sources || []}
+                    testData={isTriggerNode && useRealData ? selectedTestData : null}
+                    isTriggerNode={isTriggerNode}
+                    testDataList={testData}
+                    testDataType={testDataType}
+                    selectedTestData={selectedTestData}
+                    onTestDataChange={setSelectedTestData}
+                    useRealData={useRealData}
+                    onUseRealDataChange={setUseRealData}
+                    loadingTestData={loadingTestData}
+                  />
 
-                      {/* Toggle between real and mock data */}
-                      <div className="flex items-center gap-2">
-                        <Button
-                          variant={useRealData ? "default" : "outline"}
-                          size="sm"
-                          onClick={() => setUseRealData(true)}
-                          disabled={testRecords.length === 0}
-                          className="flex-1"
-                        >
-                          <Database className="h-4 w-4 mr-2" />
-                          Real Records ({testRecords.length})
-                        </Button>
-                        <Button
-                          variant={!useRealData ? "default" : "outline"}
-                          size="sm"
-                          onClick={() => setUseRealData(false)}
-                          className="flex-1"
-                        >
-                          <Code2 className="h-4 w-4 mr-2" />
-                          Sample Data
-                        </Button>
-                      </div>
-
-                      {/* Record selector when using real data */}
-                      {useRealData && testRecords.length > 0 && (
-                        <Card className="p-3 space-y-2">
-                          <Label className="text-xs">Select a test record:</Label>
-                          <Select
-                            value={selectedTestRecord ? String(selectedTestRecord.id) : ''}
-                            onValueChange={(value) => {
-                              const record = testRecords.find(r => String(r.id) === value);
-                              setSelectedTestRecord(record);
-                            }}
-                          >
-                            <SelectTrigger className="w-full">
-                              <SelectValue placeholder="Select a test record" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {testRecords.map((record) => {
-                                const displayName = getRecordDisplayName(record);
-                                const email = record.data?.email || record.email;
-
-                                return (
-                                  <SelectItem key={record.id} value={String(record.id)}>
-                                    <div className="flex items-center gap-2">
-                                      <User className="h-3 w-3" />
-                                      <span className="font-medium">
-                                        {displayName}
-                                      </span>
-                                      {email && email !== displayName && (
-                                        <span className="text-xs text-muted-foreground">
-                                          ({email})
-                                        </span>
-                                      )}
-                                    </div>
-                                  </SelectItem>
-                                );
-                              })}
-                            </SelectContent>
-                          </Select>
-
-                          {/* Show selected record preview */}
-                          {selectedTestRecord && (
-                            <div className="bg-muted/30 rounded-lg p-2">
-                              <div className="flex items-center justify-between mb-2">
-                                <p className="text-xs font-medium">Test Data Preview:</p>
-                                <Badge variant="secondary" className="text-xs">
-                                  {getRecordDisplayName(selectedTestRecord)}
-                                </Badge>
-                              </div>
-                              <ScrollArea className="h-[300px] border rounded">
-                                <pre className="text-xs font-mono p-2">
-                                  {JSON.stringify(selectedTestRecord || {}, null, 2)}
-                                </pre>
-                              </ScrollArea>
-                            </div>
-                          )}
-                        </Card>
-                      )}
-
-                      {/* Loading indicator */}
-                      {loadingTestRecords && (
-                        <Card className="p-3">
-                          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                            <Loader2 className="h-3 w-3 animate-spin" />
-                            Loading test records...
-                          </div>
-                        </Card>
-                      )}
-
-                      {/* Sample data preview when not using real data */}
-                      {!useRealData && (
-                        <Card className="p-3">
-                          <p className="text-xs font-medium mb-1">Sample Trigger Data:</p>
-                          <div className="text-xs text-muted-foreground">
-                            A mock record will be generated based on the pipeline fields
-                          </div>
-                        </Card>
-                      )}
-                    </div>
-                  ) : inputData.sources?.length > 0 ? (
-                    <>
-                      <div className="text-xs text-muted-foreground mb-2">
-                        Available data from previous nodes:
-                      </div>
-                      {inputData.sources.map((source: any, index: number) => (
-                        <Card key={index} className="p-3">
-                          <div className="flex items-start justify-between mb-2">
-                            <div className="flex items-center gap-2">
-                              <Database className="h-4 w-4 text-muted-foreground" />
-                              <span className="font-medium text-sm">{source.label}</span>
-                            </div>
-                            <Badge variant="outline" className="text-xs">
-                              {source.nodeId}
-                            </Badge>
-                          </div>
-                          <div className="space-y-1 mt-2">
-                            {source.outputs?.map((field: string) => (
-                              <div key={field} className="flex items-center gap-2 text-xs">
-                                <Variable className="h-3 w-3 text-muted-foreground" />
-                                <code className="font-mono bg-muted px-1 rounded">
-                                  {`{{${source.nodeId}.${field}}}`}
-                                </code>
-                              </div>
-                            ))}
-                          </div>
-                        </Card>
-                      ))}
-
-                      <Alert className="mt-3">
-                        <AlertCircle className="h-4 w-4" />
-                        <AlertDescription className="text-xs">
-                          Use these variables in the configuration by typing
-                          <code className="mx-1 font-mono bg-muted px-1 rounded">{`{{nodeId.field}}`}</code>
-                          in text fields that support expressions.
-                        </AlertDescription>
-                      </Alert>
-                    </>
-                  ) : (
-                    <div className="text-center text-muted-foreground py-8">
-                      <Database className="h-12 w-12 mx-auto mb-3 opacity-50" />
-                      <p className="text-sm">No input data</p>
-                      <p className="text-xs mt-1">
-                        {node.type.startsWith('trigger_')
-                          ? 'This is a trigger node - it starts the workflow'
-                          : 'Connect nodes to provide input data'}
-                      </p>
-                    </div>
+                  {/* Show test data error if any */}
+                  {testDataError && (
+                    <Alert variant="destructive" className="mt-2">
+                      <AlertCircle className="h-4 w-4" />
+                      <AlertDescription className="text-xs">
+                        {testDataError}
+                      </AlertDescription>
+                    </Alert>
                   )}
+
                 </div>
               </ScrollArea>
             </div>
@@ -489,7 +455,7 @@ function NodeConfigModalInner({
                     <AlertCircle className="h-4 w-4" />
                     <AlertDescription>{error}</AlertDescription>
                   </Alert>
-                ) : nodeConfig ? (
+                ) : (nodeSchema || nodeConfig) ? (
                   <>
                     {/* Data loading indicators */}
                     {(dataLoading.pipelines || dataLoading.users || dataLoading.userTypes) && (
@@ -501,33 +467,56 @@ function NodeConfigModalInner({
                       </Alert>
                     )}
 
-                    {/* Configuration form */}
-                    <UnifiedConfigRenderer
-                      nodeConfig={nodeConfig}
-                      config={localConfig}
-                      onChange={handleConfigChange}
-                      availableVariables={inputData.sources || []}
-                      pipelines={pipelines}
-                      pipelineFields={(() => {
-                        // Aggregate pipeline fields based on selection
-                        if (localConfig?.pipeline_id) {
-                          return pipelineFields[localConfig.pipeline_id];
-                        }
-                        if (localConfig?.pipeline_ids && Array.isArray(localConfig.pipeline_ids)) {
-                          const allFields: any[] = [];
-                          localConfig.pipeline_ids.forEach((id: string) => {
-                            if (pipelineFields[id]) {
-                              allFields.push(...pipelineFields[id]);
-                            }
-                          });
-                          return allFields.length > 0 ? allFields : undefined;
-                        }
-                        return undefined;
-                      })()}
-                      users={users}
-                      userTypes={userTypes}
-                      errors={validationErrors}
-                    />
+                    {/* Configuration form - use schema-based renderer when available */}
+                    {nodeSchema ? (
+                      <UnifiedConfigRenderer
+                        nodeConfig={nodeSchema}
+                        config={localConfig}
+                        onChange={handleConfigChange}
+                        availableVariables={inputData.sources || []}
+                        pipelines={pipelines}
+                        workflows={[]}
+                        pipelineFields={(() => {
+                          // Aggregate pipeline fields based on selection
+                          if (localConfig?.pipeline_id) {
+                            return pipelineFields[localConfig.pipeline_id];
+                          }
+                          if (localConfig?.pipeline_ids && Array.isArray(localConfig.pipeline_ids)) {
+                            const allFields: any[] = [];
+                            localConfig.pipeline_ids.forEach((id: string) => {
+                              if (pipelineFields[id]) {
+                                allFields.push(...pipelineFields[id]);
+                              }
+                            });
+                            // Remove duplicates based on field name/slug
+                            const uniqueFields = allFields.filter((field, index, self) =>
+                              index === self.findIndex((f) =>
+                                (f.slug === field.slug && f.slug) ||
+                                (f.name === field.name)
+                              )
+                            );
+                            return uniqueFields.length > 0 ? uniqueFields : undefined;
+                          }
+                          return undefined;
+                        })()}
+                        users={users}
+                        userTypes={userTypes}
+                        errors={validationErrors}
+                      />
+                    ) : nodeConfig ? (
+                      // Fallback to old config renderer if no schema
+                      <UnifiedConfigRenderer
+                        nodeConfig={nodeConfig}
+                        config={localConfig}
+                        onChange={handleConfigChange}
+                        availableVariables={inputData.sources || []}
+                        pipelines={pipelines}
+                        pipelineFields={pipelineFields[localConfig?.pipeline_id]}
+                        users={users}
+                        userTypes={userTypes}
+                        errors={validationErrors}
+                      />
+                    ) : null}
                   </>
                 ) : (
                   <div className="text-center text-muted-foreground p-4">
@@ -550,15 +539,18 @@ function NodeConfigModalInner({
 
               <ScrollArea className="h-[calc(90vh-12rem)]">
                 <div className="pr-2">
-                {node && (
-                  <NodeOutputTabV2
-                    nodeId={node.id}
-                    nodeType={node.type}
-                    config={localConfig}
-                    inputData={inputData}
-                    testRecord={useRealData ? selectedTestRecord : null}
-                  />
-                )}
+                  {node && (
+                    <NodeOutputTabV2
+                      nodeId={node.id}
+                      nodeType={node.type}
+                      config={localConfig}
+                      inputData={inputData}
+                      testRecord={isTriggerNode && useRealData ? selectedTestData : null}
+                      testDataType={testDataType || 'record'}
+                      onNodeTest={onNodeTest}
+                      nodeOutputs={nodeOutputs}
+                    />
+                  )}
                 </div>
               </ScrollArea>
             </div>

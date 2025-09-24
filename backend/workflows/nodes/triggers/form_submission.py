@@ -187,12 +187,14 @@ class TriggerFormSubmittedProcessor(AsyncNodeProcessor):
         form_data = trigger_data.get('form_data', {})
         pipeline_id = config.get('pipeline_id') or trigger_data.get('pipeline_id')
 
-        # Use clean structured data from config (no parsing needed!)
+        # Use clean structured data from config, with fallback to trigger_data
         form_selection = config.get('form_selection', '')
-        # Check for both 'mode' and 'form_mode' for compatibility
-        form_mode = config.get('mode', config.get('form_mode', 'public_filtered'))
-        # Check for both 'stage' and 'form_stage' for compatibility
-        stage = config.get('stage', config.get('form_stage', None))
+
+        # Get form_mode from trigger_data first (if test data provided), then config
+        form_mode = trigger_data.get('form_mode') or config.get('mode', config.get('form_mode', 'public_filtered'))
+
+        # Get stage from trigger_data first (if test data provided), then config
+        stage = trigger_data.get('stage') or config.get('stage', config.get('form_stage', None))
 
         # Fallback to parsing only if structured data not available (backward compatibility)
         if not form_mode and form_selection:
@@ -264,13 +266,13 @@ class TriggerFormSubmittedProcessor(AsyncNodeProcessor):
         # Build comprehensive output matching test expectations
         output = {
             # Core identifiers
-            'submission_id': submission_info.get('submission_id', f'sub_{form_id}'),
-            'record_id': submission_info.get('record_id'),
+            'submission_id': trigger_data.get('submission_id') or submission_info.get('submission_id', f'sub_{form_id}'),
+            'record_id': trigger_data.get('record_id') or submission_info.get('record_id'),
             'pipeline_id': pipeline_id,
 
             # Form information
-            'form_id': form_id,
-            'form_name': submission_info.get('form_name', f'Pipeline {pipeline_id} Form'),
+            'form_id': trigger_data.get('form_id') or form_id,
+            'form_name': trigger_data.get('form_name') or submission_info.get('form_name', f'Pipeline {pipeline_id} Form'),
             'form_version': submission_info.get('form_version', '1.0'),
             'form_mode': form_mode,
             'stage': stage,
@@ -282,7 +284,7 @@ class TriggerFormSubmittedProcessor(AsyncNodeProcessor):
 
             # Form data
             'fields': form_data,  # All submitted field values
-            # 'form_data': form_data,  # Backward compatibility
+            'form_data': form_data,  # Backward compatibility
 
             # Submission metadata
             'submission_metadata': submission_metadata,

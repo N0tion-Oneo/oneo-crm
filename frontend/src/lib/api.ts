@@ -1125,7 +1125,8 @@ export const workflowsApi = {
   testNodeStandalone: (data: {
     node_type: string;
     node_config: any;
-    test_context?: any;
+    context?: any;
+    test_context?: any; // Deprecated - use context
     test_record_id?: string;
     test_data_id?: string;
     test_data_type?: string;

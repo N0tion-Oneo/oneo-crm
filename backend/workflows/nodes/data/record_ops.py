@@ -84,11 +84,19 @@ class RecordCreateProcessor(AsyncNodeProcessor):
                 created_by=user
             )
             
+            record_id = str(record.id)
             return {
                 'success': True,
-                'record_id': record.id,
+                'entity_type': 'record',
+                'entity_id': record_id,  # Primary identifier
+                'record_id': record_id,  # Explicit ID for easy access
+                'pipeline_id': pipeline_id,
                 'record_data': record.data,
-                'pipeline_id': pipeline_id
+                'created_at': record.created_at.isoformat(),
+                'related_ids': {
+                    'record_id': record_id,
+                    'pipeline_id': pipeline_id
+                }
             }
             
         except Exception as e:
@@ -215,11 +223,20 @@ class RecordUpdateProcessor(AsyncNodeProcessor):
             record.data.update(formatted_data)
             await sync_to_async(record.save)()
             
+            record_id = str(record.id)
             return {
                 'success': True,
-                'record_id': record.id,
+                'entity_type': 'record',
+                'entity_id': record_id,  # Primary identifier
+                'record_id': record_id,  # Explicit ID for easy access
+                'pipeline_id': str(record.pipeline_id),
                 'updated_fields': list(formatted_data.keys()),
-                'new_data': record.data
+                'new_data': record.data,
+                'updated_at': record.updated_at.isoformat(),
+                'related_ids': {
+                    'record_id': record_id,
+                    'pipeline_id': str(record.pipeline_id)
+                }
             }
             
         except Exception as e:
@@ -401,29 +418,47 @@ class RecordFindProcessor(AsyncNodeProcessor):
             records = await sync_to_async(list)(queryset)
             
             if return_first_only and records:
+                record_id = str(records[0].id)
                 return {
                     'success': True,
+                    'entity_type': 'record',
+                    'entity_id': record_id,  # Primary identifier
                     'found': True,
+                    'record_id': record_id,  # Explicit ID for easy access
+                    'pipeline_id': pipeline_id,
                     'record': {
-                        'id': records[0].id,
+                        'id': record_id,
                         'data': records[0].data,
                         'created_at': records[0].created_at.isoformat()
                     },
-                    'total_found': len(records)
+                    'total_found': len(records),
+                    'related_ids': {
+                        'record_id': record_id,
+                        'pipeline_id': pipeline_id
+                    }
                 }
             else:
+                record_ids = [str(record.id) for record in records]
                 return {
                     'success': True,
+                    'entity_type': 'record_list',
+                    'entity_ids': record_ids,  # Array of identifiers
                     'found': len(records) > 0,
+                    'record_ids': record_ids,  # Explicit IDs for easy access
+                    'pipeline_id': pipeline_id,
                     'records': [
                         {
-                            'id': record.id,
+                            'id': str(record.id),
                             'data': record.data,
                             'created_at': record.created_at.isoformat()
                         }
                         for record in records
                     ],
-                    'total_found': len(records)
+                    'total_found': len(records),
+                    'related_ids': {
+                        'record_ids': record_ids,
+                        'pipeline_id': pipeline_id
+                    }
                 }
                 
         except Exception as e:

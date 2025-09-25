@@ -27,6 +27,18 @@ import { cn } from '@/lib/utils';
 interface TestResult {
   status: 'success' | 'error' | 'warning';
   output?: any;
+  input_context?: {
+    node_type: string;
+    node_config: any;
+    test_context: any;
+    has_trigger_data: boolean;
+    has_record_data: boolean;
+  };
+  processing_metadata?: {
+    processor_class: string;
+    supports_replay: boolean;
+    supports_checkpoints: boolean;
+  };
   side_effects?: Array<{
     type: string;
     description: string;
@@ -65,7 +77,7 @@ export function NodeExecutionResults({
   const [loadingTestData, setLoadingTestData] = useState(false);
   const [executing, setExecuting] = useState(false);
   const [testResult, setTestResult] = useState<TestResult | null>(null);
-  const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set(['output', 'side_effects']));
+  const [lastExecutionInput, setLastExecutionInput] = useState<any>(null);
 
   // No longer loading pipelines - using config only
 
@@ -221,13 +233,21 @@ export function NodeExecutionResults({
       };
 
       // Add record data if selected
+      let selectedRecordData = null;
       if (selectedRecord && selectedRecord !== 'none') {
         const record = records.find((r: any) => String(r.id) === selectedRecord);
         if (record) {
           testContext.record = record;
           testContext.record_id = record.id;
           testContext.record_data = record.data || {};
+          selectedRecordData = record;
         }
+      }
+
+      // For triggers with test data, get the actual test data item
+      let selectedTestDataItem = null;
+      if (selectedTestData && selectedTestData !== 'none' && testData.length > 0) {
+        selectedTestDataItem = testData.find((item: any) => String(item.id) === selectedTestData);
       }
 
       // For triggers with test data, pass the test data ID and type
@@ -243,6 +263,17 @@ export function NodeExecutionResults({
         requestData.test_data_id = selectedTestData;
         requestData.test_data_type = testDataType;
       }
+
+      // Store input data for display
+      const inputData = {
+        node_type: selectedNode.type,
+        node_config: testConfig,
+        test_context: testContext,
+        test_data: selectedTestDataItem,
+        test_record: selectedRecordData,
+        test_data_type: testDataType
+      };
+      setLastExecutionInput(inputData);
 
       console.log('Executing node test with data:', requestData);
       const response = await workflowsApi.testNodeStandalone(requestData);
@@ -267,16 +298,6 @@ export function NodeExecutionResults({
     } finally {
       setExecuting(false);
     }
-  };
-
-  const toggleSection = (section: string) => {
-    const newExpanded = new Set(expandedSections);
-    if (newExpanded.has(section)) {
-      newExpanded.delete(section);
-    } else {
-      newExpanded.add(section);
-    }
-    setExpandedSections(newExpanded);
   };
 
   const getTriggerTestDataMessage = (nodeType: string): string => {
@@ -480,131 +501,352 @@ export function NodeExecutionResults({
 
       {/* Test Results */}
       {testResult && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-lg flex items-center justify-between">
-              Test Results
-              <Badge variant={
-                testResult.status === 'success' ? 'default' :
-                testResult.status === 'warning' ? 'secondary' :
-                'destructive'
-              }>
-                {testResult.status}
-              </Badge>
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {/* Execution Time */}
-            {testResult.execution_time && (
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <Clock className="h-4 w-4" />
-                Executed in {testResult.execution_time.toFixed(2)}ms
-              </div>
-            )}
-
+        <div className="space-y-4">
+          {/* Results Header Card */}
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-lg flex items-center justify-between">
+                Test Results
+                <div className="flex items-center gap-2">
+                  {testResult.execution_time && (
+                    <div className="flex items-center gap-1 text-sm text-muted-foreground">
+                      <Clock className="h-3 w-3" />
+                      <span>{testResult.execution_time.toFixed(2)}ms</span>
+                    </div>
+                  )}
+                  <Badge variant={
+                    testResult.status === 'success' ? 'default' :
+                    testResult.status === 'warning' ? 'secondary' :
+                    'destructive'
+                  }>
+                    {testResult.status}
+                  </Badge>
+                </div>
+              </CardTitle>
+            </CardHeader>
             {/* Error Display */}
             {testResult.error && (
-              <Alert variant="destructive">
-                <XCircle className="h-4 w-4" />
-                <AlertDescription>
-                  <div className="space-y-2">
-                    <div className="font-semibold">{testResult.error.type}</div>
-                    <div>{testResult.error.message}</div>
-                    {testResult.error.traceback && (
-                      <details className="mt-2">
-                        <summary className="cursor-pointer text-sm">Stack Trace</summary>
-                        <pre className="mt-2 text-xs overflow-x-auto whitespace-pre-wrap">
-                          {testResult.error.traceback}
+              <CardContent className="pt-0">
+                <Alert variant="destructive">
+                  <XCircle className="h-4 w-4" />
+                  <AlertDescription>
+                    <div className="space-y-2">
+                      <div className="font-semibold">{testResult.error.type}</div>
+                      <div>{testResult.error.message}</div>
+                      {testResult.error.traceback && (
+                        <details className="mt-2">
+                          <summary className="cursor-pointer text-sm">Stack Trace</summary>
+                          <pre className="mt-2 text-xs overflow-x-auto whitespace-pre-wrap">
+                            {testResult.error.traceback}
+                          </pre>
+                        </details>
+                      )}
+                    </div>
+                  </AlertDescription>
+                </Alert>
+              </CardContent>
+            )}
+
+          </Card>
+
+          {/* 3-Panel Grid Layout */}
+          {!testResult.error && (
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
+              {/* Input Panel */}
+              <Card>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-sm font-medium flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Database className="h-4 w-4" />
+                      Input
+                    </div>
+                    <Badge variant="outline" className="text-xs">
+                      {testResult?.input_context?.has_trigger_data ? 'Trigger' :
+                       testResult?.input_context?.has_record_data ? 'Record' :
+                       lastExecutionInput?.test_data ? 'Test Data' :
+                       lastExecutionInput?.test_record ? 'Record' :
+                       'Config'}
+                    </Badge>
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-3">
+                    {/* Node Configuration */}
+                    <div>
+                      <div className="text-xs font-semibold text-muted-foreground mb-1">Configuration</div>
+                      <pre className="text-xs overflow-x-auto whitespace-pre-wrap bg-muted p-2 rounded">
+                        {JSON.stringify(lastExecutionInput?.node_config || {}, null, 2)}
+                      </pre>
+                    </div>
+
+                    {/* Test Data */}
+                    {(lastExecutionInput?.test_data || lastExecutionInput?.test_record) && (
+                      <div>
+                        <div className="text-xs font-semibold text-muted-foreground mb-1">
+                          {lastExecutionInput.test_data ? `Test Data (${lastExecutionInput.test_data_type})` : 'Test Record'}
+                        </div>
+                        <pre className="text-xs overflow-x-auto whitespace-pre-wrap bg-muted p-2 rounded">
+                          {JSON.stringify(lastExecutionInput.test_data || lastExecutionInput.test_record, null, 2)}
                         </pre>
-                      </details>
+                      </div>
                     )}
-                  </div>
-                </AlertDescription>
-              </Alert>
-            )}
 
-            {/* Output Section */}
-            {testResult.output !== undefined && (
-              <div className="space-y-2">
-                <button
-                  onClick={() => toggleSection('output')}
-                  className="flex items-center gap-2 text-sm font-medium w-full"
-                >
-                  {expandedSections.has('output') ?
-                    <ChevronDown className="h-4 w-4" /> :
-                    <ChevronRight className="h-4 w-4" />
-                  }
-                  Output
-                </button>
-                {expandedSections.has('output') && (
-                  <div className="bg-muted p-3 rounded-lg">
-                    <pre className="text-xs overflow-x-auto whitespace-pre-wrap">
-                      {JSON.stringify(testResult.output, null, 2)}
-                    </pre>
+                    {/* Context */}
+                    <div>
+                      <div className="text-xs font-semibold text-muted-foreground mb-1">Context</div>
+                      <pre className="text-xs overflow-x-auto whitespace-pre-wrap bg-muted p-2 rounded">
+                        {JSON.stringify(
+                          testResult?.input_context?.test_context || lastExecutionInput?.test_context || {},
+                          null,
+                          2
+                        )}
+                      </pre>
+                    </div>
                   </div>
-                )}
-              </div>
-            )}
+                </CardContent>
+              </Card>
 
-            {/* Side Effects */}
-            {testResult.side_effects && testResult.side_effects.length > 0 && (
-              <div className="space-y-2">
-                <button
-                  onClick={() => toggleSection('side_effects')}
-                  className="flex items-center gap-2 text-sm font-medium w-full"
-                >
-                  {expandedSections.has('side_effects') ?
-                    <ChevronDown className="h-4 w-4" /> :
-                    <ChevronRight className="h-4 w-4" />
-                  }
-                  Side Effects ({testResult.side_effects.length})
-                </button>
-                {expandedSections.has('side_effects') && (
-                  <div className="space-y-2">
-                    {testResult.side_effects.map((effect, idx) => (
-                      <div key={idx} className="flex items-start gap-2 p-2 bg-muted rounded">
-                        {getSideEffectIcon(effect.type)}
-                        <div className="flex-1">
-                          <div className="text-xs font-medium">{effect.type}</div>
-                          <div className="text-xs text-muted-foreground">{effect.description}</div>
+              {/* Processing Panel */}
+              <Card>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-sm font-medium flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <RefreshCw className="h-4 w-4" />
+                      Processing
+                    </div>
+                    {testResult?.processing_metadata && (
+                      <Badge variant="outline" className="text-xs">
+                        {testResult.processing_metadata.processor_class}
+                      </Badge>
+                    )}
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-3 text-xs">
+                    {/* Node Info */}
+                    <div>
+                      <div className="font-semibold text-muted-foreground mb-2">Node Type</div>
+                      <div className="flex items-center gap-2">
+                        <Badge variant="secondary">{selectedNode.type}</Badge>
+                        {testResult?.processing_metadata && (
+                          <div className="flex gap-1">
+                            {testResult.processing_metadata.supports_replay && (
+                              <Badge variant="outline" className="text-xs">
+                                <RefreshCw className="h-3 w-3" />
+                              </Badge>
+                            )}
+                            {testResult.processing_metadata.supports_checkpoints && (
+                              <Badge variant="outline" className="text-xs">
+                                <CheckCircle className="h-3 w-3" />
+                              </Badge>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Processing Steps */}
+                    <div>
+                      <div className="font-semibold text-muted-foreground mb-2">Processing Steps</div>
+                      <ol className="space-y-1 list-decimal list-inside text-xs">
+                        {selectedNode.type.startsWith('trigger_') ? (
+                          <>
+                            <li>Event detected/simulated</li>
+                            <li>Data loaded & validated</li>
+                            <li>Conditions evaluated</li>
+                            <li>Output prepared</li>
+                          </>
+                        ) : selectedNode.type.includes('record_') ? (
+                          <>
+                            <li>Pipeline context loaded</li>
+                            <li>Config validated</li>
+                            <li>DB operation executed</li>
+                            <li>Result formatted</li>
+                          </>
+                        ) : selectedNode.type.includes('ai_') ? (
+                          <>
+                            <li>Prompt processed</li>
+                            <li>Variables substituted</li>
+                            <li>AI model invoked</li>
+                            <li>Response parsed</li>
+                          </>
+                        ) : selectedNode.type.includes('send_') || selectedNode.type.includes('email') ? (
+                          <>
+                            <li>Template loaded</li>
+                            <li>Variables replaced</li>
+                            <li>Channel formatting</li>
+                            <li>Message queued</li>
+                          </>
+                        ) : selectedNode.type.includes('condition') || selectedNode.type.includes('wait') ? (
+                          <>
+                            <li>Conditions evaluated</li>
+                            <li>Branch calculated</li>
+                            <li>Path determined</li>
+                            <li>State updated</li>
+                          </>
+                        ) : (
+                          <>
+                            <li>Config parsed</li>
+                            <li>Input validated</li>
+                            <li>Logic executed</li>
+                            <li>Output generated</li>
+                          </>
+                        )}
+                      </ol>
+                    </div>
+
+                    {/* Data Flow */}
+                    <div>
+                      <div className="font-semibold text-muted-foreground mb-2">Data Flow</div>
+                      <div className="flex items-center justify-center gap-2 text-xs bg-muted p-2 rounded">
+                        <span>Input</span>
+                        <ChevronRight className="h-3 w-3" />
+                        <Badge variant="default" className="text-xs">
+                          {selectedNode.label || selectedNode.type}
+                        </Badge>
+                        <ChevronRight className="h-3 w-3" />
+                        <span>Output</span>
+                      </div>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Output Panel */}
+              <Card>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-sm font-medium flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <FileText className="h-4 w-4" />
+                      Output
+                    </div>
+                    <Badge variant="outline" className="text-xs">
+                      {testResult.output ? 'Data' : 'Empty'}
+                    </Badge>
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-3">
+                    {/* Identifiers Section - Highlighted */}
+                    {testResult.output && (testResult.output.entity_id || testResult.output.entity_ids ||
+                      testResult.output.record_id || testResult.output.related_ids) && (
+                      <div>
+                        <div className="text-xs font-semibold text-muted-foreground mb-1 flex items-center gap-1">
+                          <Badge variant="default" className="text-xs">IDs</Badge>
+                          Identifiable Data
+                        </div>
+                        <div className="bg-blue-50 dark:bg-blue-950 border border-blue-200 dark:border-blue-800 p-2 rounded text-xs space-y-1">
+                          {testResult.output.entity_type && (
+                            <div className="flex items-center gap-2">
+                              <span className="font-semibold">Entity Type:</span>
+                              <Badge variant="secondary" className="text-xs">{testResult.output.entity_type}</Badge>
+                            </div>
+                          )}
+                          {testResult.output.entity_id && (
+                            <div className="flex items-center gap-2">
+                              <span className="font-semibold">Primary ID:</span>
+                              <code className="bg-white dark:bg-gray-900 px-1 py-0.5 rounded">{testResult.output.entity_id}</code>
+                            </div>
+                          )}
+                          {testResult.output.entity_ids && (
+                            <div className="flex items-start gap-2">
+                              <span className="font-semibold">IDs:</span>
+                              <div className="flex flex-wrap gap-1">
+                                {testResult.output.entity_ids.map((id: string, idx: number) => (
+                                  <code key={idx} className="bg-white dark:bg-gray-900 px-1 py-0.5 rounded">{id}</code>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          {testResult.output.record_id && (
+                            <div className="flex items-center gap-2">
+                              <span className="font-semibold">Record ID:</span>
+                              <code className="bg-white dark:bg-gray-900 px-1 py-0.5 rounded">{testResult.output.record_id}</code>
+                            </div>
+                          )}
+                          {testResult.output.pipeline_id && (
+                            <div className="flex items-center gap-2">
+                              <span className="font-semibold">Pipeline ID:</span>
+                              <code className="bg-white dark:bg-gray-900 px-1 py-0.5 rounded">{testResult.output.pipeline_id}</code>
+                            </div>
+                          )}
+                          {testResult.output.related_ids && Object.keys(testResult.output.related_ids).length > 0 && (
+                            <div className="mt-2 pt-2 border-t border-blue-200 dark:border-blue-800">
+                              <div className="font-semibold mb-1">Related IDs:</div>
+                              {Object.entries(testResult.output.related_ids).map(([key, value]) => value && (
+                                <div key={key} className="flex items-center gap-2 ml-2">
+                                  <span className="text-muted-foreground">{key}:</span>
+                                  {Array.isArray(value) ? (
+                                    <div className="flex flex-wrap gap-1">
+                                      {value.map((v: string, idx: number) => (
+                                        <code key={idx} className="bg-white dark:bg-gray-900 px-1 py-0.5 rounded text-xs">{v}</code>
+                                      ))}
+                                    </div>
+                                  ) : (
+                                    <code className="bg-white dark:bg-gray-900 px-1 py-0.5 rounded text-xs">{String(value)}</code>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
+                    )}
 
-            {/* Logs */}
-            {testResult.logs && testResult.logs.length > 0 && (
-              <div className="space-y-2">
-                <button
-                  onClick={() => toggleSection('logs')}
-                  className="flex items-center gap-2 text-sm font-medium w-full"
-                >
-                  {expandedSections.has('logs') ?
-                    <ChevronDown className="h-4 w-4" /> :
-                    <ChevronRight className="h-4 w-4" />
-                  }
-                  Logs ({testResult.logs.length})
-                </button>
-                {expandedSections.has('logs') && (
-                  <div className="space-y-1 max-h-64 overflow-y-auto">
-                    {testResult.logs.map((log, idx) => (
-                      <div key={idx} className="flex items-start gap-2 text-xs font-mono">
-                        <span className={cn('font-semibold', getLogLevelColor(log.level))}>
-                          [{log.level}]
-                        </span>
-                        <span className="text-muted-foreground">{log.timestamp}</span>
-                        <span className="flex-1">{log.message}</span>
+                    {/* Main Output */}
+                    {testResult.output !== undefined && (
+                      <div>
+                        <div className="text-xs font-semibold text-muted-foreground mb-1">Full Output Data</div>
+                        <pre className="text-xs overflow-x-auto whitespace-pre-wrap bg-muted p-2 rounded">
+                          {JSON.stringify(testResult.output, null, 2)}
+                        </pre>
                       </div>
-                    ))}
+                    )}
+
+                    {/* Side Effects */}
+                    {testResult.side_effects && testResult.side_effects.length > 0 && (
+                      <div>
+                        <div className="text-xs font-semibold text-muted-foreground mb-1">
+                          Side Effects ({testResult.side_effects.length})
+                        </div>
+                        <div className="space-y-1">
+                          {testResult.side_effects.map((effect, idx) => (
+                            <div key={idx} className="flex items-start gap-2 p-2 bg-muted rounded text-xs">
+                              {getSideEffectIcon(effect.type)}
+                              <div className="flex-1">
+                                <div className="font-medium">{effect.type}</div>
+                                <div className="text-muted-foreground">{effect.description}</div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Logs */}
+                    {testResult.logs && testResult.logs.length > 0 && (
+                      <div>
+                        <div className="text-xs font-semibold text-muted-foreground mb-1">
+                          Execution Logs ({testResult.logs.length})
+                        </div>
+                        <div className="space-y-1 bg-muted p-2 rounded">
+                          {testResult.logs.map((log, idx) => (
+                            <div key={idx} className="flex items-start gap-2 text-xs font-mono">
+                              <span className={cn('font-semibold', getLogLevelColor(log.level))}>
+                                [{log.level}]
+                              </span>
+                              <span className="flex-1">{log.message}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
-                )}
-              </div>
-            )}
-          </CardContent>
-        </Card>
+                </CardContent>
+              </Card>
+            </div>
+          )}
+        </div>
       )}
     </div>
   );

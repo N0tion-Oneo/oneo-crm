@@ -262,6 +262,54 @@ class WorkflowLoopController(AsyncNodeProcessor):
 class WorkflowLoopBreaker(AsyncNodeProcessor):
     """Break out of a workflow loop early"""
 
+    CONFIG_SCHEMA = {
+        "type": "object",
+        "properties": {
+            "loop_key": {
+                "type": "string",
+                "default": "default_loop",
+                "description": "Identifier for the loop to break",
+                "ui_hints": {
+                    "widget": "text",
+                    "placeholder": "Enter loop key"
+                }
+            },
+            "break_reason": {
+                "type": "string",
+                "default": "manual_break",
+                "description": "Reason for breaking the loop",
+                "ui_hints": {
+                    "widget": "text",
+                    "placeholder": "Enter break reason"
+                }
+            },
+            "break_all_loops": {
+                "type": "boolean",
+                "default": False,
+                "description": "Break all nested loops",
+                "ui_hints": {
+                    "widget": "checkbox"
+                }
+            },
+            "set_exit_flag": {
+                "type": "boolean",
+                "default": True,
+                "description": "Set the loop exit flag in context",
+                "ui_hints": {
+                    "widget": "checkbox"
+                }
+            },
+            "exit_data": {
+                "type": "object",
+                "description": "Additional data to pass when exiting the loop",
+                "ui_hints": {
+                    "widget": "json",
+                    "collapsible": True
+                }
+            }
+        }
+    }
+
     def __init__(self):
         super().__init__()
         self.node_type = "workflow_loop_breaker"

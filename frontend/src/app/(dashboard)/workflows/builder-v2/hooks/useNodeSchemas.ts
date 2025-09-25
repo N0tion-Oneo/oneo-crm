@@ -70,6 +70,10 @@ const NODE_DEFINITIONS: NodeDefinition[] = [
   { type: WorkflowNodeType.WEBHOOK_OUT, label: 'Webhook Out', category: 'External', icon: '📤' },
   { type: WorkflowNodeType.TASK_NOTIFY, label: 'Send Notification', category: 'External', icon: '🔔' },
   { type: WorkflowNodeType.SUB_WORKFLOW, label: 'Run Sub-Workflow', category: 'External', icon: '🔄' },
+
+  // Workflow Control
+  { type: WorkflowNodeType.APPROVAL, label: 'Approval', category: 'Control', icon: '✋' },
+  { type: WorkflowNodeType.GENERATE_FORM_LINK, label: 'Generate Form Link', category: 'Data', icon: '🔗' },
 ];
 
 export function useNodeSchemas() {

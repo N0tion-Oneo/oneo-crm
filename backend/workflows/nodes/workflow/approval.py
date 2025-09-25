@@ -14,7 +14,73 @@ User = get_user_model()
 
 class ApprovalProcessor(AsyncNodeProcessor):
     """Process human approval nodes that pause workflow execution"""
-    
+
+    CONFIG_SCHEMA = {
+        "type": "object",
+        "properties": {
+            "title": {
+                "type": "string",
+                "default": "Approval Required",
+                "description": "Title of the approval request",
+                "ui_hints": {
+                    "widget": "text",
+                    "placeholder": "Enter approval title"
+                }
+            },
+            "description": {
+                "type": "string",
+                "description": "Detailed description of what needs approval",
+                "ui_hints": {
+                    "widget": "textarea",
+                    "rows": 4,
+                    "placeholder": "Describe what needs to be approved"
+                }
+            },
+            "assigned_to_id": {
+                "type": "string",
+                "required": True,
+                "description": "User who should approve this request",
+                "ui_hints": {
+                    "widget": "user_select",
+                    "placeholder": "Select approver"
+                }
+            },
+            "timeout_hours": {
+                "type": "number",
+                "default": 24,
+                "description": "Hours before the approval times out",
+                "ui_hints": {
+                    "widget": "number",
+                    "min": 1,
+                    "max": 168,
+                    "step": 1
+                }
+            },
+            "escalation_rules": {
+                "type": "array",
+                "description": "Rules for escalating unactioned approvals",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "after_hours": {
+                            "type": "number",
+                            "description": "Hours after which to escalate"
+                        },
+                        "escalate_to_id": {
+                            "type": "string",
+                            "description": "User to escalate to"
+                        }
+                    }
+                },
+                "ui_hints": {
+                    "widget": "array",
+                    "collapsible": True
+                }
+            }
+        },
+        "required": ["assigned_to_id"]
+    }
+
     def __init__(self):
         super().__init__()
         self.node_type = "approval"

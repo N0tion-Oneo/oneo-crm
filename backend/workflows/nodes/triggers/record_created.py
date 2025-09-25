@@ -146,14 +146,23 @@ class TriggerRecordCreatedProcessor(AsyncNodeProcessor):
                     'evaluation_details': details
                 }
 
-        # Pass record data forward
+        # Pass record data forward with identifiable data
+        record_id = trigger_data.get('record_id')
         return {
             'success': True,
-            'record': record,
+            'entity_type': 'record',
+            'entity_id': record_id,  # Primary identifier
+            'record_id': record_id,  # Explicit record ID for easy access
             'pipeline_id': pipeline_id,
+            'record': record,  # Full record data
             'created_by': created_by,
             'created_at': trigger_data.get('created_at'),
-            'trigger_type': 'record_created'
+            'trigger_type': 'record_created',
+            'related_ids': {
+                'record_id': record_id,
+                'pipeline_id': pipeline_id,
+                'user_id': created_by
+            }
         }
 
     def get_display_name(self) -> str:

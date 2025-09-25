@@ -108,6 +108,22 @@ class NodeTestingService:
                 else:
                     response_data['output'] = {'result': result}
 
+                # Include input context for debugging and visibility
+                response_data['input_context'] = {
+                    'node_type': node_type,
+                    'node_config': node_config,
+                    'test_context': context,
+                    'has_trigger_data': 'trigger_data' in context,
+                    'has_record_data': 'record' in context,
+                }
+
+                # Add processing metadata
+                response_data['processing_metadata'] = {
+                    'processor_class': processor.__class__.__name__,
+                    'supports_replay': getattr(processor, 'supports_replay', False),
+                    'supports_checkpoints': getattr(processor, 'supports_checkpoints', False),
+                }
+
                 return Response(response_data)
 
             except asyncio.TimeoutError:

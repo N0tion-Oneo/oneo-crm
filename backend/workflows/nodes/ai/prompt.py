@@ -161,14 +161,32 @@ class AIPromptProcessor(AsyncNodeProcessor):
                 user=execution.triggered_by if execution else None
             )
             
+            # Get source record ID if processing record data
+            source_record_id = None
+            if 'record' in context or 'record_id' in context:
+                source_record_id = context.get('record_id') or (context.get('record', {}).get('id'))
+            elif 'trigger_data' in context:
+                source_record_id = context.get('trigger_data', {}).get('record_id')
+
+            prompt_id = f"prompt_{context.get('execution_id', 'test')}_{context.get('node_id', 'unknown')}"
+
             return {
-                'output': result.get('content', ''),
                 'success': True,
+                'entity_type': 'ai_response',
+                'entity_id': prompt_id,  # Primary identifier
+                'output': result.get('content', ''),
+                'prompt_id': prompt_id,  # For tracking
+                'source_record_id': source_record_id,  # Reference to source data
                 'ai_metadata': {
                     'tokens_used': result.get('tokens_used', 0),
                     'model': result.get('model', ''),
                     'processing_time_ms': result.get('processing_time_ms', 0),
                     'cost_cents': result.get('cost_cents', 0)
+                },
+                'related_ids': {
+                    'prompt_id': prompt_id,
+                    'source_record_id': source_record_id,
+                    'execution_id': context.get('execution_id')
                 }
             }
             

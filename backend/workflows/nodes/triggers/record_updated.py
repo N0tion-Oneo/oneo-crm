@@ -304,16 +304,25 @@ class TriggerRecordUpdatedProcessor(AsyncNodeProcessor):
                     'evaluation_details': details
                 }
 
-        # Pass record data forward
+        # Pass record data forward with identifiable data
+        record_id = trigger_data.get('record_id')
         result = {
             'success': True,
-            'record': record,
-            'previous_record': previous_record,
+            'entity_type': 'record',
+            'entity_id': record_id,  # Primary identifier
+            'record_id': record_id,  # Explicit record ID for easy access
             'pipeline_id': pipeline_id,
+            'record': record,  # Current record data
+            'previous_record': previous_record,  # Previous state
             'updated_by': updated_by,
             'updated_at': trigger_data.get('updated_at'),
             'changed_fields': changed_fields,
-            'trigger_type': 'record_updated'
+            'trigger_type': 'record_updated',
+            'related_ids': {
+                'record_id': record_id,
+                'pipeline_id': pipeline_id,
+                'user_id': updated_by
+            }
         }
 
         # Add stage transition info if tracking

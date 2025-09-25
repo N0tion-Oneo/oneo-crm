@@ -264,10 +264,18 @@ class TriggerFormSubmittedProcessor(AsyncNodeProcessor):
             }
 
         # Build comprehensive output matching test expectations
+        submission_id = trigger_data.get('submission_id') or submission_info.get('submission_id', f'sub_{form_id}')
+        record_id = trigger_data.get('record_id') or submission_info.get('record_id')
+
         output = {
+            # Primary identifiers
+            'success': True,
+            'entity_type': 'form_submission',
+            'entity_id': submission_id,  # Primary identifier
+
             # Core identifiers
-            'submission_id': trigger_data.get('submission_id') or submission_info.get('submission_id', f'sub_{form_id}'),
-            'record_id': trigger_data.get('record_id') or submission_info.get('record_id'),
+            'submission_id': submission_id,
+            'record_id': record_id,
             'pipeline_id': pipeline_id,
 
             # Form information
@@ -310,10 +318,17 @@ class TriggerFormSubmittedProcessor(AsyncNodeProcessor):
                 'webhook_url': submission_info.get('webhook_url'),
             },
 
+            # Related IDs for easy reference
+            'related_ids': {
+                'submission_id': submission_id,
+                'record_id': record_id,
+                'pipeline_id': pipeline_id,
+                'form_id': trigger_data.get('form_id') or form_id
+            },
+
             # Legacy fields for compatibility
             'submission_info': submission_info,
-            'trigger_type': 'form_submitted',
-            'success': True
+            'trigger_type': 'form_submitted'
         }
 
         return output

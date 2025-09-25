@@ -38,8 +38,8 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { UnifiedConfigRenderer } from '../../components/node-configs/unified/UnifiedConfigRenderer';
-import { NodeOutputTabV2 } from '../../components/configuration/NodeOutputTabV2';
-import { NodeInputStructure } from '../../components/configuration/NodeInputStructure';
+import { NodeOutputTabV3 } from '../../components/configuration/NodeOutputTabV3';
+import { NodeInputStructureV2 } from '../../components/configuration/NodeInputStructureV2';
 import { workflowSchemaService } from '@/services/workflowSchemaService';
 import { useWorkflowData } from '../../hooks/useWorkflowData';
 import { useWorkflowTestData } from '../../hooks/useWorkflowTestData';
@@ -196,35 +196,57 @@ function NodeConfigModalInner({
   }, [testData, selectedTestData]);
 
   const loadInputData = (currentNode: WorkflowNode) => {
-    // Find incoming edges to this node
-    const incomingEdges = workflowDefinition.edges.filter(edge => edge.target === currentNode.id);
+    // Find ALL upstream nodes (parents, grandparents, etc.) that have a path to this node
+    const visitedNodes = new Set<string>();
     const inputSources: any[] = [];
 
-    incomingEdges.forEach(edge => {
-      const sourceNode = workflowDefinition.nodes.find(n => n.id === edge.source);
-      if (sourceNode) {
-        // Get the node's actual configuration
-        const nodeConfig = sourceNode.data.config || {};
+    // Recursive function to find all upstream nodes
+    const findUpstreamNodes = (nodeId: string, depth: number = 0) => {
+      // Find all edges that lead TO this node
+      const incomingEdges = workflowDefinition.edges.filter(edge => edge.target === nodeId);
 
-        // First try to get actual output from nodeOutputs
-        // Then fallback to lastOutput stored in the node
-        // Finally fallback to default schema
-        const actualOutput = nodeOutputs[sourceNode.id] ||
-                           sourceNode.data.lastOutput ||
-                           getDefaultNodeOutputs(sourceNode.type);
+      incomingEdges.forEach(edge => {
+        const sourceNode = workflowDefinition.nodes.find(n => n.id === edge.source);
 
-        inputSources.push({
-          nodeId: sourceNode.id,
-          label: sourceNode.data.label,
-          type: sourceNode.type,
-          data: actualOutput,
-          config: nodeConfig
-        });
-      }
+        if (sourceNode && !visitedNodes.has(sourceNode.id)) {
+          visitedNodes.add(sourceNode.id);
+
+          // Get the node's actual configuration
+          const nodeConfig = sourceNode.data.config || {};
+
+          // First try to get actual output from nodeOutputs
+          // Then fallback to lastOutput stored in the node
+          // Finally fallback to default schema
+          const actualOutput = nodeOutputs[sourceNode.id] ||
+                             sourceNode.data.lastOutput ||
+                             getDefaultNodeOutputs(sourceNode.type);
+
+          // Add this node as an available source
+          inputSources.push({
+            nodeId: sourceNode.id,
+            label: sourceNode.data.label,
+            type: sourceNode.type,
+            data: actualOutput,
+            config: nodeConfig,
+            depth: depth, // Track how many levels upstream this node is
+            isDirectConnection: depth === 0 // Mark if directly connected
+          });
+
+          // Recursively find this node's upstream nodes
+          findUpstreamNodes(sourceNode.id, depth + 1);
+        }
+      });
+    };
+
+    // Start the recursive search from the current node
+    findUpstreamNodes(currentNode.id, 0);
+
+    // Sort sources: direct connections first, then by depth
+    inputSources.sort((a, b) => {
+      if (a.isDirectConnection && !b.isDirectConnection) return -1;
+      if (!a.isDirectConnection && b.isDirectConnection) return 1;
+      return a.depth - b.depth;
     });
-
-    // Only include data from nodes that are actually connected via edges
-    // This ensures data flow follows the visual workflow connections
 
     setInputData({
       sources: inputSources,
@@ -392,7 +414,7 @@ function NodeConfigModalInner({
 
           <div className="flex flex-1 overflow-hidden">
             {/* Left Panel - Input Data */}
-            <div className="flex-1 border-r p-4 overflow-hidden">
+            <div className="w-[30%] min-w-[300px] border-r p-2 overflow-hidden">
               <div className="flex items-center gap-2 mb-4">
                 <ArrowRight className="h-4 w-4 text-muted-foreground" />
                 <h3 className="font-semibold text-sm">Input Data</h3>
@@ -403,10 +425,10 @@ function NodeConfigModalInner({
 
               <ScrollArea className="h-[calc(90vh-12rem)]">
                 <div className="pr-2">
-                  {/* Input data structure display with 3 sections */}
-                  <NodeInputStructure
+                  {/* Input data structure display with enhanced table view */}
+                  <NodeInputStructureV2
                     sources={inputData.sources || []}
-                    testData={isTriggerNode && useRealData ? selectedTestData : null}
+                    testData={isTriggerNode ? getDefaultNodeOutputs(node.type) : null}
                     isTriggerNode={isTriggerNode}
                     testDataList={testData}
                     testDataType={testDataType}
@@ -415,6 +437,7 @@ function NodeConfigModalInner({
                     useRealData={useRealData}
                     onUseRealDataChange={setUseRealData}
                     loadingTestData={loadingTestData}
+                    nodeType={node.type}
                   />
 
                   {/* Show test data error if any */}
@@ -432,7 +455,7 @@ function NodeConfigModalInner({
             </div>
 
             {/* Center Panel - Configuration */}
-            <div className="flex-[1.5] border-r p-4 overflow-hidden">
+            <div className="flex-1 min-w-[400px] border-r p-4 overflow-hidden">
               <div className="flex items-center gap-2 mb-4">
                 <Settings className="h-4 w-4 text-muted-foreground" />
                 <h3 className="font-semibold text-sm">Configuration</h3>
@@ -528,7 +551,7 @@ function NodeConfigModalInner({
             </div>
 
             {/* Right Panel - Output Data */}
-            <div className="flex-1 p-4 overflow-hidden">
+            <div className="w-[30%] min-w-[300px] p-2 overflow-hidden">
               <div className="flex items-center gap-2 mb-4">
                 <ArrowLeft className="h-4 w-4 text-muted-foreground" />
                 <h3 className="font-semibold text-sm">Output Data</h3>
@@ -540,11 +563,32 @@ function NodeConfigModalInner({
               <ScrollArea className="h-[calc(90vh-12rem)]">
                 <div className="pr-2">
                   {node && (
-                    <NodeOutputTabV2
+                    <NodeOutputTabV3
                       nodeId={node.id}
                       nodeType={node.type}
                       config={localConfig}
-                      inputData={inputData}
+                      inputData={(() => {
+                        // Prepare the actual input context data
+                        if (isTriggerNode) {
+                          // For triggers, use the test data as context
+                          return useRealData ? selectedTestData : getDefaultNodeOutputs(node.type);
+                        } else if (inputData.sources && inputData.sources.length > 0) {
+                          // For other nodes, combine data from sources
+                          if (inputData.sources.length === 1) {
+                            return inputData.sources[0].data || {};
+                          } else {
+                            // Multiple sources - group by node
+                            const grouped: any = {};
+                            inputData.sources.forEach((source: any) => {
+                              if (source.data) {
+                                grouped[source.label || source.nodeId] = source.data;
+                              }
+                            });
+                            return grouped;
+                          }
+                        }
+                        return {};
+                      })()}
                       testRecord={isTriggerNode && useRealData ? selectedTestData : null}
                       testDataType={testDataType || 'record'}
                       onNodeTest={onNodeTest}

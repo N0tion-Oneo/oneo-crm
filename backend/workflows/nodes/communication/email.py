@@ -152,15 +152,15 @@ class EmailProcessor(AsyncNodeProcessor):
         from_user = config.get('from_user', {})
         if isinstance(from_user, str):
             # Handle legacy format or variable reference
-            user_id = self._format_template(from_user, context)
+            user_id = self.format_template(from_user, context)
             account_id = None
         else:
-            user_id = self._format_template(from_user.get('user_id', ''), context)
+            user_id = self.format_template(from_user.get('user_id', ''), context)
             account_id = from_user.get('account_id')
 
-        recipient_email = self._format_template(config.get('recipient_email', ''), context)
-        subject = self._format_template(config.get('subject', ''), context)
-        content = self._format_template(config.get('content', ''), context)
+        recipient_email = self.format_template(config.get('recipient_email', ''), context)
+        subject = self.format_template(config.get('subject', ''), context)
+        content = self.format_template(config.get('content', ''), context)
         cc_recipients = config.get('cc_recipients', [])
         bcc_recipients = config.get('bcc_recipients', [])
 
@@ -430,7 +430,7 @@ class EmailProcessor(AsyncNodeProcessor):
                 return False
         
         # Validate email format (basic check)
-        recipient_email = self._format_template(node_data.get('recipient_email', ''), context)
+        recipient_email = self.format_template(node_data.get('recipient_email', ''), context)
         if '@' not in recipient_email:
             return False
         
@@ -443,9 +443,9 @@ class EmailProcessor(AsyncNodeProcessor):
         node_data = node_config.get('data', {})
         checkpoint.update({
             'email_config': {
-                'recipient': self._format_template(node_data.get('recipient_email', ''), context),
-                'subject': self._format_template(node_data.get('subject', ''), context),
-                'user_id': self._format_template(node_data.get('user_id', ''), context)
+                'recipient': self.format_template(node_data.get('recipient_email', ''), context),
+                'subject': self.format_template(node_data.get('subject', ''), context),
+                'user_id': self.format_template(node_data.get('user_id', ''), context)
             },
             'tracking_enabled': node_data.get('tracking_enabled', True)
         })

@@ -52,8 +52,9 @@ export function NodeOutputTabV3({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Track previous config to detect actual changes
+  // Track previous config and input data to detect actual changes
   const [prevConfig, setPrevConfig] = useState<string>('');
+  const [prevInputData, setPrevInputData] = useState<string>('');
 
   // Check if this is a trigger node
   const isTriggerNode = useMemo(() => {
@@ -69,10 +70,19 @@ export function NodeOutputTabV3({
     }
   }, [config]);
 
-  // Fetch real output from backend only when config actually changes
+  // Serialize input data for comparison
+  const inputDataString = useMemo(() => {
+    try {
+      return JSON.stringify(inputData || {});
+    } catch {
+      return '';
+    }
+  }, [inputData]);
+
+  // Fetch real output from backend when config or input data changes
   useEffect(() => {
-    // Skip if config hasn't actually changed
-    if (configString === prevConfig && sampleOutput !== null) {
+    // Skip if neither config nor input data has changed
+    if (configString === prevConfig && inputDataString === prevInputData && sampleOutput !== null) {
       return;
     }
 
@@ -123,8 +133,9 @@ export function NodeOutputTabV3({
             onNodeTest(nodeId, output);
           }
 
-          // Mark this config as tested
+          // Mark this config and input data as tested
           setPrevConfig(configString);
+          setPrevInputData(inputDataString);
         } else {
           throw new Error('No output received from backend');
         }
@@ -140,7 +151,7 @@ export function NodeOutputTabV3({
     };
 
     fetchRealOutput();
-  }, [nodeType, configString, prevConfig, inputData, nodeId, testRecord, setNodeTestData, onNodeTest]);
+  }, [nodeType, configString, prevConfig, inputDataString, prevInputData, nodeId, testRecord, setNodeTestData, onNodeTest]);
 
   const regenerateOutput = async () => {
     // Skip during server-side rendering
@@ -185,8 +196,9 @@ export function NodeOutputTabV3({
           onNodeTest(nodeId, output);
         }
 
-        // Update prevConfig to mark this config as tested
+        // Update prevConfig and prevInputData to mark this state as tested
         setPrevConfig(configString);
+        setPrevInputData(inputDataString);
 
         toast.success('Output regenerated from backend');
       } else {
@@ -232,18 +244,12 @@ export function NodeOutputTabV3({
 
       {/* Output Structure - Now using DataTableView */}
       <div>
-        <div className="flex items-center gap-2 mb-3">
-          <ArrowLeft className="h-4 w-4 text-muted-foreground" />
-          <h3 className="font-semibold text-sm">Output Data</h3>
-          {displayData && (
-            <Badge variant="secondary" className="text-xs">
-              Expected
-            </Badge>
-          )}
-          {loading && (
-            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground ml-auto" />
-          )}
-        </div>
+        {loading && (
+          <div className="flex items-center gap-2 mb-3">
+            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+            <span className="text-sm text-muted-foreground">Loading output...</span>
+          </div>
+        )}
 
         {loading && !displayData ? (
           <Card className="p-4">
@@ -265,7 +271,7 @@ export function NodeOutputTabV3({
             maxHeight="350px"
             onFieldCopy={(path, value) => {
               // Custom handling for workflow field references
-              const expression = `{{${nodeId}.${path}}}`;
+              const expression = `{${nodeId}.${path}}`;
               navigator.clipboard.writeText(expression);
               toast.success(`Copied: ${expression}`);
             }}
@@ -350,7 +356,7 @@ export function NodeOutputTabV3({
             <p className="text-blue-600 dark:text-blue-400">
               Reference these fields in subsequent nodes using expressions like:
               <code className="ml-1 font-mono bg-blue-100 dark:bg-blue-900 px-1 rounded">
-                {`{{${nodeId}.record.id}}`}
+                {`{${nodeId}.record.id}`}
               </code>
             </p>
           </div>

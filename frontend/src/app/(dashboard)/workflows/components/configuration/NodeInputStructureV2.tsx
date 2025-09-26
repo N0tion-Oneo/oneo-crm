@@ -270,15 +270,6 @@ export function NodeInputStructureV2({
 
       {/* Section 2: Input Structure - Now using DataTableView */}
       <div>
-        <div className="flex items-center gap-2 mb-3">
-          <ArrowRight className="h-4 w-4 text-muted-foreground" />
-          <h3 className="font-semibold text-sm">Input Data</h3>
-          {sources.length > 0 && (
-            <Badge variant="secondary" className="text-xs">
-              {sources.length} {sources.length === 1 ? 'source' : 'sources'}
-            </Badge>
-          )}
-        </div>
 
         {/* Show source nodes when there are any */}
         {sources.length > 0 && (
@@ -394,22 +385,22 @@ export function NodeInputStructureV2({
               Reference these fields in your configuration using expressions like:
               {isTriggerNode ? (
                 <code className="ml-1 font-mono bg-blue-100 dark:bg-blue-900 px-1 rounded">
-                  {'{{trigger.record.id}}'}, {'{{trigger.pipeline_id}}'}
+                  {'{trigger.record.id}'}, {'{trigger.pipeline_id}'}
                 </code>
               ) : sources.length > 1 ? (
                 <>
                   <br />
                   {sources.map((source, index) => (
                     <code key={source.nodeId || index} className="ml-1 font-mono bg-blue-100 dark:bg-blue-900 px-1 rounded text-[10px]">
-                      {`{{${source.label || `Node_${index + 1}`}.field}}`}{index < sources.length - 1 ? ', ' : ''}
+                      {`{${source.label || `Node_${index + 1}`}.field}`}{index < sources.length - 1 ? ', ' : ''}
                     </code>
                   ))}
                 </>
               ) : (
                 <code className="ml-1 font-mono bg-blue-100 dark:bg-blue-900 px-1 rounded">
                   {sources.length > 0 && sources[0].nodeId
-                    ? `{{${sources[0].nodeId}.field}}`
-                    : '{{nodeId.field}}'}
+                    ? `{${sources[0].nodeId}.field}`
+                    : '{nodeId.field}'}
                 </code>
               )}
             </p>

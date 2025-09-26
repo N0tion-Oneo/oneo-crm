@@ -415,9 +415,9 @@ function NodeConfigModalInner({
           <div className="flex flex-1 overflow-hidden">
             {/* Left Panel - Input Data */}
             <div className="w-[30%] min-w-[300px] border-r p-2 overflow-hidden">
-              <div className="flex items-center gap-2 mb-4">
-                <ArrowRight className="h-4 w-4 text-muted-foreground" />
-                <h3 className="font-semibold text-sm">Input Data</h3>
+              <div className="flex items-center gap-2 mb-4 px-2 py-1 bg-muted/30 rounded-md">
+                <ArrowRight className="h-4 w-4 text-blue-500" />
+                <h3 className="font-semibold text-sm">Node Input</h3>
                 <Badge variant="secondary" className="text-xs">
                   {inputData.sources?.length || 0} sources
                 </Badge>
@@ -552,9 +552,9 @@ function NodeConfigModalInner({
 
             {/* Right Panel - Output Data */}
             <div className="w-[30%] min-w-[300px] p-2 overflow-hidden">
-              <div className="flex items-center gap-2 mb-4">
-                <ArrowLeft className="h-4 w-4 text-muted-foreground" />
-                <h3 className="font-semibold text-sm">Output Data</h3>
+              <div className="flex items-center gap-2 mb-4 px-2 py-1 bg-muted/30 rounded-md">
+                <ArrowLeft className="h-4 w-4 text-green-500" />
+                <h3 className="font-semibold text-sm">Node Output</h3>
                 <Badge variant="secondary" className="text-xs">
                   Expected
                 </Badge>

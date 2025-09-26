@@ -93,8 +93,8 @@ class ApprovalProcessor(AsyncNodeProcessor):
         node_data = node_config.get('data', {})
         
         # Extract configuration with context formatting
-        title = self._format_template(node_data.get('title', 'Approval Required'), context)
-        description = self._format_template(node_data.get('description', ''), context)
+        title = self.format_template(node_data.get('title', 'Approval Required'), context)
+        description = self.format_template(node_data.get('description', ''), context)
         assigned_to_id = node_data.get('assigned_to_id')
         timeout_hours = node_data.get('timeout_hours', 24)
         escalation_rules = node_data.get('escalation_rules', [])
@@ -307,7 +307,7 @@ class ApprovalProcessor(AsyncNodeProcessor):
         
         checkpoint.update({
             'approval_config': {
-                'title': self._format_template(node_data.get('title', 'Approval Required'), context),
+                'title': self.format_template(node_data.get('title', 'Approval Required'), context),
                 'assigned_to_id': assigned_to_id,
                 'assigned_to_email': assigned_to_email,
                 'timeout_hours': node_data.get('timeout_hours', 24),

@@ -216,7 +216,7 @@ Focus on the core message content."""
         """Build user prompt with context"""
 
         # Format template with context variables
-        formatted_template = self._format_template(template, context)
+        formatted_template = self.format_template(template, context)
 
         prompt_parts = []
 

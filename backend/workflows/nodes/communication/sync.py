@@ -75,7 +75,7 @@ class MessageSyncProcessor(AsyncNodeProcessor):
         config = node_data.get('config', {})
 
         # Extract configuration with context formatting
-        user_id = self._format_template(config.get('user_id', ''), context)
+        user_id = self.format_template(config.get('user_id', ''), context)
         channel_types = config.get('channel_types', [])
         sync_limit = config.get('sync_limit', 100)
         sync_since = config.get('sync_since', '')  # Optional datetime filter
@@ -175,7 +175,7 @@ class MessageSyncProcessor(AsyncNodeProcessor):
             since_datetime = None
             if sync_since:
                 try:
-                    formatted_since = self._format_template(sync_since, {'channel': channel})
+                    formatted_since = self.format_template(sync_since, {'channel': channel})
                     since_datetime = timezone.datetime.fromisoformat(formatted_since.replace('Z', '+00:00'))
                 except:
                     # Fall back to channel's last sync time
@@ -314,7 +314,7 @@ class MessageSyncProcessor(AsyncNodeProcessor):
 
         checkpoint.update({
             'sync_config': {
-                'user_id': self._format_template(config.get('user_id', ''), context),
+                'user_id': self.format_template(config.get('user_id', ''), context),
                 'channel_types': config.get('channel_types', []),
                 'sync_limit': config.get('sync_limit', 100),
                 'sync_since': config.get('sync_since', ''),

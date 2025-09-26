@@ -114,8 +114,8 @@ class TaskNotificationProcessor(AsyncNodeProcessor):
 
         # Extract configuration with context formatting
         notification_type = config.get('type', 'info')
-        message = self._format_template(config.get('message', ''), context)
-        title = self._format_template(config.get('title', 'Workflow Notification'), context)
+        message = self.format_template(config.get('message', ''), context)
+        title = self.format_template(config.get('title', 'Workflow Notification'), context)
         recipients = config.get('recipients', [])
         channels = config.get('channels', ['in_app'])  # in_app, email, slack, webhook
         priority = config.get('priority', 'normal')  # low, normal, high, urgent
@@ -196,7 +196,7 @@ class TaskNotificationProcessor(AsyncNodeProcessor):
             try:
                 if isinstance(recipient, str):
                     # Try to format with context first
-                    formatted_recipient = self._format_template(recipient, context)
+                    formatted_recipient = self.format_template(recipient, context)
                     
                     if '@' in formatted_recipient:
                         # Email address
@@ -222,7 +222,7 @@ class TaskNotificationProcessor(AsyncNodeProcessor):
                         user = await sync_to_async(User.objects.get)(id=recipient['user_id'])
                         resolved_users.append(user)
                     elif 'email' in recipient:
-                        email = self._format_template(recipient['email'], context)
+                        email = self.format_template(recipient['email'], context)
                         user = await sync_to_async(User.objects.get)(email=email)
                         resolved_users.append(user)
                 
@@ -489,8 +489,8 @@ class TaskNotificationProcessor(AsyncNodeProcessor):
         checkpoint.update({
             'notification_config': {
                 'type': node_data.get('type', 'info'),
-                'title': self._format_template(node_data.get('title', 'Workflow Notification'), context),
-                'message_length': len(self._format_template(node_data.get('message', ''), context)),
+                'title': self.format_template(node_data.get('title', 'Workflow Notification'), context),
+                'message_length': len(self.format_template(node_data.get('message', ''), context)),
                 'recipients_count': len(node_data.get('recipients', [])),
                 'channels': node_data.get('channels', ['in_app']),
                 'priority': node_data.get('priority', 'normal'),

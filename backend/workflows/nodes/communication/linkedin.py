@@ -109,10 +109,10 @@ class LinkedInProcessor(AsyncNodeProcessor):
         config = node_data.get('config', {})
 
         # Extract configuration with context formatting
-        user_id = self._format_template(config.get('user_id', ''), context)
-        recipient_profile = self._format_template(config.get('recipient_profile', ''), context)
-        message_content = self._format_template(config.get('message_content', ''), context)
-        connection_note = self._format_template(config.get('connection_note', ''), context)
+        user_id = self.format_template(config.get('user_id', ''), context)
+        recipient_profile = self.format_template(config.get('recipient_profile', ''), context)
+        message_content = self.format_template(config.get('message_content', ''), context)
+        connection_note = self.format_template(config.get('connection_note', ''), context)
 
         # Optional parameters
         sequence_metadata = config.get('sequence_metadata', {})
@@ -375,7 +375,7 @@ class LinkedInProcessor(AsyncNodeProcessor):
                 return False
 
         # Validate message content length (LinkedIn has character limits)
-        message_content = self._format_template(config.get('message_content', ''), context)
+        message_content = self.format_template(config.get('message_content', ''), context)
         if len(message_content) > 300:  # LinkedIn message limit
             return False
 
@@ -389,9 +389,9 @@ class LinkedInProcessor(AsyncNodeProcessor):
         config = node_data.get('config', {})
         checkpoint.update({
             'linkedin_config': {
-                'recipient': self._format_template(config.get('recipient_profile', ''), context),
-                'message_length': len(self._format_template(config.get('message_content', ''), context)),
-                'user_id': self._format_template(config.get('user_id', ''), context),
+                'recipient': self.format_template(config.get('recipient_profile', ''), context),
+                'message_length': len(self.format_template(config.get('message_content', ''), context)),
+                'user_id': self.format_template(config.get('user_id', ''), context),
                 'send_connection_request': config.get('send_connection_request', False)
             }
         })

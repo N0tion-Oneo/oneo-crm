@@ -102,9 +102,8 @@ class AIPromptProcessor(AsyncNodeProcessor):
     async def process(self, node_config: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
         """Process AI prompt node"""
 
-        # Get configuration
-        node_data = node_config.get('data', {})
-        config = node_data.get('config', {})
+        # node_config is already the extracted config when called from execute()
+        config = node_config
 
         # Extract configuration values
         prompt_template = config.get('prompt', '')
@@ -115,7 +114,7 @@ class AIPromptProcessor(AsyncNodeProcessor):
         enable_tools = config.get('enable_tools', False)
         allowed_tools = config.get('allowed_tools', [])
         response_format = config.get('response_format', 'text')
-        input_mapping = node_data.get('input_mapping', {})
+        input_mapping = config.get('input_mapping', {})
         
         # Prepare inputs if mapping specified
         prepared_inputs = await self.prepare_inputs(node_config, context)
@@ -198,10 +197,10 @@ class AIPromptProcessor(AsyncNodeProcessor):
     async def create_checkpoint(self, node_config: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
         """Create checkpoint for AI prompt node"""
         checkpoint = await super().create_checkpoint(node_config, context)
-        
+
         # Add AI-specific checkpoint data
-        node_data = node_config.get('data', {})
-        config = node_data.get('config', {})
+        # In checkpoint, node_config is the full node config with data structure
+        config = node_config.get('data', {}).get('config', {})
         checkpoint.update({
             'prompt_template': config.get('prompt', ''),
             'ai_config': {

@@ -109,14 +109,14 @@ class CommunicationLoggingProcessor(AsyncNodeProcessor):
 
         # Extract configuration with context formatting
         activity_type = config.get('activity_type', 'communication')
-        description = self._format_template(config.get('description', ''), context)
+        description = self.format_template(config.get('description', ''), context)
         contact_id_path = config.get('contact_id_path', '')
         contact_id = self._get_nested_value(context, contact_id_path) if contact_id_path else None
 
         # Additional logging fields
         communication_channel = config.get('communication_channel', '')
         communication_direction = config.get('communication_direction', 'outbound')  # inbound, outbound
-        subject = self._format_template(config.get('subject', ''), context)
+        subject = self.format_template(config.get('subject', ''), context)
         metadata = config.get('metadata', {})
         tags = config.get('tags', [])
         
@@ -338,12 +338,12 @@ class CommunicationLoggingProcessor(AsyncNodeProcessor):
         checkpoint.update({
             'logging_config': {
                 'activity_type': config.get('activity_type', 'communication'),
-                'description': self._format_template(config.get('description', ''), context),
+                'description': self.format_template(config.get('description', ''), context),
                 'contact_id_path': contact_id_path,
                 'resolved_contact_id': resolved_contact_id,
                 'communication_channel': config.get('communication_channel', ''),
                 'communication_direction': config.get('communication_direction', 'outbound'),
-                'subject': self._format_template(config.get('subject', ''), context),
+                'subject': self.format_template(config.get('subject', ''), context),
                 'tags_count': len(config.get('tags', [])),
                 'metadata_keys': list(config.get('metadata', {}).keys())
             }

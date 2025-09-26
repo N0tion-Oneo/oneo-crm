@@ -234,20 +234,22 @@ class BaseNodeProcessor(ABC):
     def _get_nested_value(self, data: Dict[str, Any], path: str) -> Any:
         """
         Get nested value from dictionary using dot notation
-        
+
         Args:
             data: Dictionary to search
             path: Dot-notation path (e.g., 'user.profile.name')
-            
+
         Returns:
             Found value or None
         """
         if not path:
             return None
-            
-        # Handle template variables like {trigger_data.contact_email}
-        if path.startswith('{') and path.endswith('}'):
-            path = path[1:-1]
+
+        # Handle template variables like {{trigger_data.contact_email}} or {trigger_data.contact_email}
+        if path.startswith('{{') and path.endswith('}}'):
+            path = path[2:-2].strip()
+        elif path.startswith('{') and path.endswith('}'):
+            path = path[1:-1].strip()
         
         keys = path.split('.')
         current = data
@@ -263,7 +265,7 @@ class BaseNodeProcessor(ABC):
     def _set_nested_value(self, data: Dict[str, Any], path: str, value: Any) -> None:
         """
         Set nested value in dictionary using dot notation
-        
+
         Args:
             data: Dictionary to modify
             path: Dot-notation path
@@ -271,13 +273,56 @@ class BaseNodeProcessor(ABC):
         """
         keys = path.split('.')
         current = data
-        
+
         for key in keys[:-1]:
             if key not in current:
                 current[key] = {}
             current = current[key]
-        
+
         current[keys[-1]] = value
+
+    def format_template(self, template: str, context: Dict[str, Any]) -> str:
+        """
+        Format template string with context variables
+
+        Supports {variable.path} syntax with nested path resolution.
+        This is the standard template format for all workflow nodes.
+
+        Args:
+            template: Template string with {variable.path} placeholders
+            context: Context dictionary with nested values
+
+        Returns:
+            Formatted string with variables replaced
+        """
+        if not template:
+            return ''
+
+        import re
+
+        # Find all template variables in {var.path} format
+        pattern = r'\{([^}]+)\}'
+
+        def replace_variable(match):
+            var_path = match.group(1).strip()
+
+            # Use _get_nested_value to resolve the path
+            value = self._get_nested_value(context, var_path)
+
+            if value is not None:
+                return str(value)
+            else:
+                # Keep the original template if variable not found
+                logger.warning(f"Template variable not found in context: {var_path}")
+                return match.group(0)
+
+        try:
+            # Replace all template variables
+            result = re.sub(pattern, replace_variable, template)
+            return result
+        except Exception as e:
+            logger.error(f"Template formatting error: {e}")
+            return template
     
     async def log_execution(self, node_config: Dict[str, Any], result: Dict[str, Any], 
                           execution_time_ms: int, success: bool, error: Optional[str] = None):

@@ -76,8 +76,8 @@ class ContactStatusUpdateProcessor(AsyncNodeProcessor):
         # Extract configuration
         contact_id_path = config.get('contact_id_path', '')
         contact_id = self._get_nested_value(context, contact_id_path) if contact_id_path else None
-        new_status = self._format_template(config.get('new_status', ''), context)
-        status_reason = self._format_template(config.get('status_reason', ''), context)
+        new_status = self.format_template(config.get('new_status', ''), context)
+        status_reason = self.format_template(config.get('status_reason', ''), context)
         additional_updates = config.get('additional_updates', {})
         create_status_history = config.get('create_status_history', True)
         
@@ -117,7 +117,7 @@ class ContactStatusUpdateProcessor(AsyncNodeProcessor):
             
             # Process additional updates
             for field_key, field_value in additional_updates.items():
-                formatted_value = self._format_template(str(field_value), context)
+                formatted_value = self.format_template(str(field_value), context)
                 update_data[field_key] = formatted_value
             
             # Create status history if requested
@@ -339,8 +339,8 @@ class ContactStatusUpdateProcessor(AsyncNodeProcessor):
             'status_update_config': {
                 'contact_id_path': contact_id_path,
                 'resolved_contact_id': resolved_contact_id,
-                'new_status': self._format_template(config.get('new_status', ''), context),
-                'status_reason': self._format_template(config.get('status_reason', ''), context),
+                'new_status': self.format_template(config.get('new_status', ''), context),
+                'status_reason': self.format_template(config.get('status_reason', ''), context),
                 'additional_updates_count': len(config.get('additional_updates', {})),
                 'create_status_history': config.get('create_status_history', True)
             }
@@ -482,8 +482,8 @@ class FollowUpTaskProcessor(AsyncNodeProcessor):
         logger.info(f"FollowUpTaskProcessor task_title template: {config.get('task_title', '')}")
 
         # Extract configuration with context formatting
-        task_title = self._format_template(config.get('task_title', ''), context)
-        task_description = self._format_template(config.get('task_description', ''), context)
+        task_title = self.format_template(config.get('task_title', ''), context)
+        task_description = self.format_template(config.get('task_description', ''), context)
 
         logger.info(f"FollowUpTaskProcessor task_title after formatting: {task_title}")
 
@@ -512,7 +512,7 @@ class FollowUpTaskProcessor(AsyncNodeProcessor):
         status = config.get('status', 'pending')
 
         # Related record
-        related_record_id = self._format_template(str(config.get('related_record_id', '')), context)
+        related_record_id = self.format_template(str(config.get('related_record_id', '')), context)
         if not related_record_id:
             # Try to get record from context or trigger_data
             if context.get('record'):
@@ -703,7 +703,7 @@ class FollowUpTaskProcessor(AsyncNodeProcessor):
             else:
                 due_date = None
         elif due_date_type == 'field':
-            date_field = self._format_template(node_data.get('date_field', ''), context)
+            date_field = self.format_template(node_data.get('date_field', ''), context)
             if date_field:
                 try:
                     due_date = datetime.fromisoformat(date_field.replace('Z', '+00:00'))
@@ -755,7 +755,7 @@ class FollowUpTaskProcessor(AsyncNodeProcessor):
             if record and record.get('assigned_to_id'):
                 return str(record['assigned_to_id'])
         elif assignment_type == 'field':
-            field_value = self._format_template(node_data.get('assignment_field', ''), context)
+            field_value = self.format_template(node_data.get('assignment_field', ''), context)
             return field_value if field_value else None
         elif assignment_type == 'round_robin':
             # TODO: Implement round robin logic
@@ -899,7 +899,7 @@ class FollowUpTaskProcessor(AsyncNodeProcessor):
         node_data = node_config.get('data', {})
 
         # Resolve record ID for checkpoint
-        related_record_id = self._format_template(str(node_data.get('related_record_id', '')), context)
+        related_record_id = self.format_template(str(node_data.get('related_record_id', '')), context)
         if not related_record_id:
             # Try to get record from context or trigger_data
             if context.get('record'):
@@ -911,8 +911,8 @@ class FollowUpTaskProcessor(AsyncNodeProcessor):
 
         checkpoint.update({
             'task_config': {
-                'task_title': self._format_template(node_data.get('task_title', ''), context),
-                'task_description': self._format_template(node_data.get('task_description', ''), context),
+                'task_title': self.format_template(node_data.get('task_title', ''), context),
+                'task_description': self.format_template(node_data.get('task_description', ''), context),
                 'due_date_type': node_data.get('due_date_type', 'relative'),
                 'priority': node_data.get('priority', 'medium'),
                 'status': node_data.get('status', 'pending'),

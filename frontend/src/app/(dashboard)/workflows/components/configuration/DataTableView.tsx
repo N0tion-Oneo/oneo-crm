@@ -189,7 +189,7 @@ export function DataTableView({
 
   // Handle field copy
   const handleCopyField = (row: FlattenedField) => {
-    const expression = nodeId ? `{{${nodeId}.${row.path}}}` : `{{${row.path}}}`;
+    const expression = nodeId ? `{${nodeId}.${row.path}}` : `{${row.path}}`;
     navigator.clipboard.writeText(expression);
     toast.success(`Copied: ${expression}`);
     onFieldCopy?.(row.path, row.value);

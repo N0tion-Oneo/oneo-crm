@@ -61,10 +61,10 @@ const FieldMappingRow: React.FC<{
             <SelectContent>
               {targetFields.map((field: any) => (
                 <SelectItem
-                  key={field.id || field.name}
-                  value={field.name}
+                  key={field.id || field.slug || field.name}
+                  value={field.slug || field.name}
                 >
-                  <>
+                  <div className="flex items-center">
                     <span>{field.display_name || field.name}</span>
                     {field.is_required && (
                       <span className="text-xs text-destructive ml-1">*</span>
@@ -72,7 +72,7 @@ const FieldMappingRow: React.FC<{
                     <span className="text-xs text-muted-foreground ml-2">
                       ({field.field_type})
                     </span>
-                  </>
+                  </div>
                 </SelectItem>
               ))}
             </SelectContent>
@@ -94,13 +94,13 @@ const FieldMappingRow: React.FC<{
                     if (!val) return;
                     // Insert variable at cursor position or append
                     const currentValue = mapping.sourceValue || '';
-                    const variable = `{{${val}}}`;
-                    const newValue = mapping.sourceType === 'template' || currentValue.includes('{{')
+                    const variable = `{${val}}`;
+                    const newValue = mapping.sourceType === 'template' || currentValue.includes('{')
                       ? `${currentValue}${currentValue ? ' ' : ''}${variable}`
                       : variable;
                     onUpdate(index, {
                       sourceValue: newValue,
-                      sourceType: newValue.includes('{{') ? 'template' : mapping.sourceType
+                      sourceType: newValue.includes('{') ? 'template' : mapping.sourceType
                     });
                   }}
                 >
@@ -133,7 +133,7 @@ const FieldMappingRow: React.FC<{
           {mapping.sourceType === 'variable' && availableVariables.length > 0 ? (
             <Select
               value={mapping.sourceValue?.replace(/[{}]/g, '') || ''}
-              onValueChange={(val) => onUpdate(index, { sourceValue: `{{${val}}}` })}
+              onValueChange={(val) => onUpdate(index, { sourceValue: `{${val}}` })}
             >
               <SelectTrigger className="h-9 w-full">
                 <SelectValue placeholder="Select variable" />
@@ -153,12 +153,12 @@ const FieldMappingRow: React.FC<{
                 ))}
               </SelectContent>
             </Select>
-          ) : mapping.sourceType === 'template' || (mapping.sourceValue && mapping.sourceValue.includes('{{')) ? (
+          ) : mapping.sourceType === 'template' || (mapping.sourceValue && mapping.sourceValue.includes('{')) ? (
             // Template mode - always use Input for mixed content
             <Input
               value={mapping.sourceValue}
               onChange={(e) => onUpdate(index, { sourceValue: e.target.value })}
-              placeholder="Enter text and {{variables}}"
+              placeholder="Enter text and {variables}"
               className="h-9 w-full font-mono text-sm"
             />
           ) : mapping.sourceType === 'value' && targetFieldDef ? (
@@ -248,7 +248,7 @@ export function FieldMapperWidget({
     // Convert object format to array format
     return Object.entries(value).map(([field, val]) => ({
       targetField: field,
-      sourceType: typeof val === 'string' && val.includes('{{') ? 'template' : 'value',
+      sourceType: typeof val === 'string' && val.includes('{') ? 'template' : 'value',
       sourceValue: String(val)
     }));
   });
@@ -306,18 +306,18 @@ export function FieldMapperWidget({
   };
 
   const getFieldType = (fieldName: string) => {
-    const field = targetFields.find((f: any) => f.name === fieldName || f.slug === fieldName);
+    const field = targetFields.find((f: any) => f.slug === fieldName || f.name === fieldName);
     return field?.field_type || 'text';
   };
 
   const getFieldLabel = (fieldName: string) => {
-    const field = targetFields.find((f: any) => f.name === fieldName || f.slug === fieldName);
+    const field = targetFields.find((f: any) => f.slug === fieldName || f.name === fieldName);
     return field?.display_name || field?.name || fieldName;
   };
 
   // Convert pipeline field to Field type for FieldRenderer
   const getTargetFieldAsFieldType = (fieldName: string): Field | null => {
-    const field = targetFields.find((f: any) => f.name === fieldName || f.slug === fieldName);
+    const field = targetFields.find((f: any) => f.slug === fieldName || f.name === fieldName);
     if (!field) return null;
 
     // Build complete field_config including options if present

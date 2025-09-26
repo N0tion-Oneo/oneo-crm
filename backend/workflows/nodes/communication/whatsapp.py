@@ -119,9 +119,9 @@ class WhatsAppProcessor(AsyncNodeProcessor):
         config = node_data.get('config', {})
 
         # Extract configuration with context formatting
-        user_id = self._format_template(config.get('user_id', ''), context)
-        recipient_phone = self._format_template(config.get('recipient_phone', ''), context)
-        message_content = self._format_template(config.get('message_content', ''), context)
+        user_id = self.format_template(config.get('user_id', ''), context)
+        recipient_phone = self.format_template(config.get('recipient_phone', ''), context)
+        message_content = self.format_template(config.get('message_content', ''), context)
 
         # Optional parameters
         sequence_metadata = config.get('sequence_metadata', {})
@@ -360,7 +360,7 @@ class WhatsAppProcessor(AsyncNodeProcessor):
                 return False
 
         # Validate phone number format
-        recipient_phone = self._format_template(config.get('recipient_phone', ''), context)
+        recipient_phone = self.format_template(config.get('recipient_phone', ''), context)
         if not self._validate_phone_number(recipient_phone):
             return False
 
@@ -385,9 +385,9 @@ class WhatsAppProcessor(AsyncNodeProcessor):
         config = node_data.get('config', {})
         checkpoint.update({
             'whatsapp_config': {
-                'recipient': self._format_template(config.get('recipient_phone', ''), context),
-                'message_length': len(self._format_template(config.get('message_content', ''), context)),
-                'user_id': self._format_template(config.get('user_id', ''), context),
+                'recipient': self.format_template(config.get('recipient_phone', ''), context),
+                'message_length': len(self.format_template(config.get('message_content', ''), context)),
+                'user_id': self.format_template(config.get('user_id', ''), context),
                 'message_type': config.get('message_type', 'text'),
                 'attachments_count': len(config.get('attachments', []))
             }

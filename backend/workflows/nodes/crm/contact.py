@@ -98,10 +98,10 @@ class ContactResolveProcessor(AsyncNodeProcessor):
         config = node_data.get('config', {})
 
         # Extract contact identification fields
-        email = self._format_template(config.get('email', ''), context) or self._get_nested_value(context, 'email')
-        phone = self._format_template(config.get('phone', ''), context) or self._get_nested_value(context, 'phone')
-        name = self._format_template(config.get('name', ''), context) or self._get_nested_value(context, 'name')
-        linkedin_url = self._format_template(config.get('linkedin_url', ''), context) or self._get_nested_value(context, 'linkedin_url')
+        email = self.format_template(config.get('email', ''), context) or self._get_nested_value(context, 'email')
+        phone = self.format_template(config.get('phone', ''), context) or self._get_nested_value(context, 'phone')
+        name = self.format_template(config.get('name', ''), context) or self._get_nested_value(context, 'name')
+        linkedin_url = self.format_template(config.get('linkedin_url', ''), context) or self._get_nested_value(context, 'linkedin_url')
 
         # Configuration
         pipeline_id = config.get('pipeline_id')
@@ -265,7 +265,7 @@ class ContactResolveProcessor(AsyncNodeProcessor):
             
             # Handle additional fields
             for field_key, field_value in additional_fields.items():
-                formatted_value = self._format_template(str(field_value), {'contact': existing_contact})
+                formatted_value = self.format_template(str(field_value), {'contact': existing_contact})
                 
                 if merge_strategy == 'update_existing':
                     update_data[field_key] = formatted_value
@@ -320,7 +320,7 @@ class ContactResolveProcessor(AsyncNodeProcessor):
             
             # Add additional fields
             for field_key, field_value in additional_fields.items():
-                formatted_value = self._format_template(str(field_value), {})
+                formatted_value = self.format_template(str(field_value), {})
                 contact_data[field_key] = formatted_value
             
             # Add metadata
@@ -403,9 +403,9 @@ class ContactResolveProcessor(AsyncNodeProcessor):
         node_data = node_config.get('data', {})
         
         # Resolve identifiers for checkpoint
-        email = self._format_template(node_data.get('email', ''), context) or self._get_nested_value(context, 'email')
-        phone = self._format_template(node_data.get('phone', ''), context) or self._get_nested_value(context, 'phone')
-        name = self._format_template(node_data.get('name', ''), context) or self._get_nested_value(context, 'name')
+        email = self.format_template(node_data.get('email', ''), context) or self._get_nested_value(context, 'email')
+        phone = self.format_template(node_data.get('phone', ''), context) or self._get_nested_value(context, 'phone')
+        name = self.format_template(node_data.get('name', ''), context) or self._get_nested_value(context, 'name')
         
         checkpoint.update({
             'contact_resolution_config': {
@@ -414,7 +414,7 @@ class ContactResolveProcessor(AsyncNodeProcessor):
                     'email': email,
                     'phone': phone,
                     'name': name,
-                    'linkedin_url': self._format_template(node_data.get('linkedin_url', ''), context)
+                    'linkedin_url': self.format_template(node_data.get('linkedin_url', ''), context)
                 },
                 'create_if_not_found': node_data.get('create_if_not_found', True),
                 'merge_strategy': node_data.get('merge_strategy', 'update_existing'),

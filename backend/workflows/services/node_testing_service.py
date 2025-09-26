@@ -154,18 +154,25 @@ class NodeTestingService:
 
         # Include nodes context from request (outputs from previous nodes)
         request_context = request.data.get('context', {})
-        if 'nodes' in request_context:
-            # Store nodes in two ways for compatibility
-            context['nodes'] = request_context['nodes']
+        if request_context:
+            # If context has 'nodes' structure, handle it specially
+            if 'nodes' in request_context:
+                # Store nodes in two ways for compatibility
+                context['nodes'] = request_context['nodes']
 
-            # Also store as node_{id} for direct access by processors
-            # This matches how the workflow engine stores node outputs
-            for node_id, node_output in request_context['nodes'].items():
-                node_key = f"node_{node_id}" if not node_id.startswith('node_') else node_id
-                context[node_key] = node_output
-                logger.info(f"Stored node output as {node_key}")
+                # Also store as node_{id} for direct access by processors
+                # This matches how the workflow engine stores node outputs
+                for node_id, node_output in request_context['nodes'].items():
+                    node_key = f"node_{node_id}" if not node_id.startswith('node_') else node_id
+                    context[node_key] = node_output
+                    logger.info(f"Stored node output as {node_key}")
 
-            logger.info(f"Including node outputs in context: {list(request_context['nodes'].keys())}")
+                logger.info(f"Including node outputs in context: {list(request_context['nodes'].keys())}")
+            else:
+                # For simple context (like output from a previous node), merge it directly
+                # This makes fields like record_id, pipeline_id directly accessible
+                context.update(request_context)
+                logger.info(f"Merged request context with {len(request_context)} keys: {list(request_context.keys())[:10]}")
 
         return context
 

@@ -100,9 +100,9 @@ class SMSProcessor(AsyncNodeProcessor):
         config = node_data.get('config', {})
 
         # Extract configuration with context formatting
-        user_id = self._format_template(config.get('user_id', ''), context)
-        recipient_phone = self._format_template(config.get('recipient_phone', ''), context)
-        message_content = self._format_template(config.get('message_content', ''), context)
+        user_id = self.format_template(config.get('user_id', ''), context)
+        recipient_phone = self.format_template(config.get('recipient_phone', ''), context)
+        message_content = self.format_template(config.get('message_content', ''), context)
 
         # Optional parameters
         sequence_metadata = config.get('sequence_metadata', {})
@@ -359,12 +359,12 @@ class SMSProcessor(AsyncNodeProcessor):
                 return False
 
         # Validate phone number format
-        recipient_phone = self._format_template(config.get('recipient_phone', ''), context)
+        recipient_phone = self.format_template(config.get('recipient_phone', ''), context)
         if not self._validate_phone_number(recipient_phone):
             return False
 
         # Validate message length
-        message_content = self._format_template(config.get('message_content', ''), context)
+        message_content = self.format_template(config.get('message_content', ''), context)
         if len(message_content) > 1600:  # Reasonable limit for SMS
             return False
 
@@ -382,13 +382,13 @@ class SMSProcessor(AsyncNodeProcessor):
 
         node_data = node_config.get('data', {})
         config = node_data.get('config', {})
-        message_content = self._format_template(config.get('message_content', ''), context)
+        message_content = self.format_template(config.get('message_content', ''), context)
 
         checkpoint.update({
             'sms_config': {
-                'recipient': self._format_template(config.get('recipient_phone', ''), context),
+                'recipient': self.format_template(config.get('recipient_phone', ''), context),
                 'message_length': len(message_content),
-                'user_id': self._format_template(config.get('user_id', ''), context),
+                'user_id': self.format_template(config.get('user_id', ''), context),
                 'sender_id': config.get('sender_id', ''),
                 'segments_count': self._calculate_sms_segments(message_content)
             }

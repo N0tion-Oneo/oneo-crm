@@ -485,7 +485,120 @@ class FieldViewSet(viewsets.ModelViewSet):
                 pipeline_id=pipeline_pk
             ).select_related('pipeline', 'created_by')
         return Field.objects.none()
-    
+
+    def list(self, request, *args, **kwargs):
+        """List fields with optional system fields"""
+        queryset = self.filter_queryset(self.get_queryset())
+
+        # Get custom fields
+        serializer = self.get_serializer(queryset, many=True)
+        fields_data = serializer.data
+
+        # Check if we should include system fields
+        include_system = request.query_params.get('include_system', 'false').lower() == 'true'
+
+        if include_system:
+            # Define system fields
+            system_fields = [
+                {
+                    'id': 'system_id',
+                    'name': 'id',
+                    'slug': 'id',
+                    'display_name': 'Record ID',
+                    'field_type': 'number',
+                    'is_system': True,
+                    'is_required': True,
+                    'is_readonly': True,
+                    'config': {'readonly': True},
+                    'description': 'Unique identifier for the record'
+                },
+                {
+                    'id': 'system_title',
+                    'name': 'title',
+                    'slug': 'title',
+                    'display_name': 'Title',
+                    'field_type': 'text',
+                    'is_system': True,
+                    'is_required': False,
+                    'is_readonly': True,
+                    'config': {'readonly': True},
+                    'description': 'Display title for the record'
+                },
+                {
+                    'id': 'system_status',
+                    'name': 'status',
+                    'slug': 'status',
+                    'display_name': 'Status',
+                    'field_type': 'select',
+                    'is_system': True,
+                    'is_required': False,
+                    'is_readonly': False,
+                    'config': {
+                        'options': ['active', 'inactive', 'pending', 'completed'],
+                        'default': 'active'
+                    },
+                    'description': 'Current status of the record'
+                },
+                {
+                    'id': 'system_created_at',
+                    'name': 'created_at',
+                    'slug': 'created_at',
+                    'display_name': 'Created At',
+                    'field_type': 'datetime',
+                    'is_system': True,
+                    'is_required': True,
+                    'is_readonly': True,
+                    'config': {'readonly': True},
+                    'description': 'When the record was created'
+                },
+                {
+                    'id': 'system_updated_at',
+                    'name': 'updated_at',
+                    'slug': 'updated_at',
+                    'display_name': 'Updated At',
+                    'field_type': 'datetime',
+                    'is_system': True,
+                    'is_required': True,
+                    'is_readonly': True,
+                    'config': {'readonly': True},
+                    'description': 'When the record was last updated'
+                },
+                {
+                    'id': 'system_created_by',
+                    'name': 'created_by',
+                    'slug': 'created_by',
+                    'display_name': 'Created By',
+                    'field_type': 'user',
+                    'is_system': True,
+                    'is_required': True,
+                    'is_readonly': True,
+                    'config': {'readonly': True},
+                    'description': 'User who created the record'
+                },
+                {
+                    'id': 'system_updated_by',
+                    'name': 'updated_by',
+                    'slug': 'updated_by',
+                    'display_name': 'Updated By',
+                    'field_type': 'user',
+                    'is_system': True,
+                    'is_required': True,
+                    'is_readonly': True,
+                    'config': {'readonly': True},
+                    'description': 'User who last updated the record'
+                }
+            ]
+
+            # Prepend system fields to the list
+            fields_data = system_fields + fields_data
+
+        # Return paginated response
+        page = self.paginate_queryset(fields_data)
+        if page is not None:
+            return self.get_paginated_response(page)
+
+        return Response(fields_data)
+
     def get_object(self):
         """Get field object, including soft-deleted fields for restore operations"""
         action = getattr(self, 'action', None)

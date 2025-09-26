@@ -307,8 +307,10 @@ export const pipelinesApi = {
     api.delete(`/api/v1/pipelines/${id}/`),
   
   // Field management - using nested API structure consistently
-  getFields: (pipelineId: string) =>
-    api.get(`/api/v1/pipelines/${pipelineId}/fields/`),
+  getFields: (pipelineId: string, includeSystem: boolean = false) =>
+    api.get(`/api/v1/pipelines/${pipelineId}/fields/`, {
+      params: includeSystem ? { include_system: 'true' } : {}
+    }),
 
   createField: (pipelineId: string, data: any) =>
     api.post(`/api/v1/pipelines/${pipelineId}/fields/`, data),

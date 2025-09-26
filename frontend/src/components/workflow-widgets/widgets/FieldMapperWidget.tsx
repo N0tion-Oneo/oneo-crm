@@ -59,22 +59,28 @@ const FieldMappingRow: React.FC<{
               <SelectValue placeholder="Select target field" />
             </SelectTrigger>
             <SelectContent>
-              {targetFields.map((field: any) => (
-                <SelectItem
-                  key={field.id || field.slug || field.name}
-                  value={field.slug || field.name}
-                >
-                  <div className="flex items-center">
-                    <span>{field.display_name || field.name}</span>
-                    {field.is_required && (
-                      <span className="text-xs text-destructive ml-1">*</span>
-                    )}
-                    <span className="text-xs text-muted-foreground ml-2">
-                      ({field.field_type})
-                    </span>
-                  </div>
-                </SelectItem>
-              ))}
+              {targetFields.map((field: any) => {
+                const isSystemField = field.id && String(field.id).startsWith('system_');
+                return (
+                  <SelectItem
+                    key={field.id || field.slug || field.name}
+                    value={field.slug || field.name}
+                  >
+                    <div className="flex items-center">
+                      <span>{field.display_name || field.name}</span>
+                      {isSystemField && (
+                        <span className="text-xs text-muted-foreground ml-1">[System]</span>
+                      )}
+                      {field.is_required && (
+                        <span className="text-xs text-destructive ml-1">*</span>
+                      )}
+                      <span className="text-xs text-muted-foreground ml-2">
+                        ({field.field_type})
+                      </span>
+                    </div>
+                  </SelectItem>
+                );
+              })}
             </SelectContent>
           </Select>
         </div>
@@ -93,7 +99,7 @@ const FieldMappingRow: React.FC<{
                   onValueChange={(val) => {
                     if (!val) return;
                     // Insert variable at cursor position or append
-                    const currentValue = mapping.sourceValue || '';
+                    const currentValue = String(mapping.sourceValue || '');
                     const variable = `{${val}}`;
                     const newValue = mapping.sourceType === 'template' || currentValue.includes('{')
                       ? `${currentValue}${currentValue ? ' ' : ''}${variable}`
@@ -113,14 +119,16 @@ const FieldMappingRow: React.FC<{
                     </div>
                     {availableVariables.map((variable) => (
                       <SelectItem key={variable.value} value={variable.value}>
-                        <>
-                          {variable.label}
-                          {variable.description && (
+                        {variable.description ? (
+                          <div>
+                            <div>{variable.label}</div>
                             <div className="text-xs text-muted-foreground">
                               {variable.description}
                             </div>
-                          )}
-                        </>
+                          </div>
+                        ) : (
+                          variable.label
+                        )}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -132,7 +140,7 @@ const FieldMappingRow: React.FC<{
           {/* Render appropriate input based on sourceType */}
           {mapping.sourceType === 'variable' && availableVariables.length > 0 ? (
             <Select
-              value={mapping.sourceValue?.replace(/[{}]/g, '') || ''}
+              value={String(mapping.sourceValue || '').replace(/[{}]/g, '')}
               onValueChange={(val) => onUpdate(index, { sourceValue: `{${val}}` })}
             >
               <SelectTrigger className="h-9 w-full">
@@ -141,19 +149,21 @@ const FieldMappingRow: React.FC<{
               <SelectContent>
                 {availableVariables.map((variable) => (
                   <SelectItem key={variable.value} value={variable.value}>
-                    <>
-                      {variable.label}
-                      {variable.description && (
+                    {variable.description ? (
+                      <div>
+                        <div>{variable.label}</div>
                         <div className="text-xs text-muted-foreground">
                           {variable.description}
                         </div>
-                      )}
-                    </>
+                      </div>
+                    ) : (
+                      variable.label
+                    )}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
-          ) : mapping.sourceType === 'template' || (mapping.sourceValue && mapping.sourceValue.includes('{')) ? (
+          ) : mapping.sourceType === 'template' || (mapping.sourceValue && String(mapping.sourceValue).includes('{')) ? (
             // Template mode - always use Input for mixed content
             <Input
               value={mapping.sourceValue}

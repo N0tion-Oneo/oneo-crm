@@ -193,7 +193,8 @@ export function useWorkflowData(): WorkflowData {
     setError(prev => ({ ...prev, fields: null }));
 
     try {
-      const response = await pipelinesApi.getFields(pipelineId);
+      // In workflow context, always include system fields
+      const response = await pipelinesApi.getFields(pipelineId, true);
       const fieldsData = response.data;
 
       // Handle both array and paginated response

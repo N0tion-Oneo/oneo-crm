@@ -64,6 +64,19 @@ export const CriteriaBuilderWidget: React.FC<WidgetProps> = (props) => {
   const { value = null, onChange, uiHints = {}, pipelineFields = [] } = props;
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set(['root']));
 
+  // Debug logging
+  React.useEffect(() => {
+    console.log('[CriteriaBuilderWidget] Fields:', {
+      fieldCount: pipelineFields.length,
+      hasSystemFields: pipelineFields.some((f: any) => f.id && String(f.id).startsWith('system_')),
+      systemFields: pipelineFields.filter((f: any) => f.id && String(f.id).startsWith('system_')).map((f: any) => ({
+        id: f.id,
+        name: f.name,
+        display_name: f.display_name
+      }))
+    });
+  }, [pipelineFields]);
+
   const initialGroup: CriteriaGroup = value || {
     id: 'root',
     operator: 'AND',
@@ -269,10 +282,11 @@ export const CriteriaBuilderWidget: React.FC<WidgetProps> = (props) => {
           <SelectContent>
             {pipelineFields.map(field => {
               const fieldKey = field.slug || field.name || field.key;
-              const fieldLabel = field.label || field.name || fieldKey;
+              const fieldLabel = field.display_name || field.label || field.name || fieldKey;
+              const isSystemField = field.id && String(field.id).startsWith('system_');
               return (
                 <SelectItem key={fieldKey} value={fieldKey}>
-                  {fieldLabel}
+                  {fieldLabel} {isSystemField && <span className="text-xs text-muted-foreground ml-1">[System]</span>}
                 </SelectItem>
               );
             })}

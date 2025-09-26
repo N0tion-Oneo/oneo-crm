@@ -59,6 +59,7 @@ function WorkflowCanvasInner({
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
   const [reactFlowInstance, setReactFlowInstance] = React.useState<ReactFlowInstance | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
 
   // Canvas settings
   const {
@@ -94,11 +95,14 @@ function WorkflowCanvasInner({
   const initialEdges = React.useMemo(() =>
     definition.edges.map(edge => ({
       id: edge.id,
+      type: 'smoothstep',
       source: edge.source,
       target: edge.target,
       sourceHandle: edge.sourceHandle || undefined,
       targetHandle: edge.targetHandle || undefined,
       label: edge.label,
+      deletable: true,
+      focusable: true,
     })), []); // Empty deps - only compute once on mount
 
   // Initialize nodes and edges state with initial values
@@ -184,22 +188,51 @@ function WorkflowCanvasInner({
     // Apply changes locally first
     onEdgesChangeInternal(changes);
 
-    // Mark that we need to update parent after the state settles
-    if (!isSyncingFromParentRef.current) {
-      requestAnimationFrame(() => {
-        const currentEdges = edges;
-        const workflowEdges: WorkflowEdge[] = currentEdges.map(edge => ({
-          id: edge.id,
-          source: edge.source,
-          target: edge.target,
-          sourceHandle: edge.sourceHandle || undefined,
-          targetHandle: edge.targetHandle || undefined,
-          label: typeof edge.label === 'string' ? edge.label : undefined,
-        }));
-        onEdgesChange(workflowEdges);
-      });
+    // Check for edge removal or selection changes
+    const hasRemoval = changes.some(change => change.type === 'remove');
+    const hasSelection = changes.some(change => change.type === 'select');
+
+    // Handle selection changes
+    if (hasSelection && !hasRemoval) {
+      const selectChange = changes.find(change => change.type === 'select');
+      if (selectChange && 'selected' in selectChange) {
+        if (selectChange.selected) {
+          setSelectedEdgeId(selectChange.id);
+        } else {
+          setSelectedEdgeId(null);
+        }
+      }
     }
-  }, [onEdgesChangeInternal, onEdgesChange, edges]);
+
+    // For removal, wait for the state to update before syncing with parent
+    if (!isSyncingFromParentRef.current && hasRemoval) {
+      // Use setTimeout to ensure we get the edges AFTER removal and avoid setState during render
+      setTimeout(() => {
+        setEdges((currentEdges) => {
+          const workflowEdges: WorkflowEdge[] = currentEdges.map(edge => ({
+            id: edge.id,
+            source: edge.source,
+            target: edge.target,
+            sourceHandle: edge.sourceHandle || undefined,
+            targetHandle: edge.targetHandle || undefined,
+            label: typeof edge.label === 'string' ? edge.label : undefined,
+          }));
+
+          // Update parent with edges after removal (deferred to avoid setState during render)
+          setTimeout(() => {
+            onEdgesChange(workflowEdges);
+          }, 0);
+
+          // Clear selected edge if it was removed
+          if (selectedEdgeId && !currentEdges.find(e => e.id === selectedEdgeId)) {
+            setTimeout(() => setSelectedEdgeId(null), 0);
+          }
+
+          return currentEdges;
+        });
+      }, 0);
+    }
+  }, [onEdgesChangeInternal, onEdgesChange, setEdges, selectedEdgeId]);
 
   // Handle new connections
   const onConnect = useCallback(
@@ -207,6 +240,9 @@ function WorkflowCanvasInner({
       const newEdge = {
         ...params,
         id: `edge-${Date.now()}`,
+        type: 'smoothstep',
+        deletable: true,
+        focusable: true,
       };
       setEdges((eds) => addEdge(newEdge, eds));
 
@@ -227,6 +263,19 @@ function WorkflowCanvasInner({
   const onNodeClick = useCallback(
     (_: React.MouseEvent, node: Node) => {
       onNodeSelect(node.id);
+      // Clear edge selection when node is clicked
+      setSelectedEdgeId(null);
+    },
+    [onNodeSelect]
+  );
+
+  // Handle edge click for manual selection
+  const onEdgeClick = useCallback(
+    (_: React.MouseEvent, edge: Edge) => {
+      // Clear node selection when edge is clicked
+      onNodeSelect(null);
+      // Set the selected edge ID
+      setSelectedEdgeId(edge.id);
     },
     [onNodeSelect]
   );
@@ -244,6 +293,7 @@ function WorkflowCanvasInner({
   // Handle pane click (deselect)
   const onPaneClick = useCallback(() => {
     onNodeSelect(null);
+    setSelectedEdgeId(null);
   }, [onNodeSelect]);
 
   // Handle drop
@@ -310,11 +360,15 @@ function WorkflowCanvasInner({
 
       const newFlowEdges: Edge[] = definition.edges.map(edge => ({
         id: edge.id,
+        type: 'smoothstep',
         source: edge.source,
         target: edge.target,
         sourceHandle: edge.sourceHandle || undefined,
         targetHandle: edge.targetHandle || undefined,
         label: edge.label,
+        deletable: true,
+        focusable: true,
+        selected: edge.id === selectedEdgeId,
       }));
 
       // Mark that we're syncing from parent to prevent loop
@@ -331,7 +385,7 @@ function WorkflowCanvasInner({
         }, 0);
       }, 0);
     }
-  }, [definition, nodeConfigs, selectedNodeId, setNodes, setEdges]);
+  }, [definition, nodeConfigs, selectedNodeId, selectedEdgeId, setNodes, setEdges]);
 
   // Convert background variant string to enum
   const getBackgroundVariant = (): BackgroundVariant => {
@@ -356,6 +410,7 @@ function WorkflowCanvasInner({
         onEdgesChange={handleEdgesChange}
         onConnect={onConnect}
         onNodeClick={onNodeClick}
+        onEdgeClick={onEdgeClick}
         onNodeDoubleClick={handleNodeDoubleClick}
         onPaneClick={onPaneClick}
         onInit={setReactFlowInstance}
@@ -364,6 +419,10 @@ function WorkflowCanvasInner({
         nodeTypes={nodeTypes}
         fitView
         deleteKeyCode={['Delete', 'Backspace']}
+        // Enable edge interactivity
+        edgesFocusable={true}
+        edgesUpdatable={true}
+        elementsSelectable={true}
         // Apply settings
         snapToGrid={settings.snapToGrid}
         snapGrid={[settings.gridSize, settings.gridSize]}
@@ -375,6 +434,8 @@ function WorkflowCanvasInner({
         defaultEdgeOptions={{
           animated: settings.animatedEdges,
           type: 'smoothstep',
+          deletable: true,
+          focusable: true,
         }}
         proOptions={{ hideAttribution: true }}
       >

@@ -491,7 +491,7 @@ export function EnhancedDataView({
               <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-muted-foreground" />
               <Input
                 type="text"
-                placeholder="Search fields..."
+                placeholder={`Search ${flattenedData.length} fields...`}
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="h-7 pl-7 pr-7 text-xs w-full"
@@ -507,6 +507,12 @@ export function EnhancedDataView({
                 </Button>
               )}
             </div>
+          )}
+
+          {searchQuery && (
+            <Badge variant="outline" className="text-xs">
+              {filteredData.length} matches
+            </Badge>
           )}
 
           {/* Spacer */}
@@ -552,18 +558,6 @@ export function EnhancedDataView({
               </ToggleGroupItem>
             </ToggleGroup>
           )}
-
-          {/* Field count */}
-          <div className="flex items-center gap-2">
-            <Badge variant="secondary" className="text-xs">
-              {filteredData.length} fields
-            </Badge>
-            {searchQuery && (
-              <Badge variant="outline" className="text-xs">
-                Filtered
-              </Badge>
-            )}
-          </div>
         </div>
       </div>
 

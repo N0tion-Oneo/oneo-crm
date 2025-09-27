@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { DataTableView } from './DataTableView';
+import { EnhancedDataView } from './EnhancedDataView';
 
 interface NodeInputStructureV2Props {
   sources: any[];
@@ -82,30 +83,16 @@ export function NodeInputStructureV2({
         return testData;
       }
     } else if (sources && sources.length > 0) {
-      // Combine data from multiple sources
-      if (sources.length === 1) {
-        // Single source - show data directly, but still indicate the source node
-        const source = sources[0];
-        // For single source, we can show the data directly without nesting
-        // but let's add a reference to which node it came from
-        return source.data || {};
-      } else {
-        // Multiple sources - group by node with clear labeling
-        const grouped: any = {};
-        sources.forEach((source, index) => {
-          if (source.data) {
-            // Create a descriptive key for each source node
-            // Format: "NodeLabel (node_id)" or just "NodeLabel" if id matches label
-            const nodeKey = source.label || `Node_${index + 1}`;
-            const nodeIdentifier = source.nodeId && source.nodeId !== source.label
-              ? `${nodeKey}_${source.nodeId.substring(0, 8)}`
-              : nodeKey;
-
-            grouped[nodeIdentifier] = source.data;
-          }
-        });
-        return grouped;
-      }
+      // Always group data by node for consistency
+      const grouped: any = {};
+      sources.forEach((source, index) => {
+        if (source.data) {
+          // Use node ID for backend compatibility, prefixed with "node_"
+          const nodeKey = source.nodeId ? `node_${source.nodeId}` : `Node_${index + 1}`;
+          grouped[nodeKey] = source.data;
+        }
+      });
+      return Object.keys(grouped).length > 0 ? grouped : null;
     }
     return null;
   }, [sources, testData, isTriggerNode, useRealData, selectedTestData, nodeType]);
@@ -150,13 +137,6 @@ export function NodeInputStructureV2({
     return `Record ${data.id || ''}`;
   };
 
-  // Copy sample JSON
-  const copySampleInput = () => {
-    if (inputData) {
-      navigator.clipboard.writeText(JSON.stringify(inputData, null, 2));
-      toast.success('Sample input copied to clipboard');
-    }
-  };
 
   return (
     <div className="space-y-4">
@@ -305,18 +285,14 @@ export function NodeInputStructureV2({
             </div>
           </Card>
         ) : inputData ? (
-          <DataTableView
+          <EnhancedDataView
             data={inputData}
-            title=""
-            initialExpanded="first-level"
+            sources={sources}
+            defaultView="tree"
+            showViewToggle={true}
             showSearch={true}
-            showTypeColumn={true}
-            showCopyButtons={true}
-            maxHeight="350px"
-            onFieldCopy={(path, value) => {
-              // Field path already copied by DataTableView
-              // Can add additional handling here if needed
-            }}
+            showActions={true}
+            maxHeight="400px"
           />
         ) : (
           <Card className="p-8">
@@ -333,48 +309,6 @@ export function NodeInputStructureV2({
         )}
       </div>
 
-      <Separator />
-
-      {/* Section 3: Sample Input (JSON) */}
-      <div>
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-2">
-            <h4 className="text-sm font-medium">Sample Input</h4>
-            {inputData && (
-              <Badge variant="secondary" className="text-xs">
-                JSON
-              </Badge>
-            )}
-          </div>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={copySampleInput}
-            disabled={!inputData || loading}
-            className="h-6 text-xs px-2"
-          >
-            <Copy className="h-3 w-3 mr-1" />
-            Copy JSON
-          </Button>
-        </div>
-
-        <Card className="p-3 bg-muted/30">
-          {loading ? (
-            <div className="space-y-2">
-              <Skeleton className="h-4 w-full" />
-              <Skeleton className="h-4 w-5/6" />
-              <Skeleton className="h-4 w-4/6" />
-            </div>
-          ) : (
-            <ScrollArea className="h-[200px]">
-              <pre className="text-xs font-mono whitespace-pre-wrap break-words">
-                {inputData ? JSON.stringify(inputData, null, 2) : 'No input data available'}
-              </pre>
-            </ScrollArea>
-          )}
-        </Card>
-      </div>
-
       {/* Usage hint */}
       <div className="bg-blue-50 dark:bg-blue-950/20 rounded-lg p-3">
         <div className="flex gap-2">
@@ -385,22 +319,20 @@ export function NodeInputStructureV2({
               Reference these fields in your configuration using expressions like:
               {isTriggerNode ? (
                 <code className="ml-1 font-mono bg-blue-100 dark:bg-blue-900 px-1 rounded">
-                  {'{trigger.record.id}'}, {'{trigger.pipeline_id}'}
+                  {'{{trigger.record.id}}'}, {'{{trigger.pipeline_id}}'}
                 </code>
-              ) : sources.length > 1 ? (
+              ) : sources.length > 0 ? (
                 <>
                   <br />
                   {sources.map((source, index) => (
                     <code key={source.nodeId || index} className="ml-1 font-mono bg-blue-100 dark:bg-blue-900 px-1 rounded text-[10px]">
-                      {`{${source.label || `Node_${index + 1}`}.field}`}{index < sources.length - 1 ? ', ' : ''}
+                      {`{{node_${source.nodeId || `Node_${index + 1}`}.field}}`}{index < sources.length - 1 ? ', ' : ''}
                     </code>
                   ))}
                 </>
               ) : (
                 <code className="ml-1 font-mono bg-blue-100 dark:bg-blue-900 px-1 rounded">
-                  {sources.length > 0 && sources[0].nodeId
-                    ? `{${sources[0].nodeId}.field}`
-                    : '{nodeId.field}'}
+                  {'{{nodeId.field}}'}
                 </code>
               )}
             </p>

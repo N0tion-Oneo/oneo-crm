@@ -120,12 +120,12 @@ const FieldMappingRow: React.FC<{
                     {availableVariables.map((variable) => (
                       <SelectItem key={variable.value} value={variable.value}>
                         {variable.description ? (
-                          <div>
+                          <>
                             <div>{variable.label}</div>
                             <div className="text-xs text-muted-foreground">
                               {variable.description}
                             </div>
-                          </div>
+                          </>
                         ) : (
                           variable.label
                         )}
@@ -150,12 +150,12 @@ const FieldMappingRow: React.FC<{
                 {availableVariables.map((variable) => (
                   <SelectItem key={variable.value} value={variable.value}>
                     {variable.description ? (
-                      <div>
+                      <>
                         <div>{variable.label}</div>
                         <div className="text-xs text-muted-foreground">
                           {variable.description}
                         </div>
-                      </div>
+                      </>
                     ) : (
                       variable.label
                     )}

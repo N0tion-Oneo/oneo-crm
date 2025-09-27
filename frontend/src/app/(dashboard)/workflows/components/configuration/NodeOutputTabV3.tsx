@@ -24,13 +24,14 @@ import { WorkflowNodeType } from '../../types';
 import { useTestData } from './TestDataContext';
 import { toast } from 'sonner';
 import { workflowsApi } from '@/lib/api';
-import { DataTableView } from './DataTableView';
+import { EnhancedDataView } from './EnhancedDataView';
 
 interface NodeOutputTabV3Props {
   nodeId: string;
   nodeType: WorkflowNodeType;
   config: any;
   inputData?: any;
+  sourceNodeId?: string;  // ID of the upstream node providing the input data
   testRecord?: any;
   testDataType?: string;
   onNodeTest?: (nodeId: string, output: any) => void;
@@ -42,6 +43,7 @@ export function NodeOutputTabV3({
   nodeType,
   config,
   inputData,
+  sourceNodeId,
   testRecord,
   testDataType,
   onNodeTest,
@@ -113,6 +115,10 @@ export function NodeOutputTabV3({
         // Add input data context if available
         if (inputData && Object.keys(inputData).length > 0) {
           requestData.context = inputData;
+          // If there's a specific source node, pass its ID so backend can store context correctly
+          if (sourceNodeId) {
+            requestData.node_id = sourceNodeId;
+          }
         }
 
         // Call the backend to get real output
@@ -178,6 +184,10 @@ export function NodeOutputTabV3({
       // Add input data context if available
       if (inputData && Object.keys(inputData).length > 0) {
         requestData.context = inputData;
+        // If there's a specific source node, pass its ID so backend can store context correctly
+        if (sourceNodeId) {
+          requestData.node_id = sourceNodeId;
+        }
       }
 
       // Call the backend to get real output
@@ -213,12 +223,6 @@ export function NodeOutputTabV3({
     }
   };
 
-  const copyOutput = () => {
-    if (sampleOutput) {
-      navigator.clipboard.writeText(JSON.stringify(sampleOutput, null, 2));
-      toast.success('Output copied to clipboard');
-    }
-  };
 
   // Prepare display data
   const displayData = useMemo(() => {
@@ -242,64 +246,13 @@ export function NodeOutputTabV3({
         </Alert>
       )}
 
-      {/* Output Structure - Now using DataTableView */}
-      <div>
-        {loading && (
-          <div className="flex items-center gap-2 mb-3">
-            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-            <span className="text-sm text-muted-foreground">Loading output...</span>
-          </div>
-        )}
-
-        {loading && !displayData ? (
-          <Card className="p-4">
-            <div className="space-y-2">
-              <Skeleton className="h-4 w-full" />
-              <Skeleton className="h-4 w-3/4" />
-              <Skeleton className="h-4 w-1/2" />
-            </div>
-          </Card>
-        ) : displayData ? (
-          <DataTableView
-            data={displayData}
-            nodeId={nodeId}
-            title=""
-            initialExpanded="first-level"
-            showSearch={true}
-            showTypeColumn={true}
-            showCopyButtons={true}
-            maxHeight="350px"
-            onFieldCopy={(path, value) => {
-              // Custom handling for workflow field references
-              const expression = `{${nodeId}.${path}}`;
-              navigator.clipboard.writeText(expression);
-              toast.success(`Copied: ${expression}`);
-            }}
-          />
-        ) : (
-          <Card className="p-8">
-            <div className="text-center text-muted-foreground">
-              <AlertCircle className="h-12 w-12 mx-auto mb-3 opacity-50" />
-              <p className="text-sm">No output generated</p>
-              <p className="text-xs mt-1">
-                Configure the node to see expected output
-              </p>
-            </div>
-          </Card>
-        )}
-      </div>
-
-      <Separator />
-
-      {/* Sample Output Preview */}
+      {/* Output Data - Using EnhancedDataView */}
       <div>
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
-            <h4 className="text-sm font-medium">Sample Output</h4>
-            {displayData && (
-              <Badge variant="secondary" className="text-xs">
-                JSON
-              </Badge>
+            <h4 className="text-sm font-medium">Output Data</h4>
+            {loading && (
+              <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
             )}
           </div>
           <div className="flex gap-1">
@@ -317,34 +270,38 @@ export function NodeOutputTabV3({
               )}
               Regenerate
             </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={copyOutput}
-              disabled={!displayData || loading}
-              className="h-6 text-xs px-2"
-            >
-              <Copy className="h-3 w-3 mr-1" />
-              Copy JSON
-            </Button>
           </div>
         </div>
 
-        <Card className="p-3 bg-muted/30">
-          {loading && !displayData ? (
+        {loading && !displayData ? (
+          <Card className="p-4">
             <div className="space-y-2">
               <Skeleton className="h-4 w-full" />
-              <Skeleton className="h-4 w-5/6" />
-              <Skeleton className="h-4 w-4/6" />
+              <Skeleton className="h-4 w-3/4" />
+              <Skeleton className="h-4 w-1/2" />
             </div>
-          ) : (
-            <ScrollArea className="h-[200px]">
-              <pre className="text-xs font-mono whitespace-pre-wrap break-words">
-                {displayData ? JSON.stringify(displayData, null, 2) : 'No output generated'}
-              </pre>
-            </ScrollArea>
-          )}
-        </Card>
+          </Card>
+        ) : displayData ? (
+          <EnhancedDataView
+            data={displayData}
+            nodeId={nodeId}
+            defaultView="tree"
+            showViewToggle={true}
+            showSearch={true}
+            showActions={true}
+            maxHeight="400px"
+          />
+        ) : (
+          <Card className="p-8">
+            <div className="text-center text-muted-foreground">
+              <AlertCircle className="h-12 w-12 mx-auto mb-3 opacity-50" />
+              <p className="text-sm">No output generated</p>
+              <p className="text-xs mt-1">
+                Configure the node to see expected output
+              </p>
+            </div>
+          </Card>
+        )}
       </div>
 
       {/* Usage Hint */}

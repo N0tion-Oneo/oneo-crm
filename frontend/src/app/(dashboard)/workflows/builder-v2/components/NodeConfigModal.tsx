@@ -48,6 +48,7 @@ import { useNodeSchemas } from '../hooks/useNodeSchemas';
 import { WorkflowNode, WorkflowEdge, WorkflowDefinition } from '../types';
 import { WorkflowNodeType } from '../../types';
 import { TestDataProvider, useTestData } from '../../components/configuration/TestDataContext';
+import { DataFlowIndicator, DataFlowPath } from './DataFlowIndicator';
 
 interface NodeConfigModalProps {
   isOpen: boolean;
@@ -412,6 +413,15 @@ function NodeConfigModalInner({
             </div>
           </DialogHeader>
 
+          {/* Data Flow Path Indicator */}
+          <div className="px-6 py-2 border-b bg-muted/20">
+            <DataFlowPath
+              stages={['Input Data', node?.type.replace(/_/g, ' ').toLowerCase() || 'Process', 'Output']}
+              activeStage={loading ? 1 : undefined}
+              className="justify-center"
+            />
+          </div>
+
           <div className="flex flex-1 overflow-hidden">
             {/* Left Panel - Input Data */}
             <div className="w-[30%] min-w-[300px] border-r p-2 overflow-hidden">
@@ -454,10 +464,17 @@ function NodeConfigModalInner({
               </ScrollArea>
             </div>
 
+            {/* Flow indicator between Input and Config */}
+            <DataFlowIndicator
+              active={loading}
+              direction="horizontal"
+              animate={true}
+            />
+
             {/* Center Panel - Configuration */}
             <div className="flex-1 min-w-[400px] border-r p-4 overflow-hidden">
               <div className="flex items-center gap-2 mb-4">
-                <Settings className="h-4 w-4 text-muted-foreground" />
+                <Settings className="h-4 w-4 text-purple-500" />
                 <h3 className="font-semibold text-sm">Configuration</h3>
                 {hasValidationErrors && (
                   <Badge variant="destructive" className="text-xs">
@@ -550,6 +567,13 @@ function NodeConfigModalInner({
               </ScrollArea>
             </div>
 
+            {/* Flow indicator between Config and Output */}
+            <DataFlowIndicator
+              active={loading}
+              direction="horizontal"
+              animate={true}
+            />
+
             {/* Right Panel - Output Data */}
             <div className="w-[30%] min-w-[300px] p-2 overflow-hidden">
               <div className="flex items-center gap-2 mb-4 px-2 py-1 bg-muted/30 rounded-md">
@@ -588,6 +612,13 @@ function NodeConfigModalInner({
                           }
                         }
                         return {};
+                      })()}
+                      sourceNodeId={(() => {
+                        // Pass the source node ID when there's a single source
+                        if (inputData.sources && inputData.sources.length === 1) {
+                          return inputData.sources[0].nodeId;
+                        }
+                        return undefined;
                       })()}
                       testRecord={isTriggerNode && useRealData ? selectedTestData : null}
                       testDataType={testDataType || 'record'}

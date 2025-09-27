@@ -169,10 +169,19 @@ class NodeTestingService:
 
                 logger.info(f"Including node outputs in context: {list(request_context['nodes'].keys())}")
             else:
-                # For simple context (like output from a previous node), merge it directly
-                # This makes fields like record_id, pipeline_id directly accessible
-                context.update(request_context)
-                logger.info(f"Merged request context with {len(request_context)} keys: {list(request_context.keys())[:10]}")
+                # Check if this looks like output from a node (has a node_id in request)
+                # If so, store it under the proper node key to match production behavior
+                node_id = request.data.get('node_id')
+                if node_id:
+                    # Store the output under the node key, just like the workflow engine does
+                    node_key = f"node_{node_id}" if not node_id.startswith('node_') else node_id
+                    context[node_key] = request_context
+                    logger.info(f"Stored previous node output as {node_key} with keys: {list(request_context.keys())[:10]}")
+                else:
+                    # For backward compatibility, also merge at root level
+                    # This allows direct field access for simple testing scenarios
+                    context.update(request_context)
+                    logger.info(f"Merged request context with {len(request_context)} keys: {list(request_context.keys())[:10]}")
 
         return context
 

@@ -1132,6 +1132,7 @@ export const workflowsApi = {
     test_record_id?: string;
     test_data_id?: string;
     test_data_type?: string;
+    node_id?: string; // ID of the source node when context comes from another node
   }) =>
     api.post('/api/v1/workflows/test-node-standalone/', data),
 

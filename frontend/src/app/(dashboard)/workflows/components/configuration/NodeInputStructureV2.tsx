@@ -87,8 +87,8 @@ export function NodeInputStructureV2({
       const grouped: any = {};
       sources.forEach((source, index) => {
         if (source.data) {
-          // Use node ID for backend compatibility, prefixed with "node_"
-          const nodeKey = source.nodeId ? `node_${source.nodeId}` : `Node_${index + 1}`;
+          // Use the node label for display, fallback to node ID if label not available
+          const nodeKey = source.label || (source.nodeId ? `node_${source.nodeId}` : `Node_${index + 1}`);
           grouped[nodeKey] = source.data;
         }
       });
@@ -326,7 +326,7 @@ export function NodeInputStructureV2({
                   <br />
                   {sources.map((source, index) => (
                     <code key={source.nodeId || index} className="ml-1 font-mono bg-blue-100 dark:bg-blue-900 px-1 rounded text-[10px]">
-                      {`{{node_${source.nodeId || `Node_${index + 1}`}.field}}`}{index < sources.length - 1 ? ', ' : ''}
+                      {`{{${source.label || source.nodeId || `Node_${index + 1}`}.field}}`}{index < sources.length - 1 ? ', ' : ''}
                     </code>
                   ))}
                 </>

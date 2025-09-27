@@ -67,6 +67,19 @@ export function EnhancedDataView({
   const [searchQuery, setSearchQuery] = useState('');
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set());
 
+  // Create a mapping from label to nodeId for proper path copying
+  const labelToNodeIdMap = useMemo(() => {
+    const map: Record<string, string> = {};
+    if (sources) {
+      sources.forEach(source => {
+        if (source.label && source.nodeId) {
+          map[source.label] = `node_${source.nodeId}`;
+        }
+      });
+    }
+    return map;
+  }, [sources]);
+
   // Flatten data structure for easier searching and display
   const flattenedData = useMemo(() => {
     const result: Array<{
@@ -378,7 +391,19 @@ export function EnhancedDataView({
                 className="h-7 px-3 text-xs font-medium shadow-sm hover:bg-primary hover:text-primary-foreground transition-colors"
                 onClick={(e) => {
                   e.stopPropagation();
-                  const fieldPath = `{{${item.path}}}`;
+                  // Convert display label back to node_id for backend compatibility
+                  let copyPath = item.path;
+                  if (labelToNodeIdMap) {
+                    // Check if the path starts with a label that needs to be mapped
+                    const pathParts = item.path.split('.');
+                    const firstPart = pathParts[0];
+                    if (labelToNodeIdMap[firstPart]) {
+                      // Replace the label with the node_id
+                      pathParts[0] = labelToNodeIdMap[firstPart];
+                      copyPath = pathParts.join('.');
+                    }
+                  }
+                  const fieldPath = `{{${copyPath}}}`;
                   navigator.clipboard.writeText(fieldPath);
                   toast.success(`Copied path: ${fieldPath}`);
                 }}

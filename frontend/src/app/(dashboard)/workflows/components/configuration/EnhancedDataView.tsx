@@ -15,7 +15,6 @@ import {
   ToggleGroupItem,
 } from '@/components/ui/toggle-group';
 import {
-  Table,
   Code2,
   TreePine,
   FileJson,
@@ -24,7 +23,9 @@ import {
   Copy,
   ChevronRight,
   ChevronDown,
-  Database
+  Database,
+  Maximize2,
+  Minimize2
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { DataTypeIcon, DataTypeBadge, detectDataType } from './DataTypeIcon';
@@ -35,7 +36,6 @@ type ViewMode = 'table' | 'tree' | 'json' | 'schema';
 
 interface EnhancedDataViewProps {
   data: any;
-  schema?: any;
   nodeId?: string;
   title?: string;
   className?: string;
@@ -51,7 +51,6 @@ interface EnhancedDataViewProps {
 
 export function EnhancedDataView({
   data,
-  schema,
   nodeId,
   title,
   className,
@@ -256,7 +255,7 @@ export function EnhancedDataView({
               getRowBackground()
             )}
           >
-            <td colSpan={4} className="p-2">
+            <td colSpan={3} className="p-2">
               <div className="flex items-center gap-2">
                 <Button
                   variant="ghost"
@@ -294,7 +293,7 @@ export function EnhancedDataView({
         <tr
           key={`${item.path}-${index}`}
           className={cn(
-            'group hover:bg-muted/80 transition-colors text-xs',
+            'group hover:bg-muted/80 transition-colors text-xs relative',
             getRowBackground()
           )}
         >
@@ -369,36 +368,39 @@ export function EnhancedDataView({
             </div>
           </td>
 
-          {/* Actions */}
-          <td className="p-1 whitespace-nowrap">
-            <div className="flex items-center justify-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+          {/* Hover actions overlay - covers type and value columns */}
+          <td className="absolute right-0 top-0 bottom-0 left-[40%] flex items-center justify-center gap-2 opacity-0 group-hover:opacity-100 transition-all duration-200 pointer-events-none">
+            <div className="absolute inset-0 bg-muted/80 backdrop-blur-sm" />
+            <div className="flex items-center gap-2 z-10 pointer-events-auto">
               <Button
-                variant="ghost"
+                variant="secondary"
                 size="sm"
-                className="h-5 w-5 p-0"
-                onClick={() => {
+                className="h-7 px-3 text-xs font-medium shadow-sm hover:bg-primary hover:text-primary-foreground transition-colors"
+                onClick={(e) => {
+                  e.stopPropagation();
                   const fieldPath = `{{${item.path}}}`;
                   navigator.clipboard.writeText(fieldPath);
-                  toast.success(`Copied: ${fieldPath}`);
+                  toast.success(`Copied path: ${fieldPath}`);
                 }}
-                title="Copy field path"
               >
-                <Code2 className="h-3 w-3" />
+                <Code2 className="h-3.5 w-3.5 mr-1.5" />
+                Copy Path
               </Button>
               <Button
-                variant="ghost"
+                variant="secondary"
                 size="sm"
-                className="h-5 w-5 p-0"
-                onClick={() => {
+                className="h-7 px-3 text-xs font-medium shadow-sm hover:bg-primary hover:text-primary-foreground transition-colors"
+                onClick={(e) => {
+                  e.stopPropagation();
                   const textToCopy = typeof item.value === 'string'
                     ? item.value
                     : JSON.stringify(item.value, null, 2);
                   navigator.clipboard.writeText(textToCopy);
-                  toast.success('Value copied to clipboard');
+                  toast.success('Value copied');
                 }}
-                title="Copy value"
               >
-                <Copy className="h-3 w-3" />
+                <Copy className="h-3.5 w-3.5 mr-1.5" />
+                Copy Value
               </Button>
             </div>
           </td>
@@ -412,15 +414,13 @@ export function EnhancedDataView({
           <colgroup>
             <col style={{ width: '40%' }} />
             <col style={{ width: '15%' }} />
-            <col style={{ width: '30%' }} />
-            <col style={{ width: '15%' }} />
+            <col style={{ width: '45%' }} />
           </colgroup>
           <thead className="sticky top-0 z-10 bg-background border-b">
             <tr>
               <th className="text-left p-1 text-xs font-medium">Field Path</th>
               <th className="text-left p-1 text-xs font-medium">Type</th>
               <th className="text-left p-1 text-xs font-medium">Value</th>
-              <th className="text-center p-1 text-xs font-medium">Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
@@ -434,7 +434,7 @@ export function EnhancedDataView({
                     {/* Add spacer between different node sections */}
                     {isNewNodeSection && (
                       <tr>
-                        <td colSpan={4} className="h-2 bg-background" />
+                        <td colSpan={3} className="h-2 bg-background" />
                       </tr>
                     )}
                     {renderRow(item, index)}
@@ -443,7 +443,7 @@ export function EnhancedDataView({
               })
             ) : (
               <tr>
-                <td colSpan={4} className="text-center p-8 text-muted-foreground text-sm">
+                <td colSpan={3} className="text-center p-8 text-muted-foreground text-sm">
                   {searchQuery ? 'No fields match your search' : 'No data to display'}
                 </td>
               </tr>
@@ -473,123 +473,13 @@ export function EnhancedDataView({
     );
   };
 
-  // Render schema view
-  const renderSchemaView = () => {
-    if (!schema) {
-      return (
-        <div className="text-center text-muted-foreground p-8">
-          <Database className="h-12 w-12 mx-auto mb-3 opacity-50" />
-          <p className="text-sm">No schema available</p>
-        </div>
-      );
-    }
 
-    return (
-      <div className="overflow-hidden max-w-full">
-        <pre
-          className="font-mono text-xs bg-muted p-4 rounded"
-          style={{
-            whiteSpace: 'pre-wrap',
-            wordWrap: 'break-word',
-            overflowWrap: 'break-word',
-            tabSize: 2
-          }}
-        >
-          {JSON.stringify(schema, null, 2)}
-        </pre>
-      </div>
-    );
-  };
-
-  // Render table view (flat view without hierarchy)
-  const renderTableView = () => {
-    return (
-      <div className="overflow-hidden">
-        <table className="w-full text-xs">
-          <colgroup>
-            <col style={{ width: '40%' }} />
-            <col style={{ width: '15%' }} />
-            <col style={{ width: '35%' }} />
-            <col style={{ width: '10%' }} />
-          </colgroup>
-          <thead className="sticky top-0 z-10 bg-background border-b">
-            <tr>
-              <th className="text-left p-1 text-xs font-medium">Field Path</th>
-              <th className="text-left p-1 text-xs font-medium">Type</th>
-              <th className="text-left p-1 text-xs font-medium">Value</th>
-              <th className="text-center p-1 text-xs font-medium">Copy</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-border">
-            {filteredData.length > 0 ? (
-              filteredData.map((item, index) => (
-                <tr
-                  key={`${item.path}-${index}`}
-                  className="group hover:bg-muted/50 transition-colors"
-                >
-                  <td className="p-1">
-                    <code className="font-mono text-xs text-purple-600" style={{ overflowWrap: 'anywhere', wordBreak: 'break-all', display: 'block' }}>
-                      {item.path}
-                    </code>
-                  </td>
-                  <td className="p-1">
-                    <Badge
-                      variant="outline"
-                      className="text-[10px] px-1 py-0 h-4 font-mono"
-                    >
-                      {item.type}
-                    </Badge>
-                  </td>
-                  <td className="p-1">
-                    <div className="text-xs overflow-hidden" style={{ overflowWrap: 'anywhere', wordBreak: 'break-all' }}>
-                      <FieldValuePreview
-                        value={item.value}
-                        path={item.path}
-                        maxLength={50}
-                        expandable={false}
-                        showType={false}
-                      />
-                    </div>
-                  </td>
-                  <td className="p-1">
-                    <div className="flex items-center justify-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-5 w-5 p-0"
-                        onClick={() => {
-                          const textToCopy = typeof item.value === 'string'
-                            ? item.value
-                            : JSON.stringify(item.value, null, 2);
-                          navigator.clipboard.writeText(textToCopy);
-                          toast.success('Value copied');
-                        }}
-                        title="Copy value"
-                      >
-                        <Copy className="h-3 w-3" />
-                      </Button>
-                    </div>
-                  </td>
-                </tr>
-              ))
-            ) : (
-              <tr>
-                <td colSpan={4} className="text-center p-8 text-muted-foreground text-sm">
-                  {searchQuery ? 'No fields match your search' : 'No data to display'}
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-    );
-  };
 
   return (
     <Card className={cn('overflow-hidden', className)}>
       {/* Header */}
       <div className="border-b p-3">
-        <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
           {/* Title */}
           {title && (
             <h3 className="text-sm font-medium">{title}</h3>
@@ -597,14 +487,14 @@ export function EnhancedDataView({
 
           {/* Search */}
           {showSearch && (
-            <div className="relative flex-1 max-w-xs">
+            <div className="relative w-48">
               <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-muted-foreground" />
               <Input
                 type="text"
                 placeholder="Search fields..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="h-7 pl-7 pr-7 text-xs"
+                className="h-7 pl-7 pr-7 text-xs w-full"
               />
               {searchQuery && (
                 <Button
@@ -619,6 +509,33 @@ export function EnhancedDataView({
             </div>
           )}
 
+          {/* Spacer */}
+          <div className="flex-1" />
+
+          {/* Expand controls for tree view */}
+          {viewMode === 'tree' && (
+            <div className="flex items-center gap-1">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 w-7 p-0"
+                onClick={expandAll}
+                title="Expand All"
+              >
+                <Maximize2 className="h-3.5 w-3.5" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 w-7 p-0"
+                onClick={collapseAll}
+                title="Collapse All"
+              >
+                <Minimize2 className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          )}
+
           {/* View mode toggle */}
           {showViewToggle && (
             <ToggleGroup
@@ -627,66 +544,33 @@ export function EnhancedDataView({
               onValueChange={(value) => value && setViewMode(value as ViewMode)}
               className="h-7"
             >
-              <ToggleGroupItem value="tree" size="sm" className="h-7">
+              <ToggleGroupItem value="tree" size="sm" className="h-7" title="Tree View">
                 <TreePine className="h-3 w-3" />
               </ToggleGroupItem>
-              <ToggleGroupItem value="table" size="sm" className="h-7">
-                <Table className="h-3 w-3" />
-              </ToggleGroupItem>
-              <ToggleGroupItem value="json" size="sm" className="h-7">
+              <ToggleGroupItem value="json" size="sm" className="h-7" title="JSON View">
                 <FileJson className="h-3 w-3" />
               </ToggleGroupItem>
-              {schema && (
-                <ToggleGroupItem value="schema" size="sm" className="h-7">
-                  <Code2 className="h-3 w-3" />
-                </ToggleGroupItem>
-              )}
             </ToggleGroup>
           )}
 
-          {/* Expand controls for tree view */}
-          {viewMode === 'tree' && (
-            <div className="flex items-center gap-1">
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 px-2 text-xs"
-                onClick={expandAll}
-              >
-                Expand All
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 px-2 text-xs"
-                onClick={collapseAll}
-              >
-                Collapse All
-              </Button>
-            </div>
-          )}
-
-        </div>
-
-        {/* Stats */}
-        <div className="flex items-center gap-2 mt-2">
-          <Badge variant="secondary" className="text-xs">
-            {filteredData.length} fields
-          </Badge>
-          {searchQuery && (
-            <Badge variant="outline" className="text-xs">
-              Filtered
+          {/* Field count */}
+          <div className="flex items-center gap-2">
+            <Badge variant="secondary" className="text-xs">
+              {filteredData.length} fields
             </Badge>
-          )}
+            {searchQuery && (
+              <Badge variant="outline" className="text-xs">
+                Filtered
+              </Badge>
+            )}
+          </div>
         </div>
       </div>
 
       {/* Content */}
       <ScrollArea style={{ height: maxHeight }} className="p-3">
         {viewMode === 'tree' && renderTreeView()}
-        {viewMode === 'table' && renderTableView()}
         {viewMode === 'json' && renderJsonView()}
-        {viewMode === 'schema' && renderSchemaView()}
       </ScrollArea>
     </Card>
   );

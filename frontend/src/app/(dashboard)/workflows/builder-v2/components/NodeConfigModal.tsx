@@ -424,7 +424,7 @@ function NodeConfigModalInner({
 
           <div className="flex flex-1 overflow-hidden">
             {/* Left Panel - Input Data */}
-            <div className="w-[30%] min-w-[300px] border-r p-2 overflow-hidden">
+            <div className="w-[30%] min-w-[300px] border-r p-2 overflow-hidden flex flex-col">
               <div className="flex items-center gap-2 mb-4 px-2 py-1 bg-muted/30 rounded-md">
                 <ArrowRight className="h-4 w-4 text-blue-500" />
                 <h3 className="font-semibold text-sm">Node Input</h3>
@@ -433,7 +433,8 @@ function NodeConfigModalInner({
                 </Badge>
               </div>
 
-              <ScrollArea className="h-[calc(90vh-12rem)]">
+              <div className="flex-1 overflow-hidden">
+                <ScrollArea className="h-full">
                 <div className="pr-2">
                   {/* Input data structure display with enhanced table view */}
                   <NodeInputStructureV2
@@ -461,7 +462,8 @@ function NodeConfigModalInner({
                   )}
 
                 </div>
-              </ScrollArea>
+                </ScrollArea>
+              </div>
             </div>
 
             {/* Flow indicator between Input and Config */}
@@ -472,7 +474,7 @@ function NodeConfigModalInner({
             />
 
             {/* Center Panel - Configuration */}
-            <div className="flex-1 min-w-[400px] border-r p-4 overflow-hidden">
+            <div className="flex-1 min-w-[400px] border-r p-4 overflow-hidden flex flex-col">
               <div className="flex items-center gap-2 mb-4">
                 <Settings className="h-4 w-4 text-purple-500" />
                 <h3 className="font-semibold text-sm">Configuration</h3>
@@ -483,7 +485,8 @@ function NodeConfigModalInner({
                 )}
               </div>
 
-              <ScrollArea className="h-[calc(90vh-12rem)]">
+              <div className="flex-1 overflow-hidden">
+                <ScrollArea className="h-full">
                 <div className="pr-2">
                 {loading ? (
                   <div className="flex items-center justify-center p-8">
@@ -564,7 +567,8 @@ function NodeConfigModalInner({
                   </div>
                 )}
                 </div>
-              </ScrollArea>
+                </ScrollArea>
+              </div>
             </div>
 
             {/* Flow indicator between Config and Output */}
@@ -575,7 +579,7 @@ function NodeConfigModalInner({
             />
 
             {/* Right Panel - Output Data */}
-            <div className="w-[30%] min-w-[300px] p-2 overflow-hidden">
+            <div className="w-[30%] min-w-[300px] p-2 overflow-hidden flex flex-col">
               <div className="flex items-center gap-2 mb-4 px-2 py-1 bg-muted/30 rounded-md">
                 <ArrowLeft className="h-4 w-4 text-green-500" />
                 <h3 className="font-semibold text-sm">Node Output</h3>
@@ -584,7 +588,8 @@ function NodeConfigModalInner({
                 </Badge>
               </div>
 
-              <ScrollArea className="h-[calc(90vh-12rem)]">
+              <div className="flex-1 overflow-hidden">
+                <ScrollArea className="h-full">
                 <div className="pr-2">
                   {node && (
                     <NodeOutputTabV3
@@ -627,11 +632,12 @@ function NodeConfigModalInner({
                     />
                   )}
                 </div>
-              </ScrollArea>
+                </ScrollArea>
+              </div>
             </div>
           </div>
 
-          <DialogFooter className="px-6 py-4 border-t">
+          <DialogFooter className="px-6 py-4 border-t flex-shrink-0">
             <div className="flex items-center justify-between w-full">
               <div className="flex items-center gap-2">
                 {hasValidationErrors && (

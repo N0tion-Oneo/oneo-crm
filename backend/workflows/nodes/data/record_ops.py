@@ -144,7 +144,7 @@ class RecordUpdateProcessor(AsyncNodeProcessor):
                 "ui_hints": {
                     "widget": "pipeline_select",
                     "placeholder": "Select pipeline",
-                    "help_text": "Optional: Helps with field mapping. Leave empty to use trigger record pipeline"
+                    "help_text": "Optional: Validates the record belongs to this pipeline. Must match the record's actual pipeline for field mapping to work correctly."
                 }
             },
             "update_data": {
@@ -187,6 +187,7 @@ class RecordUpdateProcessor(AsyncNodeProcessor):
 
         # Get configuration values
         record_id_source = config.get('record_id_source', '')
+        pipeline_id = config.get('pipeline_id')  # Extract pipeline_id for validation
         update_data = config.get('update_data', {})
         merge_strategy = config.get('merge_strategy', 'merge')
         skip_validation = config.get('skip_validation', False)
@@ -232,6 +233,17 @@ class RecordUpdateProcessor(AsyncNodeProcessor):
             from pipelines.models import Record
 
             record = await sync_to_async(Record.objects.get)(id=record_id, is_deleted=False)
+
+            # Validate pipeline if specified
+            if pipeline_id and str(record.pipeline_id) != str(pipeline_id):
+                logger.error(
+                    f"Pipeline mismatch: Record {record_id} belongs to pipeline {record.pipeline_id}, "
+                    f"but pipeline {pipeline_id} was specified"
+                )
+                raise ValueError(
+                    f"Record {record_id} belongs to pipeline {record.pipeline_id}, not {pipeline_id}. "
+                    f"Please ensure the correct pipeline is selected."
+                )
 
             # Update record data based on merge strategy
             if merge_strategy == 'replace':
@@ -290,6 +302,7 @@ class RecordUpdateProcessor(AsyncNodeProcessor):
         config = node_config.get('data', {}).get('config', {})
         checkpoint.update({
             'record_id_source': config.get('record_id_source'),
+            'pipeline_id': config.get('pipeline_id'),  # Include pipeline_id in checkpoint
             'update_data_template': config.get('update_data', {}),
             'merge_strategy': config.get('merge_strategy', 'merge'),
             'resolved_record_id': self._get_nested_value(context, config.get('record_id_source', ''))

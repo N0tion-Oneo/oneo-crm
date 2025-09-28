@@ -314,7 +314,7 @@ export function EnhancedDataView({
           <td className="p-1 overflow-hidden">
             <div className="flex items-center gap-1">
               {/* Indentation based on depth, but adjust for node-grouped data */}
-              <div style={{ width: `${(item.nodeName && !item.isNodeHeader ? item.depth - 1 : item.depth) * 20}px` }} />
+              <div style={{ width: `${(item.nodeName && !item.isNodeHeader ? item.depth - 1 : item.depth) * 5}px` }} />
 
               {/* Expand/Collapse button */}
               {hasChildren ? (

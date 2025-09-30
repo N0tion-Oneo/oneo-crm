@@ -660,12 +660,17 @@ export function RecordDetailDrawer({
       
       pipeline.fields.forEach(field => {
         const fieldType = convertToFieldType(field)
-        const backendSlug = field.original_slug || field.name
-        
-        // Try multiple ways to get the value from backend data
-        let backendValue = record.data?.[backendSlug]
-        
-        // Fallback attempts if primary slug doesn't work
+
+        // For relation fields and others, the backend uses the slug as the key
+        // Try slug first, then fall back to other options
+        let backendValue = record.data?.[field.slug]
+
+        // Fallback attempts if slug doesn't work
+        if (backendValue === undefined) {
+          const backendSlug = field.original_slug || field.name
+          backendValue = record.data?.[backendSlug]
+        }
+
         if (backendValue === undefined) {
           // Try with the field name directly
           backendValue = record.data?.[field.name]
@@ -676,11 +681,28 @@ export function RecordDetailDrawer({
           const displayNameSlug = field.display_name.toLowerCase().replace(/\s+/g, '_')
           backendValue = record.data?.[displayNameSlug]
         }
-        
+
         // Always try to map the value, even if it's empty string, 0, false, etc.
         if (backendValue !== undefined) {
+          // Debug logging for relation fields
+          if (field.field_type === 'relation') {
+            console.log('🔍 Record drawer relation field:', {
+              fieldName: field.name,
+              fieldSlug: field.slug,
+              backendValue,
+              backendValueType: typeof backendValue,
+              isArray: Array.isArray(backendValue)
+            })
+          }
           // Use field system normalization for proper data types
           const normalizedValue = normalizeFieldValue(fieldType, backendValue)
+          if (field.field_type === 'relation') {
+            console.log('🔍 After normalization:', {
+              fieldName: field.name,
+              normalizedValue,
+              normalizedType: typeof normalizedValue
+            })
+          }
           formData[field.name] = normalizedValue
         } else {
           // Only use defaults if the field is truly missing from backend data
@@ -925,8 +947,22 @@ export function RecordDetailDrawer({
     const value = formData[field.name]
     const fieldError = fieldErrors[field.name]
     const fieldType = convertToFieldType(field)
-    
-    console.log('renderFieldInput:', { fieldName: field.name, fieldType: field.field_type, value, formData: formData[field.name] }) // DEBUG
+
+    // Enhanced debug logging for relation fields
+    if (field.field_type === 'relation') {
+      console.log('🎯 renderFieldInput RELATION:', {
+        fieldName: field.name,
+        fieldType: field.field_type,
+        value,
+        valueType: typeof value,
+        isArray: Array.isArray(value),
+        valueStringified: String(value),
+        formDataValue: formData[field.name],
+        isReadOnly
+      })
+    } else {
+      console.log('renderFieldInput:', { fieldName: field.name, fieldType: field.field_type, value, formData: formData[field.name] }) // DEBUG
+    }
     
     
     const handleFieldChange = (newValue: any) => {
@@ -952,9 +988,9 @@ export function RecordDetailDrawer({
       isSavingRef.current = true
       
       // Use shared API endpoint if in shared context, otherwise use authenticated endpoint
-      const apiEndpoint = sharedToken 
+      const apiEndpoint = sharedToken
         ? `/api/v1/public-filters/${sharedToken}/records/${record.id}/`
-        : `/api/pipelines/${pipeline.id}/records/${record.id}/`
+        : `/api/v1/pipelines/${pipeline.id}/records/${record.id}/`
       
       fieldSaveService.onFieldChange({
         field: fieldType,

@@ -37,14 +37,25 @@ const formatSystemTimestamp = (timestamp: string): string => {
 
 // Simplified relation value component for table chips
 const RelationChip: React.FC<{
-  recordId: string
+  relationItem: string | { id: string | number; display_value: string }
   field: RecordField
   onClick: () => void
   sharedToken?: string
-}> = ({ recordId, field, onClick, sharedToken }) => {
-  const [displayText, setDisplayText] = useState<string>(`Record #${recordId}`)
+}> = ({ relationItem, field, onClick, sharedToken }) => {
+  // Extract record ID and display value based on item type
+  const recordId = typeof relationItem === 'object' ? String(relationItem.id) : String(relationItem)
+  const initialDisplay = typeof relationItem === 'object' && relationItem.display_value
+    ? relationItem.display_value
+    : `Record #${recordId}`
+
+  const [displayText, setDisplayText] = useState<string>(initialDisplay)
   
   useEffect(() => {
+    // If we already have display value from the object, don't fetch
+    if (typeof relationItem === 'object' && relationItem.display_value) {
+      return
+    }
+
     const fetchRecordName = async () => {
       try {
         // Convert RecordField to Field type for getFieldConfig
@@ -136,7 +147,7 @@ const RelationChip: React.FC<{
     }
     
     fetchRecordName()
-  }, [recordId, field])
+  }, [recordId, field, relationItem])
   
   return (
     <button
@@ -254,32 +265,44 @@ export function RecordTableRow({
         return formattedValue
       }
 
-      // Handle multiple record IDs (array or comma-separated) vs single record ID
-      const recordIds = Array.isArray(value) 
-        ? value.map(v => (typeof v === 'object' && v.record_id) ? v.record_id.toString() : v.toString())
-        : value.toString().includes(',') 
-          ? value.toString().split(',').map((id: string) => id.trim())
-          : [value.toString()]
+      // Handle multiple records - value can be array of objects/IDs or comma-separated string
+      let relationItems: any[]
+      if (Array.isArray(value)) {
+        // Keep objects as-is, they have {id, display_value}
+        relationItems = value
+      } else if (typeof value === 'string' && value.includes(',')) {
+        // Split comma-separated IDs
+        relationItems = value.split(',').map((id: string) => id.trim())
+      } else {
+        // Single value - could be object or ID
+        relationItems = [value]
+      }
 
       // Display as chips like user fields - with emerald color for relations
       return (
         <div className="flex items-center gap-1 flex-wrap">
-          {recordIds.map((recordId: string, index: number) => (
-            <RelationChip
-              key={`${recordId}-${index}`}
-              recordId={recordId}
-              field={field}
-              sharedToken={sharedToken}
-              onClick={() => {
-                console.log('🔗 Relation chip clicked:', { 
-                  fieldName: field.name,
-                  targetPipelineId: targetPipelineId.toString(), 
-                  recordId: recordId
-                })
-                onOpenRelatedRecord(targetPipelineId.toString(), recordId)
-              }}
-            />
-          ))}
+          {relationItems.map((item: any, index: number) => {
+            // Extract ID for navigation
+            const itemId = typeof item === 'object' ? item.id : item
+            const key = `${itemId}-${index}`
+
+            return (
+              <RelationChip
+                key={key}
+                relationItem={item}
+                field={field}
+                sharedToken={sharedToken}
+                onClick={() => {
+                  console.log('🔗 Relation chip clicked:', {
+                    fieldName: field.name,
+                    targetPipelineId: targetPipelineId.toString(),
+                    recordId: itemId
+                  })
+                  onOpenRelatedRecord(targetPipelineId.toString(), String(itemId))
+                }}
+              />
+            )
+          })}
         </div>
       )
     }

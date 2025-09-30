@@ -1346,11 +1346,17 @@ class Record(models.Model):
     
     def save(self, *args, **kwargs):
         """Simplified save method delegating to RecordOperationManager"""
+        # Check if we're already in a RecordOperationManager context
+        if getattr(self, '_in_operation_manager', False):
+            # We're being called from within RecordOperationManager, so just do a normal save
+            super().save(*args, **kwargs)
+            return
+
         from .record_operations import get_record_operation_manager
-        
+
         manager = get_record_operation_manager(self)
         result = manager.process_record_save(*args, **kwargs)
-        
+
         if not result.success:
             raise ValidationError(result.errors)
     

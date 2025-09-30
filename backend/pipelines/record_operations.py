@@ -691,6 +691,8 @@ class RecordOperationManager:
         self.ai_processor = RecordAIProcessor()
         self.post_processor = RecordPostProcessor()
         self._operation_counter = 0
+        # Track relation field updates
+        self._relation_updates = {}
     
     def _generate_operation_id(self) -> str:
         """Generate unique operation ID for tracking"""
@@ -714,7 +716,11 @@ class RecordOperationManager:
                 
                 # Step 2: Validate and merge data
                 self.change_manager.validate_and_merge_data(self.record, change_context)
-                
+
+                # Step 2.5: Extract relation fields from data (they'll be synced after save)
+                self._extract_relation_fields(self.record)
+                print(f"   📦 After extraction, _relation_updates has {len(self._relation_updates)} items")
+
                 # Step 3: Title generation removed - titles are now fully dynamic
                 # Titles are generated on-the-fly in serializers/views for consistency
                 # This eliminates sync issues between stored titles and changing data/templates
@@ -737,15 +743,40 @@ class RecordOperationManager:
                 # Step 6: Perform the actual database save
                 print(f"🟢 DATABASE STEP 3: Saving to Database")
                 print(f"   📦 Final data before save: {self.record.data}")
-                
-                # Call Django's Model.save() method directly (fixing the broken super() call)
-                from django.db import models
-                models.Model.save(self.record, *args, **kwargs)
+
+                # Store user if provided for relation syncing
+                user = kwargs.pop('user', None)
+                if user:
+                    self.record._current_user = user
+
+                # Filter kwargs to only include valid Django save parameters
+                valid_save_kwargs = {}
+                for key in ['force_insert', 'force_update', 'using', 'update_fields']:
+                    if key in kwargs:
+                        valid_save_kwargs[key] = kwargs[key]
+
+                # Set flag to prevent recursive save
+                self.record._in_operation_manager = True
+
+                try:
+                    # Call Django's Model.save() method directly (fixing the broken super() call)
+                    from django.db import models
+                    models.Model.save(self.record, **valid_save_kwargs)
+                except Exception as e:
+                    print(f"   ❌ Django save failed: {e}")
+                    raise
+                finally:
+                    # Clear flag after save
+                    self.record._in_operation_manager = False
                 
                 print(f"🟢 DATABASE STEP 3.1: Django save() completed successfully")
                 print(f"   ✅ Database save complete for record {self.record.pk}")
                 print(f"   📦 Final data after save: {self.record.data}")
-                
+
+                # Step 6.5: Extract and sync relation fields to Relationship table
+                print(f"   📦 Before sync, _relation_updates has {len(self._relation_updates)} items")
+                self._sync_relation_fields(change_context)
+
                 # Step 7: Post-save operations
                 self.post_processor.update_search_vector(self.record)
                 
@@ -778,6 +809,42 @@ class RecordOperationManager:
                 operation_id=operation_id,
                 errors=[f"Record save processing failed: {str(e)}"]
             )
+
+    def _extract_relation_fields(self, record):
+        """Extract relation fields from data and store for later sync"""
+        relation_fields = record.pipeline.fields.filter(field_type='relation')
+
+        for field in relation_fields:
+            if field.slug in record.data:
+                # Extract and store relation value
+                value = record.data.pop(field.slug)
+                self._relation_updates[field] = value
+                print(f"   → Extracted relation field '{field.slug}': {value}")
+
+    def _sync_relation_fields(self, change_context: ChangeContext):
+        """Sync extracted relation fields to Relationship table"""
+        if not self._relation_updates:
+            print(f"   ⚠️ No relation updates to sync")
+            return
+
+        print(f"🔗 Syncing {len(self._relation_updates)} relation field(s) to Relationship table")
+        print(f"   📦 Updates to sync: {[(f.slug, v) for f, v in self._relation_updates.items()]}")
+
+        from .relation_field_handler import sync_relation_field
+
+        user = getattr(self.record, '_current_user', None)
+
+        for field, value in self._relation_updates.items():
+            try:
+                result = sync_relation_field(self.record, field, value, user)
+                print(f"   ✓ Synced '{field.slug}': {result}")
+            except Exception as e:
+                print(f"   ❌ Failed to sync '{field.slug}': {e}")
+                # Don't fail the save if relation sync fails
+                logger.error(f"Failed to sync relation field {field.slug}: {e}")
+
+        # Clear updates after sync
+        self._relation_updates.clear()
 
 
 # =============================================================================

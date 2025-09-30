@@ -155,14 +155,65 @@ if MODELS_AVAILABLE:
             # Handle normal creation/update (not soft deletion)
             if not instance.is_deleted:  # Only broadcast if record is not deleted
                 # Debug logging removed for production
-                
+
+                # Get complete data including relation fields
+                complete_data = instance.data.copy() if instance.data else {}
+
+                # Add relation field data from Relationship table with display values
+                from pipelines.relation_field_handler import RelationFieldHandler
+                relation_fields = instance.pipeline.fields.filter(field_type='relation')
+                for field in relation_fields:
+                    try:
+                        handler = RelationFieldHandler(field)
+                        related_ids = handler.get_related_ids(instance)
+
+                        # Convert IDs to objects with display values
+                        if related_ids is not None:
+                            display_field = field.field_config.get('display_field', 'title')
+
+                            if isinstance(related_ids, list):
+                                # Multiple relations
+                                related_objects = []
+                                for record_id in related_ids:
+                                    try:
+                                        related_record = Record.objects.get(id=record_id)
+                                        display_value = related_record.data.get(display_field) or related_record.title or f"Record #{record_id}"
+                                        related_objects.append({
+                                            'id': record_id,
+                                            'display_value': display_value
+                                        })
+                                    except Record.DoesNotExist:
+                                        related_objects.append({
+                                            'id': record_id,
+                                            'display_value': f"Record #{record_id} (deleted)"
+                                        })
+                                complete_data[field.slug] = related_objects
+                            else:
+                                # Single relation
+                                try:
+                                    related_record = Record.objects.get(id=related_ids)
+                                    display_value = related_record.data.get(display_field) or related_record.title or f"Record #{related_ids}"
+                                    complete_data[field.slug] = {
+                                        'id': related_ids,
+                                        'display_value': display_value
+                                    }
+                                except Record.DoesNotExist:
+                                    complete_data[field.slug] = {
+                                        'id': related_ids,
+                                        'display_value': f"Record #{related_ids} (deleted)"
+                                    }
+                        else:
+                            complete_data[field.slug] = None
+                    except Exception as e:
+                        logger.debug(f"Failed to get relation data for field {field.slug}: {e}")
+
                 # Create event data with complete user information
                 event_data = {
                     'type': 'record_created' if created else 'record_updated',
                     'record_id': str(instance.id),
                     'pipeline_id': str(instance.pipeline_id),
                     'title': getattr(instance, 'title', f'Record {instance.id}'),
-                    'data': instance.data,  # Use the actual saved data, not cleaned data
+                    'data': complete_data,  # Use complete data with relation fields
                     'updated_at': instance.updated_at.isoformat() if instance.updated_at else None,
                     'created_by': {
                         'id': instance.created_by.id if instance.created_by else None,

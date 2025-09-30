@@ -260,23 +260,86 @@ class RecordSerializer(serializers.ModelSerializer):
     def to_representation(self, instance):
         """Override to dynamically generate title using current pipeline template"""
         from pipelines.record_operations import RecordUtils
-        
+        from pipelines.relation_field_handler import RelationFieldHandler
+
         data = super().to_representation(instance)
-        
+
         # For basic serializer, just use the raw data since we don't have dynamic fields
         # The formatting function should handle basic field types adequately
         generated_title = RecordUtils.generate_title(
-            instance.data, 
+            instance.data,
             instance.pipeline.name,
             instance.pipeline
         )
         data['title'] = generated_title
         # Also add display_name for frontend compatibility
         data['display_name'] = generated_title
-        
+
         # Add pipeline_name for easier access
         data['pipeline_name'] = instance.pipeline.name
-        
+
+        # Add relation field data from Relationship table with display values
+        relation_fields = instance.pipeline.fields.filter(field_type='relation')
+        for field in relation_fields:
+            handler = RelationFieldHandler(field)
+            related_ids = handler.get_related_ids(instance)
+
+            # Convert IDs to objects with display values
+            if related_ids is not None:
+                display_field = field.field_config.get('display_field', 'title')
+
+                if isinstance(related_ids, list):
+                    # Multiple relations
+                    related_objects = []
+                    for record_id in related_ids:
+                        try:
+                            related_record = Record.objects.get(id=record_id)
+                            # Try exact match first, then case-insensitive with underscores
+                            display_value = related_record.data.get(display_field)
+                            if not display_value:
+                                # Try converting spaces to underscores and lowercase
+                                alt_field = display_field.lower().replace(' ', '_')
+                                display_value = related_record.data.get(alt_field)
+                            if not display_value:
+                                display_value = related_record.title or f"Record #{record_id}"
+                            related_objects.append({
+                                'id': record_id,
+                                'display_value': display_value
+                            })
+                        except Record.DoesNotExist:
+                            related_objects.append({
+                                'id': record_id,
+                                'display_value': f"Record #{record_id} (deleted)"
+                            })
+                    related_value = related_objects
+                else:
+                    # Single relation
+                    try:
+                        related_record = Record.objects.get(id=related_ids)
+                        # Try exact match first, then case-insensitive with underscores
+                        display_value = related_record.data.get(display_field)
+                        if not display_value:
+                            # Try converting spaces to underscores and lowercase
+                            alt_field = display_field.lower().replace(' ', '_')
+                            display_value = related_record.data.get(alt_field)
+                        if not display_value:
+                            display_value = related_record.title or f"Record #{related_ids}"
+                        related_value = {
+                            'id': related_ids,
+                            'display_value': display_value
+                        }
+                    except Record.DoesNotExist:
+                        related_value = {
+                            'id': related_ids,
+                            'display_value': f"Record #{related_ids} (deleted)"
+                        }
+            else:
+                related_value = None
+
+            if data.get('data') is None:
+                data['data'] = {}
+            data['data'][field.slug] = related_value
+
         return data
     
     def create(self, validated_data):
@@ -406,35 +469,98 @@ class DynamicRecordSerializer(serializers.ModelSerializer):
     def to_representation(self, instance):
         """Override to dynamically generate title using current pipeline template"""
         from pipelines.record_operations import RecordUtils
-        
+        from pipelines.relation_field_handler import RelationFieldHandler
+
         data = super().to_representation(instance)
-        
+
         # Extract the processed field data from the serialized response
         # This contains resolved values (user names, relation titles, etc.)
         processed_data = {}
         for key, value in data.items():
             if key not in ['id', 'pipeline', 'created_by', 'updated_by', 'created_at', 'updated_at', 'status', 'title']:
                 processed_data[key] = value
-        
+
         # Also include the raw data as fallback for fields not in the serializer
         if hasattr(instance, 'data') and instance.data:
             for key, value in instance.data.items():
                 if key not in processed_data:
                     processed_data[key] = value
-        
+
+        # Add relation field data from Relationship table with display values
+        relation_fields = instance.pipeline.fields.filter(field_type='relation')
+        for field in relation_fields:
+            handler = RelationFieldHandler(field)
+            related_ids = handler.get_related_ids(instance)
+
+            # Convert IDs to objects with display values
+            if related_ids is not None:
+                display_field = field.field_config.get('display_field', 'title')
+
+                if isinstance(related_ids, list):
+                    # Multiple relations
+                    related_objects = []
+                    for record_id in related_ids:
+                        try:
+                            related_record = Record.objects.get(id=record_id)
+                            # Try exact match first, then case-insensitive with underscores
+                            display_value = related_record.data.get(display_field)
+                            if not display_value:
+                                # Try converting spaces to underscores and lowercase
+                                alt_field = display_field.lower().replace(' ', '_')
+                                display_value = related_record.data.get(alt_field)
+                            if not display_value:
+                                display_value = related_record.title or f"Record #{record_id}"
+                            related_objects.append({
+                                'id': record_id,
+                                'display_value': display_value
+                            })
+                        except Record.DoesNotExist:
+                            related_objects.append({
+                                'id': record_id,
+                                'display_value': f"Record #{record_id} (deleted)"
+                            })
+                    related_value = related_objects
+                else:
+                    # Single relation
+                    try:
+                        related_record = Record.objects.get(id=related_ids)
+                        # Try exact match first, then case-insensitive with underscores
+                        display_value = related_record.data.get(display_field)
+                        if not display_value:
+                            # Try converting spaces to underscores and lowercase
+                            alt_field = display_field.lower().replace(' ', '_')
+                            display_value = related_record.data.get(alt_field)
+                        if not display_value:
+                            display_value = related_record.title or f"Record #{related_ids}"
+                        related_value = {
+                            'id': related_ids,
+                            'display_value': display_value
+                        }
+                    except Record.DoesNotExist:
+                        related_value = {
+                            'id': related_ids,
+                            'display_value': f"Record #{related_ids} (deleted)"
+                        }
+            else:
+                related_value = None
+
+            if data.get('data') is None:
+                data['data'] = {}
+            data['data'][field.slug] = related_value
+
         # Generate title dynamically using processed field values
         generated_title = RecordUtils.generate_title(
-            processed_data, 
+            processed_data,
             instance.pipeline.name,
             instance.pipeline
         )
         data['title'] = generated_title
         # Also add display_name for frontend compatibility
         data['display_name'] = generated_title
-        
+
         # Add pipeline_name for easier access
         data['pipeline_name'] = instance.pipeline.name
-        
+
         return data
     
     def __init__(self, *args, **kwargs):

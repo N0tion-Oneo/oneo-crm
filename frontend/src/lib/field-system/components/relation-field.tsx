@@ -86,31 +86,50 @@ const RelationDisplayValue: React.FC<{
   context?: string
 }> = ({ value, field, context }) => {
   const { user } = useAuth() // Use centralized auth system
-  const [displayText, setDisplayText] = useState<string>(`Record #${value}`)
+  const [displayText, setDisplayText] = useState<string>('')
   const [loading, setLoading] = useState(true)
-  
+
   const targetPipelineId = getFieldConfig(field, 'target_pipeline_id')
   const displayField = getFieldConfig(field, 'display_field', 'title')
-  
+
   useEffect(() => {
     const fetchData = async () => {
-      if (!targetPipelineId || !value) {
+      if (!value) {
         setLoading(false)
         return
       }
-      
+
+      // Check if value is already an object with display_value (new format)
+      if (typeof value === 'object' && value.display_value) {
+        setDisplayText(value.display_value)
+        setLoading(false)
+        return
+      }
+
+      // Extract ID from value (handles both old format and new format)
+      const recordId = typeof value === 'object' ? value.id : value
+
+      if (!targetPipelineId || !recordId) {
+        // Make sure recordId is a string/number, not an object
+        const idStr = typeof recordId === 'object' ? JSON.stringify(recordId) : recordId
+        setDisplayText(`Record #${idStr}`)
+        setLoading(false)
+        return
+      }
+
       // Only lookup record details if authenticated and not in public context
+      // This is for backward compatibility with old format
       const isAuthenticated = user && (context as string) !== 'public'
-      const result = await lookupRelationValue(value, targetPipelineId, displayField, Boolean(isAuthenticated))
+      const result = await lookupRelationValue(recordId, targetPipelineId, displayField, Boolean(isAuthenticated))
       setDisplayText(result)
       setLoading(false)
     }
-    
+
     fetchData()
   }, [value, targetPipelineId, displayField, user, context])
-  
+
   if (loading) {
-    return <span className="text-gray-500">Loading...</span>
+    return <span className="text-gray-500 animate-pulse">•••</span>
   }
   
   // For table and detail contexts, show a link-like appearance
@@ -203,6 +222,16 @@ function getDisplayValue(record: any, displayField: string): string {
 const EnhancedRelationshipInput: React.FC<FieldRenderProps> = (props) => {
   const { field, value, onChange, onBlur, onKeyDown, disabled, error, className, autoFocus, pipeline_id, context } = props
   const { user } = useAuth() // Use centralized auth system
+
+  // Debug logging for relation field values
+  console.log('🎨 EnhancedRelationshipInput render:', {
+    fieldName: field.name,
+    value,
+    valueType: typeof value,
+    isArray: Array.isArray(value),
+    disabled,
+    context
+  })
   
   // Get enhanced field configuration
   const targetPipelineId = getFieldConfig(field, 'target_pipeline_id')
@@ -225,34 +254,50 @@ const EnhancedRelationshipInput: React.FC<FieldRenderProps> = (props) => {
   const dropdownRef = useRef<HTMLDivElement>(null)
   
   // Normalize value to always work with arrays for consistency
-  // Handle both backend format (simple IDs) and UI format (enhanced objects)
+  // Handle NEW backend format {id, display_value} and convert to internal format
   const normalizedValue = React.useMemo(() => {
     if (!value) return []
-    
+
     if (Array.isArray(value)) {
       return value.map(v => {
         if (typeof v === 'object' && v.record_id) {
           // Already in enhanced format
           return v as EnhancedRelationship
+        } else if (typeof v === 'object' && v.id) {
+          // NEW backend format: {id, display_value}
+          return {
+            record_id: typeof v.id === 'number' ? v.id.toString() : v.id,
+            relationship_type: defaultRelationshipType,
+            display_value: v.display_value  // Store display value
+          } as EnhancedRelationship & { display_value?: string }
         } else {
-          // Backend format: simple ID, convert to enhanced format for UI
-          return { 
-            record_id: typeof v === 'number' ? v.toString() : v, 
-            relationship_type: defaultRelationshipType 
+          // Simple ID format
+          return {
+            record_id: typeof v === 'number' ? v.toString() : v,
+            relationship_type: defaultRelationshipType
           } as EnhancedRelationship
         }
       })
     }
-    
+
     if (typeof value === 'object' && value.record_id) {
       // Already in enhanced format
       return [value as EnhancedRelationship]
     }
-    
-    // Backend format: simple ID, convert to enhanced format for UI
-    return [{ 
-      record_id: typeof value === 'number' ? value.toString() : value, 
-      relationship_type: defaultRelationshipType 
+
+    if (typeof value === 'object' && value.id) {
+      // NEW backend format: {id, display_value}
+      return [{
+        record_id: typeof value.id === 'number' ? value.id.toString() : value.id,
+        relationship_type: defaultRelationshipType,
+        display_value: value.display_value  // Store display value
+      } as EnhancedRelationship & { display_value?: string }]
+    }
+
+    // Simple ID format
+    return [{
+      record_id: typeof value === 'number' ? value.toString() : value,
+      relationship_type: defaultRelationshipType
     } as EnhancedRelationship]
   }, [value, defaultRelationshipType])
   
@@ -449,9 +494,11 @@ const EnhancedRelationshipInput: React.FC<FieldRenderProps> = (props) => {
       <div className="space-y-2 mb-3">
         {normalizedValue.map((relationship, index) => {
           const record = records.find(r => r.id.toString() === relationship.record_id.toString())
-          const recordDisplay = record ? getDisplayValue(record, displayField) : `Record #${relationship.record_id}`
+          // Use stored display_value if available (from new backend format), otherwise lookup or fallback
+          const recordDisplay = (relationship as any).display_value ||
+                              (record ? getDisplayValue(record, displayField) : `Record #${relationship.record_id}`)
           const hasRequiredType = !allowRelationshipTypeSelection || (relationship.relationship_type && relationship.relationship_type.trim() !== '')
-          
+
           return (
             <div key={`${relationship.record_id}-${index}`} className={`flex items-center gap-2 p-2 rounded-lg ${
               hasRequiredType 
@@ -654,56 +701,93 @@ export const RelationFieldComponent: FieldComponent = {
   },
 
   formatValue: (value: any, field: Field, context?: string) => {
+    // Debug logging to understand the value format
+    console.log('🔍 RelationField formatValue called:', {
+      value,
+      valueType: typeof value,
+      isArray: Array.isArray(value),
+      fieldName: field.name,
+      context,
+      stringValue: String(value)
+    })
+
     if (value === null || value === undefined || value === '') {
       if (context === 'table') {
         return <span className="text-gray-400 italic">—</span>
       }
       return ''
     }
-    
-    // Check if this is an enhanced relationship field with multiple values
-    const allowMultiple = getFieldConfig(field, 'allow_multiple', false)
-    const allowRelationshipTypeSelection = getFieldConfig(field, 'allow_relationship_type_selection', false)
-    
-    if (allowMultiple && Array.isArray(value)) {
-      return (
-        <div className="space-y-1">
-          {value.map((relationship, index) => {
-            const recordId = typeof relationship === 'object' ? relationship.record_id : relationship
-            const relationshipType = typeof relationship === 'object' ? relationship.relationship_type : null
-            
-            return (
-              <div key={`${recordId}-${index}`} className="flex items-center gap-2">
-                <Link className="w-3 h-3 text-gray-500" />
-                <RelationDisplayValue value={recordId} field={field} context={context} />
-                {allowRelationshipTypeSelection && relationshipType && (
-                  <span className="text-xs text-gray-500 bg-gray-100 dark:bg-gray-700 px-2 py-0.5 rounded">
-                    {relationshipType.replace('_', ' ')}
-                  </span>
-                )}
-              </div>
-            )
-          })}
-        </div>
-      )
+
+    // Check if value was accidentally stringified as "[object Object]"
+    if (typeof value === 'string' && value === '[object Object]') {
+      console.error('⚠️ Relation field value was stringified as [object Object], cannot recover display value')
+      return <span className="text-red-500">Invalid value</span>
     }
-    
-    // Handle enhanced single relationship
-    if (typeof value === 'object' && value.record_id) {
+
+    // Check if value is a string that looks like it might be JSON
+    if (typeof value === 'string' && (value.startsWith('{') || value.startsWith('['))) {
+      try {
+        const parsed = JSON.parse(value)
+        console.log('📦 Parsed stringified JSON value:', parsed)
+        value = parsed
+      } catch (e) {
+        console.warn('Failed to parse potential JSON string:', value)
+      }
+    }
+
+    // NEW FORMAT: Handle arrays of {id, display_value} objects
+    if (Array.isArray(value)) {
+      // Filter out any empty items
+      const items = value.filter(item => item)
+
+      if (items.length === 0) {
+        if (context === 'table') {
+          return <span className="text-gray-400 italic">—</span>
+        }
+        return ''
+      }
+
+      // Multiple items
+      if (items.length > 1) {
+        return (
+          <div className="space-y-1">
+            {items.map((item, index) => {
+              const displayValue = item.display_value || `Record #${item.id}`
+              return (
+                <div key={`${item.id}-${index}`} className="flex items-center gap-2">
+                  <Link className="w-3 h-3 text-gray-500" />
+                  <span className="text-sm">{displayValue}</span>
+                </div>
+              )
+            })}
+          </div>
+        )
+      }
+
+      // Single item in array
+      const item = items[0]
+      const displayValue = item.display_value || `Record #${item.id}`
       return (
         <div className="flex items-center gap-2">
           <Link className="w-3 h-3 text-gray-500" />
-          <RelationDisplayValue value={value.record_id} field={field} context={context} />
-          {allowRelationshipTypeSelection && value.relationship_type && (
-            <span className="text-xs text-gray-500 bg-gray-100 dark:bg-gray-700 px-2 py-0.5 rounded">
-              {value.relationship_type.replace('_', ' ')}
-            </span>
-          )}
+          <span className="text-sm">{displayValue}</span>
         </div>
       )
     }
-    
-    // Fall back to simple single relationship display
+
+    // NEW FORMAT: Handle single {id, display_value} object
+    if (typeof value === 'object' && value !== null && value.id) {
+      const displayValue = value.display_value || `Record #${value.id}`
+      return (
+        <div className="flex items-center gap-2">
+          <Link className="w-3 h-3 text-gray-500" />
+          <span className="text-sm">{displayValue}</span>
+        </div>
+      )
+    }
+
+    // Fallback for any other format (shouldn't happen with new format)
+    console.warn('Unexpected relation field value format:', value, 'Type:', typeof value)
     return <RelationDisplayValue value={value} field={field} context={context} />
   },
 
@@ -733,10 +817,10 @@ export const RelationFieldComponent: FieldComponent = {
           }
         }
         
-        // Validate each relationship
+        // Validate each relationship (new format with id)
         for (const rel of value) {
-          if (typeof rel === 'object' && rel.record_id) {
-            if (!rel.record_id) {
+          if (typeof rel === 'object') {
+            if (!rel.id) {
               return {
                 isValid: false,
                 error: 'Each relationship must have a valid record ID'
@@ -744,7 +828,7 @@ export const RelationFieldComponent: FieldComponent = {
             }
           }
         }
-      } else if (typeof value === 'object' && value.record_id && !value.record_id) {
+      } else if (typeof value === 'object' && value.id && !value.id) {
         return {
           isValid: false,
           error: 'Relationship must have a valid record ID'
@@ -762,19 +846,19 @@ export const RelationFieldComponent: FieldComponent = {
   isEmpty: (value: any) => {
     if (!value || value === '') return true
     
-    // Handle enhanced relationship arrays
+    // Handle new format arrays
     if (Array.isArray(value)) {
       return value.length === 0 || value.every(rel => {
-        if (typeof rel === 'object' && rel.record_id) {
-          return !rel.record_id
+        if (typeof rel === 'object' && rel.id) {
+          return !rel.id
         }
         return !rel
       })
     }
-    
-    // Handle enhanced relationship objects
-    if (typeof value === 'object' && value.record_id) {
-      return !value.record_id
+
+    // Handle new format objects
+    if (typeof value === 'object' && value.id) {
+      return !value.id
     }
     
     return false

@@ -323,16 +323,27 @@ class RecordSerializer(serializers.ModelSerializer):
     def to_representation(self, instance):
         """Override to dynamically generate title using current pipeline template"""
         from .record_operations import RecordUtils
-        
+        from .relation_field_handler import RelationFieldHandler
+
         data = super().to_representation(instance)
-        
+
         # Generate title dynamically using current pipeline template
         data['title'] = RecordUtils.generate_title(
-            instance.data, 
+            instance.data,
             instance.pipeline.name,
             instance.pipeline
         )
-        
+
+        # Add relation field data from Relationship table
+        relation_fields = instance.pipeline.fields.filter(field_type='relation')
+        for field in relation_fields:
+            handler = RelationFieldHandler(field)
+            related_ids = handler.get_related_ids(instance)
+            # Merge relation data into the data dict
+            if data.get('data') is None:
+                data['data'] = {}
+            data['data'][field.slug] = related_ids
+
         return data
     
     def validate_data(self, value):
@@ -354,43 +365,81 @@ class RecordSerializer(serializers.ModelSerializer):
         return validation_result['cleaned_data']
     
     def create(self, validated_data):
-        """Create record with proper user assignment"""
+        """Create record with proper user assignment and relation field handling"""
         request = self.context.get('request')
         pipeline = self.context.get('pipeline')
-        
+
         if not pipeline:
             raise serializers.ValidationError("Pipeline is required")
-        
-        validated_data['pipeline'] = pipeline
-        
+
+        # Create record instance (but don't save yet)
+        record = Record(
+            pipeline=pipeline,
+            data=validated_data.get('data', {}),
+            status=validated_data.get('status', 'active'),
+            tags=validated_data.get('tags', [])
+        )
+
+        # Set user fields
+        user = None
         if request and request.user:
-            validated_data['created_by'] = request.user
-            validated_data['updated_by'] = request.user
-        
-        return Record.objects.create(**validated_data)
+            record.created_by = request.user
+            record.updated_by = request.user
+            user = request.user
+
+        # Use RecordOperationManager to handle the save, which will:
+        # 1. Extract relation fields from JSONB
+        # 2. Save the record
+        # 3. Sync relation fields to Relationship table
+        from .record_operations import RecordOperationManager
+        operation_manager = RecordOperationManager(record)
+        result = operation_manager.process_record_save(user=user)
+
+        if result.success:
+            return result.record
+        else:
+            raise serializers.ValidationError(result.errors)
     
     def update(self, instance, validated_data):
-        """Update record with proper user assignment"""
+        """Update record with proper user assignment and relation field handling"""
         import logging
         logger = logging.getLogger(__name__)
-        
+
         request = self.context.get('request')
-        
+
         # 🔍 DEBUG: Log user context at serializer level
         if request:
             logger.info(f"SERIALIZER_UPDATE: Request user: {request.user.email if hasattr(request.user, 'email') else request.user} (ID: {getattr(request.user, 'id', 'No ID')})")
             logger.info(f"SERIALIZER_UPDATE: Request object ID: {id(request)}")
             logger.info(f"SERIALIZER_UPDATE: User object ID: {id(request.user)}")
             logger.info(f"SERIALIZER_UPDATE: Record instance ID: {instance.id}")
-            
+
             # Check for authentication state
             if hasattr(request.user, 'is_authenticated'):
                 logger.info(f"SERIALIZER_UPDATE: User authenticated: {request.user.is_authenticated}")
-            
+
+        # Extract user for the operation
+        user = None
         if request and request.user:
             validated_data['updated_by'] = request.user
-        
-        return super().update(instance, validated_data)
+            user = request.user
+
+        # Update the record's data with validated data
+        if 'data' in validated_data:
+            instance.data = validated_data['data']
+
+        # Use RecordOperationManager to handle the save, which will:
+        # 1. Extract relation fields from JSONB
+        # 2. Save the record
+        # 3. Sync relation fields to Relationship table
+        from .record_operations import RecordOperationManager
+        operation_manager = RecordOperationManager(instance)
+        result = operation_manager.process_record_save(user=user)
+
+        if result.success:
+            return result.record
+        else:
+            raise serializers.ValidationError(result.errors)
 
 
 class RecordCreateSerializer(serializers.Serializer):

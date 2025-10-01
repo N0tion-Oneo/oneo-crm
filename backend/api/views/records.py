@@ -19,6 +19,7 @@ from api.serializers import (
     RecordSerializer, DynamicRecordSerializer, RecordRelationshipSerializer,
     BulkRecordSerializer
 )
+from pipelines.serializers import BulkRecordActionSerializer
 from api.filters import DynamicRecordFilter, GlobalSearchFilter
 from api.permissions import RecordPermission
 from authentication.permissions import AsyncPermissionManager, SyncPermissionManager as PermissionManager
@@ -1291,6 +1292,75 @@ class RecordViewSet(viewsets.ModelViewSet):
         # Simply filter by the indexed assigned_user_ids field
         # This works across all pipelines since it's a single indexed lookup
         return queryset.filter(assigned_user_ids__contains=[user.id])
+
+    @action(detail=False, methods=['post'])
+    def bulk_action(self, request, pipeline_pk=None):
+        """Perform bulk actions on records"""
+        serializer = BulkRecordActionSerializer(data=request.data)
+
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        data = serializer.validated_data
+        action_type = data['action']
+        record_ids = data['record_ids']
+
+        # Get records user has access to
+        records = self.get_queryset().filter(id__in=record_ids)
+
+        if not records.exists():
+            return Response(
+                {'error': 'No accessible records found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        result = {'processed': 0, 'errors': []}
+
+        if action_type == 'delete':
+            # Bulk soft delete - much faster than individual soft_delete() calls
+            # This bypasses individual record signals to avoid trigger storm
+            from django.utils import timezone
+
+            count = records.update(
+                is_deleted=True,
+                deleted_at=timezone.now(),
+                deleted_by=request.user
+            )
+            result['processed'] = count
+
+        elif action_type == 'update_status':
+            new_status = data['status']
+            records.update(status=new_status, updated_by=request.user)
+            result['processed'] = records.count()
+
+        elif action_type == 'add_tags':
+            tags = data['tags']
+            for record in records:
+                record.tags = list(set(record.tags + tags))
+                record.updated_by = request.user
+                record.save(update_fields=['tags', 'updated_by'])
+                result['processed'] += 1
+
+        elif action_type == 'remove_tags':
+            tags = data['tags']
+            for record in records:
+                record.tags = [tag for tag in record.tags if tag not in tags]
+                record.updated_by = request.user
+                record.save(update_fields=['tags', 'updated_by'])
+                result['processed'] += 1
+
+        elif action_type == 'export':
+            # Return export data instead of performing action
+            export_data = []
+            for record in records:
+                export_data.append(record.to_dict(include_metadata=True))
+
+            return Response({
+                'export_data': export_data,
+                'count': len(export_data)
+            })
+
+        return Response(result)
 
 
 class GlobalSearchViewSet(viewsets.ReadOnlyModelViewSet):

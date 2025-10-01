@@ -249,9 +249,34 @@ function NodeConfigModalInner({
       return a.depth - b.depth;
     });
 
+    // Build expanded variables with multi-hop relation paths
+    const { buildAvailableVariables } = require('../../utils/relationPathExpander');
+
+    // Combine all input data into a single object for path expansion
+    const combinedInputData: any = {};
+    inputSources.forEach(source => {
+      if (source.data && source.nodeId) {
+        combinedInputData[source.label || source.nodeId] = source.data;
+      }
+    });
+
+    // Generate expanded variable paths including multi-hop relations
+    const expandedVariables = buildAvailableVariables(combinedInputData, 3);
+
+    // Convert to format expected by widgets: {label, value, description}
+    const formattedVariables = expandedVariables.map(v => ({
+      label: v.label,
+      value: v.value,
+      description: v.description,
+      type: v.type,
+      isRelation: v.isRelation,
+      depth: v.depth,
+      group: v.group
+    }));
+
     setInputData({
       sources: inputSources,
-      availableVariables: inputSources
+      availableVariables: formattedVariables
     });
   };
 
@@ -439,7 +464,7 @@ function NodeConfigModalInner({
                   {/* Input data structure display with enhanced table view */}
                   <NodeInputStructureV2
                     sources={inputData.sources || []}
-                    testData={isTriggerNode ? getDefaultNodeOutputs(node.type) : null}
+                    testData={isTriggerNode && !useRealData ? getDefaultNodeOutputs(node.type) : null}
                     isTriggerNode={isTriggerNode}
                     testDataList={testData}
                     testDataType={testDataType}
@@ -516,9 +541,11 @@ function NodeConfigModalInner({
                         nodeConfig={nodeSchema}
                         config={localConfig}
                         onChange={handleConfigChange}
-                        availableVariables={inputData.sources || []}
+                        availableVariables={inputData.availableVariables || []}
                         pipelines={pipelines}
                         workflows={[]}
+                        allPipelineFields={pipelineFields}
+                        fetchPipelineFields={fetchPipelineFields}
                         pipelineFields={(() => {
                           // Aggregate pipeline fields based on selection
                           if (localConfig?.pipeline_id) {
@@ -552,8 +579,10 @@ function NodeConfigModalInner({
                         nodeConfig={nodeConfig}
                         config={localConfig}
                         onChange={handleConfigChange}
-                        availableVariables={inputData.sources || []}
+                        availableVariables={inputData.availableVariables || []}
                         pipelines={pipelines}
+                        allPipelineFields={pipelineFields}
+                        fetchPipelineFields={fetchPipelineFields}
                         pipelineFields={pipelineFields[localConfig?.pipeline_id]}
                         users={users}
                         userTypes={userTypes}

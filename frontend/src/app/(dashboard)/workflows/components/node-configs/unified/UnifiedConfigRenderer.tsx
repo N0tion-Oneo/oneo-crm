@@ -44,6 +44,8 @@ export function UnifiedConfigRenderer({
   userTypes,
   unipileAccounts,
   pipelineFields,
+  allPipelineFields,
+  fetchPipelineFields,
   errors: externalErrors = {}
 }: UnifiedConfigRendererProps) {
   console.log('[UnifiedConfigRenderer] RENDER', {
@@ -293,6 +295,8 @@ export function UnifiedConfigRenderer({
           userTypes,
           workflows,
           pipelineFields,
+          allPipelineFields,
+          fetchPipelineFields,
           availableVariables
         }}
       />

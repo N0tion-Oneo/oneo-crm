@@ -33,6 +33,108 @@ class TestDataService:
         return f"Record {str(record.id)[:8]}"
 
     @staticmethod
+    def expand_relation_fields(record, depth=2, _visited=None):
+        """
+        Recursively expand relation fields to support multi-hop traversal
+        Example: company.jobs[0].interviews[0].candidates
+
+        Args:
+            record: Record instance to expand
+            depth: Maximum depth for relation expansion (default 2 for performance)
+            _visited: Set of visited record IDs to prevent circular references
+
+        Returns:
+            dict: Record data with expanded relation fields
+        """
+        from pipelines.models import Record
+        from pipelines.relation_field_handler import RelationFieldHandler
+
+        if _visited is None:
+            _visited = set()
+
+        # Prevent infinite loops
+        if record.id in _visited or depth <= 0:
+            return record.data or {}
+
+        _visited.add(record.id)
+
+        # Start with the record's data
+        expanded_data = dict(record.data or {})
+
+        # Get all relation fields for this pipeline
+        relation_fields = record.pipeline.fields.filter(
+            field_type='relation',
+            is_deleted=False
+        )
+
+        for field in relation_fields:
+            handler = RelationFieldHandler(field)
+            relationships = handler.get_bidirectional_relationships(record, include_deleted=False)
+
+            if not relationships:
+                # Keep original value or set empty structure
+                if field.slug not in expanded_data:
+                    expanded_data[field.slug] = [] if handler.allow_multiple else None
+                continue
+
+            expanded_relations = []
+
+            for rel in relationships:
+                # Determine target record
+                if rel.source_record_id == record.id:
+                    target_record_id = rel.target_record_id
+                    target_pipeline_id = rel.target_pipeline_id
+                else:
+                    target_record_id = rel.source_record_id
+                    target_pipeline_id = rel.source_pipeline_id
+
+                try:
+                    # Get target record
+                    target_record = Record.objects.select_related('pipeline').get(
+                        id=target_record_id,
+                        pipeline_id=target_pipeline_id,
+                        is_deleted=False
+                    )
+
+                    # Get display value
+                    display_value = target_record.data.get(handler.display_field) if target_record.data else None
+                    if not display_value:
+                        alt_field = handler.display_field.lower().replace(' ', '_')
+                        display_value = target_record.data.get(alt_field) if target_record.data else None
+                    if not display_value:
+                        display_value = target_record.title or f"Record #{target_record_id}"
+
+                    # Recursively expand nested relations
+                    nested_data = TestDataService.expand_relation_fields(
+                        target_record,
+                        depth=depth - 1,
+                        _visited=_visited.copy()
+                    )
+
+                    # Build expanded relation object
+                    expanded_relation = {
+                        'id': target_record_id,
+                        'display_value': display_value,
+                        'data': nested_data,  # Nested data for multi-hop traversal
+                        'pipeline_id': str(target_pipeline_id),
+                        'title': target_record.title
+                    }
+
+                    expanded_relations.append(expanded_relation)
+
+                except Record.DoesNotExist:
+                    # Skip missing records
+                    continue
+
+            # Store based on cardinality
+            if handler.allow_multiple:
+                expanded_data[field.slug] = expanded_relations
+            else:
+                expanded_data[field.slug] = expanded_relations[0] if expanded_relations else None
+
+        return expanded_data
+
+    @staticmethod
     def parse_node_config(request):
         """Parse node config from request parameters"""
         pipeline_id = request.query_params.get('pipeline_id')
@@ -511,11 +613,13 @@ class TestDataService:
 
         formatted_data = []
         for record in records:
-            data = record.data or {}
+            # Expand relation fields recursively for multi-hop traversal support
+            expanded_data = cls.expand_relation_fields(record, depth=2)
+
             title = (
-                data.get('name') or
-                f"{data.get('first_name', '')} {data.get('last_name', '')}".strip() or
-                data.get('email') or
+                expanded_data.get('name') or
+                f"{expanded_data.get('first_name', '')} {expanded_data.get('last_name', '')}".strip() or
+                expanded_data.get('email') or
                 f"Record {str(record.id)[:8]}"
             )
 
@@ -523,9 +627,14 @@ class TestDataService:
                 'id': str(record.id),
                 'type': 'record',
                 'title': title,
+                'pipeline_id': str(record.pipeline_id),
                 'created_at': record.created_at.isoformat(),
+                'updated_at': record.updated_at.isoformat() if record.updated_at else None,
+                'created_by': str(record.created_by_id) if hasattr(record, 'created_by_id') and record.created_by_id else None,
+                'updated_by': str(record.updated_by_id) if hasattr(record, 'updated_by_id') and record.updated_by_id else None,
+                'data': expanded_data,  # Expanded data with nested relations for multi-hop traversal
                 'preview': {
-                    k: v for k, v in data.items()
+                    k: v for k, v in expanded_data.items()
                     if k in ['name', 'first_name', 'last_name', 'email', 'company']
                 }
             })

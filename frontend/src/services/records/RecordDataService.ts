@@ -225,21 +225,24 @@ export class RecordDataService {
   }
 
   /**
-   * Bulk update multiple records
+   * Bulk update multiple records (status update)
    */
   static async bulkUpdateRecords(
-    pipelineId: string, 
-    recordIds: string[], 
+    pipelineId: string,
+    recordIds: string[],
     data: Record['data']
   ): Promise<void> {
+    // Note: Backend bulk_action only supports 'update_status', not arbitrary field updates
+    // For arbitrary field updates, we'd need a different endpoint
+    const status = data.status || 'active'
     await pipelinesApi.bulkUpdateRecords(pipelineId, {
       record_ids: recordIds,
-      data
+      status
     })
   }
 
   /**
-   * Bulk delete multiple records
+   * Bulk delete multiple records (soft delete)
    */
   static async bulkDeleteRecords(pipelineId: string, recordIds: string[]): Promise<void> {
     await pipelinesApi.bulkDeleteRecords(pipelineId, {

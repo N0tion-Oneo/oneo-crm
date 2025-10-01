@@ -176,6 +176,74 @@ export function VariablePicker({
       }
     ];
 
+    // Relation field traversal examples
+    const relationVars: VariableItem[] = [
+      {
+        path: 'record.company.name',
+        label: 'Company Name',
+        type: 'string',
+        category: 'relations',
+        description: 'Single-hop: Traverse to related company name',
+        icon: <Link className="h-4 w-4" />
+      },
+      {
+        path: 'record.company.industry',
+        label: 'Company Industry',
+        type: 'string',
+        category: 'relations',
+        description: 'Single-hop: Company industry field',
+        icon: <Link className="h-4 w-4" />
+      },
+      {
+        path: 'record.company.email',
+        label: 'Company Email',
+        type: 'string',
+        category: 'relations',
+        description: 'Single-hop: Company email address',
+        icon: <Link className="h-4 w-4" />
+      },
+      {
+        path: 'record.deal.company.name',
+        label: 'Deal → Company Name',
+        type: 'string',
+        category: 'relations',
+        description: 'Multi-hop: Traverse through deal to company name',
+        icon: <Link className="h-4 w-4" />
+      },
+      {
+        path: 'record.deal.company.industry',
+        label: 'Deal → Company → Industry',
+        type: 'string',
+        category: 'relations',
+        description: 'Multi-hop: Traverse through multiple relations',
+        icon: <Link className="h-4 w-4" />
+      },
+      {
+        path: 'record.contacts[0].email',
+        label: 'First Contact Email',
+        type: 'string',
+        category: 'relations',
+        description: 'Array relation: Access first contact\'s email',
+        icon: <Link className="h-4 w-4" />
+      },
+      {
+        path: 'record.contacts[0].name',
+        label: 'First Contact Name',
+        type: 'string',
+        category: 'relations',
+        description: 'Array relation: Access first contact\'s name',
+        icon: <Link className="h-4 w-4" />
+      },
+      {
+        path: 'record.manager.email',
+        label: 'Manager Email',
+        type: 'string',
+        category: 'relations',
+        description: 'Single-hop: Related manager email address',
+        icon: <Link className="h-4 w-4" />
+      }
+    ];
+
     // Node output variables
     availableVariables.forEach(node => {
       node.outputs.forEach(output => {
@@ -222,7 +290,7 @@ export function VariablePicker({
     ];
 
     // Combine all variables
-    let finalVars = [...systemVars, ...recordVars, ...allVars, ...envVars];
+    let finalVars = [...systemVars, ...recordVars, ...relationVars, ...allVars, ...envVars];
 
     // Filter for arrays only if requested
     if (showArraysOnly) {
@@ -294,10 +362,12 @@ export function VariablePicker({
         return <Settings className="h-4 w-4" />;
       case 'record':
         return <Database className="h-4 w-4" />;
+      case 'relations':
+        return <Link className="h-4 w-4" />;
       case 'nodes':
         return <Variable className="h-4 w-4" />;
       case 'environment':
-        return <Link className="h-4 w-4" />;
+        return <Settings className="h-4 w-4" />;
       default:
         return <FileText className="h-4 w-4" />;
     }
@@ -318,6 +388,7 @@ export function VariablePicker({
     { id: 'all', label: 'All Variables', count: variables.length },
     { id: 'system', label: 'System', count: variables.filter(v => v.category === 'system').length },
     { id: 'record', label: 'Record', count: variables.filter(v => v.category === 'record').length },
+    { id: 'relations', label: 'Relations', count: variables.filter(v => v.category === 'relations').length },
     { id: 'nodes', label: 'Node Outputs', count: variables.filter(v => v.category === 'nodes').length },
     { id: 'environment', label: 'Environment', count: variables.filter(v => v.category === 'environment').length }
   ];

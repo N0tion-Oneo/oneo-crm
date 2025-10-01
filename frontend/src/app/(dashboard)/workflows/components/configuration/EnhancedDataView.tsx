@@ -25,7 +25,8 @@ import {
   ChevronDown,
   Database,
   Maximize2,
-  Minimize2
+  Minimize2,
+  Link
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { DataTypeIcon, DataTypeBadge, detectDataType } from './DataTypeIcon';
@@ -33,6 +34,37 @@ import { FieldValuePreview, FieldRow } from './FieldValuePreview';
 import { toast } from 'sonner';
 
 type ViewMode = 'table' | 'tree' | 'json' | 'schema';
+
+/**
+ * Detect if a value is a relation field (has id and display_value)
+ * Relation fields can be traversed using dot notation like: record.company.name
+ */
+const isRelationField = (value: any): boolean => {
+  if (!value || typeof value !== 'object') return false;
+
+  // Single relation: {id: X, display_value: "..."}
+  if ('id' in value && 'display_value' in value) {
+    return true;
+  }
+
+  // Array of relations: [{id: X, display_value: "..."}, ...]
+  if (Array.isArray(value) && value.length > 0) {
+    return value.every(item =>
+      item && typeof item === 'object' &&
+      'id' in item && 'display_value' in item
+    );
+  }
+
+  return false;
+};
+
+/**
+ * Get the type of relation field (single or multiple)
+ */
+const getRelationType = (value: any): 'single' | 'multiple' | null => {
+  if (!isRelationField(value)) return null;
+  return Array.isArray(value) ? 'multiple' : 'single';
+};
 
 interface EnhancedDataViewProps {
   data: any;
@@ -360,12 +392,25 @@ export function EnhancedDataView({
 
           {/* Type */}
           <td className="p-1 whitespace-nowrap">
-            <Badge
-              variant="outline"
-              className="text-[10px] px-1 py-0 h-4 font-mono"
-            >
-              {item.type}
-            </Badge>
+            <div className="flex items-center gap-1">
+              <Badge
+                variant="outline"
+                className="text-[10px] px-1 py-0 h-4 font-mono"
+              >
+                {item.type}
+              </Badge>
+              {/* Relation field indicator */}
+              {isRelationField(item.value) && (
+                <Badge
+                  variant="secondary"
+                  className="text-[9px] px-1 py-0 h-4 flex items-center gap-0.5 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800"
+                  title="Relation field - can be traversed with dot notation (e.g., record.company.name)"
+                >
+                  <Link className="h-2.5 w-2.5" />
+                  {getRelationType(item.value) === 'multiple' ? '[]' : '→'}
+                </Badge>
+              )}
+            </div>
           </td>
 
           {/* Value */}

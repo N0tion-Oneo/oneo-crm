@@ -204,12 +204,29 @@ class RecordPermission(permissions.BasePermission):
     
     def has_permission(self, request, view):
         """Check if user has general record access"""
+        import logging
+        logger = logging.getLogger(__name__)
+
         if not request.user.is_authenticated:
             return False
-        
+
         permission_manager = PermissionManager(request.user)
         pipeline_id = view.kwargs.get('pipeline_pk') or request.data.get('pipeline_id')
-        
+
+        # Debug: Log the action being checked
+        logger.info(f"🔐 RecordPermission.has_permission:")
+        logger.info(f"   view.action: {view.action}")
+        logger.info(f"   pipeline_id: {pipeline_id}")
+        logger.info(f"   user: {request.user.email}")
+        logger.info(f"   request.method: {request.method}")
+        logger.info(f"   request.path: {request.path}")
+
+        # Handle case where view.action is None (happens with some nested routes)
+        # Check if this is a bulk_action request by URL path
+        if view.action is None and 'bulk_action' in request.path:
+            view.action = 'bulk_action'
+            logger.info(f"   ✅ Detected bulk_action from URL path, setting view.action = 'bulk_action'")
+
         if view.action == 'list':
             if pipeline_id:
                 # Check pipeline access first, then record permission
@@ -268,7 +285,61 @@ class RecordPermission(permissions.BasePermission):
             # Share link generation requires read permission for the pipeline
             # Users can share records they can read
             return True  # Object-level check in has_object_permission
-        
+        elif view.action == 'bulk_action':
+            # Bulk action permission depends on the specific action type
+            # Check the action type from request data
+            bulk_action_type = request.data.get('action')
+
+            # Debug logging for permission check
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.info(f"🔐 BULK_ACTION Permission Check:")
+            logger.info(f"   Action type: {bulk_action_type}")
+            logger.info(f"   Pipeline ID from kwargs: {view.kwargs.get('pipeline_pk')}")
+            logger.info(f"   Pipeline ID from data: {request.data.get('pipeline_id')}")
+            logger.info(f"   Final pipeline_id: {pipeline_id}")
+            logger.info(f"   User: {request.user}")
+
+            if not pipeline_id:
+                logger.error(f"   ❌ No pipeline_id found!")
+                return False
+
+            has_access = permission_manager.has_pipeline_access(pipeline_id)
+            logger.info(f"   Has pipeline access: {has_access}")
+
+            if bulk_action_type == 'delete':
+                # Requires delete permission
+                has_perm = permission_manager.has_permission('action', 'records', 'delete', pipeline_id)
+                logger.info(f"   Delete permission: {has_perm}")
+                result = has_access and has_perm
+                logger.info(f"   ✅ Final result: {result}")
+                return result
+            elif bulk_action_type == 'update_status':
+                # Requires update permission
+                has_perm = permission_manager.has_permission('action', 'records', 'update', pipeline_id)
+                logger.info(f"   Update permission: {has_perm}")
+                result = has_access and has_perm
+                logger.info(f"   ✅ Final result: {result}")
+                return result
+            elif bulk_action_type in ['add_tags', 'remove_tags']:
+                # Requires update permission
+                has_perm = permission_manager.has_permission('action', 'records', 'update', pipeline_id)
+                logger.info(f"   Update permission (tags): {has_perm}")
+                result = has_access and has_perm
+                logger.info(f"   ✅ Final result: {result}")
+                return result
+            elif bulk_action_type == 'export':
+                # Requires read permission
+                has_perm = permission_manager.has_permission('action', 'records', 'read', pipeline_id)
+                logger.info(f"   Read permission (export): {has_perm}")
+                result = has_access and has_perm
+                logger.info(f"   ✅ Final result: {result}")
+                return result
+            else:
+                # Unknown action type
+                logger.error(f"   ❌ Unknown bulk_action_type: {bulk_action_type}")
+                return False
+
         return False
     
     def has_object_permission(self, request, view, obj):

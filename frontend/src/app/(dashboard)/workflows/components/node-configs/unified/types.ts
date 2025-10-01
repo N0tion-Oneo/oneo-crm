@@ -199,6 +199,8 @@ export interface NodeConfigComponentProps {
   userTypes?: any[];
   unipileAccounts?: any[];
   pipelineFields?: any[];
+  allPipelineFields?: Record<string, any[]>;
+  fetchPipelineFields?: (pipelineId: string) => Promise<void>;
   errors?: Record<string, string>;
 }
 

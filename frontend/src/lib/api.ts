@@ -424,17 +424,23 @@ export const pipelinesApi = {
   getDeletedRecords: (pipelineId: string, params?: any) =>
     api.get(`/api/v1/pipelines/${pipelineId}/records/deleted/`, { params }),
   
-  // Bulk operations
+  // Bulk operations - using nested RecordViewSet bulk_action endpoint
   bulkUpdateRecords: (pipelineId: string, data: any) =>
-    api.post(`/api/v1/records/bulk_update/`, { ...data, pipeline: parseInt(pipelineId) }),
-  
+    api.post(`/api/v1/pipelines/${pipelineId}/records/bulk_action/`, {
+      action: 'update_status',
+      ...data
+    }),
+
   bulkDeleteRecords: (pipelineId: string, data: any) =>
-    api.post(`/api/v1/records/bulk_delete/`, { ...data, pipeline: parseInt(pipelineId) }),
+    api.post(`/api/v1/pipelines/${pipelineId}/records/bulk_action/`, {
+      action: 'delete',
+      ...data
+    }),
   
-  // Export
+  // Export - using nested PipelineViewSet export action
   exportRecords: (pipelineId: string, format: 'csv' | 'json' | 'excel', params?: any) =>
-    api.get(`/api/v1/records/export/`, { 
-      params: { ...params, format, pipeline: parseInt(pipelineId) },
+    api.get(`/api/v1/pipelines/${pipelineId}/export/`, {
+      params: { ...params, format },
       responseType: 'blob'
     }),
   

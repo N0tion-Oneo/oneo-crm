@@ -19,11 +19,12 @@ def trigger_record_event_workflows(sender, instance, created, **kwargs):
     event_type = 'created' if created else 'updated'
 
     try:
-        # Prepare record data
+        # Prepare record data with Record object for FieldPathResolver
         record_data = {
             'id': str(instance.id),
             'pipeline_id': str(instance.pipeline_id),
             'data': instance.data,
+            'record_object': instance,  # Pass actual Record instance for relation traversal
             'created_at': instance.created_at.isoformat() if instance.created_at else None,
             'updated_at': instance.updated_at.isoformat() if instance.updated_at else None,
         }
@@ -59,6 +60,7 @@ def trigger_record_deleted_workflows(sender, instance, **kwargs):
             'id': str(instance.id),
             'pipeline_id': str(instance.pipeline_id),
             'data': instance.data,
+            'record_object': instance,  # Pass actual Record instance for relation traversal
         }
 
         # Create a trigger view instance to handle the event

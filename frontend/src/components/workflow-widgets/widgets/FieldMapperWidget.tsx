@@ -1,15 +1,17 @@
 'use client';
 
 import React, { useState, useMemo, useEffect } from 'react';
-import { Plus, X, ArrowRight, Variable } from 'lucide-react';
+import { Plus, X, ArrowRight, Variable, ChevronRight, ChevronDown, Link2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Input } from '@/components/ui/input';
+import { Badge } from '@/components/ui/badge';
 import { BaseWidgetProps } from '../core/types';
 import { cn } from '@/lib/utils';
 import { FieldRenderer } from '@/lib/field-system/field-renderer';
 import { Field } from '@/lib/field-system/types';
+import { expandTargetFields, type ExpandedTargetField } from '@/app/(dashboard)/workflows/utils/relationPathExpander';
 // Ensure field system is initialized
 import '@/lib/field-system';
 
@@ -31,6 +33,9 @@ const FieldMappingRow: React.FC<{
   onRemove: (index: number) => void;
   getFieldType: (fieldName: string) => string;
   getTargetFieldAsFieldType: (fieldName: string) => Field | null;
+  groupedFields: { directFields: ExpandedTargetField[]; relationFieldsMap: Record<string, ExpandedTargetField[]> };
+  expandedRelations: Set<string>;
+  toggleRelationExpansion: (fieldValue: string) => void;
 }> = ({
   mapping,
   index,
@@ -40,7 +45,10 @@ const FieldMappingRow: React.FC<{
   onUpdate,
   onRemove,
   getFieldType,
-  getTargetFieldAsFieldType
+  getTargetFieldAsFieldType,
+  groupedFields,
+  expandedRelations,
+  toggleRelationExpansion
 }) => {
   // Get the target field definition once
   const targetFieldDef = mapping.targetField ? getTargetFieldAsFieldType(mapping.targetField) : null;
@@ -58,27 +66,122 @@ const FieldMappingRow: React.FC<{
             <SelectTrigger className="h-9 w-full">
               <SelectValue placeholder="Select target field" />
             </SelectTrigger>
-            <SelectContent>
-              {targetFields.map((field: any) => {
+            <SelectContent className="max-h-[400px]">
+              {groupedFields.directFields.map((field: any, idx: number) => {
                 const isSystemField = field.id && String(field.id).startsWith('system_');
+                const isRelationField = field.field_type === 'relation';
+                const fieldValue = field.value || field.slug || field.name;
+                const hasNestedFields = groupedFields.relationFieldsMap[fieldValue]?.length > 0;
+                const isExpanded = expandedRelations.has(fieldValue);
+
                 return (
-                  <SelectItem
-                    key={field.id || field.slug || field.name}
-                    value={field.slug || field.name}
-                  >
-                    <div className="flex items-center">
-                      <span>{field.display_name || field.name}</span>
-                      {isSystemField && (
-                        <span className="text-xs text-muted-foreground ml-1">[System]</span>
-                      )}
-                      {field.is_required && (
-                        <span className="text-xs text-destructive ml-1">*</span>
-                      )}
-                      <span className="text-xs text-muted-foreground ml-2">
-                        ({field.field_type})
-                      </span>
-                    </div>
-                  </SelectItem>
+                  <React.Fragment key={`${fieldValue}-${idx}`}>
+                    <SelectItem value={fieldValue}>
+                      <div className="flex items-center gap-2">
+                        <span className="truncate">{field.label || field.display_name || field.name}</span>
+                        {isSystemField && (
+                          <span className="text-xs text-muted-foreground flex-shrink-0">[System]</span>
+                        )}
+                        {field.is_required && (
+                          <span className="text-xs text-destructive flex-shrink-0">*</span>
+                        )}
+                        <span className="text-xs text-muted-foreground flex-shrink-0">
+                          ({field.field_type})
+                        </span>
+                      </div>
+                    </SelectItem>
+
+                    {/* Show expand/collapse toggle for relation fields with nested fields */}
+                    {isRelationField && hasNestedFields && (
+                      <div
+                        className="flex items-center gap-2 px-2 py-1.5 text-sm cursor-pointer hover:bg-accent/50 border-b"
+                        onClick={() => toggleRelationExpansion(fieldValue)}
+                      >
+                        {isExpanded ? (
+                          <ChevronDown className="h-3 w-3 flex-shrink-0" />
+                        ) : (
+                          <ChevronRight className="h-3 w-3 flex-shrink-0" />
+                        )}
+                        <span className="text-xs text-muted-foreground">
+                          {isExpanded ? 'Hide' : 'Show'} {field.label || field.display_name || field.name} related fields
+                        </span>
+                      </div>
+                    )}
+
+                    {/* Show nested fields if expanded */}
+                    {isRelationField && isExpanded && hasNestedFields && (
+                      <>
+                        {groupedFields.relationFieldsMap[fieldValue].map((nestedField: any, nestedIdx: number) => {
+                          // Check if this nested field is also a relation with its own nested fields
+                          const nestedFieldValue = nestedField.value;
+                          const nestedIsRelation = nestedField.field_type === 'relation';
+                          const nestedHasNestedFields = groupedFields.relationFieldsMap[nestedFieldValue]?.length > 0;
+                          const nestedIsExpanded = expandedRelations.has(nestedFieldValue);
+
+                          return (
+                            <React.Fragment key={`${nestedField.value}-${nestedIdx}`}>
+                              <SelectItem
+                                value={nestedField.value}
+                                className="pl-8"
+                              >
+                                <div className="flex items-center">
+                                  <Link2 className="h-3 w-3 mr-2 text-blue-500" />
+                                  <span className="text-sm">{nestedField.label}</span>
+                                  {nestedField.is_required && (
+                                    <span className="text-xs text-destructive ml-1">*</span>
+                                  )}
+                                  <span className="text-xs text-muted-foreground ml-2">
+                                    ({nestedField.field_type})
+                                  </span>
+                                </div>
+                              </SelectItem>
+
+                              {/* Show expand/collapse toggle for nested relation fields */}
+                              {nestedIsRelation && nestedHasNestedFields && (
+                                <div
+                                  className="flex items-center gap-2 px-2 py-1.5 pl-10 text-sm cursor-pointer hover:bg-accent/50"
+                                  onClick={() => toggleRelationExpansion(nestedFieldValue)}
+                                >
+                                  {nestedIsExpanded ? (
+                                    <ChevronDown className="h-3 w-3 flex-shrink-0" />
+                                  ) : (
+                                    <ChevronRight className="h-3 w-3 flex-shrink-0" />
+                                  )}
+                                  <span className="text-xs text-muted-foreground">
+                                    {nestedIsExpanded ? 'Hide' : 'Show'} {nestedField.label} related fields
+                                  </span>
+                                </div>
+                              )}
+
+                              {/* Show multi-hop nested fields if expanded */}
+                              {nestedIsRelation && nestedIsExpanded && nestedHasNestedFields && (
+                                <>
+                                  {groupedFields.relationFieldsMap[nestedFieldValue].map((deepField: any, deepIdx: number) => (
+                                    <SelectItem
+                                      key={`${deepField.value}-${deepIdx}`}
+                                      value={deepField.value}
+                                      className="pl-16"
+                                    >
+                                      <div className="flex items-center">
+                                        <Link2 className="h-3 w-3 mr-2 text-purple-500" />
+                                        <span className="text-sm">{deepField.label}</span>
+                                        {deepField.is_required && (
+                                          <span className="text-xs text-destructive ml-1">*</span>
+                                        )}
+                                        <span className="text-xs text-muted-foreground ml-2">
+                                          ({deepField.field_type})
+                                        </span>
+                                      </div>
+                                    </SelectItem>
+                                  ))}
+                                </>
+                              )}
+                            </React.Fragment>
+                          );
+                        })}
+                      </>
+                    )}
+                  </React.Fragment>
                 );
               })}
             </SelectContent>
@@ -227,6 +330,8 @@ interface FieldMapperWidgetProps extends BaseWidgetProps {
   onChange: (value: Record<string, any> | FieldMapping[]) => void;
   pipelines?: any[];
   pipelineFields?: any;
+  allPipelineFields?: Record<string, any[]>; // Full map of all loaded pipeline fields
+  fetchPipelineFields?: (pipelineId: string) => Promise<void>; // Function to fetch fields for a pipeline
   availableVariables?: Array<{ label: string; value: string; description?: string }>;
   config?: any;
   uiHints?: {
@@ -241,14 +346,76 @@ export function FieldMapperWidget({
   onChange,
   pipelines = [],
   pipelineFields,
+  allPipelineFields,
+  fetchPipelineFields,
   availableVariables = [],
   config,
   uiHints = {}
 }: FieldMapperWidgetProps) {
+  console.log('🔍 [FieldMapperWidget] Props:', {
+    pipelines: pipelines?.length,
+    pipelineFields,
+    config,
+    uiHints
+  });
+
   // Get target pipeline from config
   const targetPipelineKey = uiHints.target_pipeline_key || 'pipeline_id';
   const targetPipelineId = config?.[targetPipelineKey];
   const showRequiredOnly = uiHints.show_required_only || false;
+
+  console.log('🔍 [FieldMapperWidget] Target pipeline:', {
+    targetPipelineKey,
+    targetPipelineId
+  });
+
+  // Auto-fetch fields for related pipelines when target pipeline fields are loaded
+  useEffect(() => {
+    if (!targetPipelineId || !fetchPipelineFields || !allPipelineFields) return;
+
+    // Get the target pipeline fields
+    const fields = Array.isArray(pipelineFields)
+      ? pipelineFields
+      : (allPipelineFields[targetPipelineId] || []);
+
+    // Find all relation fields
+    const relationFields = fields.filter((f: any) => f.field_type === 'relation');
+
+    console.log('🔍 [FieldMapperWidget] Auto-fetching related pipelines:', {
+      targetPipelineId,
+      relationFieldsCount: relationFields.length,
+      relationFields: relationFields.map((f: any) => ({
+        name: f.name,
+        targetPipelineId: f.config?.target_pipeline_id || f.field_config?.target_pipeline_id
+      }))
+    });
+
+    // Fetch fields for each related pipeline
+    relationFields.forEach((field: any) => {
+      const fieldConfig = field.config || field.field_config;
+      const relatedPipelineId = fieldConfig?.target_pipeline_id;
+
+      if (relatedPipelineId && !allPipelineFields[relatedPipelineId]) {
+        console.log('🔍 [FieldMapperWidget] Fetching fields for related pipeline:', relatedPipelineId);
+        fetchPipelineFields(String(relatedPipelineId));
+      }
+    });
+  }, [targetPipelineId, pipelineFields, allPipelineFields, fetchPipelineFields]);
+
+  // Track which relation fields are expanded in the dropdown
+  const [expandedRelations, setExpandedRelations] = useState<Set<string>>(new Set());
+
+  const toggleRelationExpansion = (fieldValue: string) => {
+    setExpandedRelations(prev => {
+      const next = new Set(prev);
+      if (next.has(fieldValue)) {
+        next.delete(fieldValue);
+      } else {
+        next.add(fieldValue);
+      }
+      return next;
+    });
+  };
 
   // Convert value to mappings array format for internal use
   const [mappings, setMappings] = useState<FieldMapping[]>(() => {
@@ -263,24 +430,62 @@ export function FieldMapperWidget({
     }));
   });
 
-  // Get fields for the target pipeline
+  // Get fields for the target pipeline with relation field expansion
   const targetFields = useMemo(() => {
-    if (!targetPipelineId || !pipelineFields) return [];
+    if (!targetPipelineId) return [];
+
+    // Use allPipelineFields if available, otherwise fall back to pipelineFields
+    const fieldsMap = allPipelineFields || pipelineFields;
 
     let fields = [];
     if (Array.isArray(pipelineFields)) {
       fields = pipelineFields;
-    } else if (pipelineFields[targetPipelineId]) {
-      fields = pipelineFields[targetPipelineId];
+    } else if (fieldsMap?.[targetPipelineId]) {
+      fields = fieldsMap[targetPipelineId];
     }
+
+    console.log('🔍 [FieldMapperWidget] Before expansion:', {
+      fieldsCount: fields.length,
+      fields: fields.slice(0, 3),
+      allPipelineFieldsKeys: allPipelineFields ? Object.keys(allPipelineFields) : 'not provided',
+      pipelineFieldsStructure: typeof pipelineFields
+    });
+
+    // Expand relation fields to include nested paths
+    // Pass allPipelineFields (map of {pipelineId: fields[]}) for looking up related pipeline fields
+    const expandedFields = expandTargetFields(fields, fieldsMap, 2);
+
+    console.log('🔍 [FieldMapperWidget] After expansion:', {
+      expandedCount: expandedFields.length,
+      expanded: expandedFields.slice(0, 10)
+    });
 
     // Filter to required fields if needed
     if (showRequiredOnly) {
-      fields = fields.filter((f: any) => f.is_required);
+      return expandedFields.filter((f: any) => f.is_required);
     }
 
-    return fields;
-  }, [targetPipelineId, pipelineFields, showRequiredOnly]);
+    return expandedFields;
+  }, [targetPipelineId, pipelineFields, allPipelineFields, showRequiredOnly]);
+
+  // Group fields by depth and parent for hierarchical display
+  const groupedFields = useMemo(() => {
+    const directFields: ExpandedTargetField[] = [];
+    const relationFieldsMap: Record<string, ExpandedTargetField[]> = {};
+
+    targetFields.forEach(field => {
+      if (field.depth === 0) {
+        directFields.push(field);
+      } else if (field.parent) {
+        if (!relationFieldsMap[field.parent]) {
+          relationFieldsMap[field.parent] = [];
+        }
+        relationFieldsMap[field.parent].push(field);
+      }
+    });
+
+    return { directFields, relationFieldsMap };
+  }, [targetFields]);
 
   // Update parent when mappings change
   useEffect(() => {
@@ -316,19 +521,31 @@ export function FieldMapperWidget({
   };
 
   const getFieldType = (fieldName: string) => {
-    const field = targetFields.find((f: any) => f.slug === fieldName || f.name === fieldName);
+    // Handle both direct fields and nested paths (e.g., "company.name" or "email")
+    const field = targetFields.find((f: any) =>
+      f.value === fieldName || f.slug === fieldName || f.name === fieldName
+    );
     return field?.field_type || 'text';
   };
 
   const getFieldLabel = (fieldName: string) => {
-    const field = targetFields.find((f: any) => f.slug === fieldName || f.name === fieldName);
-    return field?.display_name || field?.name || fieldName;
+    // Handle both direct fields and nested paths
+    const field = targetFields.find((f: any) =>
+      f.value === fieldName || f.slug === fieldName || f.name === fieldName
+    );
+    return field?.label || field?.display_name || field?.name || fieldName;
   };
 
   // Convert pipeline field to Field type for FieldRenderer
   const getTargetFieldAsFieldType = (fieldName: string): Field | null => {
-    const field = targetFields.find((f: any) => f.slug === fieldName || f.name === fieldName);
-    if (!field) return null;
+    // Handle both direct fields and nested paths
+    const expandedField = targetFields.find((f: any) =>
+      f.value === fieldName || f.slug === fieldName || f.name === fieldName
+    );
+    if (!expandedField) return null;
+
+    // Use originalField for nested fields, otherwise use the field itself
+    const field = expandedField.originalField || expandedField;
 
     // Build complete field_config including options if present
     const fieldConfig: any = {
@@ -347,14 +564,14 @@ export function FieldMapperWidget({
     return {
       id: field.id || field.name,
       name: field.name || field.slug,
-      display_name: field.display_name,
-      field_type: field.field_type,
+      display_name: expandedField.label || field.display_name,
+      field_type: expandedField.field_type || field.field_type,
       field_config: fieldConfig,
       config: fieldConfig, // Include as both for compatibility
       help_text: field.help_text,
       placeholder: field.placeholder,
       is_readonly: field.is_readonly || false,
-      is_required: field.is_required || false,
+      is_required: expandedField.is_required || field.is_required || false,
       original_slug: field.slug || field.name,
       business_rules: field.business_rules
     };
@@ -411,6 +628,9 @@ export function FieldMapperWidget({
               onRemove={removeMapping}
               getFieldType={getFieldType}
               getTargetFieldAsFieldType={getTargetFieldAsFieldType}
+              groupedFields={groupedFields}
+              expandedRelations={expandedRelations}
+              toggleRelationExpansion={toggleRelationExpansion}
             />
           ))}
         </div>

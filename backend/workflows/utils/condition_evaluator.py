@@ -267,10 +267,48 @@ class GroupedConditionEvaluator:
             }
 
     def _get_nested_value(self, data: Dict, field_path: str) -> Any:
-        """Get value from nested dict using dot notation"""
+        """
+        Get value from nested dict using dot notation with relationship traversal support.
+
+        Now supports:
+        - Simple dict access: 'user.email'
+        - Relation traversal: 'company.name' (fetches related company record)
+        - Multi-hop: 'deal.company.industry' (traverses multiple relationships)
+        """
         if not field_path:
             return None
 
+        # Check if we have a record in the data for relationship traversal
+        record = None
+        if 'record' in data:
+            from pipelines.models import Record
+            record_data = data['record']
+            if isinstance(record_data, Record):
+                record = record_data
+            elif isinstance(record_data, dict) and 'id' in record_data:
+                try:
+                    record = Record.objects.get(id=record_data['id'], is_deleted=False)
+                except Exception:
+                    pass
+
+        # Try relationship traversal if we have a record
+        if record and '.' in field_path:
+            try:
+                from pipelines.field_path_resolver import FieldPathResolver
+
+                # Check if first segment is a field in the record
+                first_segment = field_path.split('.')[0]
+                if first_segment in record.data:
+                    resolver = FieldPathResolver(max_depth=3, enable_caching=True)
+                    resolved_value = resolver.resolve(record, field_path)
+
+                    if resolved_value is not None:
+                        return resolved_value
+
+            except Exception as e:
+                logger.debug(f"Relation traversal failed for '{field_path}': {e}")
+
+        # Fall back to standard dictionary traversal
         keys = field_path.split('.')
         value = data
 

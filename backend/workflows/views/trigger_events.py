@@ -124,6 +124,7 @@ class RecordEventTriggerView(TriggerEventBaseView):
                 'pipeline_id': record_data.get('pipeline_id'),
                 'event_type': event_type,
                 'record_data': record_data,
+                'record': record_data.get('record_object'),  # Extract Record instance for FieldPathResolver
                 'triggered_at': timezone.now().isoformat(),
                 'triggered_by': str(self.request.user.id) if self.request.user else None
             }

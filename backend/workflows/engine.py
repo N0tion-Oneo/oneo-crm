@@ -219,6 +219,28 @@ class WorkflowEngine:
                 'workflow_id': str(workflow.id)
             }
 
+            # Ensure Record object is available for FieldPathResolver (relation traversal)
+            if 'record' not in context and 'record_id' in context and 'pipeline_id' in context:
+                # Lazy load Record if only ID was provided
+                @sync_to_async
+                def fetch_record():
+                    from pipelines.models import Record as PipelineRecord
+                    with schema_context(tenant_schema):
+                        try:
+                            return PipelineRecord.objects.get(
+                                id=context['record_id'],
+                                pipeline_id=context['pipeline_id'],
+                                is_deleted=False
+                            )
+                        except PipelineRecord.DoesNotExist:
+                            logger.warning(f"Record {context['record_id']} not found for workflow context")
+                            return None
+
+                record = await fetch_record()
+                if record:
+                    context['record'] = record
+                    logger.debug(f"Loaded Record {record.id} into workflow context for relation traversal")
+
             # Execute nodes in dependency order
             await self._execute_nodes(execution, execution_graph, context, start_node_id)
 
@@ -496,10 +518,47 @@ class WorkflowEngine:
         return node_input
 
     def _get_nested_value(self, data: Dict[str, Any], path: str) -> Any:
-        """Get nested value from dictionary using dot notation"""
+        """
+        Get nested value from dictionary using dot notation with relationship traversal support.
+
+        Now supports:
+        - Simple dict access: 'trigger_data.email'
+        - Relation traversal: 'record.company.name'
+        - Multi-hop: 'record.deal.company.industry'
+        """
         if not path:
             return None
 
+        # Check if we have a record in the data for relationship traversal
+        record = None
+        if 'record' in data:
+            from pipelines.models import Record
+            record_data = data['record']
+            if isinstance(record_data, Record):
+                record = record_data
+            elif isinstance(record_data, dict) and 'id' in record_data:
+                try:
+                    record = Record.objects.get(id=record_data['id'], is_deleted=False)
+                except Exception:
+                    pass
+
+        # Try relationship traversal if we have a record and path starts with record
+        if record and path.startswith('record.'):
+            # Remove 'record.' prefix and resolve on the record object
+            field_path = path[7:]  # Remove 'record.'
+            if field_path:
+                try:
+                    from pipelines.field_path_resolver import FieldPathResolver
+                    resolver = FieldPathResolver(max_depth=3, enable_caching=True)
+                    resolved_value = resolver.resolve(record, field_path)
+
+                    if resolved_value is not None:
+                        return resolved_value
+
+                except Exception as e:
+                    logger.debug(f"Relation traversal failed for '{path}': {e}")
+
+        # Fall back to standard dictionary traversal
         keys = path.split('.')
         current = data
 

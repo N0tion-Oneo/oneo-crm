@@ -60,24 +60,40 @@ export function NodeInputStructureV2({
     if (isTriggerNode) {
       // For trigger nodes, we need to show the proper trigger output structure
       if (useRealData && selectedTestData) {
-        // When using real data, we need to format it as trigger output
-        // The testData from getDefaultNodeOutputs already has the right structure
-        // But we need to inject the real selected test data into the record field
-        if (testData && typeof testData === 'object' && 'record' in testData) {
-          // Use the trigger structure from testData but with real record data
-          return {
-            ...testData,
-            record: selectedTestData,
-            // For record_updated trigger, also set previous_record
-            ...(nodeType?.includes('record_updated') ? {
-              previous_record: selectedTestData
-            } : {})
-          };
-        }
-        // Fallback if testData structure is not available
-        return {
-          trigger: selectedTestData
+        // When using real data, build proper trigger structure matching backend signals
+        // This matches the structure from workflows/signals.py:22-30
+        const triggerStructure: any = {
+          success: true,
+          record: selectedTestData,
+          pipeline_id: selectedTestData.pipeline_id || selectedTestData.pipeline?.id,
+          trigger_type: nodeType?.includes('created') ? 'record_created' :
+                       nodeType?.includes('updated') ? 'record_updated' :
+                       nodeType?.includes('deleted') ? 'record_deleted' : 'trigger',
         };
+
+        // Add timestamps if available
+        if (selectedTestData.created_at) {
+          triggerStructure.created_at = selectedTestData.created_at;
+        }
+        if (selectedTestData.updated_at) {
+          triggerStructure.updated_at = selectedTestData.updated_at;
+        }
+
+        // Add user info if available
+        if (selectedTestData.created_by) {
+          triggerStructure.created_by = selectedTestData.created_by;
+        }
+        if (selectedTestData.updated_by) {
+          triggerStructure.updated_by = selectedTestData.updated_by;
+        }
+
+        // For record_updated trigger, also include previous_record
+        if (nodeType?.includes('record_updated')) {
+          triggerStructure.previous_record = selectedTestData;
+          triggerStructure.changed_fields = []; // Would be populated in real trigger
+        }
+
+        return triggerStructure;
       } else if (testData) {
         // Mock data - already properly structured from getDefaultNodeOutputs
         return testData;

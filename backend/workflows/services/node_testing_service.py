@@ -325,8 +325,12 @@ class NodeTestingService:
                 }
 
         if record:
+            # Expand relation fields for multi-hop traversal support
+            from workflows.services.test_data_service import TestDataService
+            expanded_data = TestDataService.expand_relation_fields(record, depth=2)
+
             trigger_data = {
-                'record': record.data or {},
+                'record': expanded_data,  # Use expanded data with nested relations
                 'record_id': str(record.id),
                 'pipeline_id': str(record.pipeline_id),
                 'updated_at': record.updated_at.isoformat(),
@@ -334,8 +338,8 @@ class NodeTestingService:
             }
 
             if node_type == 'trigger_record_updated':
-                trigger_data['previous_record'] = record.data or {}
-                trigger_data['changed_fields'] = list(record.data.keys()) if record.data else []
+                trigger_data['previous_record'] = expanded_data  # Also expand previous record
+                trigger_data['changed_fields'] = list(expanded_data.keys()) if expanded_data else []
                 trigger_data['updated_by'] = str(request.user.id)
             elif node_type == 'trigger_record_created':
                 trigger_data['created_by'] = str(request.user.id)
@@ -912,17 +916,20 @@ class NodeTestingService:
             pipeline_id = pipeline_ids[0] if pipeline_ids else None
 
         from pipelines.models import Record
+        from workflows.services.test_data_service import TestDataService
 
         # First try to use specific test data if provided and it matches the pipeline
         if test_data_id and test_data_type == 'record':
             try:
-                record = Record.objects.get(id=test_data_id, is_deleted=False)
+                record = Record.objects.select_related('pipeline').get(id=test_data_id, is_deleted=False)
                 # If pipeline is configured, validate the record matches
                 if not pipeline_id or str(record.pipeline_id) == str(pipeline_id):
+                    # Expand relation fields for multi-hop traversal
+                    expanded_data = TestDataService.expand_relation_fields(record, depth=2)
                     return {
                         'id': str(record.id),
                         'pipeline_id': str(record.pipeline_id),
-                        'data': record.data or {},
+                        'data': expanded_data,  # Use expanded data with nested relations
                         'created_at': record.created_at.isoformat(),
                         'updated_at': record.updated_at.isoformat()
                     }
@@ -932,12 +939,17 @@ class NodeTestingService:
         # If no specific record or it doesn't match, get any record from configured pipeline
         if pipeline_id:
             try:
-                record = Record.objects.filter(pipeline_id=pipeline_id, is_deleted=False).first()
+                record = Record.objects.select_related('pipeline').filter(
+                    pipeline_id=pipeline_id,
+                    is_deleted=False
+                ).first()
                 if record:
+                    # Expand relation fields for multi-hop traversal
+                    expanded_data = TestDataService.expand_relation_fields(record, depth=2)
                     return {
                         'id': str(record.id),
                         'pipeline_id': str(record.pipeline_id),
-                        'data': record.data or {},
+                        'data': expanded_data,  # Use expanded data with nested relations
                         'created_at': record.created_at.isoformat(),
                         'updated_at': record.updated_at.isoformat()
                     }

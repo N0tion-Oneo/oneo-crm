@@ -233,11 +233,17 @@ class BaseNodeProcessor(ABC):
     
     def _get_nested_value(self, data: Dict[str, Any], path: str) -> Any:
         """
-        Get nested value from dictionary using dot notation
+        Get nested value from dictionary using dot notation with relationship traversal.
+
+        Now supports:
+        - Simple dict access: 'user.email'
+        - Relation traversal: 'company.name' (fetches related company record)
+        - Multi-hop: 'deal.company.industry' (traverses multiple relationships)
+        - Array access: 'contacts[0].email'
 
         Args:
-            data: Dictionary to search
-            path: Dot-notation path (e.g., 'user.profile.name')
+            data: Dictionary to search (can contain 'record' key for relation traversal)
+            path: Dot-notation path (e.g., 'user.profile.name' or 'company.name')
 
         Returns:
             Found value or None
@@ -250,16 +256,52 @@ class BaseNodeProcessor(ABC):
             path = path[2:-2].strip()
         elif path.startswith('{') and path.endswith('}'):
             path = path[1:-1].strip()
-        
+
+        # Check if we have a record in the data - needed for relation traversal
+        # This is typically set in workflow context as 'record' or 'trigger.record'
+        record = None
+        if 'record' in data:
+            from pipelines.models import Record
+            record_data = data['record']
+            if isinstance(record_data, Record):
+                record = record_data
+            elif isinstance(record_data, dict) and 'id' in record_data:
+                # Try to fetch the record if we have an ID
+                try:
+                    record = Record.objects.get(id=record_data['id'], is_deleted=False)
+                except Exception:
+                    pass
+
+        # If we have a record and the path looks like it might involve relations,
+        # try using the FieldPathResolver first
+        if record and '.' in path:
+            try:
+                from pipelines.field_path_resolver import FieldPathResolver
+
+                # Check if first segment is a field in the record
+                first_segment = path.split('.')[0].split('[')[0]  # Handle array notation
+                if first_segment in record.data:
+                    resolver = FieldPathResolver(max_depth=3, enable_caching=True)
+                    resolved_value = resolver.resolve(record, path)
+
+                    if resolved_value is not None:
+                        return resolved_value
+                    # Fall through to dict traversal if resolver returns None
+
+            except Exception as e:
+                # If relation traversal fails, fall back to dict traversal
+                logger.debug(f"Relation traversal failed for '{path}', falling back to dict access: {e}")
+
+        # Fall back to standard dictionary traversal
         keys = path.split('.')
         current = data
-        
+
         for key in keys:
             if isinstance(current, dict) and key in current:
                 current = current[key]
             else:
                 return None
-        
+
         return current
     
     def _set_nested_value(self, data: Dict[str, Any], path: str, value: Any) -> None:

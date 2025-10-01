@@ -141,7 +141,7 @@ TENANT_APPS = [
     'django_filters',  # Advanced filtering
     'drf_spectacular',  # OpenAPI documentation
     'channels',  # Real-time support
-    'django_extensions',  # For debugging URLs
+    # 'django_extensions',  # For debugging URLs - commented out (not installed)
     'core',
     'authentication',  # Authentication app in tenant context
     'pipelines',  # Pipeline system app

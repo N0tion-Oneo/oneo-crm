@@ -26,9 +26,14 @@ class RelationFieldHandler:
 
         # Parse field configuration
         self.config = field.field_config or {}
-        self.target_pipeline_id = self.config.get('target_pipeline_id')
+        self.target_pipeline_id = self.config.get('target_pipeline_id') or self.config.get('target_pipeline')
         self.allow_multiple = self.config.get('allow_multiple', False)
         self.display_field = self.config.get('display_field', 'title')
+
+        # Bidirectional field support
+        self.is_auto_generated = field.is_auto_generated
+        self.reverse_field_id = field.reverse_field_id
+        self.is_reverse_field = self.config.get('is_reverse_field', False)
 
         # Lazy load relationship type
         self._relationship_type = None
@@ -42,7 +47,26 @@ class RelationFieldHandler:
 
     def _get_or_create_relationship_type(self) -> RelationshipType:
         """Get existing or create new RelationshipType"""
-        # Generate unique slug for this field
+
+        # For auto-generated reverse fields, use the original field's RelationshipType
+        if self.is_auto_generated and self.is_reverse_field:
+            original_field = self.get_original_field()
+            if original_field:
+                # Create handler for original field and get its relationship type
+                original_handler = RelationFieldHandler(original_field)
+                return original_handler.relationship_type
+
+        # For manually created reverse fields (old fields marked as reverse), use original field's RelationshipType
+        if self.is_reverse_field and self.reverse_field_id:
+            try:
+                original_field = Field.objects.get(id=self.reverse_field_id, is_deleted=False)
+                # Create handler for original field and get its relationship type
+                original_handler = RelationFieldHandler(original_field)
+                return original_handler.relationship_type
+            except Field.DoesNotExist:
+                pass
+
+        # Generate unique slug for this field (for original fields)
         slug = f"{self.pipeline.slug}_{self.field.slug}"
 
         # Determine cardinality
@@ -65,27 +89,65 @@ class RelationFieldHandler:
 
         return rel_type
 
-    def get_relationships(self, record: Record) -> List[Relationship]:
+    def get_reverse_field(self) -> Optional[Field]:
+        """Get the reverse field for this bidirectional relation"""
+        if self.reverse_field_id:
+            try:
+                return Field.objects.get(id=self.reverse_field_id, is_deleted=False)
+            except Field.DoesNotExist:
+                return None
+        return None
+
+    def get_original_field(self) -> Optional[Field]:
+        """Get the original field if this is an auto-generated reverse field"""
+        if self.is_auto_generated and 'original_field_id' in (self.field.auto_reverse_config or {}):
+            try:
+                original_field_id = self.field.auto_reverse_config['original_field_id']
+                return Field.objects.get(id=original_field_id, is_deleted=False)
+            except Field.DoesNotExist:
+                return None
+        return None
+
+    def get_bidirectional_relationships(self, record: Record, include_deleted: bool = True) -> List[Relationship]:
+        """
+        Get relationships for bidirectional fields - includes both directions
+        Now that reverse fields share the same RelationshipType, we can use standard querying
+
+        Args:
+            record: The record to find relationships for
+            include_deleted: Whether to include soft-deleted relationships
+        """
+        # All fields (original and reverse) now use the same RelationshipType,
+        # so we can use the standard bidirectional query
+        return self.get_relationships(record, include_deleted=include_deleted)
+
+    def get_relationships(self, record: Record, include_deleted: bool = True) -> List[Relationship]:
         """
         Get all relationships for this field and record
         Uses bidirectional query to find relationships in both directions
+
+        Args:
+            record: The record to find relationships for
+            include_deleted: Whether to include soft-deleted relationships
+                           True for internal operations (resurrection)
+                           False for display/serialization
         """
-        return Relationship.objects.filter(
+        manager = Relationship.all_objects if include_deleted else Relationship.objects
+        return manager.filter(
             Q(
                 source_record_id=record.id,
-                source_pipeline=self.pipeline,
+                source_pipeline_id=self.pipeline.id,
                 relationship_type=self.relationship_type
             ) | Q(
                 target_record_id=record.id,
-                target_pipeline=self.pipeline,
+                target_pipeline_id=self.pipeline.id,
                 relationship_type=self.relationship_type
-            ),
-            is_deleted=False  # Only active relationships
+            )
         ).select_related('source_pipeline', 'target_pipeline', 'relationship_type')
 
     def get_related_ids(self, record: Record) -> Union[List[int], int, None]:
-        """Get related record IDs for serialization"""
-        relationships = self.get_relationships(record)
+        """Get related record IDs for serialization - supports bidirectional fields"""
+        relationships = self.get_bidirectional_relationships(record, include_deleted=False)
 
         # Collect IDs based on direction
         related_ids = []
@@ -100,6 +162,57 @@ class RelationFieldHandler:
             return related_ids
         else:
             return related_ids[0] if related_ids else None
+
+    def get_related_records_with_display(self, record: Record) -> Union[List[Dict[str, Any]], Dict[str, Any], None]:
+        """Get related records with display values for API serialization"""
+        relationships = self.get_bidirectional_relationships(record, include_deleted=False)
+
+        if not relationships:
+            return [] if self.allow_multiple else None
+
+        related_records = []
+        for rel in relationships:
+            # Determine which record is the target
+            if rel.source_record_id == record.id:
+                target_record_id = rel.target_record_id
+                target_pipeline_id = rel.target_pipeline_id
+            else:
+                target_record_id = rel.source_record_id
+                target_pipeline_id = rel.source_pipeline_id
+
+            try:
+                # Get the target record
+                target_record = Record.objects.get(
+                    id=target_record_id,
+                    pipeline_id=target_pipeline_id,
+                    is_deleted=False
+                )
+
+                # Get display value using configured display field
+                display_value = target_record.data.get(self.display_field)
+                if not display_value:
+                    # Try alternate field name matching (e.g., "Company Name" vs "company_name")
+                    alt_field = self.display_field.lower().replace(' ', '_')
+                    display_value = target_record.data.get(alt_field)
+
+                if not display_value:
+                    display_value = target_record.title or f"Record #{target_record_id}"
+
+                related_records.append({
+                    'id': target_record_id,
+                    'display_value': display_value
+                })
+
+            except Record.DoesNotExist:
+                # Skip deleted or missing records
+                continue
+
+        # Return based on cardinality
+        if self.allow_multiple:
+            return related_records
+        else:
+            return related_records[0] if related_records else None
+
 
     def set_relationships(self, record: Record, target_ids: Any, user: Optional[User] = None) -> Dict[str, Any]:
         """
@@ -125,9 +238,9 @@ class RelationFieldHandler:
             target_ids = target_ids[:1]
 
         # Get current relationships - check BOTH directions
-        current_relationships = Relationship.objects.filter(
-            relationship_type_id=self.relationship_type.id,
-            is_deleted=False
+        # Manager includes soft-deleted relationships for proper resurrection
+        current_relationships = Relationship.all_objects.filter(
+            relationship_type_id=self.relationship_type.id
         ).filter(
             Q(
                 source_record_id=record.id,
@@ -165,19 +278,39 @@ class RelationFieldHandler:
 
         # Remove relationships that are no longer needed
         to_remove = current_target_ids - new_target_ids
-        if to_remove:
-            print(f"   → Removing relationships for: {list(to_remove)}")
+
+        # Special case: if new_target_ids is empty, we're clearing the field
+        # In this case, we should soft-delete ALL active relationships, not just those in current_target_ids
+        if len(new_target_ids) == 0 and len(current_target_ids) > 0:
+            print(f"   → Clearing field - soft-deleting all active relationships")
+            # Find all active relationships for this field (exclude already soft-deleted)
+            active_relationships = current_relationships.filter(is_deleted=False)
+            from django.utils import timezone
+
+            for rel in active_relationships:
+                rel.is_deleted = True
+                rel.deleted_by = user
+                rel.deleted_at = timezone.now()
+                rel.save()
+                results['removed'] += 1
+                print(f"      ✓ Soft deleted active relationship {rel.id}")
+
+        elif to_remove:
+            print(f"   → Removing specific relationships for: {list(to_remove)}")
             from django.utils import timezone
 
             for target_id in to_remove:
                 if target_id in relationships_map:
                     rel = relationships_map[target_id]
-                    rel.is_deleted = True
-                    rel.deleted_by = user
-                    rel.deleted_at = timezone.now()
-                    rel.save()
-                    results['removed'] += 1
-                    print(f"      ✓ Soft deleted relationship to {target_id}")
+                    if not rel.is_deleted:  # Only delete if not already soft-deleted
+                        rel.is_deleted = True
+                        rel.deleted_by = user
+                        rel.deleted_at = timezone.now()
+                        rel.save()
+                        results['removed'] += 1
+                        print(f"      ✓ Soft deleted relationship to {target_id}")
+                    else:
+                        print(f"      → Relationship to {target_id} already soft-deleted")
 
         # Add new relationships
         to_add = new_target_ids - current_target_ids
@@ -191,7 +324,7 @@ class RelationFieldHandler:
                 )
 
                 # Check for existing relationship in BOTH directions (including soft-deleted)
-                existing = Relationship.objects.filter(
+                existing = Relationship.all_objects.filter(
                     relationship_type_id=self.relationship_type.id
                 ).filter(
                     Q(
@@ -215,18 +348,39 @@ class RelationFieldHandler:
                         existing.deleted_at = None
                         existing.save()
                         results['created'] += 1
-                        print(f"   ✓ Resurrected relationship to {target_id}")
+                        print(f"   ✓ Resurrected bidirectional relationship to {target_id}")
                     else:
                         results['unchanged'] += 1
-                        print(f"   → Relationship already exists to {target_id}")
+                        print(f"   → Bidirectional relationship already exists to {target_id}")
                 else:
-                    # Create new relationship - use get_or_create for safety
+                    # Create new relationship with consistent direction for bidirectional relationships
+                    # CRITICAL: For bidirectional relationships, always use consistent source/target ordering
+                    # to avoid creating duplicate records. Use lower record ID as source for consistency.
+
+                    # Determine consistent direction based on record IDs (lower ID always as source)
+                    if record.id < target_id:
+                        # Current record has lower ID - use as source
+                        source_pipeline_id = self.pipeline.id
+                        source_record_id = record.id
+                        target_pipeline_id = self.target_pipeline_id
+                        target_record_id = target_id
+                    else:
+                        # Target record has lower ID - use as source
+                        source_pipeline_id = self.target_pipeline_id
+                        source_record_id = target_id
+                        target_pipeline_id = self.pipeline.id
+                        target_record_id = record.id
+
+                    print(f"   → Creating bidirectional relationship: {source_record_id} → {target_record_id}")
+
+                    print(f"   🔄 CREATING relationship: {source_record_id} → {target_record_id} (type: {self.relationship_type.id})")
+
                     relationship, created = Relationship.objects.get_or_create(
                         relationship_type_id=self.relationship_type.id,
-                        source_pipeline_id=self.pipeline.id,
-                        source_record_id=record.id,
-                        target_pipeline_id=self.target_pipeline_id,
-                        target_record_id=target_id,
+                        source_pipeline_id=source_pipeline_id,
+                        source_record_id=source_record_id,
+                        target_pipeline_id=target_pipeline_id,
+                        target_record_id=target_record_id,
                         defaults={
                             'created_by': user,
                             'strength': 1.0,
@@ -236,28 +390,46 @@ class RelationFieldHandler:
 
                     if created:
                         results['created'] += 1
-                        print(f"   ✓ Created relationship to {target_id}")
+                        print(f"   ✅ CREATED NEW relationship ID {relationship.id}: {source_record_id} → {target_record_id}")
+                        print(f"   📡 This should trigger post_save signal for Relationship {relationship.id}")
                     else:
                         # Shouldn't happen due to our checks, but handle it
                         if relationship.is_deleted:
+                            print(f"   🔄 RESURRECTING relationship ID {relationship.id}: {source_record_id} → {target_record_id}")
                             relationship.is_deleted = False
                             relationship.deleted_by = None
                             relationship.deleted_at = None
                             relationship.save()
                             results['created'] += 1
-                            print(f"   ✓ Resurrected existing relationship to {target_id}")
+                            print(f"   ✅ RESURRECTED relationship ID {relationship.id}: {source_record_id} → {target_record_id}")
+                            print(f"   📡 This should trigger post_save signal for Relationship {relationship.id}")
                         else:
                             results['unchanged'] += 1
-                            print(f"   → Relationship already existed to {target_id}")
+                            print(f"   ➡️ Relationship ID {relationship.id} already existed: {source_record_id} → {target_record_id}")
 
             except Record.DoesNotExist:
                 print(f"   ⚠️ Target record {target_id} not found")
             except Exception as e:
                 print(f"   ❌ Error creating relationship to {target_id}: {e}")
 
-        # Count unchanged
+        # Handle unchanged relationships - check if any are soft-deleted and need resurrection
         unchanged = new_target_ids & current_target_ids
-        results['unchanged'] = len(unchanged)
+        for target_id in unchanged:
+            if target_id in relationships_map:
+                rel = relationships_map[target_id]
+                if rel.is_deleted:
+                    # Resurrect soft-deleted relationship
+                    rel.is_deleted = False
+                    rel.deleted_by = None
+                    rel.deleted_at = None
+                    rel.save()
+                    results['created'] += 1
+                    results['unchanged'] -= 1 if results['unchanged'] > 0 else 0
+                    print(f"   ✓ Resurrected unchanged relationship to {target_id}")
+                else:
+                    print(f"   → Unchanged relationship to {target_id} already active")
+
+        results['unchanged'] = len(unchanged) - results.get('resurrected', 0)
 
         print(f"   → Results: {results}")
         return results

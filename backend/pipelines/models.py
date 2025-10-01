@@ -887,7 +887,22 @@ class Field(models.Model):
     
     # AI configuration (for AI fields)
     ai_config = models.JSONField(default=dict)
-    
+
+    # Bidirectional relation fields
+    is_auto_generated = models.BooleanField(
+        default=False,
+        help_text="True if this field was automatically created as a reverse relation"
+    )
+    reverse_field_id = models.IntegerField(
+        null=True,
+        blank=True,
+        help_text="ID of the reverse relation field (bidirectional link)"
+    )
+    auto_reverse_config = models.JSONField(
+        default=dict,
+        help_text="Configuration for automatic reverse field creation"
+    )
+
     # Soft delete functionality
     is_deleted = models.BooleanField(default=False)
     deleted_at = models.DateTimeField(null=True, blank=True)
@@ -914,13 +929,17 @@ class Field(models.Model):
             models.Index(fields=['is_ai_field']),
             models.Index(fields=['is_deleted']),
             models.Index(fields=['scheduled_for_hard_delete']),
+            models.Index(fields=['is_auto_generated']),
+            models.Index(fields=['reverse_field_id']),
             # Composite indexes for common queries
             models.Index(fields=['pipeline', 'is_deleted'], name='idx_field_pipeline_active'),
             models.Index(fields=['is_deleted', 'deleted_at'], name='idx_field_deletion_status'),
+            models.Index(fields=['field_type', 'is_auto_generated'], name='idx_field_type_auto_gen'),
             GinIndex(fields=['field_config']),
             GinIndex(fields=['storage_constraints']),
             GinIndex(fields=['business_rules']),
             GinIndex(fields=['ai_config']),
+            GinIndex(fields=['auto_reverse_config']),
         ]
         ordering = ['display_order', 'name']
     

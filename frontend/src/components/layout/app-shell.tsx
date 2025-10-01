@@ -135,6 +135,13 @@ export function AppShell({ children }: AppShellProps) {
       const response = await pipelinesApi.list()
       const pipelinesData = response.data.results || response.data || []
       console.log('Fetched pipelines:', pipelinesData.length, 'pipelines')
+
+      // Debug pipeline IDs
+      console.log('🔍 DEBUGGING: Sidebar pipeline data:', pipelinesData.map(p => ({
+        id: p.id,
+        idType: typeof p.id,
+        name: p.name
+      })))
       // Filter only active pipelines and limit to first 10
       const activePipelines = pipelinesData
         .filter((p: any) => !p.is_archived)
@@ -398,6 +405,7 @@ export function AppShell({ children }: AppShellProps) {
                                   <Link
                                     key={pipeline.id}
                                     href={`/pipelines/${pipeline.id}/records`}
+                                    onClick={() => console.log('🔗 DEBUGGING: Sidebar link clicked for pipeline:', { id: pipeline.id, href: `/pipelines/${pipeline.id}/records` })}
                                     className={cn(
                                       "flex items-center justify-center px-2 py-2 text-sm rounded-md transition-colors group",
                                       isCurrentPipeline

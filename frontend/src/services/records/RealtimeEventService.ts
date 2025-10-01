@@ -77,7 +77,7 @@ export class RealtimeEventService {
    * Handle record update message
    */
   private static handleRecordUpdate(
-    message: RealtimeMessage, 
+    message: RealtimeMessage,
     onRecordUpdate: (record: Record) => void
   ): void {
     const updatedRecord: Record = {
@@ -88,11 +88,30 @@ export class RealtimeEventService {
       created_by: message.payload.updated_by
     }
 
+    // Check if this is a relationship change
+    const isRelationshipChange = message.payload.relationship_changed === true
+
+    // Identify relation fields in the data
+    const relationFields = Object.keys(updatedRecord.data).filter(key => {
+      const value = updatedRecord.data[key]
+      return (
+        Array.isArray(value) ||
+        (typeof value === 'object' && value !== null && 'id' in value && 'display_value' in value)
+      )
+    })
+
     console.log('🔄 Processing record update:', {
       recordId: updatedRecord.id,
-      updatedFields: Object.keys(updatedRecord.data)
+      updatedFields: Object.keys(updatedRecord.data),
+      isRelationshipChange,
+      relationFields,
+      relationFieldCount: relationFields.length
     })
-    
+
+    if (isRelationshipChange) {
+      console.log('🔗 Relationship change detected - relation fields updated:', relationFields)
+    }
+
     onRecordUpdate(updatedRecord)
   }
 

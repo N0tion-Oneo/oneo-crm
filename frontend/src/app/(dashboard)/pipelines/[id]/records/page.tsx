@@ -34,7 +34,16 @@ export default function PipelineRecordsPage() {
         
         // Load pipeline basic data
         const response = await pipelinesApi.get(pipelineId)
-        
+
+        // Debug what we received from the API
+        console.log('🔍 DEBUGGING: Pipeline API Response:', {
+          urlPipelineId: pipelineId,
+          apiResponseId: response.data.id,
+          apiResponseIdType: typeof response.data.id,
+          apiResponseName: response.data.name,
+          fullResponse: response.data
+        })
+
         // Load field groups data
         const fieldGroupsResponse = await pipelinesApi.getFieldGroups(pipelineId)
         const fieldGroups = (fieldGroupsResponse.data as any)?.results || (fieldGroupsResponse as any).results || fieldGroupsResponse.data || fieldGroupsResponse || []

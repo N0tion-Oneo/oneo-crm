@@ -239,25 +239,135 @@ def handle_record_delete(sender, instance, **kwargs):
     )
 
 
+def _create_reverse_relation_field(original_field, created_by):
+    """Create automatic reverse relation field for bidirectional relationships"""
+    try:
+        # Extract configuration from original field
+        field_config = original_field.field_config or {}
+        target_pipeline_id = field_config.get('target_pipeline_id') or field_config.get('target_pipeline')
+        display_field = field_config.get('display_field', 'title')
+
+        if not target_pipeline_id:
+            logger.info(f"No target_pipeline found in field config for {original_field.slug}")
+            return None
+
+        # Get target pipeline
+        try:
+            target_pipeline = Pipeline.objects.get(id=target_pipeline_id)
+        except Pipeline.DoesNotExist:
+            logger.error(f"Target pipeline {target_pipeline_id} not found for reverse field creation")
+            return None
+
+        # Generate reverse field name
+        reverse_field_name = f"{original_field.pipeline.name} (via {original_field.display_name or original_field.name})"
+        reverse_field_slug = slugify(reverse_field_name).replace('-', '_')
+
+        # Ensure unique slug
+        counter = 1
+        base_slug = reverse_field_slug
+        while target_pipeline.fields.filter(slug=reverse_field_slug).exists():
+            reverse_field_slug = f"{base_slug}_{counter}"
+            counter += 1
+
+        # Create reverse field configuration
+        reverse_config = {
+            'target_pipeline_id': original_field.pipeline.id,
+            'display_field': 'title',  # Default to title for reverse direction
+            'cardinality': field_config.get('cardinality', 'many_to_many'),  # Preserve cardinality
+            'is_reverse_field': True,
+            'original_field_id': original_field.id
+        }
+
+        # Create auto reverse configuration
+        auto_reverse_config = {
+            'original_field_id': original_field.id,
+            'original_pipeline_id': original_field.pipeline.id,
+            'original_field_name': original_field.name,
+            'created_automatically': True,
+            'creation_timestamp': timezone.now().isoformat()
+        }
+
+        # Create the reverse field
+        reverse_field = Field.objects.create(
+            pipeline=target_pipeline,
+            name=reverse_field_name,
+            slug=reverse_field_slug,
+            description=f"Automatically created reverse relation to {original_field.pipeline.name}",
+            field_type='relation',
+            field_config=reverse_config,
+            display_name=reverse_field_name,
+            help_text=f"Records from {original_field.pipeline.name} that reference this record",
+            is_auto_generated=True,
+            reverse_field_id=original_field.id,
+            auto_reverse_config=auto_reverse_config,
+            display_order=999,  # Put auto-generated fields at the end
+            is_visible_in_list=True,
+            is_visible_in_detail=True,
+            created_by=created_by
+        )
+
+        # Update original field to link back to reverse field
+        original_field.reverse_field_id = reverse_field.id
+        original_field.auto_reverse_config = {
+            'reverse_field_id': reverse_field.id,
+            'reverse_pipeline_id': target_pipeline.id,
+            'reverse_field_name': reverse_field_name,
+            'created_automatically': True,
+            'creation_timestamp': timezone.now().isoformat()
+        }
+        original_field.save(update_fields=['reverse_field_id', 'auto_reverse_config'])
+
+        logger.info(f"✅ Created reverse relation field {reverse_field.slug} in {target_pipeline.name} for {original_field.slug}")
+
+        return reverse_field
+
+    except Exception as e:
+        logger.error(f"Failed to create reverse relation field for {original_field.slug}: {e}")
+        return None
+
+
 @receiver(post_save, sender=Field)
 def handle_field_save(sender, instance, created, **kwargs):
     """Handle field save events - SIMPLIFIED to delegate to FieldOperationManager"""
-    
+
     # Update pipeline field schema cache (only include active fields)
     try:
         instance.pipeline._update_field_schema()
         instance.pipeline.save(update_fields=['field_schema'])
     except Exception as e:
         logger.error(f"Failed to update pipeline schema for field {instance.slug}: {e}")
-    
+
+    # Handle bidirectional relation field creation for new relation fields
+    if created and instance.field_type == 'relation' and not instance.is_auto_generated:
+        logger.info(f"🔄 Creating bidirectional relation for new field: {instance.slug}")
+        try:
+            reverse_field = _create_reverse_relation_field(instance, instance.created_by)
+            if reverse_field:
+                logger.info(f"✅ Bidirectional relation created: {instance.slug} ↔ {reverse_field.slug}")
+        except Exception as e:
+            logger.error(f"Failed to create bidirectional relation for {instance.slug}: {e}")
+            # Don't raise - we don't want to break field creation if reverse field fails
+
     # Create audit logs for field lifecycle events
     if created:
         logger.info(f"New field created: {instance.slug} in pipeline {instance.pipeline.name}")
-        
+
     elif instance.is_deleted and not getattr(instance, '_was_deleted_before_save', False):
         # Field was just soft deleted
         logger.info(f"Field soft deleted: {instance.slug} in pipeline {instance.pipeline.name}")
-        
+
+        # Handle reverse field deletion for bidirectional fields
+        if instance.reverse_field_id and not instance.is_auto_generated:
+            try:
+                reverse_field = Field.objects.get(id=instance.reverse_field_id)
+                if reverse_field.is_auto_generated:
+                    logger.info(f"🗑️ Soft deleting reverse field {reverse_field.slug} due to original field deletion")
+                    reverse_field.soft_delete(instance.deleted_by or instance.created_by)
+            except Field.DoesNotExist:
+                logger.warning(f"Reverse field {instance.reverse_field_id} not found during deletion")
+            except Exception as e:
+                logger.error(f"Failed to handle reverse field deletion: {e}")
+
         # Create audit log for field deletion
         try:
             AuditLog.objects.create(
@@ -274,11 +384,23 @@ def handle_field_save(sender, instance, created, **kwargs):
             )
         except Exception as e:
             logger.error(f"Failed to create audit log for field deletion {instance.slug}: {e}")
-    
+
     elif not instance.is_deleted and getattr(instance, '_was_deleted_before_save', False):
         # Field was just restored
         logger.info(f"Field restored: {instance.slug} in pipeline {instance.pipeline.name}")
-        
+
+        # Handle reverse field restoration for bidirectional fields
+        if instance.reverse_field_id and not instance.is_auto_generated:
+            try:
+                reverse_field = Field.objects.with_deleted().get(id=instance.reverse_field_id)
+                if reverse_field.is_auto_generated and reverse_field.is_deleted:
+                    logger.info(f"🔄 Restoring reverse field {reverse_field.slug} due to original field restoration")
+                    reverse_field.restore(getattr(instance, 'updated_by', instance.created_by))
+            except Field.DoesNotExist:
+                logger.warning(f"Reverse field {instance.reverse_field_id} not found during restoration")
+            except Exception as e:
+                logger.error(f"Failed to handle reverse field restoration: {e}")
+
         # Create audit log for field restoration
         try:
             AuditLog.objects.create(
@@ -295,14 +417,14 @@ def handle_field_save(sender, instance, created, **kwargs):
             )
         except Exception as e:
             logger.error(f"Failed to create audit log for field restoration {instance.slug}: {e}")
-    
+
     # Delegate complex migration logic to FieldOperationManager
     try:
         from .field_operations import get_field_operation_manager
-        
+
         manager = get_field_operation_manager(instance.pipeline)
         manager.handle_field_save_signal(instance, created)
-        
+
     except Exception as e:
         logger.error(f"FieldOperationManager signal handling failed for field {instance.slug}: {e}")
         # Don't raise - we don't want to break field saves if FieldOperationManager fails

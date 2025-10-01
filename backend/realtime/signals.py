@@ -11,8 +11,41 @@ from django.core.cache import cache
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
 import logging
+import hashlib
 
 logger = logging.getLogger(__name__)
+
+# Broadcast deduplication cache (prevents duplicate messages within 1 second)
+_broadcast_cache = {}
+_cache_cleared_at = time.time()
+
+
+def _should_broadcast(record_id, data_hash):
+    """Prevent duplicate broadcasts within 1 second window"""
+    global _broadcast_cache, _cache_cleared_at
+
+    # Clear cache every second
+    now = time.time()
+    if now - _cache_cleared_at > 1.0:
+        _broadcast_cache.clear()
+        _cache_cleared_at = now
+
+    cache_key = f"{record_id}_{data_hash}"
+    if cache_key in _broadcast_cache:
+        logger.debug(f"⏭️ Skipping duplicate broadcast for record {record_id}")
+        return False
+
+    _broadcast_cache[cache_key] = now
+    return True
+
+
+def _get_data_hash(data):
+    """Generate hash of data for deduplication"""
+    try:
+        data_str = json.dumps(data, sort_keys=True, default=str)
+        return hashlib.md5(data_str.encode()).hexdigest()
+    except:
+        return str(hash(str(data)))
 
 
 def safe_group_send_sync(channel_layer, group_name, message):
@@ -22,9 +55,15 @@ def safe_group_send_sync(channel_layer, group_name, message):
     """
     import asyncio
     import threading
-    
+
     logger.debug(f"🔄 WEBSOCKET SEND: Attempting to send message to group '{group_name}' - type: {message.get('type', 'unknown')}")
-    
+
+    # Critical fix: Check if channel_layer is None before attempting to use it
+    if channel_layer is None:
+        logger.error(f"❌ WEBSOCKET SEND FAILED: channel_layer is None for group '{group_name}'")
+        logger.error(f"❌ This indicates the Django Channels Redis layer is not properly initialized")
+        return
+
     try:
         # First approach: use async_to_sync directly (works when no active event loop)
         async_to_sync(channel_layer.group_send)(group_name, message)
@@ -154,18 +193,24 @@ if MODELS_AVAILABLE:
             
             # Handle normal creation/update (not soft deletion)
             if not instance.is_deleted:  # Only broadcast if record is not deleted
-                # Debug logging removed for production
+                logger.debug(f"🔄 WEBSOCKET: Processing record save for {instance.id} (created: {created})")
 
                 # Get complete data including relation fields
+                # CRITICAL: Always fetch fresh relation field data, don't rely on instance.data
                 complete_data = instance.data.copy() if instance.data else {}
+                logger.debug(f"📦 Base record data: {list(complete_data.keys())}")
 
                 # Add relation field data from Relationship table with display values
+                # This ensures we get the LATEST relation data even if sync happened after record save
                 from pipelines.relation_field_handler import RelationFieldHandler
-                relation_fields = instance.pipeline.fields.filter(field_type='relation')
+                relation_fields = instance.pipeline.fields.filter(field_type='relation', is_deleted=False)
+                logger.debug(f"🔗 Found {relation_fields.count()} relation fields to process")
+
                 for field in relation_fields:
                     try:
                         handler = RelationFieldHandler(field)
                         related_ids = handler.get_related_ids(instance)
+                        logger.debug(f"🔗 Field '{field.slug}' related IDs: {related_ids}")
 
                         # Convert IDs to objects with display values
                         if related_ids is not None:
@@ -188,6 +233,7 @@ if MODELS_AVAILABLE:
                                             'display_value': f"Record #{record_id} (deleted)"
                                         })
                                 complete_data[field.slug] = related_objects
+                                logger.debug(f"✅ Set multiple relation data for '{field.slug}': {len(related_objects)} items")
                             else:
                                 # Single relation
                                 try:
@@ -197,6 +243,7 @@ if MODELS_AVAILABLE:
                                         'id': related_ids,
                                         'display_value': display_value
                                     }
+                                    logger.debug(f"✅ Set single relation data for '{field.slug}': {related_ids}")
                                 except Record.DoesNotExist:
                                     complete_data[field.slug] = {
                                         'id': related_ids,
@@ -204,8 +251,28 @@ if MODELS_AVAILABLE:
                                     }
                         else:
                             complete_data[field.slug] = None
+                            logger.debug(f"➖ No relation data for '{field.slug}'")
                     except Exception as e:
-                        logger.debug(f"Failed to get relation data for field {field.slug}: {e}")
+                        logger.error(f"❌ Failed to get relation data for field {field.slug}: {e}")
+                        complete_data[field.slug] = None
+
+                # Detect if any relation fields changed (for relationship_changed flag)
+                has_relation_changes = False
+                if not created and hasattr(instance, '_change_context'):
+                    try:
+                        from pipelines.record_operations import ChangeContext
+                        change_ctx = instance._change_context
+                        if isinstance(change_ctx, ChangeContext):
+                            # Check if any changed fields are relation fields
+                            relation_field_slugs = set(
+                                field.slug for field in relation_fields
+                            )
+                            has_relation_changes = bool(
+                                change_ctx.changed_fields & relation_field_slugs
+                            )
+                            logger.debug(f"   🔍 Relation change detection: {has_relation_changes}")
+                    except:
+                        pass
 
                 # Create event data with complete user information
                 event_data = {
@@ -214,6 +281,7 @@ if MODELS_AVAILABLE:
                     'pipeline_id': str(instance.pipeline_id),
                     'title': getattr(instance, 'title', f'Record {instance.id}'),
                     'data': complete_data,  # Use complete data with relation fields
+                    'relationship_changed': has_relation_changes,  # Add relationship change flag
                     'updated_at': instance.updated_at.isoformat() if instance.updated_at else None,
                     'created_by': {
                         'id': instance.created_by.id if instance.created_by else None,
@@ -231,30 +299,36 @@ if MODELS_AVAILABLE:
                     'new_count': new_record_count,  # Add the updated count
                     'timestamp': time.time()
                 }
-                
-                
+
+
+                # Check if we should broadcast (deduplication)
+                data_hash = _get_data_hash(complete_data)
+                if not _should_broadcast(instance.id, data_hash):
+                    logger.debug(f"⏭️ Skipping duplicate broadcast for record {instance.id}")
+                    return
+
                 # Broadcast to pipeline subscribers
                 pipeline_group = f"pipeline_records_{instance.pipeline_id}"
                 safe_group_send_sync(channel_layer, pipeline_group, {
                     'type': 'record_update',
                     'data': event_data
                 })
-                
+
                 # Broadcast to document subscribers (for collaborative editing)
                 document_group = f"document_{instance.id}"
                 safe_group_send_sync(channel_layer, document_group, {
                     'type': 'document_updated',
                     'data': event_data
                 })
-                
+
                 # Store for SSE subscribers
                 store_sse_message(
                     f"pipeline_records_{instance.pipeline_id}",
                     event_data
                 )
-                
+
                 # Activity logging now handled by AuditLog system in pipelines/signals.py
-                
+
                 logger.debug(f"Broadcasted record {'created' if created else 'updated'}: {instance.id}")
             
         except Exception as e:
@@ -360,41 +434,189 @@ if MODELS_AVAILABLE:
     
     @receiver(post_save, sender=Relationship)
     def handle_relationship_saved(sender, instance, created, **kwargs):
-        """Handle relationship creation for real-time broadcasting"""
+        """Handle relationship creation and updates for real-time broadcasting"""
+        # LOG SIGNAL ENTRY
+        logger.info(f"🚨 SIGNAL FIRED: post_save for Relationship {instance.id}")
+        logger.info(f"   🆕 Created: {created}")
+        logger.info(f"   📍 Source: {instance.source_record_id} → Target: {instance.target_record_id}")
+        logger.info(f"   🏷️ Type: {instance.relationship_type_id}")
+        logger.info(f"   🗑️ Is Deleted: {instance.is_deleted}")
+
+        # Handle soft deletion - treat as deletion event
+        if instance.is_deleted and not created:
+            logger.info(f"🗑️ WEBSOCKET: Processing relationship soft deletion - ID: {instance.id}")
+            _handle_relationship_deletion(instance, "soft_deleted")
+            return
+
+        # Handle resurrection - relationship was soft deleted but now is active again
+        # This happens when is_deleted=False and created=False (existing relationship being reactivated)
+        if not instance.is_deleted and not created:
+            logger.info(f"🔄 WEBSOCKET: Processing relationship resurrection/update - ID: {instance.id}")
+            logger.info(f"   🔍 DEBUG: created={created}, is_deleted={instance.is_deleted}")
+            # Trigger record updates for both sides to refresh display fields
+            _trigger_record_updates_for_relationship(instance, "resurrected")
+            return
+
+        # Handle new relationship creation
+        if created:
+            logger.info(f"🆕 WEBSOCKET: Processing new relationship creation - ID: {instance.id}")
+            # Trigger record updates for both sides to refresh display fields
+            _trigger_record_updates_for_relationship(instance, "created")
+            return
+
+        # If we get here, something unexpected happened
+        logger.warning(f"⚠️ WEBSOCKET: Unexpected relationship signal state - ID: {instance.id}, created: {created}, is_deleted: {instance.is_deleted}")
+
+
+    def _trigger_record_update_for_relationship_change(relationship_instance, is_created, channel_layer=None):
+        """
+        Trigger record update broadcasts for both sides of a relationship change.
+        This ensures that relation field data is updated in real-time in record lists and drawers.
+        """
         try:
-            channel_layer = get_channel_layer()
-            if not channel_layer:
+            # CRITICAL FIX: Always get fresh channel layer instead of relying on parameter
+            if channel_layer is None:
+                channel_layer = get_channel_layer()
+                logger.info(f"🔍 CHANNEL FIX: Retrieved fresh channel_layer = {channel_layer}")
+
+            if channel_layer is None:
+                logger.error(f"❌ WEBSOCKET: Cannot proceed - channel_layer is None even after fresh retrieval")
                 return
-            
-            # Create event data
-            event_data = {
-                'type': 'relationship_created' if created else 'relationship_updated',
-                'relationship_id': str(instance.id),
-                'source_record_id': str(instance.source_record_id),
-                'target_record_id': str(instance.target_record_id),
-                'relationship_type': str(instance.relationship_type_id),
-                'strength': float(instance.strength) if hasattr(instance, 'strength') else 1.0,
-                'timestamp': time.time()
-            }
-            
-            # Broadcast to relationship subscribers
-            safe_group_send_sync(channel_layer, "relationship_updates", {
-                'type': 'relationship_update',
-                'data': event_data
-            })
-            
-            # Broadcast to both record documents
-            for record_id in [instance.source_record_id, instance.target_record_id]:
-                document_group = f"document_{record_id}"
-                safe_group_send_sync(channel_layer, document_group, {
-                    'type': 'relationship_update',
-                    'data': event_data
-                })
-            
-            logger.debug(f"Broadcasted relationship {'created' if created else 'updated'}: {instance.id}")
-            
+
+            logger.info(f"🔄 WEBSOCKET: Starting record updates for relationship change")
+            # Get both records involved in the relationship
+            record_ids = [relationship_instance.source_record_id, relationship_instance.target_record_id]
+            logger.info(f"   📋 Will update records: {record_ids}")
+
+            for record_id in record_ids:
+                try:
+                    logger.info(f"   🔍 Processing record {record_id}...")
+                    # Get the record
+                    record = Record.objects.get(id=record_id, is_deleted=False)
+                    logger.info(f"   ✅ Found record {record_id} in pipeline {record.pipeline.name}")
+
+                    # Get complete data including updated relation fields
+                    # CRITICAL: Always fetch fresh relation field data
+                    complete_data = record.data.copy() if record.data else {}
+                    logger.info(f"   📦 Base data fields: {list(complete_data.keys())}")
+
+                    # Add relation field data from Relationship table with display values
+                    from pipelines.relation_field_handler import RelationFieldHandler
+                    relation_fields = record.pipeline.fields.filter(field_type='relation', is_deleted=False)
+                    logger.info(f"   🔗 Found {relation_fields.count()} relation fields to update")
+
+                    for field in relation_fields:
+                        try:
+                            handler = RelationFieldHandler(field)
+                            related_ids = handler.get_related_ids(record)
+                            logger.info(f"   🔗 Field '{field.slug}' has related IDs: {related_ids}")
+
+                            # Convert IDs to objects with display values
+                            if related_ids is not None:
+                                if isinstance(related_ids, list):
+                                    # Multiple relations - use handler method for proper display values
+                                    logger.info(f"   🔄 Getting display values for multiple relations in '{field.slug}'")
+                                    related_objects = handler.get_related_records_with_display(record)
+                                    if related_objects is None:
+                                        related_objects = []
+                                    complete_data[field.slug] = related_objects
+                                    logger.info(f"   ✅ Set {len(related_objects)} related objects for '{field.slug}'")
+                                else:
+                                    # Single relation - use handler method for proper display values
+                                    logger.info(f"   🔄 Getting display value for single relation in '{field.slug}'")
+                                    related_object = handler.get_related_records_with_display(record)
+                                    complete_data[field.slug] = related_object
+                                    if related_object:
+                                        logger.info(f"   ✅ Set single related object for '{field.slug}': {related_object.get('display_value', 'N/A')}")
+                                    else:
+                                        logger.info(f"   ⚠️ No related object found for '{field.slug}'")
+
+                                # Skip the manual display value logic - handler already does this properly
+                                logger.info(f"   ✅ Updated relation field '{field.slug}' with proper display values")
+                                continue
+
+                            # Fallback for when there are no related IDs
+                            if isinstance(related_ids, list):
+                                complete_data[field.slug] = []
+                            else:
+                                complete_data[field.slug] = None
+
+                        except Exception as field_e:
+                            logger.error(f"   ❌ Error processing relation field '{field.slug}': {field_e}")
+                            # Set empty value on error
+                            if field.field_config.get('allow_multiple', False):
+                                complete_data[field.slug] = []
+                            else:
+                                complete_data[field.slug] = None
+
+                    # Now trigger the actual WebSocket broadcasts with updated relation data
+                    logger.info(f"   📡 Broadcasting record update to WebSocket channels...")
+
+                    # Create the record event data with FLAT structure and relationship_changed flag
+                    record_event_data = {
+                        'type': 'record_updated',
+                        'record_id': str(record.id),
+                        'pipeline_id': str(record.pipeline_id),
+                        'title': record.title,
+                        'data': complete_data,
+                        'relationship_changed': True,  # Flag to indicate this was a relationship change
+                        'updated_at': record.updated_at.isoformat() if record.updated_at else None,
+                        'timestamp': time.time()
+                    }
+
+                    # Check if we should broadcast (deduplication)
+                    data_hash = _get_data_hash(complete_data)
+                    if not _should_broadcast(record.id, data_hash):
+                        logger.info(f"   ⏭️ Skipping duplicate broadcast for record {record.id}")
+                        continue
+
+                    # Broadcast to pipeline-specific record channel with FLAT structure
+                    pipeline_record_group = f"pipeline_records_{record.pipeline_id}"
+                    safe_group_send_sync(channel_layer, pipeline_record_group, {
+                        'type': 'record_update',
+                        'data': record_event_data
+                    })
+                    logger.info(f"   📡 → Pipeline channel: {pipeline_record_group}")
+
+                    # Broadcast to document-specific channel (for record drawer)
+                    document_group = f"document_{record.id}"
+                    safe_group_send_sync(channel_layer, document_group, {
+                        'type': 'document_updated',
+                        'data': record_event_data
+                    })
+                    logger.info(f"   📡 → Document channel: {document_group}")
+
+                    # Broadcast to pipelines overview (for pipeline list with record counts)
+                    pipelines_overview_group = "pipelines_overview"
+                    safe_group_send_sync(channel_layer, pipelines_overview_group, {
+                        'type': 'record_update',
+                        'data': record_event_data
+                    })
+                    logger.info(f"   📡 → Overview channel: {pipelines_overview_group}")
+
+                    logger.info(f"   ✅ Successfully triggered record update for record {record.id}")
+
+                except Record.DoesNotExist:
+                    logger.warning(f"   ⚠️ Record {record_id} not found or deleted - skipping WebSocket update")
+                except Exception as record_e:
+                    logger.error(f"   ❌ Error processing record {record_id}: {record_e}")
+
+            logger.info(f"🏁 WEBSOCKET: Completed record updates for relationship change")
+
         except Exception as e:
-            logger.error(f"Error handling relationship save signal: {e}")
+            logger.error(f"❌ WEBSOCKET: Error in _trigger_record_update_for_relationship_change: {e}")
+            import traceback
+            logger.error(f"❌ WEBSOCKET: Traceback: {traceback.format_exc()}")
+
+
+    @receiver(post_delete, sender=Relationship)
+    def handle_relationship_deleted(sender, instance, **kwargs):
+        """Handle hard relationship deletion for real-time broadcasting"""
+        logger.info(f"🚨 SIGNAL FIRED: post_delete for Relationship {instance.id}")
+        logger.info(f"   📍 Source: {instance.source_record_id} → Target: {instance.target_record_id}")
+        logger.info(f"   🏷️ Type: {instance.relationship_type_id}")
+
+        _handle_relationship_deletion(instance, "hard_deleted")
 
 
     @receiver(post_save, sender=Field)
@@ -839,3 +1061,80 @@ if COMMUNICATION_MODELS_AVAILABLE:
         except Exception as e:
             logger.error(f"❌ Error handling sync progress signal: {e}")
             logger.error(f"❌ Progress entry: {instance.id}")
+
+
+def _handle_relationship_deletion(instance, deletion_type):
+    """Unified handler for both soft and hard relationship deletions"""
+    try:
+        logger.info(f"🗑️ WEBSOCKET: Processing relationship {deletion_type} - ID: {instance.id}")
+        logger.info(f"   📍 Source: {instance.source_record_id} → Target: {instance.target_record_id}")
+
+        channel_layer = get_channel_layer()
+        if not channel_layer:
+            logger.warning(f"❌ No channel layer available for relationship {deletion_type} signal")
+            return
+
+        # Create event data
+        event_data = {
+            'type': 'relationship_deleted',
+            'relationship_id': str(instance.id),
+            'source_record_id': str(instance.source_record_id),
+            'target_record_id': str(instance.target_record_id),
+            'relationship_type': str(instance.relationship_type_id),
+            'deletion_type': deletion_type,
+            'timestamp': time.time()
+        }
+
+        logger.info(f"📡 Broadcasting {deletion_type} to channels...")
+
+        # Broadcast to relationship subscribers
+        safe_group_send_sync(channel_layer, "relationship_updates", {
+            'type': 'relationship_delete',
+            'data': event_data
+        })
+
+        # Broadcast to both record documents
+        for record_id in [instance.source_record_id, instance.target_record_id]:
+            document_group = f"document_{record_id}"
+            safe_group_send_sync(channel_layer, document_group, {
+                'type': 'relationship_delete',
+                'data': event_data
+            })
+
+        # CRITICAL: Trigger record updates for both sides to refresh relation field data
+        logger.info(f"🔄 WEBSOCKET: Triggering record updates for both sides of {deletion_type} relationship")
+        _trigger_record_update_for_relationship_change(instance, False, channel_layer)
+
+        logger.info(f"✅ WEBSOCKET: Successfully processed relationship {deletion_type}: {instance.id}")
+
+    except Exception as e:
+        logger.error(f"❌ WEBSOCKET: Error handling relationship {deletion_type}: {e}")
+        import traceback
+        logger.error(f"❌ WEBSOCKET: Traceback: {traceback.format_exc()}")
+
+
+def _trigger_record_updates_for_relationship(instance, action_type):
+    """
+    Trigger record updates for both sides of a relationship to refresh display fields
+    Used for relationship creation and resurrection to ensure WebSocket updates include display values
+    """
+    try:
+        logger.info(f"🔄 WEBSOCKET: Triggering record updates for relationship {action_type} - ID: {instance.id}")
+
+        channel_layer = get_channel_layer()
+        if not channel_layer:
+            logger.warning(f"❌ No channel layer available for relationship {action_type} record updates")
+            return
+
+        # Determine if this is a creation action
+        is_created = action_type == "created"
+
+        # Use the existing function to trigger record updates
+        _trigger_record_update_for_relationship_change(instance, is_created, channel_layer)
+
+        logger.info(f"✅ WEBSOCKET: Successfully triggered record updates for relationship {action_type}: {instance.id}")
+
+    except Exception as e:
+        logger.error(f"❌ WEBSOCKET: Error triggering record updates for relationship {action_type}: {e}")
+        import traceback
+        logger.error(f"❌ WEBSOCKET: Traceback: {traceback.format_exc()}")

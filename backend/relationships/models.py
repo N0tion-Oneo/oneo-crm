@@ -16,6 +16,22 @@ User = get_user_model()
 logger = logging.getLogger(__name__)
 
 
+class RelationshipManager(models.Manager):
+    """Manager for Relationship model with automatic soft delete filtering"""
+
+    def get_queryset(self):
+        """Return only non-deleted relationships by default"""
+        return super().get_queryset().filter(is_deleted=False)
+
+    def all_with_deleted(self):
+        """Return all relationships including soft-deleted ones"""
+        return super().get_queryset()
+
+    def deleted_only(self):
+        """Return only soft-deleted relationships"""
+        return super().get_queryset().filter(is_deleted=True)
+
+
 class RelationshipType(models.Model):
     """Defines types of relationships between records"""
     
@@ -208,7 +224,7 @@ class RelationshipType(models.Model):
 
 class Relationship(models.Model):
     """Individual relationship instance between records or between user and record"""
-    
+
     STATUS_CHOICES = [
         ('active', 'Active'),
         ('inactive', 'Inactive'),
@@ -277,6 +293,10 @@ class Relationship(models.Model):
     is_deleted = models.BooleanField(default=False)
     deleted_at = models.DateTimeField(null=True, blank=True)
     deleted_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='deleted_relationships')
+
+    # Managers
+    objects = RelationshipManager()  # Default manager filters out soft-deleted
+    all_objects = models.Manager()   # Manager that includes all relationships
     
     class Meta:
         db_table = 'relationships_relationship'

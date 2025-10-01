@@ -40,6 +40,14 @@ export function useRealtimeUpdates(
     )
   }, [pipeline.id, onRecordCreate, onRecordUpdate, onRecordDelete, onError])
 
+  // Debug pipeline ID before subscribing
+  console.log('🔍 DEBUGGING: useRealtimeUpdates pipeline ID:', {
+    pipelineId: pipeline.id,
+    pipelineIdType: typeof pipeline.id,
+    pipelineName: pipeline.name,
+    channelName: `pipeline_records_${pipeline.id}`
+  })
+
   // Subscribe to pipeline record updates
   const { isConnected } = usePipelineRecordsSubscription(
     pipeline.id,

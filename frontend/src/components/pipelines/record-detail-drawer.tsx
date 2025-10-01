@@ -606,24 +606,40 @@ export function RecordDetailDrawer({
   const { isConnected } = useDocumentSubscription(
     record?.id || '',
     (message: RealtimeMessage) => {
-      // Handle document_updated messages (from WebSocket broadcast)
-      if (message.type === 'record_update' && message.data) {
+      // Handle BOTH document_updated and record_update messages
+      if ((message.type === 'record_update' || message.type === 'document_updated') && message.data) {
         const recordData = message.data
-        // Check if this update is for our current record
-        if (recordData.record_id === record?.id) {
-          // If we have created_by/updated_by info, we need to trigger a re-render
-          // by notifying the parent to update the record prop
+
+        // Check if this update is for our current record (handle both record_id and id)
+        if (recordData.record_id === record?.id || String(recordData.id) === String(record?.id)) {
+          console.log('🔄 Drawer received WebSocket update:', {
+            type: message.type,
+            recordId: recordData.record_id || recordData.id,
+            hasData: !!recordData.data,
+            relationshipChanged: recordData.relationship_changed,
+            dataKeys: Object.keys(recordData.data || {})
+          })
+
+          // Update form data if provided
+          if (recordData.data) {
+            setFormData(recordData.data)
+
+            // Log relation field updates specifically
+            const relationFields = Object.keys(recordData.data).filter(key => {
+              const value = recordData.data[key]
+              return Array.isArray(value) || (typeof value === 'object' && value !== null && value?.display_value)
+            })
+            if (relationFields.length > 0) {
+              console.log('✅ Updated relation fields in drawer:', relationFields)
+            }
+          }
+
+          // Handle user info updates
           if (recordData.created_by || recordData.updated_by) {
-            // The parent should handle updating the selectedRecord with full user info
             console.log('Received WebSocket update with user info:', {
               created_by: recordData.created_by,
               updated_by: recordData.updated_by
             })
-          }
-          
-          // Update form data if provided
-          if (recordData.data) {
-            setFormData(recordData.data)
           }
         }
       } else if (message.type === 'record_update' && message.payload?.record_id === record?.id) {
@@ -753,6 +769,54 @@ export function RecordDetailDrawer({
     setValidationErrors([])
   }, [record?.id, pipeline.fields.length])  // Dependencies: only reset when record ID or field count changes
 
+  // Refetch record when drawer opens to ensure fresh display values for relation fields
+  useEffect(() => {
+    const refetchRecord = async () => {
+      if (isOpen && record?.id && pipeline?.id) {
+        try {
+          console.log('🔄 Refetching record for fresh display values:', record.id)
+          const response = await pipelinesApi.getRecord(
+            pipeline.id.toString(),
+            record.id.toString()
+          )
+
+          if (response.data && response.data.data) {
+            console.log('✅ Fresh record data received:', {
+              recordId: record.id,
+              dataKeys: Object.keys(response.data.data),
+              relationFields: Object.keys(response.data.data).filter(key => {
+                const value = response.data.data[key]
+                return Array.isArray(value) || (typeof value === 'object' && value !== null && value?.display_value)
+              })
+            })
+
+            // Map the fresh data to formData with field name mapping
+            const freshFormData: { [key: string]: any } = {}
+
+            pipeline.fields.forEach(field => {
+              const fieldType = convertToFieldType(field)
+              const backendValue = response.data.data[field.slug] || response.data.data[field.name]
+
+              if (backendValue !== undefined) {
+                const normalizedValue = normalizeFieldValue(fieldType, backendValue)
+                freshFormData[field.name] = normalizedValue
+              } else {
+                // Keep existing formData value as fallback
+                freshFormData[field.name] = formData[field.name]
+              }
+            })
+
+            setFormData(freshFormData)
+          }
+        } catch (error) {
+          console.error('Failed to refetch record:', error)
+          // Continue with existing data on error
+        }
+      }
+    }
+
+    refetchRecord()
+  }, [isOpen, record?.id, pipeline?.id])
 
   // Cleanup FieldSaveService when component unmounts
   useEffect(() => {

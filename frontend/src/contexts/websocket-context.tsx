@@ -271,6 +271,25 @@ export function WebSocketProvider({ children, autoConnect = true }: WebSocketPro
     let matchedSubscriptions = 0
     
     for (const subscription of subscriptionsRef.current.values()) {
+      // Debug relationship updates specifically
+      if (message.type === 'record_update') {
+        const isRelChange = (message as any).payload?.relationship_changed
+        if (isRelChange) {
+          const payload = (message as any).payload
+          const relationFields = Object.keys(payload?.data || {}).filter(key => {
+            const value = payload.data[key]
+            return Array.isArray(value) || (typeof value === 'object' && value !== null && 'id' in value)
+          })
+          console.log('🔗 Relationship change detected:', {
+            channel: subscription.channel,
+            recordId: payload?.record_id,
+            pipelineId: payload?.pipeline_id,
+            relationFields,
+            changedFieldCount: Object.keys(payload?.data || {}).length
+          })
+        }
+      }
+
       // Debug sync progress specifically
       if (message.type === 'sync_progress_update' || subscription.channel.startsWith('sync_progress_')) {
         console.log(`🔍 SYNC DEBUG - Message type: ${message.type}, Channel: ${subscription.channel}`)
@@ -296,6 +315,8 @@ export function WebSocketProvider({ children, autoConnect = true }: WebSocketPro
         (message.type === 'user_presence' && subscription.channel === 'user_presence') ||
         (message.type === 'permission_update' && subscription.channel.startsWith('permission')) ||
         (message.type === 'activity_update' && subscription.channel.startsWith('document_')) ||
+        (message.type === 'document_updated' && subscription.channel.startsWith('document_')) ||
+        (message.type === 'record_update' && subscription.channel.startsWith('document_')) ||
         (message.type === 'message_update' && subscription.channel.startsWith('conversation_')) ||
         (message.type === 'new_message' && subscription.channel.startsWith('conversation_')) ||
         (message.type === 'message_status_update' && subscription.channel.startsWith('conversation_')) ||

@@ -565,15 +565,24 @@ class BaseRealtimeConsumer(AsyncWebsocketConsumer):
     async def record_update(self, event):
         """Handle record update messages from signals"""
         data = event.get('data', {})
-        
+
+        # CRITICAL: Handle both nested and flat relationship_changed flag placement
+        # Old format: {'data': {'relationship_changed': True}} (nested)
+        # New format: {'relationship_changed': True, 'data': {...}} (flat)
+        relationship_changed = data.get('relationship_changed', False)
+        if not relationship_changed and isinstance(data.get('data'), dict):
+            # Check nested format for backward compatibility
+            relationship_changed = data.get('data', {}).get('relationship_changed', False)
+
         # Transform signal message format to frontend expected format
         message = {
             'type': self._normalize_record_type(data.get('type', 'record_update')),
             'payload': {
-                'record_id': data.get('record_id'),
+                'record_id': data.get('record_id') or data.get('id'),
                 'pipeline_id': data.get('pipeline_id'),
                 'title': data.get('title'),
                 'data': data.get('data'),
+                'relationship_changed': relationship_changed,  # Include relationship_changed flag
                 'created_at': data.get('created_at'),
                 'updated_at': data.get('updated_at'),
                 'created_by': data.get('created_by'),  # Include full created_by object
@@ -587,7 +596,7 @@ class BaseRealtimeConsumer(AsyncWebsocketConsumer):
             } if data.get('updated_by') else None,
             'timestamp': data.get('timestamp')
         }
-        
+
         await self.send(text_data=json.dumps(message))
     
     async def record_deleted(self, event):
@@ -852,6 +861,48 @@ class BaseRealtimeConsumer(AsyncWebsocketConsumer):
         await self.send(text_data=json.dumps(websocket_message))
         
         logger.info(f"🔄 Sync job update sent to user {self.user_id}")
+
+    async def relationship_update(self, event):
+        """Handle relationship update messages from relationship system"""
+        relationship_data = event.get('data', {})
+
+        logger.debug(f"🔗 CONSUMER: relationship_update handler called for user {self.user_id}")
+        logger.debug(f"🔗 CONSUMER: Event data: {event}")
+        logger.debug(f"🔗 CONSUMER: Relationship data: {relationship_data}")
+
+        # Send relationship update to the client
+        message_to_send = {
+            'type': 'relationship_update',
+            'data': relationship_data,
+            'timestamp': relationship_data.get('timestamp')
+        }
+
+        logger.debug(f"🔗 CONSUMER: Sending to frontend: {message_to_send}")
+
+        await self.send(text_data=json.dumps(message_to_send))
+
+        logger.debug(f"🔗 CONSUMER: Relationship update sent to user {self.user_id}: relationship {relationship_data.get('relationship_id', 'unknown')}")
+
+    async def relationship_delete(self, event):
+        """Handle relationship deletion messages from relationship system"""
+        relationship_data = event.get('data', {})
+
+        logger.debug(f"🗑️ CONSUMER: relationship_delete handler called for user {self.user_id}")
+        logger.debug(f"🗑️ CONSUMER: Event data: {event}")
+        logger.debug(f"🗑️ CONSUMER: Relationship data: {relationship_data}")
+
+        # Send relationship deletion to the client
+        message_to_send = {
+            'type': 'relationship_delete',
+            'data': relationship_data,
+            'timestamp': relationship_data.get('timestamp')
+        }
+
+        logger.debug(f"🗑️ CONSUMER: Sending to frontend: {message_to_send}")
+
+        await self.send(text_data=json.dumps(message_to_send))
+
+        logger.debug(f"🗑️ CONSUMER: Relationship deletion sent to user {self.user_id}: relationship {relationship_data.get('relationship_id', 'unknown')}")
 
 
 class CollaborativeEditingConsumer(BaseRealtimeConsumer):

@@ -816,10 +816,11 @@ class RecordOperationManager:
 
         for field in relation_fields:
             if field.slug in record.data:
-                # Extract and store relation value
-                value = record.data.pop(field.slug)
+                # Extract relation value (but keep in data for database storage)
+                value = record.data.get(field.slug)
                 self._relation_updates[field] = value
                 print(f"   → Extracted relation field '{field.slug}': {value}")
+                print(f"   → Keeping relation IDs in record.data for storage")
 
     def _sync_relation_fields(self, change_context: ChangeContext):
         """Sync extracted relation fields to Relationship table"""
@@ -829,19 +830,58 @@ class RecordOperationManager:
 
         print(f"🔗 Syncing {len(self._relation_updates)} relation field(s) to Relationship table")
         print(f"   📦 Updates to sync: {[(f.slug, v) for f, v in self._relation_updates.items()]}")
+        print(f"   🎯 Record ID: {self.record.id}, Pipeline: {self.record.pipeline_id}")
 
         from .relation_field_handler import sync_relation_field
+        import time
 
-        user = getattr(self.record, '_current_user', None)
+        user = getattr(self.record, '_current_user', None) or self.record.updated_by or self.record.created_by
+
+        print(f"   👤 User context: _current_user={getattr(self.record, '_current_user', None)}, updated_by={self.record.updated_by}, created_by={self.record.created_by}")
+        print(f"   ✅ Final user for relationships: {user}")
 
         for field, value in self._relation_updates.items():
             try:
+                print(f"   🔄 STARTING sync for field '{field.slug}' with value: {value}")
+                start_time = time.time()
+
                 result = sync_relation_field(self.record, field, value, user)
-                print(f"   ✓ Synced '{field.slug}': {result}")
+
+                sync_time = (time.time() - start_time) * 1000  # Convert to milliseconds
+                print(f"   ✓ COMPLETED sync for '{field.slug}' in {sync_time:.2f}ms: {result}")
+
+                # Log what relationships were actually created/changed
+                if isinstance(result, dict):
+                    if result.get('created', 0) > 0:
+                        print(f"   🆕 Created {result['created']} new relationship(s)")
+                    if result.get('deleted', 0) > 0:
+                        print(f"   🗑️ Deleted {result['deleted']} relationship(s)")
+                    if result.get('unchanged', 0) > 0:
+                        print(f"   ➡️ {result['unchanged']} relationship(s) unchanged")
+
+                # Update record.data with final relation IDs after sync
+                if not self.record.data:
+                    self.record.data = {}
+                self.record.data[field.slug] = value
+                print(f"   💾 Updated record.data['{field.slug}'] with final IDs: {value}")
+
             except Exception as e:
                 print(f"   ❌ Failed to sync '{field.slug}': {e}")
                 # Don't fail the save if relation sync fails
                 logger.error(f"Failed to sync relation field {field.slug}: {e}")
+
+        # Save updated relation IDs back to database
+        if self._relation_updates:
+            try:
+                print(f"   💾 Saving final relation IDs to database...")
+                from django.db import models
+                models.Model.save(self.record, update_fields=['data'])
+                print(f"   ✅ Saved relation IDs to record.data in database")
+            except Exception as e:
+                print(f"   ❌ Failed to save relation IDs: {e}")
+                logger.error(f"Failed to save relation IDs for record {self.record.id}: {e}")
+
+        print(f"🏁 FINISHED syncing all relation fields for record {self.record.id}")
 
         # Clear updates after sync
         self._relation_updates.clear()

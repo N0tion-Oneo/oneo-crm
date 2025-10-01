@@ -278,63 +278,12 @@ class RecordSerializer(serializers.ModelSerializer):
         # Add pipeline_name for easier access
         data['pipeline_name'] = instance.pipeline.name
 
-        # Add relation field data from Relationship table with display values
-        relation_fields = instance.pipeline.fields.filter(field_type='relation')
+        # Add relation field data from Relationship table with display values (including bidirectional)
+        relation_fields = instance.pipeline.fields.filter(field_type='relation', is_deleted=False)
         for field in relation_fields:
             handler = RelationFieldHandler(field)
-            related_ids = handler.get_related_ids(instance)
-
-            # Convert IDs to objects with display values
-            if related_ids is not None:
-                display_field = field.field_config.get('display_field', 'title')
-
-                if isinstance(related_ids, list):
-                    # Multiple relations
-                    related_objects = []
-                    for record_id in related_ids:
-                        try:
-                            related_record = Record.objects.get(id=record_id)
-                            # Try exact match first, then case-insensitive with underscores
-                            display_value = related_record.data.get(display_field)
-                            if not display_value:
-                                # Try converting spaces to underscores and lowercase
-                                alt_field = display_field.lower().replace(' ', '_')
-                                display_value = related_record.data.get(alt_field)
-                            if not display_value:
-                                display_value = related_record.title or f"Record #{record_id}"
-                            related_objects.append({
-                                'id': record_id,
-                                'display_value': display_value
-                            })
-                        except Record.DoesNotExist:
-                            related_objects.append({
-                                'id': record_id,
-                                'display_value': f"Record #{record_id} (deleted)"
-                            })
-                    related_value = related_objects
-                else:
-                    # Single relation
-                    try:
-                        related_record = Record.objects.get(id=related_ids)
-                        # Try exact match first, then case-insensitive with underscores
-                        display_value = related_record.data.get(display_field)
-                        if not display_value:
-                            # Try converting spaces to underscores and lowercase
-                            alt_field = display_field.lower().replace(' ', '_')
-                            display_value = related_record.data.get(alt_field)
-                        if not display_value:
-                            display_value = related_record.title or f"Record #{related_ids}"
-                        related_value = {
-                            'id': related_ids,
-                            'display_value': display_value
-                        }
-                    except Record.DoesNotExist:
-                        related_value = {
-                            'id': related_ids,
-                            'display_value': f"Record #{related_ids} (deleted)"
-                        }
-            else:
-                related_value = None
+            # Use the new bidirectional-aware method that handles display values automatically
+            related_value = handler.get_related_records_with_display(instance)
 
             if data.get('data') is None:
                 data['data'] = {}
@@ -486,63 +435,12 @@ class DynamicRecordSerializer(serializers.ModelSerializer):
                 if key not in processed_data:
                     processed_data[key] = value
 
-        # Add relation field data from Relationship table with display values
-        relation_fields = instance.pipeline.fields.filter(field_type='relation')
+        # Add relation field data from Relationship table with display values (including bidirectional)
+        relation_fields = instance.pipeline.fields.filter(field_type='relation', is_deleted=False)
         for field in relation_fields:
             handler = RelationFieldHandler(field)
-            related_ids = handler.get_related_ids(instance)
-
-            # Convert IDs to objects with display values
-            if related_ids is not None:
-                display_field = field.field_config.get('display_field', 'title')
-
-                if isinstance(related_ids, list):
-                    # Multiple relations
-                    related_objects = []
-                    for record_id in related_ids:
-                        try:
-                            related_record = Record.objects.get(id=record_id)
-                            # Try exact match first, then case-insensitive with underscores
-                            display_value = related_record.data.get(display_field)
-                            if not display_value:
-                                # Try converting spaces to underscores and lowercase
-                                alt_field = display_field.lower().replace(' ', '_')
-                                display_value = related_record.data.get(alt_field)
-                            if not display_value:
-                                display_value = related_record.title or f"Record #{record_id}"
-                            related_objects.append({
-                                'id': record_id,
-                                'display_value': display_value
-                            })
-                        except Record.DoesNotExist:
-                            related_objects.append({
-                                'id': record_id,
-                                'display_value': f"Record #{record_id} (deleted)"
-                            })
-                    related_value = related_objects
-                else:
-                    # Single relation
-                    try:
-                        related_record = Record.objects.get(id=related_ids)
-                        # Try exact match first, then case-insensitive with underscores
-                        display_value = related_record.data.get(display_field)
-                        if not display_value:
-                            # Try converting spaces to underscores and lowercase
-                            alt_field = display_field.lower().replace(' ', '_')
-                            display_value = related_record.data.get(alt_field)
-                        if not display_value:
-                            display_value = related_record.title or f"Record #{related_ids}"
-                        related_value = {
-                            'id': related_ids,
-                            'display_value': display_value
-                        }
-                    except Record.DoesNotExist:
-                        related_value = {
-                            'id': related_ids,
-                            'display_value': f"Record #{related_ids} (deleted)"
-                        }
-            else:
-                related_value = None
+            # Use the new bidirectional-aware method that handles display values automatically
+            related_value = handler.get_related_records_with_display(instance)
 
             if data.get('data') is None:
                 data['data'] = {}
